@@ -62,10 +62,7 @@ $-dP/dx$ with half-width, density, viscosity and conductivity one, which is the
 normalisation of `lmx.duct_problem`; $\tilde Q$ is four times the mean velocity
 the steady tests compare. `wall_conductance` in `duct_problem` sets the two
 walls normal to the field, so A2 (Hartmann walls $c=0.01$, insulating side
-walls) is `duct_problem(..., wall_conductance=0.01)`. An exact series (Fourier
-in the side-wall direction, closed form along the field) reproduces the
-analytic column to all four printed digits and the spectral reference of
-`validation/shercliff.py` to $5\times10^{-9}$.
+walls) is `duct_problem(..., wall_conductance=0.01)`.
 
 Measured so far, float64, default tolerance, meshes `Ny:layer_y:Nz:layer_z`
 (fitted geometric stretching, `layer` cells inside $1/Ha$ along the field and
