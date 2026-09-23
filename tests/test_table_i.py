@@ -4,10 +4,10 @@ Table I lists the flow rate of a square duct for unit ``-dP/dx`` with half-width
 density, viscosity and conductivity one, which is the normalisation of
 ``duct_problem``: the flow rate is the area integral of the axial velocity. A1 is
 Shercliff's insulating duct and A2 is Hunt's duct with conducting Hartmann walls
-(c 0.01) and insulating side walls. Only the Ha 500 rows are gated here. At
-Ha 15,000 the error grows under refinement because the float64 potential solve
-loses accuracy on those meshes (docs/validation, plan step 2b.3); those rows are
-reported, not tested.
+(c 0.01) and insulating side walls. Only the Ha 500 rows are gated here; the
+Ha 5,000-15,000 rows are reported in docs/validation. A1 at Ha 15,000 does not
+converge under refinement, which points at the float64 potential solve (plan
+step 2b.3).
 """
 
 import math
