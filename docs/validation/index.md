@@ -55,6 +55,41 @@ float64 target on an A4000 is withdrawn. The two CPU reports in
 `benchmarks/results` are from the uncontrolled 2026-09-07 run and record no
 matmul precision; no ratio is quoted from them.
 
+## Smolentsev et al. 2015 Table I on the staggered core (in progress, plan step 1.13)
+
+Flow rate $\tilde Q=\int_{-1}^{1}\int_{-1}^{1}\tilde U\,dy\,dz$ for unit
+$-dP/dx$ with half-width, density, viscosity and conductivity one, which is the
+normalisation of `lmx.duct_problem`; $\tilde Q$ is four times the mean velocity
+the steady tests compare. `wall_conductance` in `duct_problem` sets the two
+walls normal to the field, so A2 (Hartmann walls $c=0.01$, insulating side
+walls) is `duct_problem(..., wall_conductance=0.01)`. An exact series (Fourier
+in the side-wall direction, closed form along the field) reproduces the
+analytic column to all four printed digits and the spectral reference of
+`validation/shercliff.py` to $5\times10^{-9}$.
+
+Measured so far, float64, default tolerance, meshes `Ny:layer_y:Nz:layer_z`
+(fitted geometric stretching, `layer` cells inside $1/Ha$ along the field and
+$1/\sqrt{Ha}$ across it); relative error against the analytic column:
+
+| Row | Ha | Mesh | Relative error | CG iterations |
+|---|---|---|---|---|
+| A1 | 500 | 32:4:32:4 / 48:6:48:6 / 72:9:72:9 | +2.20 % / +0.98 % / +0.43 % | — |
+| A1 | 500 | 96:12:48:6 / 48:6:96:12 | +0.27 % / +0.95 % | — |
+| A2 | 500 | 64:8:32:4 / 96:12:48:6 | +0.38 % / +0.18 % | 66 / 95 |
+| A1 | 15,000 | 64:8:32:4 / 64:8:64:8 / 128:16:32:4 / 128:16:64:8 | +1.10 % / +1.08 % / +3.15 % / +3.16 % | 122 / 138 / 127 / 142 |
+| A2 | 15,000 | 64:8:32:4 / 128:16:64:8 | +1.25 % / +0.33 % | 500 / 632 |
+
+At Ha 500 the A1 series is second order (observed order 2.00 over ratio 1.5)
+and its Richardson value is within $1\times10^{-5}$ of the analytic one; the
+error lives in the Hartmann layer, not the side layer. At Ha 15,000 refining
+the Hartmann direction makes A1 worse: the fast-diagonal potential solve loses
+float64 accuracy on these meshes. The along-field eigenvalue of the constant
+mode comes out $5.5\times10^{-6}$ instead of zero on 128:16 (smallest cell
+$6.3\times10^{-7}$, largest eigenvalue $5.4\times10^{12}$), one direct solve
+leaves a relative residual of $5.3\times10^{-3}$, and the core current is a
+$1/Ha$ cancellation of $u\times B$ and $\nabla\phi$, so the error reaches the
+flow rate amplified. The gate of validation row 27 is not yet assessed.
+
 ## Test gates
 
 The portable suite includes analytical, manufactured, regression, physics, and
