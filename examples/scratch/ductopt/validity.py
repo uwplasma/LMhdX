@@ -18,8 +18,16 @@ import time
 import jax
 import numpy as np
 
+from lmhdx.axial import (
+    axial_faces,
+    charge_balance,
+    mass_balance,
+    open_duct,
+    pressure_drop,
+    solve_open_duct,
+)
 from lmhdx.bc import PERIODIC, BoundaryCondition
-from lmhdx.core3d import ChannelProblem, ImposedField
+from lmhdx.core3d import ChannelProblem, ImposedField, fringe_field
 from lmhdx.design import channel_flow_response
 from lmhdx.grid import Grid, uniform_faces, wall_resolving_faces
 from lmhdx.steady import solve_steady_state
@@ -146,3 +154,80 @@ def validity_map(
                 fine["refinement_of"] = "nx16"
                 rows.append(fine)
     return rows
+
+
+def ramp_excess(
+    gamma_sqrt_ha: float,
+    beta: float,
+    ha_mid: float,
+    *,
+    delta: float = 0.2,
+    cells: int = 24,
+    cells_in_layer: int = 4,
+    spacing: float = 0.25,
+    window: float = 6.0,
+    upstream: float = 15.0,
+    downstream: float = 10.0,
+) -> dict:
+    """5A.B1-B2: the 3-D excess on an open duct with a monotone sine ramp, 1.9d's method.
+
+    ``B_y(x)`` falls by ``delta`` (relative to the mid-field ``ha_mid``) over ``|x| <= x0`` as TM-228's
+    ``fringe_field`` (``B_y`` alone, divergence free) added to a uniform field, between buffers of
+    ``upstream`` and ``downstream`` half-widths (D26). The steepest relative gradient is
+    ``gamma = delta pi / (4 x0)``, so ``x0`` follows from ``gamma sqrt(Ha)`` (2.5 definition).
+    The excess is ``Delta p / Delta p_FD - 1`` over ``[-x0 - window, x0 + window]``, with ``Delta p_FD``
+    the 2-D fully developed gradient at the local field on the same cross-section, integrated with
+    24 Gauss points over the ramp.
+    """
+    x0 = delta * np.pi * np.sqrt(ha_mid) / (4.0 * gamma_sqrt_ha)
+    b_lo, d_b = ha_mid * (1.0 - delta / 2.0), ha_mid * delta
+    ha_hi = b_lo + d_b
+    y = wall_resolving_faces(
+        cells, -1.0, 1.0, layer_thickness=1.0 / ha_hi, cells_in_layer=cells_in_layer, max_ratio=None
+    )
+    z = wall_resolving_faces(
+        cells, -beta, beta, layer_thickness=min(1.0 / np.sqrt(ha_mid), 0.25 * beta),
+        cells_in_layer=cells_in_layer, max_ratio=None,
+    )
+    step = float(np.clip(spacing, x0 / 40.0, x0 / 5.0))  # 5-40 cells across the half-ramp
+    grid = Grid(axial_faces(-x0 - upstream, x0 + downstream, (-x0 - 1.0, x0 + 1.0), step), y, z)
+    ramp = fringe_field(grid, half_length=x0, strength=d_b, solenoidal=False)
+    faces = (ramp.faces[0], ramp.faces[1] + b_lo, ramp.faces[2])
+    components = (ramp.components[0], ramp.components[1] + b_lo, ramp.components[2])
+    walled = ChannelProblem(
+        grid=grid, conditions=(BoundaryCondition(PERIODIC), _WALL, _WALL), conductivity=1.0,
+        magnetic_field=ImposedField(grid, components, faces), dt=1.0,
+    )
+    problem = open_duct(walled, 1.0)
+    t0 = time.perf_counter()
+    solution = solve_open_duct(problem)
+    jax.block_until_ready(solution.velocity)
+    elapsed = time.perf_counter() - t0
+    xa, xb = -x0 - window, x0 + window
+    dp = float(pressure_drop(solution.pressure, xa, xb))
+
+    section = ChannelProblem(
+        grid=Grid(uniform_faces(1, 0.0, 1.0), y, z), conditions=walled.conditions, conductivity=1.0,
+        magnetic_field=(0.0, ha_hi, 0.0), forcing=(1.0, 0.0, 0.0), dt=1.0,
+    )
+    q_fn = jax.jit(lambda s: channel_flow_response(section, magnetic_field_scale=s).flow_per_unit_drive)
+
+    def gradient(b):  # fully developed dp/dx magnitude at field b, unit flow rate
+        return 1.0 / float(q_fn(b / ha_hi))
+
+    nodes, weights = np.polynomial.legendre.leggauss(24)
+    s = x0 * nodes
+    field = b_lo + d_b * (1.0 - np.sin(np.pi * s / (2.0 * x0))) / 2.0
+    dp_fd = (
+        gradient(ha_hi) * (window) + x0 * sum(w * gradient(b) for w, b in zip(weights, field))
+        + gradient(b_lo) * window
+    )
+    return {
+        "gamma_sqrt_ha": gamma_sqrt_ha, "beta": beta, "ha_mid": ha_mid, "delta": delta, "x0": x0,
+        "cells": cells, "axial_cells": grid.shape[0], "spacing": step, "window": window,
+        "upstream": upstream, "downstream": downstream, "dp": dp, "dp_fd": dp_fd,
+        "excess_percent": 100.0 * (dp / dp_fd - 1.0), "iterations": int(solution.iterations),
+        "residual": float(solution.residual_norm / solution.initial_residual_norm),
+        "mass_balance": float(mass_balance(solution.velocity)),
+        "charge_balance": float(charge_balance(solution, problem)), "elapsed_s": elapsed,
+    }
