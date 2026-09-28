@@ -82,7 +82,14 @@ EXITS = {
     "re_over_ha_max": 200.0,  # exit (f); Ha is not capped (O13), warm time within 2x of Ha 300 on the same mesh
     "gamma_sqrt_ha_max": 0.2,  # 2.5 definition
     "f_cost_factor": 2.0,
+    # 5A.B, fixed 2026-09-28 before the sweep (the mesh study at Ha 200, gamma sqrt(Ha) 2 chose 48/6):
+    "i_mesh_change_max": 0.10,  # 72/9 and half-spacing must move the excess by <= 10 % of its value
+    "i_collapse_rel": 0.20,  # Ha 50 and Ha 200 excess agree within 20 % at matched gamma sqrt(Ha) >= 0.1
 }
+RAMP_HA = (50.0, 200.0)
+RAMP_GAMMAS = (0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0)  # delta k a sqrt(Ha), 2.5 definition, ramp delta 0.2
+RAMP_REFINE = (1.0, 2.0)
+RAMP_S_STAR = 2.09  # beta* sqrt(Ha*) of the design law (Tier 0, uniform field)
 
 
 def _git_sha() -> str:
@@ -277,6 +284,29 @@ def stage_validity(gamma: float, refine: bool = False) -> None:
     checkpoint.set_key(("validity_map", tag), rows)
 
 
+def stage_ramp(ha: float, case: str) -> None:
+    """5A.B: 3-D excess on the open duct with a monotone ramp, square or at the design law's own beta*."""
+    beta = 1.0 if case == "square" else RAMP_S_STAR / float(np.sqrt(ha))
+    print(f"ramp Ha={ha:.0f} {case} beta={beta:.4f}...", flush=True)
+    rows = []
+
+    def solve(gamma: float, label: str, **kwargs) -> dict:
+        kwargs = {"cells": CELLS_EXPLORE, "cells_in_layer": CELLS_IN_LAYER, **kwargs}
+        row = validity.ramp_excess(gamma, beta, ha, **kwargs)
+        row.update(case=case, variant=label)
+        rows.append(row)
+        checkpoint.set_key(("ramp_excess", f"Ha{ha:.0f}_{case}"), rows)
+        print(f"  gamma sqrt(Ha)={gamma} {label}: excess={row['excess_percent']:+.4f}% "
+              f"x0={row['x0']:.3g} it={row['iterations']} ({row['elapsed_s']:.0f} s)", flush=True)
+        return row
+
+    for gamma in RAMP_GAMMAS:
+        base = solve(gamma, "base")
+        if gamma in RAMP_REFINE:
+            solve(gamma, "cross_72_9", cells=72, cells_in_layer=9)
+            solve(gamma, "half_spacing", spacing=0.5 * base["spacing"])
+
+
 def stage_case_p_correction() -> None:
     print("Case P exact 1/R field correction...", flush=True)
     from lmhdx.bc import PERIODIC, BoundaryCondition
@@ -345,6 +375,7 @@ STAGES: list[str] = (
     + [f"designlaw_refine_{H:.0f}_{c}" for H in DESIGN_LAW_REFINE_H for c in (48, 96)]
     + [f"validity_{g}" for g in VALIDITY_GAMMAS]
     + [f"validity_refine_{g}" for g in VALIDITY_REFINE_GAMMA]
+    + [f"ramp_{ha:.0f}_{case}" for ha in RAMP_HA for case in ("square", "beta_star")]
     + ["case_p_correction"]
 )
 
@@ -372,6 +403,9 @@ def run_stage(name: str) -> None:
         stage_validity(float(name.removeprefix("validity_refine_")), refine=True)
     elif name.startswith("validity_"):
         stage_validity(float(name.removeprefix("validity_")))
+    elif name.startswith("ramp_"):
+        ha, case = name.removeprefix("ramp_").split("_", 1)
+        stage_ramp(float(ha), case)
     elif name == "case_p_correction":
         stage_case_p_correction()
     else:
@@ -473,6 +507,10 @@ def _stage_done(ckpt: dict, name: str) -> bool:
         return f"gamma{name.removeprefix('validity_refine_')}_refine" in ckpt.get("validity_map", {})
     if name.startswith("validity_"):
         return f"gamma{name.removeprefix('validity_')}" in ckpt.get("validity_map", {})
+    if name.startswith("ramp_"):
+        ha, case = name.removeprefix("ramp_").split("_", 1)
+        rows = ckpt.get("ramp_excess", {}).get(f"Ha{float(ha):.0f}_{case}", [])
+        return len(rows) == len(RAMP_GAMMAS) + 2 * len(RAMP_REFINE)
     if name == "case_p_correction":
         return "case_p_correction" in ckpt
     return False
