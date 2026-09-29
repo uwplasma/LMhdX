@@ -55,7 +55,7 @@ def _round_key(value: float, digits: int) -> float:
 
 @functools.lru_cache(maxsize=256)
 def _build_problem(
-    beta: float, ha_mesh: float, cells: int, cells_in_layer: int, centre: float = 0.0
+    beta: float, ha_mesh: float, cells: int, cells_in_layer: int, centre: float = 0.0, tilt: float = 0.0
 ) -> ChannelProblem:
     """One insulating rectangular duct, half-width 1 along B, aspect ``beta``.
 
@@ -67,12 +67,13 @@ def _build_problem(
     design box can reach is then a ``magnetic_field_scale <= 1`` of it. The
     z-clustering length follows the probes: the side layer, capped so a very
     slender duct (small ``beta``) still gets several cells across its own
-    half-width.
+    half-width. A tilted field (``tilt`` = B_p / B_T) puts a normal component on the long walls, whose layer
+    is ``1 / (ha_mesh * tilt)``: the z clustering length is the thinner of that and the side layer.
     """
     y = wall_resolving_faces(
         cells, -1.0, 1.0, layer_thickness=1.0 / ha_mesh, cells_in_layer=cells_in_layer, max_ratio=None
     )
-    side_layer = min(1.0 / np.sqrt(ha_mesh), 0.25 * (centre or beta))
+    side_layer = min(1.0 / np.sqrt(ha_mesh), 0.25 * (centre or beta), 1.0 / (ha_mesh * tilt) if tilt else np.inf)
     z = wall_resolving_faces(
         cells, -(centre or beta), centre or beta, layer_thickness=side_layer, cells_in_layer=cells_in_layer,
         max_ratio=None,
@@ -276,15 +277,15 @@ def spectral_value(box: DesignBox, u: float, w: float, points: int = 48) -> floa
     )
 
 
-def tilted_flow(beta: float, ha: float, tilt: float, cells: int = 48, cells_in_layer: int = 6) -> tuple[float, int, float]:
-    """Flow per unit drive, CG restarts and wall time of a duct whose field of magnitude ``ha`` is tilted by
-    ``arctan(tilt)`` in the cross-section (C8): the damped preconditioner of a field off the mesh axes."""
-    import time
-
-    problem = _build_problem(*mesh_key(beta, ha), cells, cells_in_layer)
+def tilted_flow(
+    beta: float, ha: float, tilt: float, cells: int = 48, cells_in_layer: int = 6, centre: float = 0.0,
+    ha_mesh: float = 0.0,
+) -> float:
+    """Flow per unit drive of a duct whose field of magnitude ``ha`` is tilted by ``arctan(tilt)`` in the
+    cross-section (C8, the tilt law): the damped preconditioner of a field off the mesh axes. With ``centre``
+    the mesh is the O12 scaled family built for ``ha_mesh`` (default ``ha``)."""
+    problem = _build_problem(*mesh_key(beta, ha_mesh or ha, centre), cells, cells_in_layer, centre, tilt)
     theta = float(np.arctan(tilt))
     problem = dataclasses.replace(problem, magnetic_field=(0.0, ha * np.cos(theta), ha * np.sin(theta)))
-    start = time.perf_counter()
     solution = solve_steady_state(problem, forcing=(1.0, 0.0, 0.0))
-    q = float(channel_flow_rate(problem, solution.velocity[0].data[0]))
-    return q, int(solution.steps), time.perf_counter() - start
+    return float(channel_flow_rate(problem, solution.velocity[0].data[0]))

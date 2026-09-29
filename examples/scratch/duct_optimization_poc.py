@@ -74,6 +74,8 @@ DESIGN_LAW_H = (10.0, 20.0, 30.0, 50.0, 100.0, 150.0, 200.0, 300.0)
 GCI_H = (30.0, 100.0, 300.0)  # the design-law points that also run the three meshes
 HIGH_H = (500.0, 1000.0)  # O4: Ha* about 2,400 and 6,100 by the law
 SPECTRAL_POINTS_HIGH = 80  # the reference at Ha* 2,400-6,100, checked against 64; 96 needs 3 x 2.8 GB, more than this VM has
+TILT_LAW_H = (30.0, 100.0, 300.0, 1000.0)  # Ha* of the aligned optimum: 57, 285, 1,223, 6,036
+TILT_LAW = (0.0, 0.02, 0.05, 0.1, 0.2, 0.3)  # B_p / B_T, up to 16.7 degrees
 TILTS = (0.1, 0.2)  # B_p / B_T, 5.7 and 11.3 degrees (C8)
 VALIDITY_GAMMAS = (0.005, 0.02, 0.05, 0.1, 0.2)  # delta k a sqrt(Ha) (R1); Tier 0's 0.05-2 x 0.1
 VALIDITY_REFINE_GAMMA = (0.2,)  # reduced from 2
@@ -101,6 +103,12 @@ EXITS = {
     "c_stationarity_rel": 1.0e-6,  # |dW/dw| / W at the polished optimum, on the scaled-mesh family, h and 2h
     "gci_order_range": (1.0, 3.0),  # the observed order is used inside it, else the assumed 2 (and it is said)
     "f_high_ha_budget_s": 7200.0,  # O4 is a bounded attempt: stop and record at 2 h of CPU
+    # The tilt law (5A.C8 follow-up), fixed 2026-09-29 before its runs. The collapse in kappa = sqrt(Ha*_0) tan(theta)
+    # was seen in coarse exploratory runs (48/6, a 12-point beta grid), so these runs confirm it on converged meshes:
+    "t_mesh_beta_rel": 0.03,  # beta*(tilt) moves <= 3 % from 48/6 to 72/9
+    "t_mesh_dp_rel": 0.01,  # dp*(tilt) moves <= 1 %
+    "t_collapse_rel": 0.10,  # beta*/beta*_0 and dp*/dp*_0 agree within 10 % across H at matched kappa
+    "t_reference_rel": 0.01,  # the tilted spectral reference (Ha <= 100) within 1 % of the core's flow
 }
 # 5A.C1, written before the 2 and 50 mm/s points run (4.3: Ha* ~ V_min^(-2/3)); 5 mm/s is the Tier 0 measurement:
 PREDICTIONS = {
@@ -309,6 +317,54 @@ def stage_dlaw(H: float) -> None:
     checkpoint.set_key(("dlaw", f"{H:.0f}"), out)
 
 
+def _tilt_value(H: float, tilt: float, cells: int, layer: int, centre: float):
+    """dp(w) at fixed area 4 and unit mean velocity, tilted field, on the scaled-mesh family centred at ``centre``."""
+    ha_mesh = 1.1 * H / np.sqrt(centre)
+
+    def value(w: float) -> float:
+        beta = float(np.exp(w))
+        return 4.0 * beta**2 / tilted_flow(beta, H / np.sqrt(beta), tilt, cells, layer, centre, ha_mesh)
+
+    return value
+
+
+def stage_tiltlaw(H: float) -> None:
+    """The tilt-aware design law: the fixed-area optimum in a tilted field, on three meshes, by continuation in tilt."""
+    print(f"tilt law H={H:.0f}...", flush=True)
+    aligned = next(m for m in checkpoint.load()["dlaw"][f"{H:.0f}"]["meshes"] if m["cells"] == CELLS_EXPLORE)
+    beta0, centre, out = aligned["beta_star"], aligned["beta_star"], {"H": H, "beta_aligned": aligned["beta_star"], "rows": []}
+    for tilt in TILT_LAW:
+        rough = None
+        for delta in (0.25, 0.5):  # a wide first pass on the coarse mesh, widened if the minimum is outside it
+            rough = polish_w(_tilt_value(H, tilt, *MESHES[0], centre), float(np.log(centre)), delta=delta)
+            if rough["interior"]:
+                break
+        start = rough["beta_star"] if rough["interior"] else centre
+        row = {"tilt": tilt, "kappa": float(np.sqrt(aligned["Ha_star"]) * tilt), "meshes": []}
+        for cells, layer in MESHES:
+            t0 = time.perf_counter()
+            found = polish_w(_tilt_value(H, tilt, cells, layer, start), float(np.log(start)))
+            beta = found["beta_star"]
+            found.update(
+                cells=cells, cells_in_layer=layer, Ha_star=H / float(np.sqrt(beta)),
+                dp_star=found["value_star"], dp_square=4.0 / tilted_flow(1.0, H, tilt, cells, layer),
+                dp_at_aligned_beta=4.0 * beta0**2 / tilted_flow(beta0, H / float(np.sqrt(beta0)), tilt, cells, layer),
+            )
+            found.update(s_star=beta * float(np.sqrt(found["Ha_star"])), reduction=1.0 - found["dp_star"] / found["dp_square"],
+                         wall_s=time.perf_counter() - t0)
+            row["meshes"].append(found)
+        row["gci"] = {name: designlaw.richardson_gci([m[key] for m in row["meshes"]], [m["cells"] for m in row["meshes"]],
+                                                     order_range=EXITS["gci_order_range"])
+                      for name, key in (("dp", "dp_star"), ("beta", "beta_star"))}
+        out["rows"].append(row)
+        fine = row["meshes"][-1]
+        print(f"  tilt {tilt}: kappa={row['kappa']:.2f} beta*={fine['beta_star']:.5f} (x{fine['beta_star'] / beta0:.3f}) "
+              f"dp*/dp*_0={fine['dp_star'] / out['rows'][0]['meshes'][-1]['dp_star']:.4f} reduction={100 * fine['reduction']:.1f}% "
+              f"retune gain={100 * (1 - fine['dp_star'] / fine['dp_at_aligned_beta']):.1f}%", flush=True)
+        centre = start
+    checkpoint.set_key(("tiltlaw", f"{H:.0f}"), out)
+
+
 def stage_tilt() -> None:
     """C8: W(tilt) / W(aligned) for the default optima and the equal-area squares, on the damped preconditioner."""
     print("tilt robustness...", flush=True)
@@ -323,12 +379,14 @@ def stage_tilt() -> None:
             ha = station.B * a * float(np.sqrt(box.sigma / box.mu))
             base = None
             for tilt in (0.0, *TILTS):
-                q, steps, wall = tilted_flow(beta, ha, tilt)
+                start = time.perf_counter()
+                q = tilted_flow(beta, ha, tilt)
+                wall = time.perf_counter() - start
                 power = box.mu * box.Q**2 * station.L / (a**4 * q)
                 base = base or power
                 rows.append({"case": tag, "design": design, "beta": beta, "Ha": ha, "B_p_over_B_T": tilt,
-                             "W": power, "W_over_aligned": power / base, "cg_restarts": steps, "wall_s": wall})
-                print(f"  {tag} {design} tilt {tilt}: W/W0={power / base:.5f} steps={steps} ({wall:.0f} s)", flush=True)
+                             "W": power, "W_over_aligned": power / base, "wall_s": wall})
+                print(f"  {tag} {design} tilt {tilt}: W/W0={power / base:.5f} ({wall:.0f} s)", flush=True)
     checkpoint.set_key(("tilt",), rows)
 
 
@@ -467,6 +525,7 @@ STAGES: list[str] = (
     + [f"verify_{tag}_{i}" for tag, sweep in PARETO.items() for i in range(len(sweep))]
     + [f"dlaw_{H:.0f}" for H in DESIGN_LAW_H]
     + ["tilt"]
+    + [f"tiltlaw_{H:.0f}" for H in TILT_LAW_H]
     + [f"validity_{g}" for g in VALIDITY_GAMMAS]
     + [f"validity_refine_{g}" for g in VALIDITY_REFINE_GAMMA]
     + [f"ramp_{ha:.0f}_{case}" for ha in RAMP_HA for case in ("square", "beta_star")]
@@ -501,6 +560,8 @@ def run_stage(name: str) -> None:
             checkpoint.set_key(("dlaw", f"{H:.0f}"), {"H": H, "failed": repr(error)})
     elif name == "tilt":
         stage_tilt()
+    elif name.startswith("tiltlaw_"):
+        stage_tiltlaw(float(name.removeprefix("tiltlaw_")))
     elif name.startswith("validity_refine_"):
         stage_validity(float(name.removeprefix("validity_refine_")), refine=True)
     elif name.startswith("validity_"):
@@ -556,6 +617,7 @@ def finalize() -> None:
                              "time_s": sum(m["wall_s"] for out in ckpt["dlaw"].values() for m in out.get("meshes", []))}
     results["verify"] = ckpt["verify"]
     results["tilt"] = ckpt["tilt"]
+    results["tilt_law"] = [ckpt["tiltlaw"][f"{H:.0f}"] for H in TILT_LAW_H]
 
     validity_rows = []
     for g in VALIDITY_GAMMAS:
@@ -606,6 +668,8 @@ def _stage_done(ckpt: dict, name: str) -> bool:
         return f"{float(name.removeprefix('dlaw_')):.0f}" in ckpt.get("dlaw", {})
     if name == "tilt":
         return "tilt" in ckpt
+    if name.startswith("tiltlaw_"):
+        return f"{float(name.removeprefix('tiltlaw_')):.0f}" in ckpt.get("tiltlaw", {})
     if name.startswith("validity_refine_"):
         return f"gamma{name.removeprefix('validity_refine_')}_refine" in ckpt.get("validity_map", {})
     if name.startswith("validity_"):
