@@ -513,6 +513,7 @@ def figure_f4(results: dict) -> None:
 def figure_f5(results: dict) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(SINGLE_COL * 2.1, SINGLE_COL * 1.1))
     rows_csv = []
+    all_v = sorted({row["V_min"] for key in ("case_r_outboard", "case_r_inboard") for row in results[key]["pareto"]})
     for key, tag in [("case_r_outboard", "R_outboard"), ("case_r_inboard", "R_inboard"), ("case_p", "P")]:
         pareto = results[key]["pareto"]
         v = [row["V_min"] for row in pareto]
@@ -529,7 +530,7 @@ def figure_f5(results: dict) -> None:
         ax.set_xscale("log")
         ax.set_xlabel(axis_label("Minimum Velocity Bound", "V_{\\min}", "m/s"))
         ax.legend(frameon=False, loc="best")
-        _value_ticks(ax, "x", v, fmt="{:g}")
+        _value_ticks(ax, "x", all_v, fmt="{:g}")
     axes[0].set_yscale("log")
     axes[0].set_ylabel(axis_label("Optimal Pumping Power", "W^*", "W"))
     _panel_letter(axes[0], "a")
@@ -549,49 +550,37 @@ def figure_f5(results: dict) -> None:
 
 
 def figure_f6(results: dict) -> None:
-    """Both quantities are tiny (< 0.11 %) and one of them changes sign between the two
-    designs, so a signed/negative axis was more confusing than informative here -- every
-    bar plots a MAGNITUDE, and the sign (direction) is given as text instead (the
-    reader's own suggestion): a decrease is written as "-x%", an increase as "+x%"."""
+    """Case P's exact 1/R cross-duct field against the uniform-field model, in two panels (one y-axis each)."""
     cp_corr = results["case_p_correction"]
-    fig, ax = plt.subplots(1, 1, figsize=(SINGLE_COL, SINGLE_COL * 0.95))
-    labels = ["Square Duct\n($R_c/a$=" + f"{cp_corr['square']['Rc_over_a']:.0f})",
-              "Optimum\n($R_c/a$=" + f"{cp_corr['at_optimum']['Rc_over_a']:.0f})"]
-    flow_pct = [100 * (cp_corr["square"]["flow_ratio"] - 1), 100 * (cp_corr["at_optimum"]["flow_ratio"] - 1)]
-    centroid_pct = [100 * cp_corr["square"]["flow_centroid_fraction"],
-                    100 * cp_corr["at_optimum"]["flow_centroid_fraction"]]
-    x = np.arange(2)
-    bars1 = ax.bar(x - 0.15, [abs(v) for v in flow_pct], width=0.3, color=COLOR["P"],
-                    label="Flow-Rate Change vs. Uniform Field")
-    ax2 = ax.twinx()
-    bars2 = ax2.bar(x + 0.15, [abs(v) for v in centroid_pct], width=0.3, color=COLOR["R_outboard"],
-                     label="Flow-Centroid Shift")
-    for bar, v in zip(bars1, flow_pct):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), f"{v:+.4f}%",
-                ha="center", va="bottom", fontsize=6, color=COLOR["P"])
-    for bar, v in zip(bars2, centroid_pct):
-        ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), f"{v:+.3f}%",
-                  ha="center", va="bottom", fontsize=6, color=COLOR["R_outboard"])
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, fontsize=6.5)
-    ax.set_ylabel(axis_label("Flow-Rate Change Magnitude", unit="%"), color=COLOR["P"])
-    ax2.set_ylabel(axis_label("Flow-Centroid Shift Magnitude", unit="%"), color=COLOR["R_outboard"])
-    ax.set_ylim(0, max(abs(v) for v in flow_pct) * 1.5)
-    ax2.set_ylim(0, max(abs(v) for v in centroid_pct) * 1.5)
-    rows_csv = [
-        {"design": "square", **cp_corr["square"], "flow_pct": flow_pct[0], "centroid_pct": centroid_pct[0]},
-        {"design": "optimum", **cp_corr["at_optimum"], "flow_pct": flow_pct[1], "centroid_pct": centroid_pct[1]},
+    designs = [("Square Duct", cp_corr["square"]), ("Optimum", cp_corr["at_optimum"])]
+    fig, axes = plt.subplots(1, 2, figsize=(SINGLE_COL * 2.1, SINGLE_COL * 0.95))
+    quantities = [
+        ("flow_ratio", "Flow-Rate Change vs. Uniform Field", lambda d: 100 * (d["flow_ratio"] - 1.0), "{:+.1e}%", "P"),
+        ("flow_centroid_fraction", "Flow-Centroid Shift, Fraction of $b$", lambda d: 100 * d["flow_centroid_fraction"],
+         "{:+.3f}%", "R_outboard"),
     ]
+    rows_csv = []
+    for ax, (_, name, value, fmt, tag) in zip(axes, quantities):
+        values = [value(d) for _, d in designs]
+        bars = ax.bar(range(2), values, width=0.5, color=COLOR[tag])
+        for bar, v in zip(bars, values):
+            ax.text(bar.get_x() + bar.get_width() / 2, v, fmt.format(v), ha="center",
+                    va="bottom" if v >= 0 else "top", fontsize=6.5)
+        ax.axhline(0.0, color=INK_SECONDARY, lw=0.6)
+        ax.set_xticks(range(2))
+        ax.set_xticklabels([f"{label}\n($R_c/a$={d['Rc_over_a']:.0f})" for label, d in designs], fontsize=6.5)
+        ax.set_ylabel(axis_label(name, unit="%"))
+        ax.margins(y=0.25)
+        rows_csv += [{"quantity": name, "design": label, "value_pct": v} for (label, _), v in zip(designs, values)]
+    _panel_letter(axes[0], "a", dx=-0.3)
+    _panel_letter(axes[1], "b", dx=-0.3)
     caption = (
-        "Case P's exact curl-free $1/R$ cross-duct field (Petrykowski & Walker "
-        "1984 [M7]) against the uniform-field approximation the optimization "
-        "uses, at the square baseline and at the found optimum. Signed values are "
-        "printed above each bar (a decrease/shift toward smaller $R$ is negative). "
-        "Both quantities are of order $(a/R_c)^2$ and $(a/R_c)$ respectively and "
-        "negligible at the tokamak radius ratio used here (plan step 0.6). The centroid is weighted by "
-        "the cell areas (R2). It shifts toward the weak-field side for the square duct, as in P10, "
-        "and the other way for the optimum; the optimum's sign is mesh-converged (32-96 cells) and "
-        "not yet explained."
+        "Case P's exact curl-free $1/R$ cross-duct field (Petrykowski & Walker 1984 [M7]) against the "
+        "uniform-field model the optimization uses, at the equal-area square and at the optimum ($R_c/a=629$). "
+        "(a) The flow-rate change, of order $(a/R_c)^2$. (b) The shift of the flow centroid across the duct, weighted "
+        "by the cell areas (R2), positive toward the weak-field (outboard) side. It is positive for the square "
+        "duct, as in P10, and negative for the optimum; the optimum's sign is mesh-converged (32/4 to 96/12 cells) "
+        "and not yet explained. Both are negligible for $\\Delta p$ at the tokamak radius ratio used here."
     )
     save_figure(fig, "F6_case_p_correction", rows_csv, caption)
 
