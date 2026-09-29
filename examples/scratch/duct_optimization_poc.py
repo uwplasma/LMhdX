@@ -268,7 +268,8 @@ def stage_verify(tag: str, index: int) -> None:
         result["u_multiplier"] = -objective(box, u, result["w_star"], cells, layer, centre)["dW_du"]
         out["meshes"].append(result)
         print(f"  {cells}/{layer}: beta*={result['beta_star']:.5f} W*={result['value_star']:.5e} "
-              f"dW/dw={result['dW_dw_rel_h']:.1e} (2h {result['dW_dw_rel_2h']:.1e})", flush=True)
+              f"dW/dw h={result['dW_dw_rel_h']:.1e} 2h={result['dW_dw_rel_2h']:.1e} "
+              f"h/10={result['dW_dw_rel_small']:.1e} Richardson={result['dW_dw_rel_richardson']:.1e}", flush=True)
     fv = out["meshes"][1]
     spectral = polish_w(lambda w: spectral_value(box, u, w), w0)
     at_fv = spectral_value(box, u, fv["w_star"])

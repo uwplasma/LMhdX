@@ -257,8 +257,9 @@ def _slope(hs: list[float], values: list[float]) -> float:
 def polish_w(value, w0: float, *, delta: float = 0.05, h: float = 0.01) -> dict:
     """The minimum of a smooth ``value(w)`` (the O12 scaled-mesh family centred at ``w0``).
 
-    A quartic through five points ``w0 + delta * (-2 ... 2)`` locates the minimum; ``dW/dw`` there is read by
-    central differences at ``h`` and ``2 h`` (their difference is the noise band), relative to the value.
+    A quartic through five points ``w0 + delta * (-2 ... 2)`` locates the minimum. ``dW/dw`` there, relative to
+    the value, is read by central differences at ``h`` and ``2 h`` (the registered readings), at ``h / 10``, and
+    Richardson-extrapolated as ``(4 D_h - D_2h) / 3``, which removes the O(h^2) truncation ``h^2 W''' / 6``.
     """
     ws = w0 + delta * np.arange(-2, 3)
     coefficients = np.polyfit(ws - w0, [value(w) for w in ws], 4)
@@ -269,6 +270,9 @@ def polish_w(value, w0: float, *, delta: float = 0.05, h: float = 0.01) -> dict:
         return {"interior": False, "w_star": None}
     w_star = w0 + float(min(convex, key=abs))
     v_star = value(w_star)
-    slopes = [(value(w_star + step) - value(w_star - step)) / (2.0 * step) / v_star for step in (h, 2.0 * h)]
+    d_h, d_2h, d_small = (
+        (value(w_star + step) - value(w_star - step)) / (2.0 * step) / v_star for step in (h, 2.0 * h, 0.1 * h)
+    )
     return {"interior": True, "w_star": w_star, "beta_star": float(np.exp(w_star)), "value_star": v_star,
-            "dW_dw_rel_h": slopes[0], "dW_dw_rel_2h": slopes[1], "delta": delta, "h": h}
+            "dW_dw_rel_h": d_h, "dW_dw_rel_2h": d_2h, "dW_dw_rel_small": d_small,
+            "dW_dw_rel_richardson": (4.0 * d_h - d_2h) / 3.0, "delta": delta, "h": h}
