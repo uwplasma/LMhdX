@@ -73,7 +73,7 @@ MESHES = ((32, 4), (48, 6), (72, 9))  # C2: a constant refinement ratio of 1.5
 DESIGN_LAW_H = (10.0, 20.0, 30.0, 50.0, 100.0, 150.0, 200.0, 300.0)
 GCI_H = (30.0, 100.0, 300.0)  # the design-law points that also run the three meshes
 HIGH_H = (500.0, 1000.0)  # O4: Ha* about 2,400 and 6,100 by the law
-SPECTRAL_POINTS_HIGH = 96  # the reference at Ha* 2,400-6,100; checked against 128 before it is quoted
+SPECTRAL_POINTS_HIGH = 80  # the reference at Ha* 2,400-6,100, checked against 64; 96 needs 3 x 2.8 GB, more than this VM has
 TILTS = (0.1, 0.2)  # B_p / B_T, 5.7 and 11.3 degrees (C8)
 VALIDITY_GAMMAS = (0.005, 0.02, 0.05, 0.1, 0.2)  # delta k a sqrt(Ha) (R1); Tier 0's 0.05-2 x 0.1
 VALIDITY_REFINE_GAMMA = (0.2,)  # reduced from 2
@@ -299,6 +299,9 @@ def stage_dlaw(H: float) -> None:
               f"reduction={100 * result['reduction']:.1f}% ({result['wall_s']:.0f} s)", flush=True)
     out["spectral"] = designlaw.polish_beta_star(H, 0, 0, start, spectral_points=SPECTRAL_POINTS_HIGH if H in HIGH_H else 48)
     print(f"  spectral: beta*={out['spectral']['beta_star']:.5f} s*={out['spectral']['s_star']:.4f}", flush=True)
+    if H in HIGH_H:
+        out["spectral_64"] = designlaw.polish_beta_star(H, 0, 0, start, spectral_points=64)
+        print(f"  spectral 64 points: beta*={out['spectral_64']['beta_star']:.5f}", flush=True)
     if len(out["meshes"]) == 3:
         out["gci"] = {name: designlaw.richardson_gci([m[key] for m in out["meshes"]], [m["cells"] for m in out["meshes"]],
                                                      order_range=EXITS["gci_order_range"])
@@ -488,7 +491,14 @@ def run_stage(name: str) -> None:
         tag, idx_str = name.removeprefix("verify_").rsplit("_", 1)
         stage_verify(tag, int(idx_str))
     elif name.startswith("dlaw_"):
-        stage_dlaw(float(name.removeprefix("dlaw_")))
+        H = float(name.removeprefix("dlaw_"))
+        try:
+            stage_dlaw(H)
+        except Exception as error:  # O4 is a bounded attempt: a failure is recorded and the run stops
+            if H not in HIGH_H:
+                raise
+            print(f"  FAILED: {error!r}", flush=True)
+            checkpoint.set_key(("dlaw", f"{H:.0f}"), {"H": H, "failed": repr(error)})
     elif name == "tilt":
         stage_tilt()
     elif name.startswith("validity_refine_"):
@@ -541,8 +551,9 @@ def finalize() -> None:
         return {**base, "meshes": out["meshes"], "spectral": out["spectral"], "gci": out.get("gci")}
 
     results["design_law"] = {"rows": [design_row(ckpt["dlaw"][f"{H:.0f}"]) for H in DESIGN_LAW_H],
-                             "high_ha": [design_row(ckpt["dlaw"][f"{H:.0f}"]) for H in HIGH_H if f"{H:.0f}" in ckpt["dlaw"]],
-                             "time_s": sum(m["wall_s"] for out in ckpt["dlaw"].values() for m in out["meshes"])}
+                             "high_ha": [design_row(ckpt["dlaw"][f"{H:.0f}"]) for H in HIGH_H
+                        if f"{H:.0f}" in ckpt["dlaw"] and "failed" not in ckpt["dlaw"][f"{H:.0f}"]],
+                             "time_s": sum(m["wall_s"] for out in ckpt["dlaw"].values() for m in out.get("meshes", []))}
     results["verify"] = ckpt["verify"]
     results["tilt"] = ckpt["tilt"]
 
