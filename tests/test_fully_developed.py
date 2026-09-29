@@ -183,6 +183,17 @@ def test_the_spectral_quadrant_reproduces_the_full_domain_solve():
     )
 
 
+@pytest.mark.unit
+def test_spectral_reference_takes_an_aspect_ratio():
+    """A rectangle at B = 0 is the Fourier series of Poiseuille flow; with a field the two solves agree."""
+    beta, odd = 0.4, np.arange(1, 4000, 2)
+    series = (16.0 / np.pi**3) / (4.0 * beta) * np.sum(
+        4.0 / (np.pi * odd**4) * (2.0 * beta - 4.0 / (np.pi * odd) * np.tanh(np.pi * odd * beta / 2.0))
+    )
+    assert flow_rate(0.0, 48, aspect=beta) == pytest.approx(series, rel=1e-9)
+    assert quadrant_flow_rate(20.0, 32, aspect=beta) == pytest.approx(flow_rate(20.0, 48, aspect=beta), rel=1e-7)
+
+
 def _with(case, **changes):
     return dataclasses.replace(case, **changes)
 
