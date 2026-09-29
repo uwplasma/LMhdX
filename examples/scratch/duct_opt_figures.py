@@ -596,54 +596,55 @@ def figure_f6(results: dict) -> None:
 
 
 def figure_f7(results: dict) -> None:
-    rows = results["validity_map"]["rows"]
-    fig, ax = plt.subplots(1, 1, figsize=(SINGLE_COL, SINGLE_COL * 1.05))
-    all_gammas = []
-    for case, marker in (("square", "D"), ("beta*", "o")):
-        pts = [r for r in rows if r["case"] == case and not r.get("refinement_of")]
-        g = [r["gamma_sqrt_ha"] for r in pts]
-        e = [abs(r["excess_percent"]) for r in pts]
-        all_gammas.extend(g)
-        color = COLOR["square"] if case == "square" else COLOR["R_outboard"]
-        ls = LINESTYLE["square"] if case == "square" else LINESTYLE["R_outboard"]
-        case_label = "Square Duct" if case == "square" else "Optimum ($\\beta^*$)"
-        ax.plot(g, e, marker=marker, color=color, ls=ls, label=case_label, markeredgecolor="white", zorder=3)
-        refined = [r for r in rows if r["case"] == case and r.get("refinement_of")]
-        if refined:
-            # nx=32 refinement check: drawn as a larger hollow ring *behind* its nx=16
-            # point, centered exactly on it -- the ring is a "verified here" mark, not
-            # a second data value, so it's placed at the nx=16 point's own (g, e)
-            # rather than the refined row's slightly different value (which would
-            # skew the ring off-center and read as a mistake, not a tiny mesh delta
-            # that's already reported numerically in Table T5).
-            ax.plot([g[-1]], [e[-1]], marker=marker, color=color, mfc="none", mec=color, ls="none",
-                     markersize=11, markeredgewidth=1.2, zorder=1)
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.axhline(1.0, color=INK_SECONDARY, ls="--", lw=1.0)
-    ax.annotate("1% Threshold", (0.9, 1.18), fontsize=6, color=INK_SECONDARY, ha="right")
-    ax.axvspan(0.5, 2.0, color=INK_MUTED, alpha=0.15)
-    _value_ticks(ax, "x", all_gammas, fmt="{:g}")
-    ax.annotate(
-        "Reactor Radial\nDucts [M4, M5]", (0.52, 0.018), fontsize=6, color=INK_SECONDARY,
-        ha="left", bbox=dict(facecolor="white", edgecolor="none", alpha=0.75, pad=1),
-    )
-    ax.set_xlabel(axis_label("Field-Gradient Parameter", "\\gamma\\sqrt{Ha}"))
-    ax.set_ylabel(axis_label("3-D Excess Pressure Drop", unit="%"))
-    ax.legend(frameon=False, loc="upper left", fontsize=6, bbox_to_anchor=(0.0, 0.88))
-    rows_csv = [{"case": r["case"], "gamma_sqrt_ha": r["gamma_sqrt_ha"], "excess_percent": r["excess_percent"],
-                 "nx": r["nx"], "core_over_side": r["core_over_side_velocity"], "m_shape": r["m_shape"]}
-                for r in rows]
+    ramp = results["ramp_excess"]["rows"]
+    periodic = [r for r in results["validity_map"]["rows"] if not r.get("refinement_of")]
+    fig, axes = plt.subplots(1, 2, figsize=(SINGLE_COL * 2.1, SINGLE_COL * 1.05), sharey=True)
+    series = [("Open Duct, Ha 50", 50.0, "R_outboard"), ("Open Duct, Ha 200", 200.0, "R_inboard")]
+    rows_csv = []
+    for ax, case, periodic_case, title in (
+        (axes[0], "square", "square", "Square Duct"),
+        (axes[1], "beta_star", "beta*", "Design-Law Aspect ($\\beta^*=2.09/\\sqrt{Ha}$)"),
+    ):
+        for label, ha, key in series:
+            pts = [r for r in ramp if r["case"] == case and r["ha_mid"] == ha]
+            base = [r for r in pts if r["variant"] == "base"]
+            ax.plot([r["gamma_sqrt_ha"] for r in base], [r["excess_percent"] for r in base], marker=MARKER[key],
+                    color=COLOR[key], label=label, markeredgecolor="white", zorder=3)
+            refined = [r for r in pts if r["variant"] != "base"]
+            ax.plot([r["gamma_sqrt_ha"] for r in refined], [r["excess_percent"] for r in refined], ls="none",
+                    marker=MARKER[key], mfc="none", mec=COLOR[key], markersize=8, zorder=2)
+            rows_csv += [{"series": label, "case": case, **{k: r[k] for k in (
+                "variant", "gamma_sqrt_ha", "excess_percent", "x0", "axial_cells", "cells", "iterations")}}
+                for r in pts]
+        per = [r for r in periodic if r["case"] == periodic_case]
+        ax.plot([r["gamma_sqrt_ha"] for r in per], [abs(r["excess_percent"]) for r in per], marker="^",
+                color=COLOR["P"], lw=1.0, label="Periodic, Ha 50", markeredgecolor="white", zorder=3)
+        rows_csv += [{"series": "Periodic, Ha 50", "case": case, "variant": f"nx{r['nx']}",
+                      "gamma_sqrt_ha": r["gamma_sqrt_ha"], "excess_percent": r["excess_percent"]} for r in per]
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.axhline(1.0, color=INK_SECONDARY, lw=0.6)
+        ax.annotate("1% Threshold", (0.021, 1.15), fontsize=6, color=INK_SECONDARY)
+        ax.axvspan(0.5, 2.0, color=INK_MUTED, alpha=0.15)
+        ax.annotate("Reactor Estimate\n[M4, M5]", (0.52, 0.0025), fontsize=6, color=INK_SECONDARY)
+        ax.set_xlabel(axis_label("Field-Gradient Parameter", "\\gamma\\sqrt{Ha}"))
+        ax.set_title(title, fontsize=7)
+        ax.legend(frameon=False, loc="upper left", fontsize=6)
+    axes[0].set_ylabel(axis_label("3-D Excess Pressure Drop", unit="%"))
+    _panel_letter(axes[0], "a")
+    _panel_letter(axes[1], "b")
+    summary = results["ramp_excess"]["summary"]
     caption = (
-        "The validity map: 3-D excess pressure drop over the locally fully "
-        "developed sum, against $\\gamma\\sqrt{Ha}$ ($\\gamma=$ field change per "
-        "duct half-width), for a square duct and the Tier-0 optimum's aspect "
-        "ratio; the hollow marker beside each rightmost point is the same "
-        "quantity at twice the axial resolution ($n_x=32$ vs. 16), confirming "
-        "$n_x=16$ is already converged (Table T5). The lab-scale proof of "
-        "concept operates near $\\gamma\\sqrt{Ha}\\sim0.02$. The shaded band is the reactor "
-        "estimate for radial ducts (Walker & Ludford 1972 [M4]; Alboussi\\`ere 2004 [M5]); the "
-        "periodic-modulation data here stop at 0.2 and say nothing inside it."
+        "The validity map: 3-D excess pressure drop over the locally fully developed sum, against "
+        "$\\gamma\\sqrt{Ha}$ with $\\gamma=a|dB/dx|/B$ (Tier 0 mislabelled it, R1). Filled: an open duct "
+        "in a monotone 20 % sine ramp of $B_y$ (TM-228's field, buffers of 15 and 10 half-widths, the 1.9d "
+        "method, Stokes limit). Hollow rings: 72/9 cross-section cells and half the axial spacing. Triangles: "
+        "the periodic-modulation construction of Tier 0 at Ha 50 (10 % amplitude, 24 cells); its flattening below "
+        "0.01 % is taken to be that mesh's floor, not physics. "
+        f"{len(summary['mesh_flagged'])} of {len(summary['mesh_changes'])} refinements move the excess by more "
+        f"than {100 * results['meta']['exits']['i_mesh_change_max']:.0f} %. The excess "
+        f"{'collapses' if summary['collapsed'] else 'does not collapse'} on $\\gamma\\sqrt{{Ha}}$ across Ha 50 "
+        "and 200 (Table T5); the shaded band is the reactor estimate."
     )
     save_figure(fig, "F7_validity_map", rows_csv, caption)
 
@@ -810,6 +811,31 @@ def table_t5(results: dict) -> None:
     )
 
 
+def table_t7(results: dict) -> None:
+    ramp = results["ramp_excess"]["rows"]
+    rows = []
+    for r in (r for r in ramp if r["variant"] == "base"):
+        change = {
+            v["variant"]: abs(v["excess_percent"] - r["excess_percent"]) / abs(r["excess_percent"])
+            for v in ramp
+            if v["variant"] != "base" and (v["case"], v["ha_mid"], v["gamma_sqrt_ha"]) == (r["case"], r["ha_mid"], r["gamma_sqrt_ha"])
+        }
+        rows.append([
+            "Square" if r["case"] == "square" else "Design Law", f"{r['ha_mid']:.0f}", f"{r['beta']:.3f}",
+            f"{r['gamma_sqrt_ha']:g}", f"{r['x0']:.3g}", f"{r['excess_percent']:.4f}",
+            f"{100 * change['cross_72_9']:.1f}" if change else "-",
+            f"{100 * change['half_spacing']:.1f}" if change else "-", f"{r['iterations']}", f"{r['elapsed_s']:.0f}",
+        ])
+    save_table(
+        "T7_ramp",
+        ["Duct", "$Ha$", "$\\beta$", "$\\gamma\\sqrt{Ha}$", "$x_0/a$", "Excess (\\%)", "72/9 Change (\\%)",
+         "Half-Spacing Change (\\%)", "CG Iterations", "Solve (s)"],
+        rows,
+        "Open-duct ramp study (5A.B): the 3-D excess over the locally fully developed sum, the change of that "
+        "excess under the two refinements (relative to itself), and the cost of each base solve on a CPU.",
+    )
+
+
 def table_t6(results: dict) -> None:
     meta = results["meta"]
     rows = [
@@ -846,6 +872,7 @@ def main():
     table_t4(results)
     table_t5(results)
     table_t6(results)
+    table_t7(results)
     with (DATA_DIR / "captions.md").open("w") as fh:
         fh.write("# Draft figure and table captions\n\n" + "\n\n".join(CAPTIONS) + "\n")
     print(f"wrote {DATA_DIR / 'captions.md'}")

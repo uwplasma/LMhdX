@@ -265,9 +265,7 @@ def stage_designlaw_refine(H: float, cells: int) -> None:
 def stage_validity(gamma: float, refine: bool = False) -> None:
     tag = f"gamma{gamma}" + ("_refine" if refine else "")
     print(f"validity map {tag}...", flush=True)
-    ckpt = checkpoint.load()
-    r_out_pareto = ckpt.get("pareto", {}).get("R_out", [])
-    beta_star = next((r["beta"] for r in r_out_pareto if abs(r["V_min"] - 0.010) < 1e-12), 0.15)
+    beta_star = RAMP_S_STAR / float(np.sqrt(50.0))  # R8: the design-law aspect at this Ha, not Tier 0's Ha-195 optimum
     nx = 32 if refine else 16
     rows = []
     for beta, case_label in ((1.0, "square"), (beta_star, "beta*")):
@@ -305,6 +303,31 @@ def stage_ramp(ha: float, case: str) -> None:
         if gamma in RAMP_REFINE:
             solve(gamma, "cross_72_9", cells=72, cells_in_layer=9)
             solve(gamma, "half_spacing", spacing=0.5 * base["spacing"])
+
+
+def ramp_summary(rows: list[dict]) -> dict:
+    """Exit (i): the refinement changes and the Ha collapse test, against the tolerances fixed in EXITS."""
+    key = lambda r: (r["case"], r["ha_mid"], r["gamma_sqrt_ha"])  # noqa: E731
+    base = {key(r): r for r in rows if r["variant"] == "base"}
+    changes = [
+        {"case": r["case"], "ha": r["ha_mid"], "gamma_sqrt_ha": r["gamma_sqrt_ha"], "variant": r["variant"],
+         "relative_change": abs(r["excess_percent"] - base[key(r)]["excess_percent"]) / abs(base[key(r)]["excess_percent"])}
+        for r in rows if r["variant"] != "base"
+    ]
+    collapse = []
+    for case in ("square", "beta_star"):
+        for gamma in RAMP_GAMMAS:
+            lo, hi = base.get((case, RAMP_HA[0], gamma)), base.get((case, RAMP_HA[-1], gamma))
+            if lo and hi and gamma >= 0.1:
+                e = sorted((lo["excess_percent"], hi["excess_percent"]))
+                collapse.append({"case": case, "gamma_sqrt_ha": gamma, "excess_ha_lo": lo["excess_percent"],
+                                 "excess_ha_hi": hi["excess_percent"], "relative_difference": 1.0 - e[0] / e[1]})
+    return {
+        "mesh_changes": changes,
+        "mesh_flagged": [c for c in changes if c["relative_change"] > EXITS["i_mesh_change_max"]],
+        "collapse": collapse,
+        "collapsed": all(c["relative_difference"] <= EXITS["i_collapse_rel"] for c in collapse),
+    }
 
 
 def stage_case_p_correction() -> None:
@@ -467,6 +490,10 @@ def finalize() -> None:
     results["validity_map"] = {"rows": validity_rows,
                                "time_s": sum(r.get("elapsed_s", 0) for r in validity_rows)}
 
+    ramp_rows = [r for ha in RAMP_HA for case in ("square", "beta_star")
+                 for r in ckpt["ramp_excess"][f"Ha{ha:.0f}_{case}"]]
+    results["ramp_excess"] = {"rows": ramp_rows, "summary": ramp_summary(ramp_rows),
+                              "time_s": sum(r["elapsed_s"] for r in ramp_rows)}
     results["case_p_correction"] = {"square": ckpt["case_p_correction"]["square"],
                                      "at_optimum": ckpt["case_p_correction"]["at_optimum"]}
     results["meta"]["total_time_s"] = (
@@ -475,6 +502,7 @@ def finalize() -> None:
         + sum(sum(r["time_s"] for r in results[k]["pareto"]) for k in ("case_r_outboard", "case_r_inboard", "case_p"))
         + results["design_law"]["time_s"]
         + results["validity_map"]["time_s"]
+        + results["ramp_excess"]["time_s"]
         + ckpt["case_p_correction"]["time_s"]
     )
 
