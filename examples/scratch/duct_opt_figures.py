@@ -367,54 +367,55 @@ def figure_f1(results: dict) -> None:
 
 def figure_f2(results: dict) -> None:
     rows = results["design_law"]["rows"]
+    high = results["design_law"].get("high_ha", [])
     fig, axes = plt.subplots(2, 1, figsize=(SINGLE_COL, SINGLE_COL * 1.35), sharex=True)
-    s_star = np.array([r["s_star"] for r in rows])
-    reduction = np.array([100 * r["reduction"] for r in rows])
     ha_star = np.array([r["Ha_star"] for r in rows])
-    gci_err = np.array([r["gci"]["gci_fine"] * s_star[i] if r.get("gci") else 0.0 for i, r in enumerate(rows)])
-    refined_ha = [ha_star[i] for i, r in enumerate(rows) if r.get("gci")]
+    s_star = np.array([r["s_star"] for r in rows])
+    # s* = beta^(3/4) H^(1/2) at fixed area, so a relative GCI on beta is 3/4 of it on s*
+    gci_err = np.array([0.75 * r["gci"]["beta"]["gci_fine"] * r["s_star"] if r.get("gci") else 0.0 for r in rows])
+    ref_ha = [r["spectral"]["Ha_star"] for r in rows + high]
+    ref_s = [r["spectral"]["s_star"] for r in rows + high]
 
     ax = axes[0]
-    ax.errorbar(
-        ha_star, s_star, yerr=gci_err, fmt="o", color=COLOR["R_outboard"], ecolor=INK_MUTED,
-        capsize=2, label="Measured $\\beta^* \\sqrt{Ha^*}$",
-    )
+    ax.errorbar(ha_star, s_star, yerr=gci_err, fmt="o", color=COLOR["R_outboard"], ecolor=INK_MUTED, capsize=2,
+                label="Core, 48/6 Cells", markeredgecolor="white", zorder=3)
+    ax.plot([r["Ha_star"] for r in high], [r["s_star"] for r in high], "o", color=COLOR["R_outboard"], mfc="none",
+            mec=COLOR["R_outboard"], mew=1.3, markersize=7, label="Core, Reactor-Scale Ha", zorder=3)
+    ax.plot(ref_ha, ref_s, "s", color=COLOR["R_inboard"], markersize=4, label="Spectral Reference", zorder=2)
     ax.axhline(2.13, color=INK_SECONDARY, ls="--", lw=1.0)
-    ax.annotate("Shercliff Asymptote, 2.13 [M3]", (ha_star[1], 2.16), fontsize=6, color=INK_SECONDARY)
+    ax.annotate("Shercliff Formula, 2.13 [M3]", (ha_star[1], 2.135), fontsize=6, color=INK_SECONDARY)
+    ax.set_ylim(1.97, 2.15)
     ax.set_xscale("log")
     ax.set_ylabel(axis_label("Optimal Aspect Ratio", "\\beta^*\\sqrt{Ha^*}"))
-    ax.legend(frameon=False, loc="lower right")
+    ax.legend(frameon=False, loc="lower right", fontsize=6)
     _panel_letter(ax, "a", dx=-0.22)
-    # grid lines land exactly on the swept Ha* values (see panel (b)); this panel's own
-    # tick labels stay hidden since it's the sharex top panel, redundant with (b) below
-    _value_grid(ax, "x", ha_star, fmt="{:.0f}")
 
     ax = axes[1]
-    ax.plot(ha_star, reduction, "o-", color=COLOR["R_outboard"])
+    ax.plot(ha_star, [100 * r["reduction"] for r in rows], "o-", color=COLOR["R_outboard"])
+    ax.plot([r["Ha_star"] for r in high], [100 * r["reduction"] for r in high], "o", color=COLOR["R_outboard"],
+            mfc="none", mec=COLOR["R_outboard"], mew=1.3, markersize=7)
     ax.set_xscale("log")
     ax.set_xlabel(axis_label("Hartmann Number at the Optimum", "Ha^*"))
     ax.set_ylabel(axis_label("Pressure-Drop Reduction vs. Square Duct", unit="%"))
-    _panel_letter(ax, "b", dx=-0.26)  # a long y-label needs more room than the default offset
-    # a decade grid would put a tick at 10^3, one pixel from the Ha*=1228 point --
-    # grid strictly on the swept values instead, so nothing collides
-    _value_grid(ax, "x", ha_star, fmt="{:.0f}")
+    _panel_letter(ax, "b", dx=-0.26)
+    for ax in axes:
+        ax.grid(True, which="major", axis="x")
 
     rows_csv = [
-        {"H": r["H"], "Ha_star": r["Ha_star"], "beta_star": r["beta_star"], "s_star": r["s_star"],
-         "reduction_pct": 100 * r["reduction"], "gci": r["gci"]["gci_fine"] if r.get("gci") else None}
-        for r in rows
+        {"H": r["H"], "Ha_star": r["Ha_star"], "beta_star_48_6": r["beta_star"], "s_star_48_6": r["s_star"],
+         "s_star_reference": r["spectral"]["s_star"], "reduction_pct": 100 * r["reduction"],
+         "gci_beta": r["gci"]["beta"]["gci_fine"] if r.get("gci") else None}
+        for r in rows + high
     ]
+    gci_points = "$, $".join(f"{r['Ha_star']:.0f}" for r in rows if r.get("gci"))
     caption = (
-        "The design law. (a) The optimal aspect ratio, expressed as "
-        "$\\beta^*\\sqrt{Ha^*}$, is close to constant over almost two decades in "
-        "$Ha^*$ and matches the Shercliff asymptotic prediction (Smolentsev 2021 "
-        "[M3], Section 4.3) even outside its stated range of validity; error bars "
-        f"are the three-mesh GCI (Celik et al. 2008 [O15]) at $Ha^*="
-        f"{'$ and $'.join(f'{v:.0f}' for v in refined_ha)}$ (two of the sweep's five "
-        "points; reduced from a three-point plan for this sandbox's time budget, "
-        "not for scientific reasons -- see the run metadata). "
-        "(b) The pumping-power reduction the optimum buys over a square duct of "
-        "the same cross-sectional area."
+        "The design law. (a) The optimal aspect ratio $\\beta^*\\sqrt{Ha^*}$ at fixed area, from the core (filled, "
+        "48/6 cells; error bars are the three-mesh GCI at the observed order, 32/4, 48/6, 72/9 cells, at "
+        f"$Ha^*={gci_points}$) and from the independent spectral "
+        "reference (squares), with the reactor-scale points $Ha^*\\approx2{,}400$ and $6{,}100$ (hollow, 48/6 "
+        "cells). The reference tends to $\\approx2.08$; Shercliff's formula as given in [M3] gives 2.13. "
+        "The optimum at fixed flow rate and area was also computed by Nishio et al. 2025 for Ha up to $6.5\\times10^4$ "
+        "(plan, novelty gate). (b) The pumping-power reduction over a square duct of equal area."
     )
     save_figure(fig, "F2_design_law", rows_csv, caption)
 
@@ -669,16 +670,22 @@ def figure_f8(results: dict) -> None:
     _value_ticks(ax, "x", [hv for hv in h if not np.isclose(np.log10(hv) % 1, 0)], fmt="{:.0e}")
 
     ax = axes[1]
-    finer = [(row["V_min"], row["finer_mesh"]["W_relative_change"]) for row in results["case_r_outboard"]["pareto"]]
-    v, dW = zip(*finer)
-    ax.plot(v, dW, "o-", color=COLOR["R_outboard"])
-    ax.axhline(0.01, color=INK_SECONDARY, ls="--", lw=1.0)
-    ax.annotate("1% Target", (v[0], 0.011), fontsize=6, color=INK_SECONDARY)
+    verify = results["verify"]
+    for key, tag in (("R_out", "R_outboard"), ("R_in", "R_inboard")):
+        points = sorted((v["V_min"], v) for k, v in verify.items() if k.startswith(key + "_"))
+        v_min = [p[0] for p in points]
+        d_beta = [abs(p[1]["meshes"][2]["beta_star"] / p[1]["meshes"][1]["beta_star"] - 1.0) for p in points]
+        d_w = [abs(p[1]["meshes"][2]["value_star"] / p[1]["meshes"][1]["value_star"] - 1.0) for p in points]
+        ax.plot(v_min, d_w, marker=MARKER[tag], color=COLOR[tag], label=f"{LABEL[tag]}, $W^*$")
+        ax.plot(v_min, d_beta, marker=MARKER[tag], color=COLOR[tag], mfc="none", ls="--", label=f"{LABEL[tag]}, $\\beta^*$")
+    ax.axhline(0.01, color=INK_SECONDARY, lw=0.6)
+    ax.annotate("1% ($W^*$)", (v_min[0], 0.0112), fontsize=6, color=INK_SECONDARY)
     ax.set_xscale("log")
     ax.set_yscale("log")
-    _value_ticks(ax, "x", v, fmt="{:g}")
+    _value_ticks(ax, "x", v_min, fmt="{:g}")
     ax.set_xlabel(axis_label("Minimum Velocity Bound", "V_{\\min}", "m/s"))
-    ax.set_ylabel(axis_label("Relative Pumping-Power Change", "|\\Delta W|/W") + " (cells 48 vs. 96)")
+    ax.set_ylabel(axis_label("Relative Change After Re-Optimizing"))
+    ax.legend(frameon=False, fontsize=5.5, loc="upper right", bbox_to_anchor=(1.0, 0.9))
     _panel_letter(ax, "b")
 
     rows_csv = [{"h": hv, "remainder_zeroth": z, "remainder_first": f}
@@ -687,9 +694,9 @@ def figure_f8(results: dict) -> None:
         "Verification. (a) Taylor remainder test (Farrell et al. 2013 [O10]) "
         "at Case R outboard's default optimum: the zeroth-order remainder falls "
         "as $O(h)$ and the gradient-corrected remainder as $O(h^2)$ (dotted "
-        "guides), confirming the analytic/finite-difference gradient. (b) The "
-        "held-out finer-mesh check (48$\\to$96 cells, 6$\\to$9 cells per layer) "
-        "at every Pareto point."
+        "guides), confirming the exact gradient in the area. (b) The change of $W^*$ (solid) and $\\beta^*$ "
+        "(dashed) when each Pareto point is re-optimized on the finer mesh (48/6 to 72/9 cells, a ratio of 1.5); "
+        "the exit limits are 1 % and 3 %."
     )
     save_figure(fig, "F8_verification", rows_csv, caption)
 
@@ -755,12 +762,14 @@ def table_t2(results: dict) -> None:
 
 def table_t3(results: dict) -> None:
     rows = []
-    for r in results["design_law"]["rows"]:
-        gci = f"{r['gci']['gci_fine']:.2e}" if r.get("gci") else "$-$"
-        rows.append([f"{r['H']:.0f}", f"{r['Ha_star']:.1f}", f"{r['beta_star']:.4f}", f"{r['s_star']:.3f}",
-                     f"{100*r['reduction']:.1f}", gci])
-    save_table("T3_design_law", ["$H$", "$Ha^*$", "$\\beta^*$", "$s^*=\\beta^*\\sqrt{Ha^*}$",
-                                  "Reduction (%)", "GCI"], rows, "The design-law data behind Fig. F2.")
+    for r in results["design_law"]["rows"] + results["design_law"].get("high_ha", []):
+        gci = f"{100 * r['gci']['beta']['gci_fine']:.2f}" if r.get("gci") else "$-$"
+        rows.append([f"{r['H']:.0f}", f"{r['Ha_star']:.1f}", f"{r['beta_star']:.5f}", f"{r['s_star']:.4f}",
+                     f"{r['spectral']['beta_star']:.5f}", f"{r['spectral']['s_star']:.4f}",
+                     f"{100 * r['reduction']:.1f}", gci])
+    save_table("T3_design_law", ["$H$", "$Ha^*$", "$\\beta^*$ (48/6)", "$s^*$ (48/6)", "$\\beta^*$ (ref.)", "$s^*$ (ref.)",
+                                  "Reduction (\\%)", "$\\beta^*$ GCI (\\%)"], rows,
+               "The design-law data behind Fig. F2: fixed area, core on the scaled-mesh family and the spectral reference.")
 
 
 _STATION_LABEL = {
@@ -809,6 +818,37 @@ def table_t5(results: dict) -> None:
         rows,
         "Verification summary at every Pareto point: Taylor-test slopes (expect 1, 2) and the finer-mesh check.",
     )
+
+
+def table_t8(results: dict) -> None:
+    rows = []
+    for key, r in sorted(results["verify"].items(), key=lambda kv: (kv[0].split("_")[0], kv[1]["V_min"])):
+        m, s, g = r["meshes"], r["spectral"], r["gci"]
+        rows.append([
+            key.rsplit("_", 1)[0].replace("_", " "), f"{1000 * r['V_min']:g}", f"{m[0]['beta_star']:.5f}",
+            f"{m[1]['beta_star']:.5f}", f"{m[2]['beta_star']:.5f}", f"{s['beta_star']:.5f}",
+            f"{g['beta']['order']:.2f}", f"{100 * g['beta']['gci_fine']:.2f}",
+            f"{100 * (m[2]['value_star'] / m[1]['value_star'] - 1):+.2f}", f"{100 * s['W_fv_over_spectral']:+.2f}",
+            f"{m[1]['dW_dw_rel_h']:+.1e}", f"{m[1]['dW_dw_rel_richardson']:+.1e}",
+        ])
+    save_table(
+        "T8_reoptimized",
+        ["Case", "$V_\\mathrm{min}$ (mm/s)", "$\\beta^*$ 32/4", "$\\beta^*$ 48/6", "$\\beta^*$ 72/9", "$\\beta^*$ ref.",
+         "Order", "GCI (\\%)", "$W^*$ change (\\%)", "Core vs. ref. $W$ (\\%)", "$dW/dw$ at $h$", "$dW/dw$ Rich."],
+        rows,
+        "Every Pareto optimum re-optimized on three meshes of constant refinement ratio 1.5 (the O12 scaled-mesh family), "
+        "the observed order and GCI of $\\beta^*$, the change of $W^*$ from 48/6 to 72/9, the core's $W$ against the "
+        "spectral reference at the core's own $\\beta^*$, and the stationarity $|dW/dw|/W$ at the registered step "
+        "$h=0.01$ and Richardson-extrapolated.",
+    )
+
+
+def table_t9(results: dict) -> None:
+    rows = [[r["case"].replace("_", " "), r["design"], f"{r['beta']:.4f}", f"{r['Ha']:.1f}", f"{r['B_p_over_B_T']:g}",
+             f"{r['W_over_aligned']:.4f}"] for r in results["tilt"]]
+    save_table("T9_tilt", ["Case", "Design", "$\\beta$", "$Ha$", "$B_p/B_T$", "$W/W_\\mathrm{aligned}$"], rows,
+               "Pumping power of the default optimum and the equal-area square in a field tilted in the cross-section "
+               "(exit (j)); one mid-run station, 48/6 cells (mesh study: the optimum's ratios move by 0.02 % and 0.7 % from 32/4 to 96/12).")
 
 
 def table_t7(results: dict) -> None:
@@ -873,6 +913,8 @@ def main():
     table_t5(results)
     table_t6(results)
     table_t7(results)
+    table_t8(results)
+    table_t9(results)
     with (DATA_DIR / "captions.md").open("w") as fh:
         fh.write("# Draft figure and table captions\n\n" + "\n\n".join(CAPTIONS) + "\n")
     print(f"wrote {DATA_DIR / 'captions.md'}")
