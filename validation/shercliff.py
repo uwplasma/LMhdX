@@ -57,12 +57,14 @@ def duct_flow(
     forcing: float = 1.0,
     hartmann_wall: float = 0.0,
     side_wall: float = 0.0,
+    aspect: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return the nodes, velocity and potential of a square duct.
+    """Return the nodes, velocity and potential of a rectangular duct, square by default.
 
     Non-dimensionalised so that the half width, density, kinematic viscosity and
     conductivity are one; the field is then ``B = hartmann`` along ``y`` and the
-    duct occupies ``[-1, 1]`` in both transverse directions.
+    duct occupies ``[-1, 1]`` along ``y`` and ``[-aspect, aspect]`` along ``z``; the returned
+    nodes are the unit ones, so ``z = aspect * nodes``.
     ``hartmann_wall`` and ``side_wall`` are the wall conductance ratios of the
     walls normal to and parallel to the field; both zero is Shercliff's duct.
     """
@@ -71,9 +73,11 @@ def duct_flow(
     derivative, nodes = _differentiation_matrix(points)
     count = points + 1
     identity = np.eye(count)
-    laplacian = np.kron(derivative @ derivative, identity) + np.kron(identity, derivative @ derivative)
+    second_y = np.kron(derivative @ derivative, identity)
+    second_z = np.kron(identity, derivative @ derivative) / aspect**2
+    laplacian = second_y + second_z
     along_y = np.kron(derivative, identity)
-    along_z = np.kron(identity, derivative)
+    along_z = np.kron(identity, derivative) / aspect
     y = np.repeat(nodes, count)
     z = np.tile(nodes, count)
     edge = (np.abs(y) > 1.0 - 1e-12) | (np.abs(z) > 1.0 - 1e-12)
@@ -87,8 +91,6 @@ def duct_flow(
     source[:size] = -float(forcing)
     operator[size:, :size] = -field * along_z
     operator[size:, size:] = laplacian
-    second_y = np.kron(derivative @ derivative, identity)
-    second_z = np.kron(identity, derivative @ derivative)
     for row in np.flatnonzero(edge):
         operator[row, :] = 0.0
         operator[row, row] = 1.0
@@ -128,7 +130,7 @@ def chebyshev_weights(points: int) -> np.ndarray:
 
 
 def flow_rate(hartmann: float, points: int = 40, *, forcing: float = 1.0, **walls: float) -> float:
-    """Return the mean velocity of the cross-section, ``Q / A``."""
+    """Return the mean velocity of the cross-section, ``Q / A`` (``Q = 4 * aspect * (Q / A)``)."""
     _, velocity, _ = duct_flow(hartmann, points, forcing=forcing, **walls)
     weights = chebyshev_weights(points)
     return float(weights @ velocity @ weights) / 4.0
@@ -151,9 +153,11 @@ def hartmann_wall_current(hartmann: float, points: int = 64, *, hartmann_wall: f
 
 
 def quadrant_flow_rate(
-    hartmann: float, points: int = 48, *, beta: float = 5.0, hartmann_wall: float = 0.0
+    hartmann: float, points: int = 48, *, beta: float = 5.0, hartmann_wall: float = 0.0, aspect: float = 1.0
 ) -> float:
     """Return ``Q / A`` from one quadrant, with the collocation points mapped onto the walls.
+
+    ``aspect`` is the half-width ratio along ``z``, as in :func:`duct_flow`; it cancels in ``Q / A``.
 
     The same equations and wall closures as :func:`duct_flow`, on ``[0, 1]^2``
     using the parity of the solution: ``u`` is even in ``y`` and ``z``, the
@@ -175,8 +179,8 @@ def quadrant_flow_rate(
     first = 2.0 * derivative / (beta * np.cosh(beta * (1.0 - t)) / np.sinh(beta))[:, None]
     count = points + 1
     identity = np.eye(count)
-    along_y, along_z = np.kron(first, identity), np.kron(identity, first)
-    second_z = np.kron(identity, first @ first)
+    along_y, along_z = np.kron(first, identity), np.kron(identity, first) / aspect
+    second_z = np.kron(identity, first @ first) / aspect**2
     size = count * count
     field = float(hartmann)
     operator = np.zeros((2 * size, 2 * size))
