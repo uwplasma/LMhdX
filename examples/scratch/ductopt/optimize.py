@@ -252,3 +252,23 @@ def _slope(hs: list[float], values: list[float]) -> float:
     logh = np.log(hs)
     logv = np.log(np.maximum(values, 1.0e-300))
     return float(np.polyfit(logh, logv, 1)[0])
+
+
+def polish_w(value, w0: float, *, delta: float = 0.05, h: float = 0.01) -> dict:
+    """The minimum of a smooth ``value(w)`` (the O12 scaled-mesh family centred at ``w0``).
+
+    A quartic through five points ``w0 + delta * (-2 ... 2)`` locates the minimum; ``dW/dw`` there is read by
+    central differences at ``h`` and ``2 h`` (their difference is the noise band), relative to the value.
+    """
+    ws = w0 + delta * np.arange(-2, 3)
+    coefficients = np.polyfit(ws - w0, [value(w) for w in ws], 4)
+    stationary = np.roots(np.polyder(coefficients))
+    real = stationary[np.abs(stationary.imag) < 1e-12].real
+    convex = [r for r in real if np.polyval(np.polyder(coefficients, 2), r) > 0.0 and abs(r) <= 2.0 * delta]
+    if not convex:
+        return {"interior": False, "w_star": None}
+    w_star = w0 + float(min(convex, key=abs))
+    v_star = value(w_star)
+    slopes = [(value(w_star + step) - value(w_star - step)) / (2.0 * step) / v_star for step in (h, 2.0 * h)]
+    return {"interior": True, "w_star": w_star, "beta_star": float(np.exp(w_star)), "value_star": v_star,
+            "dW_dw_rel_h": slopes[0], "dW_dw_rel_2h": slopes[1], "delta": delta, "h": h}

@@ -31,6 +31,7 @@ number that area range can reach (``ha_mesh``, with a small safety margin).
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 from dataclasses import dataclass
 
@@ -52,8 +53,14 @@ def _round_key(value: float, digits: int) -> float:
 
 
 @functools.lru_cache(maxsize=256)
-def _build_problem(beta: float, ha_mesh: float, cells: int, cells_in_layer: int) -> ChannelProblem:
+def _build_problem(
+    beta: float, ha_mesh: float, cells: int, cells_in_layer: int, centre: float = 0.0
+) -> ChannelProblem:
     """One insulating rectangular duct, half-width 1 along B, aspect ``beta``.
+
+    With ``centre`` > 0 the mesh is the one built for aspect ``centre``, with its z faces scaled to
+    ``beta`` (O12): the discrete W is then a smooth function of ``beta``, which a mesh rebuilt at
+    every ``beta`` (its own clustering and CG floor) is not.
 
     Field magnitude is fixed at ``ha_mesh``; every physical Hartmann number the
     design box can reach is then a ``magnetic_field_scale <= 1`` of it. The
@@ -64,10 +71,13 @@ def _build_problem(beta: float, ha_mesh: float, cells: int, cells_in_layer: int)
     y = wall_resolving_faces(
         cells, -1.0, 1.0, layer_thickness=1.0 / ha_mesh, cells_in_layer=cells_in_layer, max_ratio=None
     )
-    side_layer = min(1.0 / np.sqrt(ha_mesh), 0.25 * beta)
+    side_layer = min(1.0 / np.sqrt(ha_mesh), 0.25 * (centre or beta))
     z = wall_resolving_faces(
-        cells, -beta, beta, layer_thickness=side_layer, cells_in_layer=cells_in_layer, max_ratio=None
+        cells, -(centre or beta), centre or beta, layer_thickness=side_layer, cells_in_layer=cells_in_layer,
+        max_ratio=None,
     )
+    if centre:
+        z = z * (beta / centre)
     grid = Grid(uniform_faces(1, 0.0, 1.0), y, z)
     return ChannelProblem(
         grid=grid,
@@ -80,9 +90,9 @@ def _build_problem(beta: float, ha_mesh: float, cells: int, cells_in_layer: int)
 
 
 @functools.lru_cache(maxsize=256)
-def _compiled_value_and_grad(beta: float, ha_mesh: float, cells: int, cells_in_layer: int):
+def _compiled_value_and_grad(beta: float, ha_mesh: float, cells: int, cells_in_layer: int, centre: float = 0.0):
     """Return a jitted ``field_scale -> (q, dq/d field_scale)`` for one mesh."""
-    problem = _build_problem(beta, ha_mesh, cells, cells_in_layer)
+    problem = _build_problem(beta, ha_mesh, cells, cells_in_layer, centre)
 
     def q(field_scale):
         return channel_flow_response(problem, magnetic_field_scale=field_scale).flow_per_unit_drive
@@ -96,19 +106,21 @@ def mesh_key(beta: float, ha_mesh: float) -> tuple[float, float]:
 
 
 def q_and_grad_ha(
-    beta: float, ha_target: float, ha_mesh: float, cells: int, cells_in_layer: int
+    beta: float, ha_target: float, ha_mesh: float, cells: int, cells_in_layer: int, centre: float = 0.0
 ) -> tuple[float, float]:
     """Return ``(q(Ha_target, beta), dq/dHa)`` on the mesh built for ``ha_mesh``."""
     beta_k, ha_mesh_k = mesh_key(beta, ha_mesh)
-    value_and_grad_fn, _ = _compiled_value_and_grad(beta_k, ha_mesh_k, cells, cells_in_layer)
+    value_and_grad_fn, _ = _compiled_value_and_grad(beta_k, ha_mesh_k, cells, cells_in_layer, centre)
     scale = ha_target / ha_mesh_k
     q, dq_ds = value_and_grad_fn(scale)
     return float(q), float(dq_ds) / ha_mesh_k
 
 
-def q_only(beta: float, ha_target: float, ha_mesh: float, cells: int, cells_in_layer: int) -> float:
+def q_only(
+    beta: float, ha_target: float, ha_mesh: float, cells: int, cells_in_layer: int, centre: float = 0.0
+) -> float:
     beta_k, ha_mesh_k = mesh_key(beta, ha_mesh)
-    _, q_fn = _compiled_value_and_grad(beta_k, ha_mesh_k, cells, cells_in_layer)
+    _, q_fn = _compiled_value_and_grad(beta_k, ha_mesh_k, cells, cells_in_layer, centre)
     return float(q_fn(ha_target / ha_mesh_k))
 
 
@@ -174,7 +186,7 @@ class DesignBox:
 
 
 def station_pressure_gradient(
-    box: DesignBox, station: Station, a: float, beta: float, cells: int, cells_in_layer: int
+    box: DesignBox, station: Station, a: float, beta: float, cells: int, cells_in_layer: int, centre: float = 0.0
 ) -> dict:
     """Return ``F_k = -dp/dx`` (Pa/m) at one station and ``d ln F_k / d ln a`` at fixed beta.
 
@@ -182,9 +194,9 @@ def station_pressure_gradient(
     and ``d ln q_k / d ln a = (dq_k/dHa_k) Ha_k / q_k`` since ``Ha_k`` is
     exactly proportional to ``a`` at fixed field and beta.
     """
-    ha_mesh = box.ha_mesh_for_beta(beta)
+    ha_mesh = box.ha_mesh_for_beta(centre or beta)
     ha_k = station.B * a * np.sqrt(box.sigma / box.mu)
-    q_k, dq_dha = q_and_grad_ha(beta, ha_k, ha_mesh, cells, cells_in_layer)
+    q_k, dq_dha = q_and_grad_ha(beta, ha_k, ha_mesh, cells, cells_in_layer, centre)
     F_k = box.mu * box.Q / (a**4 * q_k)
     dlnq_dlna = dq_dha * ha_k / q_k
     dlnF_dlna = -4.0 - dlnq_dlna
@@ -197,7 +209,7 @@ def station_pressure_gradient(
     }
 
 
-def objective(box: DesignBox, u: float, w: float, cells: int, cells_in_layer: int) -> dict:
+def objective(box: DesignBox, u: float, w: float, cells: int, cells_in_layer: int, centre: float = 0.0) -> dict:
     """Return W(u, w), its exact gradient in u (at fixed w), and per-station data.
 
     ``W = sum_k L_k Q F_k`` is the total pumping power; ``dW/du = sum_k L_k Q
@@ -211,7 +223,7 @@ def objective(box: DesignBox, u: float, w: float, cells: int, cells_in_layer: in
     delta_p = 0.0
     per_station = []
     for station in box.stations:
-        info = station_pressure_gradient(box, station, a, beta, cells, cells_in_layer)
+        info = station_pressure_gradient(box, station, a, beta, cells, cells_in_layer, centre)
         Wk = station.L * box.Q * info["F"]
         dWk_du = Wk * info["dlnF_dlna"] * 0.5
         W += Wk
@@ -234,8 +246,8 @@ def objective(box: DesignBox, u: float, w: float, cells: int, cells_in_layer: in
     }
 
 
-def objective_value(box: DesignBox, u: float, w: float, cells: int, cells_in_layer: int) -> float:
-    return objective(box, u, w, cells, cells_in_layer)["W"]
+def objective_value(box: DesignBox, u: float, w: float, cells: int, cells_in_layer: int, centre: float = 0.0) -> float:
+    return objective(box, u, w, cells, cells_in_layer, centre)["W"]
 
 
 def dW_dw_central(
@@ -248,3 +260,32 @@ def dW_dw_central(
     dW_dw = (Wp - Wm) / (2.0 * h)
     d2W_dw2 = (Wp - 2.0 * W0 + Wm) / (h * h)
     return dW_dw, d2W_dw2, W0
+
+
+def spectral_value(box: DesignBox, u: float, w: float, points: int = 48) -> float:
+    """``W(u, w)`` with each station's flow from the independent spectral reference (5A.C4, exit (e))."""
+    from validation.shercliff import quadrant_flow_rate
+
+    beta, a = float(np.exp(w)), box.a_of(u, w)
+    return sum(
+        s.L * box.Q * box.mu * box.Q
+        / (a**4 * 4.0 * beta * quadrant_flow_rate(s.B * a * np.sqrt(box.sigma / box.mu), points, aspect=beta))
+        for s in box.stations
+    )
+
+
+def tilted_flow(beta: float, ha: float, tilt: float, cells: int = 48, cells_in_layer: int = 6) -> tuple[float, int, float]:
+    """Flow per unit drive, CG restarts and wall time of a duct whose field of magnitude ``ha`` is tilted by
+    ``arctan(tilt)`` in the cross-section (C8): the damped preconditioner of a field off the mesh axes."""
+    import time
+
+    from lmhdx.design import channel_flow_rate
+    from lmhdx.steady import solve_steady_state
+
+    problem = _build_problem(*mesh_key(beta, ha), cells, cells_in_layer)
+    theta = float(np.arctan(tilt))
+    problem = dataclasses.replace(problem, magnetic_field=(0.0, ha * np.cos(theta), ha * np.sin(theta)))
+    start = time.perf_counter()
+    solution = solve_steady_state(problem, forcing=(1.0, 0.0, 0.0))
+    q = float(channel_flow_rate(problem, solution.velocity[0].data[0]))
+    return q, int(solution.steps), time.perf_counter() - start

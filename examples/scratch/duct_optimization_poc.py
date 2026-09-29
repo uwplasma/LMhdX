@@ -30,6 +30,7 @@ scientific one -- every stage still carries its own exit-criterion checks.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import platform
 import subprocess
 import sys
@@ -46,8 +47,15 @@ import jax.numpy as jnp  # noqa: E402
 import numpy as np  # noqa: E402
 import solvax  # noqa: E402
 from ductopt import cases, checkpoint, designlaw, validity  # noqa: E402
-from ductopt.optimize import fd_step_study, optimize, taylor_test  # noqa: E402
-from ductopt.physics import DesignBox, cache_stats, objective  # noqa: E402
+from ductopt.optimize import fd_step_study, optimize, polish_w, taylor_test  # noqa: E402
+from ductopt.physics import (  # noqa: E402
+    DesignBox,
+    cache_stats,
+    objective,
+    objective_value,
+    spectral_value,
+    tilted_flow,
+)
 
 import lmhdx  # noqa: E402
 
@@ -60,9 +68,13 @@ CELLS_VERIFY = 96
 CELLS_IN_LAYER = 6
 CELLS_IN_LAYER_VERIFY = 9
 
-V_MIN_SWEEP = (0.005, 0.010, 0.020)  # reduced from cases.V_MIN_SWEEP (5 points) for the per-stage budget
-DESIGN_LAW_H = (10.0, 30.0, 100.0, 200.0, 300.0)  # reduced from 8
-DESIGN_LAW_REFINE_H = (30.0, 300.0)  # reduced from 3
+PARETO = {"R_out": cases.V_MIN_SWEEP, "R_in": cases.V_MIN_SWEEP, "P": (cases.V_MIN_DEFAULT,)}  # O3: P is a check
+MESHES = ((32, 4), (48, 6), (72, 9))  # C2: a constant refinement ratio of 1.5
+DESIGN_LAW_H = (10.0, 20.0, 30.0, 50.0, 100.0, 150.0, 200.0, 300.0)
+GCI_H = (30.0, 100.0, 300.0)  # the design-law points that also run the three meshes
+HIGH_H = (500.0, 1000.0)  # O4: Ha* about 2,400 and 6,100 by the law
+SPECTRAL_POINTS_HIGH = 96  # the reference at Ha* 2,400-6,100; checked against 128 before it is quoted
+TILTS = (0.1, 0.2)  # B_p / B_T, 5.7 and 11.3 degrees (C8)
 VALIDITY_GAMMAS = (0.005, 0.02, 0.05, 0.1, 0.2)  # delta k a sqrt(Ha) (R1); Tier 0's 0.05-2 x 0.1
 VALIDITY_REFINE_GAMMA = (0.2,)  # reduced from 2
 
@@ -85,6 +97,16 @@ EXITS = {
     # 5A.B, fixed 2026-09-28 before the sweep (the mesh study at Ha 200, gamma sqrt(Ha) 2 chose 48/6):
     "i_mesh_change_max": 0.10,  # 72/9 and half-spacing must move the excess by <= 10 % of its value
     "i_collapse_rel": 0.20,  # Ha 50 and Ha 200 excess agree within 20 % at matched gamma sqrt(Ha) >= 0.1
+    # 5A.C, fixed 2026-09-29 before the runs:
+    "c_stationarity_rel": 1.0e-6,  # |dW/dw| / W at the polished optimum, on the scaled-mesh family, h and 2h
+    "gci_order_range": (1.0, 3.0),  # the observed order is used inside it, else the assumed 2 (and it is said)
+    "f_high_ha_budget_s": 7200.0,  # O4 is a bounded attempt: stop and record at 2 h of CPU
+}
+# 5A.C1, written before the 2 and 50 mm/s points run (4.3: Ha* ~ V_min^(-2/3)); 5 mm/s is the Tier 0 measurement:
+PREDICTIONS = {
+    "Ha_star_2mm_outboard": (550.0, 590.0), "Ha_star_2mm_inboard_max": 700.0,
+    "Ha_star_50mm": (65.0, 80.0), "Re_over_Ha_50mm": 23.0, "Re_over_sqrtHa_50mm": 190.0,
+    "s_star_stations": (2.03, 2.16),
 }
 RAMP_HA = (50.0, 200.0)
 RAMP_GAMMAS = (0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0)  # delta k a sqrt(Ha), 2.5 definition, ramp delta 0.2
@@ -140,7 +162,7 @@ def stage_landscape(tag: str) -> None:
     print(f"landscape[{tag}]...", flush=True)
     t0 = time.perf_counter()
     betas = np.geomspace(box.beta_lo, box.beta_hi, 9)
-    v_lo = min(box.V_min, *V_MIN_SWEEP) * 0.8  # cover every Pareto V_min line the figure overlays
+    v_lo = min(box.V_min, *cases.V_MIN_SWEEP) * 0.8  # cover every Pareto V_min line the figure overlays
     v_grid = np.geomspace(v_lo, box.V_max, 10)
     rows = []
     for beta in betas:
@@ -215,13 +237,13 @@ def stage_pareto_point(tag: str, index: int) -> None:
     finish inside one foreground call, and a kill mid-sweep costs at most this one point."""
     box_builder = CASE_BUILDERS.get(tag)
     box = box_builder() if tag != "P" else cases.case_p().box
-    v_min = V_MIN_SWEEP[index]
+    v_min = PARETO[tag][index]
     print(f"Pareto point[{tag}] V_min={v_min * 1000:.1f} mm/s...", flush=True)
     ckpt = checkpoint.load()
     existing = ckpt.get("pareto", {}).get(tag, [])
-    # warm-start from the nearest already-computed point (this case's own points first, else the demo)
+    # warm-start from the nearest already-computed point in V_min (else the demo)
     if existing:
-        w_guess = existing[-1]["w"]
+        w_guess = min(existing, key=lambda r: abs(np.log(r["V_min"] / v_min)))["w"]
     else:
         w_guess = ckpt.get("demo_optimizer", {}).get("R_out", {}).get("w_final", 0.0)
     row, _ = _pareto_point(box, v_min, w_guess)
@@ -230,36 +252,80 @@ def stage_pareto_point(tag: str, index: int) -> None:
     checkpoint.set_key(("pareto", tag), existing)
 
 
-def stage_designlaw(index: int) -> None:
-    H = DESIGN_LAW_H[index]
-    print(f"design-law H={H:.0f}...", flush=True)
-    ckpt = checkpoint.load()
-    prior = ckpt.get("design_law", {})
-    guess = None
-    if index > 0 and str(DESIGN_LAW_H[index - 1]) in prior:
-        guess = prior[str(DESIGN_LAW_H[index - 1])]["beta_star"]
-    t0 = time.perf_counter()
-    row = designlaw.find_beta_star(H, cells=64, cells_in_layer=6, guess=guess)
-    elapsed = time.perf_counter() - t0
-    row["time_s"] = elapsed
-    print(
-        f"  beta*={row['beta_star']:.4f} Ha*={row['Ha_star']:.1f} s*={row['s_star']:.3f} "
-        f"reduction={100 * row['reduction']:.1f}% ({elapsed:.0f} s)",
-        flush=True,
-    )
-    checkpoint.set_key(("design_law", str(H)), row)
+def stage_verify(tag: str, index: int) -> None:
+    """C2-C4, C6, exit (c): the discrete optimum of one Pareto point on three meshes and by the reference."""
+    v_min = PARETO[tag][index]
+    print(f"verify[{tag}] V_min={v_min * 1000:.1f} mm/s...", flush=True)
+    box = cases.case_p().box if tag == "P" else CASE_BUILDERS[tag]()
+    box = dataclasses.replace(box, V_min=v_min)
+    row = next(r for r in checkpoint.load()["pareto"][tag] if abs(r["V_min"] - v_min) < 1e-15)
+    u, w0 = box.u_hi, row["w"]
+    centre = float(np.exp(w0))
+    out = {"V_min": v_min, "w_block_coordinate": w0, "meshes": []}
+    for cells, layer in MESHES:
+        result = polish_w(lambda w, c=cells, ll=layer: objective_value(box, u, w, c, ll, centre), w0)
+        result.update(cells=cells, cells_in_layer=layer)
+        result["u_multiplier"] = -objective(box, u, result["w_star"], cells, layer, centre)["dW_du"]
+        out["meshes"].append(result)
+        print(f"  {cells}/{layer}: beta*={result['beta_star']:.5f} W*={result['value_star']:.5e} "
+              f"dW/dw={result['dW_dw_rel_h']:.1e} (2h {result['dW_dw_rel_2h']:.1e})", flush=True)
+    fv = out["meshes"][1]
+    spectral = polish_w(lambda w: spectral_value(box, u, w), w0)
+    at_fv = spectral_value(box, u, fv["w_star"])
+    out["spectral"] = {**spectral, "W_at_fv_beta": at_fv, "W_fv_over_spectral": fv["value_star"] / at_fv - 1.0,
+                       "beta_fv_over_spectral": fv["beta_star"] / spectral["beta_star"] - 1.0}
+    out["gci"] = {name: designlaw.richardson_gci([m[key] for m in out["meshes"]], [m["cells"] for m in out["meshes"]],
+                                                 order_range=EXITS["gci_order_range"])
+                  for name, key in (("W", "value_star"), ("beta", "beta_star"))}
+    print(f"  spectral: beta*={spectral['beta_star']:.5f}; FV/spectral W at the FV beta {out['spectral']['W_fv_over_spectral']:+.2e}",
+          flush=True)
+    checkpoint.set_key(("verify", f"{tag}_{v_min * 1000:g}"), out)
 
 
-def stage_designlaw_refine(H: float, cells: int) -> None:
-    print(f"design-law refine H={H:.0f} cells={cells}...", flush=True)
-    ckpt = checkpoint.load()
-    guess = ckpt.get("design_law", {}).get(str(H), {}).get("beta_star")
-    t0 = time.perf_counter()
-    row = designlaw.find_beta_star(H, cells=cells, cells_in_layer=6, guess=guess)
-    elapsed = time.perf_counter() - t0
-    row["time_s"] = elapsed
-    print(f"  beta*={row['beta_star']:.4f} dp*={row['dp_star']:.4f} ({elapsed:.0f} s)", flush=True)
-    checkpoint.set_key(("design_law_refine", f"H{H:.0f}_cells{cells}"), row)
+def stage_dlaw(H: float) -> None:
+    """C1, C2, O4: the fixed-area optimum on the scaled-mesh family, by the core and by the reference."""
+    print(f"design law H={H:.0f}...", flush=True)
+    guess = min((2.13 / np.sqrt(H)) ** (4.0 / 3.0), 1.0)
+    rough = designlaw.polish_beta_star(H, *MESHES[0], guess, delta=0.15)  # a wide first pass on the coarse mesh
+    start = rough["beta_star"] if rough["interior"] else guess
+    out = {"H": H, "meshes": []}
+    for cells, layer in MESHES if H in GCI_H else MESHES[1:] if H in HIGH_H else (MESHES[1],):
+        t0 = time.perf_counter()
+        result = designlaw.polish_beta_star(H, cells, layer, start)
+        result.update(cells=cells, cells_in_layer=layer, wall_s=time.perf_counter() - t0)
+        out["meshes"].append(result)
+        print(f"  {cells}/{layer}: beta*={result['beta_star']:.5f} Ha*={result['Ha_star']:.1f} s*={result['s_star']:.4f} "
+              f"reduction={100 * result['reduction']:.1f}% ({result['wall_s']:.0f} s)", flush=True)
+    out["spectral"] = designlaw.polish_beta_star(H, 0, 0, start, spectral_points=SPECTRAL_POINTS_HIGH if H in HIGH_H else 48)
+    print(f"  spectral: beta*={out['spectral']['beta_star']:.5f} s*={out['spectral']['s_star']:.4f}", flush=True)
+    if len(out["meshes"]) == 3:
+        out["gci"] = {name: designlaw.richardson_gci([m[key] for m in out["meshes"]], [m["cells"] for m in out["meshes"]],
+                                                     order_range=EXITS["gci_order_range"])
+                      for name, key in (("dp", "dp_star"), ("beta", "beta_star"))}
+    checkpoint.set_key(("dlaw", f"{H:.0f}"), out)
+
+
+def stage_tilt() -> None:
+    """C8: W(tilt) / W(aligned) for the default optima and the equal-area squares, on the damped preconditioner."""
+    print("tilt robustness...", flush=True)
+    rows = []
+    for tag in ("R_out", "R_in"):
+        box = CASE_BUILDERS[tag]()
+        pareto = next(r for r in checkpoint.load()["pareto"][tag] if abs(r["V_min"] - cases.V_MIN_DEFAULT) < 1e-15)
+        station = box.stations[len(box.stations) // 2]  # one mid-run field; the ratio barely depends on the station
+        area = float(np.exp(pareto["u"]))
+        for design, beta in (("optimum", pareto["beta"]), ("square", 1.0)):
+            a = float(np.sqrt(area / (4.0 * beta)))
+            ha = station.B * a * float(np.sqrt(box.sigma / box.mu))
+            base = None
+            for tilt in (0.0, *TILTS):
+                q, steps, wall = tilted_flow(beta, ha, tilt)
+                power = box.mu * box.Q**2 * station.L / (a**4 * q)
+                base = base or power
+                rows.append({"case": tag, "design": design, "beta": beta, "Ha": ha, "B_p_over_B_T": tilt,
+                             "W": power, "W_over_aligned": power / base, "cg_restarts": steps, "wall_s": wall})
+                print(f"  {tag} {design} tilt {tilt}: W/W0={power / base:.5f} steps={steps} ({wall:.0f} s)", flush=True)
+    checkpoint.set_key(("tilt",), rows)
 
 
 def stage_validity(gamma: float, refine: bool = False) -> None:
@@ -393,9 +459,10 @@ def stage_case_p_correction() -> None:
 
 STAGES: list[str] = (
     ["landscape_R_out", "demo_R_out", "landscape_R_in", "landscape_P"]
-    + [f"pareto_{tag}_{i}" for tag in ("R_out", "R_in", "P") for i in range(len(V_MIN_SWEEP))]
-    + [f"designlaw_{i}" for i in range(len(DESIGN_LAW_H))]
-    + [f"designlaw_refine_{H:.0f}_{c}" for H in DESIGN_LAW_REFINE_H for c in (48, 96)]
+    + [f"pareto_{tag}_{i}" for tag, sweep in PARETO.items() for i in range(len(sweep))]
+    + [f"verify_{tag}_{i}" for tag, sweep in PARETO.items() for i in range(len(sweep))]
+    + [f"dlaw_{H:.0f}" for H in DESIGN_LAW_H]
+    + ["tilt"]
     + [f"validity_{g}" for g in VALIDITY_GAMMAS]
     + [f"validity_refine_{g}" for g in VALIDITY_REFINE_GAMMA]
     + [f"ramp_{ha:.0f}_{case}" for ha in RAMP_HA for case in ("square", "beta_star")]
@@ -416,12 +483,13 @@ def run_stage(name: str) -> None:
         rest = name.removeprefix("pareto_")
         tag, idx_str = rest.rsplit("_", 1)
         stage_pareto_point(tag, int(idx_str))
-    elif name.startswith("designlaw_refine_"):
-        rest = name.removeprefix("designlaw_refine_")
-        h_str, c_str = rest.rsplit("_", 1)
-        stage_designlaw_refine(float(h_str), int(c_str))
-    elif name.startswith("designlaw_"):
-        stage_designlaw(int(name.removeprefix("designlaw_")))
+    elif name.startswith("verify_"):
+        tag, idx_str = name.removeprefix("verify_").rsplit("_", 1)
+        stage_verify(tag, int(idx_str))
+    elif name.startswith("dlaw_"):
+        stage_dlaw(float(name.removeprefix("dlaw_")))
+    elif name == "tilt":
+        stage_tilt()
     elif name.startswith("validity_refine_"):
         stage_validity(float(name.removeprefix("validity_refine_")), refine=True)
     elif name.startswith("validity_"):
@@ -467,20 +535,15 @@ def finalize() -> None:
             entry["demo_optimizer"] = ckpt["demo_optimizer"]["R_out"]
         results[key] = entry
 
-    design_rows = []
-    for H in DESIGN_LAW_H:
-        row = dict(ckpt["design_law"][str(H)])
-        refine_key48 = f"H{H:.0f}_cells48"
-        refine_key96 = f"H{H:.0f}_cells96"
-        if refine_key48 in ckpt.get("design_law_refine", {}) and refine_key96 in ckpt.get("design_law_refine", {}):
-            values = [ckpt["design_law_refine"][refine_key48]["dp_star"], row["dp_star"],
-                      ckpt["design_law_refine"][refine_key96]["dp_star"]]
-            row["gci"] = designlaw.richardson_gci(values, [48, 64, 96])
-        else:
-            row["gci"] = None
-        design_rows.append(row)
-    results["design_law"] = {"rows": design_rows,
-                              "time_s": sum(r.get("time_s", 0) for r in design_rows)}
+    def design_row(out: dict) -> dict:
+        base = next(m for m in out["meshes"] if m["cells"] == CELLS_EXPLORE)
+        return {**base, "meshes": out["meshes"], "spectral": out["spectral"], "gci": out.get("gci")}
+
+    results["design_law"] = {"rows": [design_row(ckpt["dlaw"][f"{H:.0f}"]) for H in DESIGN_LAW_H],
+                             "high_ha": [design_row(ckpt["dlaw"][f"{H:.0f}"]) for H in HIGH_H if f"{H:.0f}" in ckpt["dlaw"]],
+                             "time_s": sum(m["wall_s"] for out in ckpt["dlaw"].values() for m in out["meshes"])}
+    results["verify"] = ckpt["verify"]
+    results["tilt"] = ckpt["tilt"]
 
     validity_rows = []
     for g in VALIDITY_GAMMAS:
@@ -521,16 +584,16 @@ def _stage_done(ckpt: dict, name: str) -> bool:
     if name.startswith("pareto_"):
         rest = name.removeprefix("pareto_")
         tag, idx_str = rest.rsplit("_", 1)
-        v_min = V_MIN_SWEEP[int(idx_str)]
+        v_min = PARETO[tag][int(idx_str)]
         rows = ckpt.get("pareto", {}).get(tag, [])
         return any(abs(r["V_min"] - v_min) < 1e-15 for r in rows)
-    if name.startswith("designlaw_refine_"):
-        rest = name.removeprefix("designlaw_refine_")
-        h_str, c_str = rest.rsplit("_", 1)
-        return f"H{float(h_str):.0f}_cells{c_str}" in ckpt.get("design_law_refine", {})
-    if name.startswith("designlaw_"):
-        H = DESIGN_LAW_H[int(name.removeprefix("designlaw_"))]
-        return str(H) in ckpt.get("design_law", {})
+    if name.startswith("verify_"):
+        tag, idx_str = name.removeprefix("verify_").rsplit("_", 1)
+        return f"{tag}_{PARETO[tag][int(idx_str)] * 1000:g}" in ckpt.get("verify", {})
+    if name.startswith("dlaw_"):
+        return f"{float(name.removeprefix('dlaw_')):.0f}" in ckpt.get("dlaw", {})
+    if name == "tilt":
+        return "tilt" in ckpt
     if name.startswith("validity_refine_"):
         return f"gamma{name.removeprefix('validity_refine_')}_refine" in ckpt.get("validity_map", {})
     if name.startswith("validity_"):
