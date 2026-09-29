@@ -41,8 +41,9 @@ import numpy as np
 
 from lmhdx.bc import PERIODIC, BoundaryCondition
 from lmhdx.core3d import ChannelProblem
-from lmhdx.design import channel_flow_response
+from lmhdx.design import channel_flow_rate, channel_flow_response
 from lmhdx.grid import Grid, uniform_faces, wall_resolving_faces
+from lmhdx.steady import solve_steady_state
 
 _WALL = BoundaryCondition("neumann")
 _MESH_MARGIN = 1.02  # ha_mesh built 2% above the largest Ha a design box can reach
@@ -100,16 +101,17 @@ def _compiled_value_and_grad(beta: float, ha_mesh: float, cells: int, cells_in_l
     return jax.jit(jax.value_and_grad(q)), jax.jit(q)
 
 
-def mesh_key(beta: float, ha_mesh: float) -> tuple[float, float]:
-    """Round (beta, ha_mesh) to cache-friendly keys; ~1e-4 relative resolution."""
-    return _round_key(beta, 6), _round_key(ha_mesh, 3)
+def mesh_key(beta: float, ha_mesh: float, centre: float = 0.0) -> tuple[float, float]:
+    """Round (beta, ha_mesh) to cache-friendly keys. The scaled-mesh family (``centre`` > 0) keeps beta to
+    13 digits: the 6-digit key perturbs the geometry by 3e-6 and W(w) by 5e-6, which hides dW/dw."""
+    return _round_key(beta, 13 if centre else 6), _round_key(ha_mesh, 3)
 
 
 def q_and_grad_ha(
     beta: float, ha_target: float, ha_mesh: float, cells: int, cells_in_layer: int, centre: float = 0.0
 ) -> tuple[float, float]:
     """Return ``(q(Ha_target, beta), dq/dHa)`` on the mesh built for ``ha_mesh``."""
-    beta_k, ha_mesh_k = mesh_key(beta, ha_mesh)
+    beta_k, ha_mesh_k = mesh_key(beta, ha_mesh, centre)
     value_and_grad_fn, _ = _compiled_value_and_grad(beta_k, ha_mesh_k, cells, cells_in_layer, centre)
     scale = ha_target / ha_mesh_k
     q, dq_ds = value_and_grad_fn(scale)
@@ -119,7 +121,7 @@ def q_and_grad_ha(
 def q_only(
     beta: float, ha_target: float, ha_mesh: float, cells: int, cells_in_layer: int, centre: float = 0.0
 ) -> float:
-    beta_k, ha_mesh_k = mesh_key(beta, ha_mesh)
+    beta_k, ha_mesh_k = mesh_key(beta, ha_mesh, centre)
     _, q_fn = _compiled_value_and_grad(beta_k, ha_mesh_k, cells, cells_in_layer, centre)
     return float(q_fn(ha_target / ha_mesh_k))
 
@@ -278,9 +280,6 @@ def tilted_flow(beta: float, ha: float, tilt: float, cells: int = 48, cells_in_l
     """Flow per unit drive, CG restarts and wall time of a duct whose field of magnitude ``ha`` is tilted by
     ``arctan(tilt)`` in the cross-section (C8): the damped preconditioner of a field off the mesh axes."""
     import time
-
-    from lmhdx.design import channel_flow_rate
-    from lmhdx.steady import solve_steady_state
 
     problem = _build_problem(*mesh_key(beta, ha), cells, cells_in_layer)
     theta = float(np.arctan(tilt))
