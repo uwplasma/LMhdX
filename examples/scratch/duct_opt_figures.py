@@ -639,6 +639,75 @@ def figure_f7(results: dict) -> None:
     save_figure(fig, "F7_validity_map", rows_csv, caption)
 
 
+TILT_H_STYLE = {30.0: ("D", 0.35), 100.0: ("s", 0.55), 300.0: ("o", 0.78), 1000.0: ("^", 1.0)}  # marker, blue-ramp level
+
+
+def _tilt_law_arrays(results: dict) -> dict:
+    """Per H: kappa, tilt, beta*/beta0, dp*/dp0 and the aligned-shape/square ratio, all on the finest mesh."""
+    out = {}
+    for entry in results["tilt_law"]:
+        first = entry["rows"][0]["meshes"][-1]
+        rows = [(r["tilt"], r["kappa"], r["meshes"][-1]) for r in entry["rows"][1:]]
+        out[entry["H"]] = {
+            "Ha_star_0": first["Ha_star"], "beta0": first["beta_star"],
+            "tilt": np.array([t for t, _, _ in rows]), "kappa": np.array([k for _, k, _ in rows]),
+            "G": np.array([m["beta_star"] / first["beta_star"] for _, _, m in rows]),
+            "P": np.array([m["dp_star"] / first["dp_star"] for _, _, m in rows]),
+            "aligned_over_square": np.array([m["dp_at_aligned_beta"] / m["dp_square"] for _, _, m in rows]),
+            "reduction": np.array([m["reduction"] for _, _, m in rows]),
+        }
+    return out
+
+
+def figure_f9(results: dict) -> None:
+    data = _tilt_law_arrays(results)
+    fig, axes = plt.subplots(1, 3, figsize=(DOUBLE_COL, DOUBLE_COL * 0.36))
+    kappa = np.geomspace(0.1, 30.0, 200)
+    rows_csv = []
+    for H, d in data.items():
+        marker, level = TILT_H_STYLE[H]
+        color = SEQ_BLUE(level)
+        label = f"$Ha^*_0={d['Ha_star_0']:.0f}$"
+        axes[0].plot(d["kappa"], d["G"], marker=marker, color=color, ls="none", label=label, markeredgecolor="white")
+        axes[1].plot(d["kappa"], d["P"], marker=marker, color=color, ls="none", markeredgecolor="white")
+        axes[2].plot(d["tilt"], d["aligned_over_square"], marker=marker, color=color, ls="-", lw=1.0, markeredgecolor="white")
+        rows_csv += [{"H": H, "Ha_star_0": d["Ha_star_0"], "tilt": t, "kappa": k, "beta_ratio": g, "dp_ratio": p,
+                      "aligned_shape_over_square": a, "reduction": r}
+                     for t, k, g, p, a, r in zip(d["tilt"], d["kappa"], d["G"], d["P"], d["aligned_over_square"], d["reduction"])]
+    s0 = 2.08  # the reference's high-Ha limit of beta* sqrt(Ha*)
+    axes[0].plot(kappa, np.sqrt(1 + (kappa / s0) ** 2), ls="--", color=INK_SECONDARY, lw=1.0)
+    axes[0].annotate("$\\sqrt{1+(\\kappa/2.08)^2}$", (0.32, 0.55), xycoords="axes fraction", fontsize=6.5, color=INK_SECONDARY)
+    axes[1].plot(kappa, np.sqrt(1 + 0.1221 * kappa**2 / (1 + kappa / 3.011)), ls="--", color=INK_SECONDARY, lw=1.0)
+    axes[1].annotate("$\\sqrt{1+0.122\\kappa^2/(1+\\kappa/3.01)}$", (0.05, 0.86), xycoords="axes fraction", fontsize=6.5,
+                     color=INK_SECONDARY)
+    axes[2].axhline(1.0, color=INK_SECONDARY, lw=0.6)
+    axes[2].annotate("Square Duct Wins Above", (0.03, 0.92), xycoords="axes fraction", fontsize=6.5, color=INK_SECONDARY)
+    for ax in axes[:2]:
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlabel(axis_label("Tilt Parameter", "\\kappa=\\sqrt{Ha^*_0}\\,B_p/B_T"))
+    axes[2].set_xscale("log")
+    axes[2].set_yscale("log")
+    axes[2].set_xlabel(axis_label("Field Tilt", "B_p/B_T"))
+    axes[0].set_ylabel(axis_label("Aspect-Ratio Shift", "\\beta^*/\\beta^*_0"))
+    axes[1].set_ylabel(axis_label("Pressure-Drop Penalty", "\\Delta p^*/\\Delta p^*_0"))
+    axes[2].set_ylabel(axis_label("Aligned Shape vs. Square", "\\Delta p/\\Delta p_\\mathrm{sq}"))
+    axes[0].legend(frameon=False, fontsize=6, loc="upper left")
+    for ax, letter in zip(axes, "abc"):
+        _panel_letter(ax, letter, dx=-0.27)
+    caption = (
+        "The tilt-aware design law: the fixed-area optimum of a duct in a field tilted by $B_p/B_T$ in the cross-section "
+        "(insulating walls, 32/4, 48/6 and 72/9 cells; the finest mesh is plotted, and 48/6 to 72/9 moves "
+        "$\\beta^*$ by at most 0.7 % and $\\Delta p^*$ by at most 0.7 %). (a) The optimal aspect ratio relative to the aligned "
+        "one and (b) the penalty of the retuned optimum collapse on $\\kappa=\\sqrt{Ha^*_0}\\,B_p/B_T$ across "
+        "$Ha^*_0=58$-$6{,}127$ to within 5 % (dashed: $\\beta^{*2}=\\beta_0^{*2}+(B_p/B_T)^2$ and a two-parameter fit "
+        "of the penalty, both fitted here). (c) Keeping the aligned optimum's shape in a tilted field, against the "
+        "equal-area square, which barely responds to tilt (0.1-0.5 % at $B_p/B_T\\le0.2$): the aligned shape loses to "
+        "the square above the crossing."
+    )
+    save_figure(fig, "F9_tilt_law", rows_csv, caption)
+
+
 def figure_f8(results: dict) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(SINGLE_COL * 2.1, SINGLE_COL * 1.05))
     tt = results["case_r_outboard"]["pareto"][0]["taylor_test"]
@@ -809,6 +878,18 @@ def table_t5(results: dict) -> None:
     )
 
 
+def table_t10(results: dict) -> None:
+    rows = []
+    for H, d in _tilt_law_arrays(results).items():
+        for i in range(len(d["tilt"])):
+            rows.append([f"{d['Ha_star_0']:.0f}", f"{d['tilt'][i]:g}", f"{d['kappa'][i]:.2f}", f"{d['beta0'] * d['G'][i]:.5f}",
+                         f"{d['G'][i]:.3f}", f"{d['P'][i]:.3f}", f"{100 * d['reduction'][i]:.1f}", f"{d['aligned_over_square'][i]:.3f}"])
+    save_table("T10_tilt_law", ["$Ha^*_0$", "$B_p/B_T$", "$\\kappa$", "$\\beta^*$", "$\\beta^*/\\beta^*_0$",
+                                 "$\\Delta p^*/\\Delta p^*_0$", "Reduction vs. Square (\\%)", "Aligned Shape / Square"], rows,
+               "The tilt-aware design law on the finest mesh (72/9 cells): the optimum in a tilted field, its penalty, its "
+               "reduction over the equal-area square in the same field, and the aligned optimum's shape against the square.")
+
+
 def table_t8(results: dict) -> None:
     rows = []
     for key, r in sorted(results["verify"].items(), key=lambda kv: (kv[0].split("_")[0], kv[1]["V_min"])):
@@ -837,7 +918,7 @@ def table_t9(results: dict) -> None:
              f"{r['W_over_aligned']:.4f}"] for r in results["tilt"]]
     save_table("T9_tilt", ["Case", "Design", "$\\beta$", "$Ha$", "$B_p/B_T$", "$W/W_\\mathrm{aligned}$"], rows,
                "Pumping power of the default optimum and the equal-area square in a field tilted in the cross-section "
-               "(exit (j)); one mid-run station, 48/6 cells (mesh study: the optimum's ratios move by 0.02 % and 0.7 % from 32/4 to 96/12).")
+               "(exit (j)); one mid-run station, 48/6 cells (tilt-aware mesh; from 32/4 to 96/12 the optimum's ratios move by 0.02 % and 0.0002 %, the square's by 0.02 % and 0.06 %).")
 
 
 def table_t7(results: dict) -> None:
@@ -894,6 +975,7 @@ def main():
     figure_f6(results)
     figure_f7(results)
     figure_f8(results)
+    figure_f9(results)
     print("tables:")
     table_t1(results)
     table_t2(results)
@@ -904,6 +986,7 @@ def main():
     table_t7(results)
     table_t8(results)
     table_t9(results)
+    table_t10(results)
     with (DATA_DIR / "captions.md").open("w") as fh:
         fh.write("# Draft figure and table captions\n\n" + "\n\n".join(CAPTIONS) + "\n")
     print(f"wrote {DATA_DIR / 'captions.md'}")
