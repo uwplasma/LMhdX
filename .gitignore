@@ -25,3 +25,4 @@ uv.lock
 stage_*_plan.txt
 scripts/perlmutter/
 examples/scratch/pbli_hartmann_from_scratch.py
+paper_references/
