@@ -733,7 +733,8 @@ def solve_compiled(problem: ChannelProblem) -> SteadySolution:
     eager solve, cold or warm.
     """
     velocity, pressure, potential, residual = _program(problem)()
-    if not all(bool(jnp.all(jnp.isfinite(field.data))) for field in velocity):
+    # On the host: an eager check compiles a program per component, 0.3 s in a new process.
+    if not all(np.isfinite(np.asarray(field.data)).all() for field in velocity):
         raise RuntimeError("the steady solve did not converge")
     return SteadySolution(velocity, pressure, potential, residual, _MAX_STEPS)
 
@@ -809,11 +810,16 @@ def shared_or_embedded(problem: ChannelProblem, build, *arguments):
         _SHAPES[key] = None
         if not _shareable(problem):
             return embedded()
-        with _programs.discovering(problem) as trace:
-            lowered = jax.jit(function).lower(*arguments)
-        _SHAPES[key] = list(trace.keys) if trace.complete else None
-        compiled = lowered.compile()
-        return lambda *values: compiled(*values)
+        # A shape an earlier process solved: its keys, or its program, are on disk.
+        _SHAPES[key] = _programs.stored(key)
+        if _SHAPES[key] is None:
+            with _programs.discovering(problem) as trace:
+                lowered = jax.jit(function).lower(*arguments)
+            if trace.complete:
+                _SHAPES[key] = list(trace.keys)
+                _programs.store(key, _SHAPES[key])
+            compiled = lowered.compile()
+            return lambda *values: compiled(*values)
     shared, calls, program = _shared(key, problem, build, arguments), [0], [None]
     if shared is None:
         shared = shape_program(function, *arguments)
@@ -832,11 +838,15 @@ def shared_or_embedded(problem: ChannelProblem, build, *arguments):
 def _shared(key, problem: ChannelProblem, build, arguments):
     """The shape's program bound to ``problem``, compiling it on the second problem; None if it cannot be."""
     entry = _SHAPES[key]
-    if entry is None:
+    if entry is None or getattr(entry, "broken", False):
+        _SHAPES[key] = None
         return None
     try:
-        if not isinstance(entry, _programs.ShapeProgram):
+        if isinstance(entry, list):
             entry = _SHAPES[key] = _programs.ShapeProgram(build, problem, arguments, entry)
+            _programs.store(key, entry)
+        if isinstance(entry, _programs._StoredProgram):
+            return entry.bind(problem, lambda: shape_program(build(problem), *arguments))
         return entry.bind(problem)
     except _programs.Unbound:
         if not isinstance(entry, _programs.ShapeProgram):
