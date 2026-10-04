@@ -89,7 +89,7 @@ _ALL_TESTS = tuple(dict.fromkeys(path.split("::")[0] for shard in _TEST_SHARDS.v
 _CHANGE_TEST_NAMES = {
     "__init__": "config cli example_runner",
     "__main__": "cli",
-    "cases": "config physics fully_developed mesh units_and_wall_models design cli runtime_logging io",
+    "cases": "config physics fully_developed units_and_wall_models design cli runtime_logging io",
     "cli": "cli example_runner",
     "axial": "axial example_runner",
     "core3d": "core3d timeloop steady coreflow axial",
