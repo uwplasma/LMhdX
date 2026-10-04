@@ -238,6 +238,75 @@ def test_a_varying_field_runs_on_the_core_and_converges_to_the_cell_centred_answ
     assert float(gradient) == pytest.approx(difference, rel=1e-6) and float(gradient) < 0.0
 
 
+def _one_wall(case):
+    """The Hunt duct with only its lower Hartmann wall conducting."""
+    return _with(
+        case,
+        boundary_conditions=(
+            BoundaryCondition("wall", "conducting_wall", region="conducting_wall", side="left"),
+            BoundaryCondition("side", "insulating", region="insulating_wall", side="right,top,bottom"),
+        ),
+    )
+
+
+def _resolved(case):
+    return _with(case, geometry=dataclasses.replace(case.geometry, wall_model="resolved"))
+
+
+@pytest.mark.parametrize(
+    ("walls", "fine", "cell_centred"),
+    [(_resolved, 0.0172604, 0.0174251), (_one_wall, 0.0237986, 0.0241184)],
+)
+def test_walls_resolved_in_cells_converge_to_the_cell_centred_answer(walls, fine, cell_centred):
+    """Hunt Ha 20, c = 0.1 as a 0.1-thick wall of the fluid's conductivity in 8 cells.
+
+    Office, float64, mean velocity on 32/64/96/128 cells: both Hartmann walls resolved
+    0.017346/0.017288/0.017267/0.017260 (cell-centred 32/64/96 0.017425/0.017310/0.017265);
+    the lower one alone 0.023915/0.023831/0.023807/0.023799 (0.024118/0.023868/0.023777).
+    At Ha 100 the cell-centred solver is still 2.0 % low on 96 cells where the core is within 0.05 %.
+    """
+    case = walls(_case(20.0, 0.1, 32))
+    problem = channel_problem(case)
+    assert problem.wall_conductance == (0.0, 0.0, 0.0) and problem.wall_layers[1] is not None
+    assert (problem.wall_layers[1][1] is None) == (walls is _one_wall)
+    solution = lmhdx.solve(case)
+    assert solution.residual < 1e-8
+    assert _mean_velocity(solution) == pytest.approx(fine, rel=0.006)
+    assert _mean_velocity(solution) == pytest.approx(cell_centred, rel=0.01)
+
+
+def test_a_resolved_wall_differentiates_in_the_field():
+    case = _one_wall(_case(20.0, 0.1, 12))
+
+    def throughput(scale):
+        return jnp.mean(solve_fully_developed_fields(case, magnetic_field_scale=scale)[0])
+
+    gradient = jax.grad(throughput)(1.0)
+    difference = (float(throughput(1.0 + 1e-4)) - float(throughput(1.0 - 1e-4))) / 2e-4
+    assert float(gradient) == pytest.approx(difference, rel=1e-6) and float(gradient) < 0.0
+
+
+def test_thin_walls_conduct_on_both_axes():
+    """Every wall a sheet, c = 0.05, joined in series at the corners.
+
+    Office, float64, mean velocity: Ha 20 core 32/64/96 0.022599/0.022526/0.022502, the
+    cell-centred solver with 0.02-thick walls in 8 cells 0.022559 (64 cells); Ha 100 core
+    0.0018350/0.0018283/0.0018280, cell-centred 0.0017987 (0.02 thick) and 0.0018113 (0.01
+    thick, 96 cells), approaching the core as the wall thins. The spectral side-wall reference
+    gives 0.0015121 there, 21 % lower, so it is not used as a gate.
+    """
+    case = _with(
+        _case(20.0, 0.05, 32),
+        boundary_conditions=(
+            BoundaryCondition(
+                "walls", "conducting_wall", region="conducting_wall", side="left,right,top,bottom"
+            ),
+        ),
+    )
+    assert channel_problem(case).wall_conductance == pytest.approx((0.0, 0.05, 0.05), rel=1e-12)
+    assert _mean_velocity(lmhdx.solve(case)) == pytest.approx(0.022559, rel=0.003)
+
+
 def test_what_the_core_does_not_model_is_refused():
     shercliff, hunt = _case(5.0, 0.0, 8), _case(5.0, 0.05, 8)
     refused = [
@@ -245,16 +314,10 @@ def test_what_the_core_does_not_model_is_refused():
         _with(shercliff, regions=(*shercliff.regions, RegionSpec("second", "fluid", 1.0, 1.0, 1.0))),
         _with(shercliff, boundary_conditions=(BoundaryCondition("j", "imposed_current_density", 1.0),)),
         _with(shercliff, boundary_conditions=(BoundaryCondition("w", "conducting_wall", side="left_right"),)),
-        # One conducting Hartmann wall: the two walls of an axis differ.
-        _with(
-            hunt,
-            boundary_conditions=(
-                BoundaryCondition("wall", "conducting_wall", region="conducting_wall", side="left"),
-                BoundaryCondition("side", "insulating", region="insulating_wall", side="top_bottom"),
-            ),
-        ),
-        # A conducting layer that no boundary names is a thick wall.
-        _with(hunt, boundary_conditions=(BoundaryCondition("walls", "no_slip"),)),
+        # Resolved walls on both axes: the corners are not modelled.
+        _resolved(_with(hunt, boundary_conditions=(BoundaryCondition("walls", "no_slip"),))),
+        # Thin walls must be equal on an axis.
+        _with(_one_wall(hunt), geometry=dataclasses.replace(hunt.geometry, wall_model="thin")),
     ]
     for case in refused:
         with pytest.raises(NotImplementedError):

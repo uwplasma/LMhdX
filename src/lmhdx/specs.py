@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 RegionKind = Literal["fluid", "solid"]
 GeometryKind = Literal["rect_duct", "layered_duct"]
+WallModel = Literal["auto", "thin", "resolved"]
 SolverKind = Literal["fully_developed_inductionless"]
 SolveMode = Literal["steady", "transient"]
 BoundaryKind = Literal[
@@ -133,6 +134,7 @@ class GeometrySpec:
     target_ha: float | None = None
     target_side_layer: float | None = None
     hartmann_layer_cells: int | None = None
+    wall_model: WallModel = "auto"
 
 
 @dataclass(frozen=True)
@@ -377,6 +379,7 @@ def load_run_config(path: str | Path) -> RunConfig:
         target_side_layer=None
         if geometry_table.get("target_side_layer") is None
         else float(geometry_table["target_side_layer"]),
+        wall_model=str(geometry_table.get("wall_model", "auto")),
     )
 
     magnetic_field = MagneticFieldSpec(

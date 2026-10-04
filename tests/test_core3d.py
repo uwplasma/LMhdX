@@ -745,3 +745,16 @@ def test_the_thin_wall_solve_is_ten_times_faster_than_the_krylov_route():
     # The first call of each route compiles it.
     ratio = np.median(times[0][1:]) / np.median(times[1][1:])
     assert ratio > 10.0, ratio
+
+
+def test_resolved_wall_layers_are_frozen_and_checked():
+    grid = Grid(uniform_faces(1, 0.0, 1.0), uniform_faces(4, -1.0, 1.0), uniform_faces(4, -1.0, 1.0))
+    conditions = (PERIODIC_X, WALL, WALL)
+    problem = ChannelProblem(grid, conditions, wall_layers=(None, ([2, [0.1, 0.1]], None), None))
+    assert problem.wall_layers == (None, ((2.0, (0.1, 0.1)), None), None) and problem.conducting_walls
+    assert hash(problem) == hash(ChannelProblem(grid, conditions, wall_layers=problem.wall_layers))
+    for layers in ((((1.0, (0.1,)), None), None, None), (None, ((0.0, (0.1,)), None), None)):
+        with pytest.raises(ValueError):
+            ChannelProblem(grid, conditions, wall_layers=layers)
+    with pytest.raises(ValueError):
+        ChannelProblem(grid, conditions, wall_conductance=(0.0, 0.1, 0.0), wall_layers=problem.wall_layers)
