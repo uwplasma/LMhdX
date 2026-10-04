@@ -259,7 +259,7 @@ def test_run_config_uses_restart_bundle_and_writes_restart_output(
         "validate_restart_bundle",
         lambda bundle, mesh, geometry_kind, case_name: None,
     )
-    monkeypatch.setattr(cli, "_build_mesh", lambda built_case: SimpleNamespace())
+    monkeypatch.setattr(cli, "case_mesh", lambda built_case: SimpleNamespace())
     perf_values = iter([10.0, 13.5])
     monkeypatch.setattr(cli.time, "perf_counter", lambda: next(perf_values))
     monkeypatch.setattr(
@@ -334,8 +334,6 @@ def test_solve_case_with_optional_logger_routes_steady_to_the_core(
     calls: list[tuple[str, object, dict]] = []
 
     def fake_transient(case, **kwargs):
-        if kwargs:
-            raise TypeError("old signature")
         calls.append(("transient", case, kwargs))
         return "transient-ok"
 
@@ -343,7 +341,7 @@ def test_solve_case_with_optional_logger_routes_steady_to_the_core(
         calls.append(("steady", case, kwargs))
         return "steady-ok"
 
-    monkeypatch.setattr(cli, "solve_transient", fake_transient)
+    monkeypatch.setattr(cli, "solve_fully_developed_transient", fake_transient)
     monkeypatch.setattr(cli, "solve_fully_developed", fake_steady)
     logger = object()
 
@@ -354,7 +352,17 @@ def test_solve_case_with_optional_logger_routes_steady_to_the_core(
         == "steady-ok"
     )
     assert calls == [
-        ("transient", case, {}),
+        (
+            "transient",
+            case,
+            {
+                "logger": logger,
+                "initial_state": None,
+                "initial_diagnostics": None,
+                "append_diagnostics": False,
+                "restart_info": None,
+            },
+        ),
         ("steady", case, {"logger": logger, "start_time": 2.5}),
     ]
 

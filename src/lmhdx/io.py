@@ -144,11 +144,11 @@ def write_paraview(solution: Solution, out_dir: str | Path) -> list[Path]:
 
 
 def write_solution_npz(solution: Solution, case, path: str | Path) -> Path:
-    from .physics import build_material_fields
-
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    materials = build_material_fields(case, solution.mesh)
+    # The solution covers the fluid alone, so its material arrays are the fluid's, uniform.
+    fluid = next(region for region in case.regions if region.kind == "fluid")
+    shape = np.shape(solution.state.u)
     metadata = {
         "case": solution.case_name,
         "time": float(solution.state.time),
@@ -173,10 +173,10 @@ def write_solution_npz(solution: Solution, case, path: str | Path) -> Path:
         lorentz_x=np.asarray(solution.state.lorentz_x),
         state_time=np.asarray(float(solution.state.time)),
         state_residual=np.asarray(float(solution.state.residual)),
-        conductivity=np.asarray(materials.conductivity),
-        density=np.asarray(materials.density),
-        viscosity=np.asarray(materials.viscosity),
-        fluid_mask=np.asarray(materials.fluid_mask),
+        conductivity=np.full(shape, fluid.conductivity),
+        density=np.full(shape, fluid.density or 1.0),
+        viscosity=np.full(shape, fluid.viscosity or 1.0),
+        fluid_mask=np.ones(shape, dtype=bool),
         **{name: np.asarray(getattr(diag, name)) for name in _DIAGNOSTIC_FIELDS},
     )
     return path

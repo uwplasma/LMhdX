@@ -10,8 +10,8 @@ from pathlib import Path
 
 import jax.numpy as jnp
 
-from .cases import make_hartmann_case, make_hunt_case, make_shercliff_case, solve_steady, solve_transient
-from .fully_developed import case_mesh, core_applies, solve_fully_developed, solve_fully_developed_transient
+from .cases import make_hartmann_case, make_hunt_case, make_shercliff_case
+from .fully_developed import case_mesh, solve_fully_developed, solve_fully_developed_transient
 from .io import (
     _portable_path,
     load_restart_bundle,
@@ -20,9 +20,7 @@ from .io import (
     write_restart_npz,
     write_solution_outputs,
 )
-from .solvers import _build_mesh
 from .specs import (
-    CaseSpec,
     RestartLogInfo,
     RunConfig,
     StreamingSolverLogger,
@@ -62,7 +60,7 @@ def _solve_case_with_optional_logger(
     append_diagnostics: bool = False,
     restart_info: RestartLogInfo | None = None,
 ):
-    if solve_mode == "transient" and isinstance(case, CaseSpec) and core_applies(case):
+    if solve_mode == "transient":
         return solve_fully_developed_transient(
             case,
             logger=logger,
@@ -71,29 +69,8 @@ def _solve_case_with_optional_logger(
             append_diagnostics=append_diagnostics,
             restart_info=restart_info,
         )
-    if solve_mode == "transient":
-        try:
-            return solve_transient(
-                case,
-                logger=logger,
-                initial_state=initial_state,
-                initial_diagnostics=initial_diagnostics,
-                append_diagnostics=append_diagnostics,
-                restart_info=restart_info,
-            )
-        except TypeError:
-            return solve_transient(case)
-    if not isinstance(case, CaseSpec) or core_applies(case):
-        start_time = 0.0 if initial_state is None else float(initial_state.time)
-        return solve_fully_developed(case, logger=logger, start_time=start_time)
-    return solve_steady(
-        case,
-        logger=logger,
-        initial_state=initial_state,
-        initial_diagnostics=initial_diagnostics,
-        append_diagnostics=append_diagnostics,
-        restart_info=restart_info,
-    )
+    start_time = 0.0 if initial_state is None else float(initial_state.time)
+    return solve_fully_developed(case, logger=logger, start_time=start_time)
 
 
 def _runtime_summary(
@@ -183,7 +160,7 @@ def _run_config(config: RunConfig) -> dict[str, object]:
         restart_bundle = load_restart_bundle(config.restart.path)
         validate_restart_bundle(
             restart_bundle,
-            mesh=case_mesh(case) if core_applies(case) else _build_mesh(case),
+            mesh=case_mesh(case),
             geometry_kind=case.geometry.kind,
             case_name=case.name,
         )

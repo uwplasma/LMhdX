@@ -1051,7 +1051,7 @@ def _corner_fix(factorization: FastDiagonalThinWallPoisson, grid: Grid, axes: li
 
     In the Kronecker sum a corner cell conducts at the product of its two walls'
     ratios, and joins its neighbours accordingly. Here a corner cell takes the
-    ratio of the nearer wall at its depth (the cell-centred solver's
+    ratio of the nearer wall at its depth (the retired cell-centred solver's
     nearest-side rule, ties to the first axis), and every link touching it is
     the two half cells in series. The difference ``D`` of the symmetric flux
     matrices lives on those links; with ``D = U L U^T`` on their cells, the solve

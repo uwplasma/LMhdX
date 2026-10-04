@@ -74,7 +74,6 @@ _TEST_SHARDS = {
     "physics": (
         "tests/test_physics.py",
         "tests/test_q2d_identities.py",
-        "tests/test_solver.py",
     ),
 }
 
@@ -82,14 +81,14 @@ _ALL_TESTS = tuple(dict.fromkeys(path.split("::")[0] for shard in _TEST_SHARDS.v
 _CHANGE_TEST_NAMES = {
     "__init__": "config cli example_runner",
     "__main__": "cli",
-    "cases": "config solver physics fully_developed",
+    "cases": "config physics fully_developed",
     "cli": "cli example_runner",
     "advect": "advect core3d",
     "axial": "axial example_runner",
     "core3d": "core3d timeloop advect steady coreflow axial",
     "coreflow": "coreflow freemhd",
     "design": "design fully_developed",
-    "fully_developed": "fully_developed design config cli solver example_runner",
+    "fully_developed": "fully_developed design config cli example_runner",
     "steady": "steady fully_developed axial",
     "bc": "ops staggered_laplacian core3d timeloop advect steady pipe axial",
     "grid": "grid ops staggered_laplacian core3d timeloop advect steady pipe",
@@ -99,12 +98,11 @@ _CHANGE_TEST_NAMES = {
     "poisson": "poisson core3d timeloop steady pipe axial",
     "pipe": "pipe",
     "io": "io cli example_runner",
-    "mesh": "mesh solver physics",
-    "physics": "solver physics",
+    "mesh": "mesh physics",
+    "physics": "physics",
     "q2d": "physics q2d_identities example_runner",
-    "solvers": "solver physics",
-    "specs": "config solver physics cli",
-    "validation": "benchmarks physics solver example_runner cli",
+    "specs": "config physics cli",
+    "validation": "benchmarks physics example_runner cli",
 }
 _CHANGE_TESTS = {
     module: tuple(f"tests/test_{name}.py" for name in names.split())
