@@ -14,8 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from .cases import make_hartmann_case
-from .mesh import StructuredMesh
-from .specs import CaseSpec, Solution
+from .specs import Solution
 
 
 @dataclass(frozen=True)
@@ -63,76 +62,6 @@ _SUMMARY_HISTORIES = (
     ("gauge_residual", "gauge_residual_history"),
     ("interface_current_residual", "interface_current_residual_history"),
 )
-
-
-def _dominant_magnetic_axis(case: CaseSpec) -> str | None:
-    if case.magnetic_field.kind != "constant" or case.magnetic_field.value is None:
-        return None
-    bx, by, bz = case.magnetic_field.value
-    magnitudes = {"x": abs(bx), "y": abs(by), "z": abs(bz)}
-    axis = max(magnitudes, key=magnitudes.get)
-    return axis if magnitudes[axis] > 0.0 else None
-
-
-def _fluid_axis_profile(mesh: StructuredMesh, axis: str) -> tuple[jnp.ndarray, jnp.ndarray]:
-    fluid_mask = mesh.fluid_mask
-    if axis == "y":
-        coordinates = mesh.y_centers
-        widths = mesh.dy
-        if fluid_mask is None:
-            return coordinates, widths
-        mid_z = int(jnp.argmax(jnp.sum(fluid_mask, axis=0)))
-        mask = fluid_mask[:, mid_z]
-        return coordinates[mask], widths[mask]
-    coordinates = mesh.z_centers
-    widths = mesh.dz
-    if fluid_mask is None:
-        return coordinates, widths
-    mid_y = int(jnp.argmax(jnp.sum(fluid_mask, axis=1)))
-    mask = fluid_mask[mid_y, :]
-    return coordinates[mask], widths[mask]
-
-
-def _cells_across_layer(widths: jnp.ndarray, layer_thickness: float) -> float:
-    cumulative = jnp.cumsum(widths)
-    full_cells = jnp.sum(cumulative < layer_thickness)
-    covered_before = jnp.where(full_cells > 0, cumulative[full_cells - 1], 0.0)
-    remaining = jnp.maximum(layer_thickness - covered_before, 0.0)
-    next_width = jnp.where(full_cells < widths.size, widths[full_cells], widths[-1])
-    partial_cell = jnp.minimum(remaining / jnp.maximum(next_width, 1e-12), 1.0)
-    return float(full_cells + partial_cell)
-
-
-def duct_layer_resolution_metrics(case: CaseSpec, mesh: StructuredMesh) -> dict[str, float]:
-    axis = _dominant_magnetic_axis(case)
-    ha = case.geometry.target_ha
-    if axis not in {"y", "z"} or ha is None or ha <= 0.0:
-        return {}
-
-    hartmann_axis = axis
-    side_axis = "z" if axis == "y" else "y"
-    hartmann_coordinates, hartmann_widths = _fluid_axis_profile(mesh, hartmann_axis)
-    side_coordinates, side_widths = _fluid_axis_profile(mesh, side_axis)
-    if hartmann_coordinates.size == 0 or side_coordinates.size == 0:
-        return {}
-
-    hartmann_half_spacing = 0.5 * float(
-        hartmann_coordinates[-1] - hartmann_coordinates[0] + 0.5 * (hartmann_widths[0] + hartmann_widths[-1])
-    )
-    side_half_spacing = 0.5 * float(
-        side_coordinates[-1] - side_coordinates[0] + 0.5 * (side_widths[0] + side_widths[-1])
-    )
-    hartmann_layer_thickness = hartmann_half_spacing / float(ha)
-    side_layer_thickness = side_half_spacing / float(jnp.sqrt(ha))
-
-    return {
-        "hartmann_layer_thickness": hartmann_layer_thickness,
-        "side_layer_thickness": side_layer_thickness,
-        "hartmann_layer_cells": _cells_across_layer(hartmann_widths, hartmann_layer_thickness),
-        "side_layer_cells": _cells_across_layer(side_widths, side_layer_thickness),
-        "min_hartmann_spacing": float(jnp.min(hartmann_widths)),
-        "min_side_spacing": float(jnp.min(side_widths)),
-    }
 
 
 def hartmann_analytic_profile(y: jnp.ndarray, ha: float) -> jnp.ndarray:

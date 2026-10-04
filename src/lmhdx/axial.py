@@ -7,7 +7,7 @@ solve stays direct and every derivative implicit:
 * **Inlet.** The velocity is LMhdX's own fully developed profile at the inlet
   field, solved on the same cross-section and scaled to the imposed flow rate.
   It is array-valued Dirichlet data on the inlet face
-  (:class:`lmhdx.bc.BoundaryCondition`). The flow rate is exact and the pressure
+  (:class:`lmhdx.grid.BoundaryCondition`). The flow rate is exact and the pressure
   drop is an output; there is no extra unknown.
 * **Outlet.** Zero axial gradient of every velocity component and ``p = 0``.
   The pressure operator is then non-singular, and the axial axis stays
@@ -36,7 +36,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .bc import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition
 from .core3d import (
     ChannelProblem,
     ImposedField,
@@ -47,7 +46,7 @@ from .core3d import (
     zero_velocity,
 )
 from .em import face_electromotive_force
-from .grid import Field, Grid, uniform_faces
+from .grid import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid, uniform_faces
 from .steady import (
     _norm,
     _preconditioner,

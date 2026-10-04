@@ -5,7 +5,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lmhdx.bc import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition
 from lmhdx.em import (
     cell_average,
     charge_residual,
@@ -19,7 +18,11 @@ from lmhdx.em import (
 )
 from lmhdx.grid import (
     CENTER,
+    DIRICHLET,
     FACE,
+    NEUMANN,
+    PERIODIC,
+    BoundaryCondition,
     Field,
     Grid,
     geometric_faces,
@@ -338,7 +341,7 @@ def test_a_divergence_free_current_leaves_no_charge_residual():
 
 def test_insulated_conduction_current_conserves_charge_when_the_potential_solves_its_equation():
     """The potential that solves the discrete equation makes the face fluxes close."""
-    from lmhdx.bc import PERIODIC
+    from lmhdx.grid import PERIODIC
     from lmhdx.ops import laplacian
     from lmhdx.poisson import fast_diagonal_poisson
 

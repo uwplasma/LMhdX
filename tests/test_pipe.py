@@ -165,7 +165,7 @@ def test_the_current_into_a_conducting_pipe_wall_exerts_no_force():
 
     The half-cell current into the sheet carries no electromotive force; while it exerted a force,
     the adjoint and the ohmic identity both missed by 5.1e-4 here. The wall power is taken at the
-    sheet potential, as in ``timeloop._wall_power``. An insulated wall is closed already: bit for bit.
+    sheet potential, as in ``core3d._wall_power``. An insulated wall is closed already: bit for bit.
     """
     from lmhdx.ops import cell_inner_product, face_average_adjoint, face_inner_product
     from lmhdx.pipe import _WALL, _WRAP, _angles, _axial_force, _face_emf

@@ -9,9 +9,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lmhdx.bc import NEUMANN, PERIODIC, BoundaryCondition
 from lmhdx.core3d import ChannelProblem, duct_problem, step, zero_velocity
-from lmhdx.grid import Grid, uniform_faces, wall_resolving_faces
+from lmhdx.grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces, wall_resolving_faces
 from lmhdx.steady import solve_steady_state, steady_residual
 from validation.shercliff import flow_rate, hartmann_wall_current, quadrant_flow_rate
 
@@ -756,7 +755,7 @@ def test_the_steady_state_closes_its_mechanical_power_balance():
     is the residual of the steady solve projected onto the velocity itself: an
     independent reading of the same claim, in energy rather than in momentum.
     """
-    from lmhdx.timeloop import energy_budget
+    from lmhdx.core3d import energy_budget
 
     for conductance in (0.0, 0.027):
         problem = _duct(32, 20.0, ratio=1.35, conductance=conductance)

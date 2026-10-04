@@ -250,7 +250,7 @@ PCIe. Correct, not yet faster — the numbers are in
   the steady mechanical power balance within a 1e-10 relative test gate (measured
   3.6e-14 insulating, 6.3e-14 at wall conductance 0.027); Q2D decay identities.
 - **Research stage:** three-dimensional convective transport (`advection="central"`
-  or `"limited"`, from `lmhdx.advect`) is tested for conservation, order and
+  or `"limited"`, from `lmhdx.ops`) is tested for conservation, order and
   boundedness but not validated against a reference flow, the fringe is solved
   in the inertialess limit only, the ALEX B1/B2 benchmarks are open, and
   multi-device execution is not yet established. The

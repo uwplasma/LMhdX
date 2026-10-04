@@ -48,7 +48,7 @@ requirement directly: given a layer thickness it places a requested number of
 cells inside the layer while bounding the growth ratio, and raises when the cell
 count cannot meet the request rather than returning an unresolved mesh.
 
-`lmhdx.bc` expresses a wall condition once, as the ghost value that reproduces it,
+`lmhdx.grid` expresses a wall condition once, as the ghost value that reproduces it,
 and `lmhdx.ops` differences every face with the same expression. A cell-centred
 value sits half a cell from the wall, so a prescribed value $g$ needs
 $p_{\rm ghost}=2g-p_0$ and a prescribed normal derivative $q$ needs
@@ -283,7 +283,7 @@ iterations) above Ha 300: the three solves take 5,581, 12,056 and 19,299.
 A Python loop around the projection step dispatches every operation from the
 host. On an accelerator that is the difference between a queue the device can run
 ahead on and a round trip per step, and it is why the audit that opened this plan
-found one GPU slower than a laptop CPU on a small duct. `lmhdx.timeloop` compiles
+found one GPU slower than a laptop CPU on a small duct. `lmhdx.core3d` compiles
 the whole run with `jax.lax.scan` instead. Measured on this laptop's CPU, 200
 steps of a 4x16x16 duct take 3.58 s through the host loop and 0.44 s through the
 scan, an **8x speedup before any accelerator is involved**; the 32-cell case gives
@@ -414,7 +414,7 @@ with the boundary conditions of HIMAG, FreeMHD, GridapMHD and the 2025
 six-code benchmark (plan D26). The inlet velocity is LMhdX's own fully
 developed profile at the inlet field, solved on the same cross-section and
 scaled to the imposed flow rate; it is array-valued Dirichlet data on the inlet
-face (`lmhdx.bc.BoundaryCondition(kind, lower=profile, upper_kind=...)`). The
+face (`lmhdx.grid.BoundaryCondition(kind, lower=profile, upper_kind=...)`). The
 outlet has zero axial gradient of every velocity component and $p=0$. Neither
 end carries normal current, $\partial\varphi/\partial n=(\mathbf u\times\mathbf B)\cdot\mathbf n$,
 and the potential's gauge is fixed by removing its mean. The flow rate is exact

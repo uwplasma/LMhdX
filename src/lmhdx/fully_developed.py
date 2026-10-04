@@ -55,10 +55,9 @@ import numpy as np
 import solvax
 
 from ._programs import host_array
-from .bc import NEUMANN, PERIODIC, BoundaryCondition
 from .core3d import ChannelProblem, ImposedField, face_currents, zero_velocity
 from .em import lorentz_force, wall_insulated
-from .grid import Grid, uniform_faces, wall_resolving_faces
+from .grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces, wall_resolving_faces
 from .mesh import StructuredMesh, generate_rect_duct_mesh_from_faces, sample_tabulated_cross_section_field
 from .ops import divergence
 from .specs import CaseSpec, Diagnostics, MHDState, Solution, SolverStepRecord, require_finite

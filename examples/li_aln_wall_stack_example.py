@@ -30,8 +30,7 @@ from lmhdx import (
     solve_steady_state,
     tangential_stack_conductance_ratio,
 )
-from lmhdx.bc import NEUMANN, PERIODIC, BoundaryCondition
-from lmhdx.grid import Grid, uniform_faces, wall_resolving_faces
+from lmhdx.grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces, wall_resolving_faces
 from lmhdx.ops import divergence
 
 # Inputs: edit material, geometry, wall, numerics, and output choices here.
