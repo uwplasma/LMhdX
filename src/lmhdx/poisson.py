@@ -59,6 +59,7 @@ __all__ = [
     "FastDiagonalThinWallPoisson",
     "assemble_axis_laplacian",
     "assemble_staggered_axis_operator",
+    "assemble_thick_wall_operator",
     "assemble_thin_wall_operator",
     "fast_diagonal_helmholtz",
     "fast_diagonal_poisson",
@@ -760,6 +761,55 @@ def assemble_thin_wall_operator(
     return operator, weights
 
 
+def assemble_thick_wall_operator(
+    grid: Grid, axis: int, layers: tuple
+) -> tuple[np.ndarray, np.ndarray, tuple[float, float]]:
+    """Return the one-dimensional potential operator with a wall resolved in cells at each end, and its weights.
+
+    ``layers`` is ``(lower, upper)``: ``None`` for an insulating wall, else
+    ``(ratio, widths)``, the wall conductivity over the fluid's and its cell
+    widths from the fluid outwards, insulated outside. A wall cell is weighted by
+    the ratio times its width, so the tangential axes conduct through it at the
+    wall's conductivity and the operator stays a Kronecker sum, as for
+    :func:`assemble_thin_wall_operator`; the wall must span the fluid's
+    tangential extent. The fluid reaches the first wall cell through the two
+    half cells in series. Also returned, per end, is the fraction of the
+    potential difference across the fluid's half cell, which
+    :meth:`FastDiagonalThinWallPoisson.solve_with_walls` uses to report the
+    interface potential :func:`lmhdx.em.thin_wall_current` reads.
+    """
+    if grid.is_polar:
+        raise ValueError("a wall resolved in cells needs a Cartesian grid")
+    insulating = assemble_axis_laplacian(grid, axis, BoundaryCondition(NEUMANN))
+    prescribed = assemble_axis_laplacian(grid, axis, BoundaryCondition(DIRICHLET))
+    cell = np.asarray(grid.widths[axis], dtype=float)
+    ends = [(float(layer[0]), np.asarray(layer[1], dtype=float)) if layer else None for layer in layers]
+    counts = [0 if end is None else end[1].size for end in ends]
+    count, lead = cell.size, counts[0]
+    size = count + sum(counts)
+    operator, weights, fractions = np.zeros((size, size)), np.zeros(size), [1.0, 1.0]
+    operator[lead : lead + count, lead : lead + count] = insulating
+    weights[lead : lead + count] = cell
+    for side, end in enumerate(ends):
+        if end is None:
+            continue
+        ratio, widths = end
+        if ratio <= 0.0 or widths.size == 0 or np.any(widths <= 0.0):
+            raise ValueError("a resolved wall needs a positive conductivity ratio and positive widths")
+        index = 0 if side == 0 else count - 1
+        # The production stencil's half-cell conductance, then the wall's half cell in series.
+        half = cell[index] * (insulating[index, index] - prescribed[index, index])
+        fractions[side] = 1.0 / (1.0 + half * 0.5 * widths[0] / ratio)
+        nodes = [lead + index] + [lead - 1 - k if side == 0 else lead + count + k for k in range(widths.size)]
+        weights[nodes[1:]] = ratio * widths
+        links = [half * fractions[side]] + list(ratio / (0.5 * (widths[:-1] + widths[1:])))
+        for (first, second), link in zip(zip(nodes[:-1], nodes[1:]), links, strict=True):
+            for row, column in ((first, second), (second, first)):
+                operator[row, column] += link / weights[row]
+                operator[row, row] -= link / weights[row]
+    return operator, weights, tuple(fractions)
+
+
 @dataclass(frozen=True)
 class FastDiagonalThinWallPoisson(FastDiagonalPoisson):
     """The potential Laplacian closed by thin conducting walls, factorized exactly.
@@ -779,6 +829,14 @@ class FastDiagonalThinWallPoisson(FastDiagonalPoisson):
     operators: tuple[np.ndarray, ...] = ()
     weights: tuple[np.ndarray, ...] = ()
     corner_gain: np.ndarray | None = None
+    # Wall nodes below and above each axis, and the interface fractions of resolved walls.
+    pads: tuple[tuple[int, int], ...] | None = None
+    fractions: tuple[tuple[float, float], ...] | None = None
+
+    def _pads(self) -> tuple[tuple[int, int], ...]:
+        if self.pads is not None:
+            return self.pads
+        return tuple((1, 1) if float(value) > 0.0 else (0, 0) for value in self.conductance)
 
     def _measure(self) -> np.ndarray:
         return (
@@ -797,21 +855,29 @@ class FastDiagonalThinWallPoisson(FastDiagonalPoisson):
         """
         if rhs.grid != self.grid or rhs.offset != (CENTER, CENTER, CENTER):
             raise ValueError("right-hand side must be cell centred on the factorized grid")
-        conducting = [float(value) > 0.0 for value in self.conductance]
-        data = jnp.pad(rhs.data, [(1, 1) if flag else (0, 0) for flag in conducting])
+        pads = self._pads()
+        data = jnp.pad(rhs.data, pads)
         solution = _refined(self, self._corrected, self._apply, data, (self, _own_measure))
         solution = _corrected(self, self._corrected, self._apply, data, solution, (self, _own_measure))
-        cells = tuple(slice(1, -1) if flag else slice(None) for flag in conducting)
+        cells = tuple(slice(low, size - high) for (low, high), size in zip(pads, solution.shape))
         volumes = host_array(self.grid, _cell_volumes, dtype=solution.dtype)
         solution = solution - jnp.sum(volumes * solution[cells]) / jnp.sum(volumes)
         walls = []
-        for axis, flag in enumerate(conducting):
-            if not flag:
+        for axis, (low, high) in enumerate(pads):
+            if not low + high:
                 walls.append(None)
                 continue
-            sheets = solution[cells[:axis] + (slice(None),) + cells[axis + 1 :]]
-            ends = [sheets[(slice(None),) * axis + (index,)] for index in (slice(0, 1), slice(-1, None))]
-            inner = jnp.zeros_like(sheets)[(slice(None),) * axis + (slice(2, -1),)]
+            lines = solution[cells[:axis] + (slice(None),) + cells[axis + 1 :]]
+            ends = []
+            for side, (node, fluid, present) in enumerate(((low - 1, low, low), (-high, -high - 1, high))):
+                at = (slice(None),) * axis
+                adjacent = lines[at + (slice(fluid, fluid + 1 or None),)]
+                wall = lines[at + (slice(node, node + 1 or None),)] if present else adjacent
+                fraction = 1.0 if self.fractions is None else self.fractions[axis][side]
+                # A resolved wall reports the potential on the interface, which the half-cell current reads.
+                ends.append(wall if fraction == 1.0 else adjacent + fraction * (wall - adjacent))
+            sheets = lines[(slice(None),) * axis + (slice(low, lines.shape[axis] - high),)]
+            inner = jnp.zeros_like(sheets)[(slice(None),) * axis + (slice(1, None),)]
             offset = tuple(FACE if other == axis else CENTER for other in range(3))
             walls.append(Field(jnp.concatenate((ends[0], inner, ends[1]), axis=axis), offset, self.grid))
         return Field(solution[cells], (CENTER, CENTER, CENTER), self.grid), tuple(walls)
@@ -872,15 +938,25 @@ def fast_diagonal_thin_wall_poisson(
     *,
     precision: str = "state",
     refinements: int = 2,
+    layers: tuple | None = None,
 ) -> FastDiagonalThinWallPoisson:
     """Factorize the potential Laplacian with a thin wall of ratio ``conductance[axis]`` on both walls of an axis.
 
     Zero keeps the insulating closure of ``conditions``; a conducting axis must
     have insulating (Neumann) walls to replace, and one axis at least must not
-    conduct.
+    conduct. ``layers`` gives an axis walls resolved in cells instead
+    (:func:`assemble_thick_wall_operator`), ``(lower, upper)`` per axis or
+    ``None``; such an axis is then the only one that conducts, since the
+    Kronecker sum would give a corner cell the product of two walls' ratios.
     """
     _require_separable(grid)
+    layers = (None, None, None) if layers is None else tuple(layers)
+    resolved = [axis for axis, pair in enumerate(layers) if pair and any(pair)]
     conducting = [axis for axis, value in enumerate(conductance) if float(value) > 0.0]
+    if resolved and (len(resolved) > 1 or conducting):
+        raise ValueError("walls resolved in cells conduct on one axis, with no thin wall on another")
+    conducting = conducting + resolved
+    pads, fractions = [], []
     if len(conditions) != 3 or len(conductance) != 3 or len(conducting) == 3 or min(conductance) < 0.0:
         raise ValueError(
             "thin walls need one condition and one non-negative conductance per axis, one axis without"
@@ -891,9 +967,15 @@ def fast_diagonal_thin_wall_poisson(
             raise ValueError(
                 f"axis {axis} needs a homogeneous condition, and insulating walls if it conducts"
             )
-        if axis in conducting:
+        pads.append((0, 0))
+        fractions.append((1.0, 1.0))
+        if axis in resolved:
+            operator, weight, fractions[axis] = assemble_thick_wall_operator(grid, axis, layers[axis])
+            pads[axis] = tuple(0 if layer is None else len(layer[1]) for layer in layers[axis])
+        elif axis in conducting:
             ratio = float(conductance[axis])
             operator, weight = assemble_thin_wall_operator(grid, axis, (ratio, ratio))
+            pads[axis] = (1, 1)
         else:
             operator, weight = assemble_axis_laplacian(grid, axis, condition), np.asarray(grid.widths[axis])
         message = f"axis {axis} thin-wall operator is not symmetric under its weights"
@@ -920,6 +1002,8 @@ def fast_diagonal_thin_wall_poisson(
         corner_gain=_corner_gain(vectors, values, scales, 3 - sum(conducting))
         if len(conducting) == 2
         else None,
+        pads=tuple(pads) if resolved else None,
+        fractions=tuple(fractions) if resolved else None,
     )
 
 

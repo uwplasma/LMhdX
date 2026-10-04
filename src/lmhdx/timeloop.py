@@ -197,7 +197,9 @@ def _wall_power(potential: Field, currents: tuple[Field, Field, Field], problem:
     if not conductivity:
         return half_cells, total
     for axis in range(3):
-        if scalar[axis].is_periodic or not float(problem.wall_conductance[axis]):
+        if scalar[axis].is_periodic or not (
+            float(problem.wall_conductance[axis]) or problem.wall_layers[axis]
+        ):
             continue
         area = jnp.asarray(grid.face_areas(axis), dtype=potential.dtype)
         widths = grid.widths[axis]

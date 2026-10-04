@@ -14,11 +14,16 @@ field, six cells in each layer (``hartmann_layer_cells`` overrides) and the
 gentlest stretching that spans the duct; an odd count adds one centre cell.
 A 2 x 2 duct with unit properties gets exactly the faces of ``duct_problem(hartmann=Ha, cells=n)``.
 
-*Walls.* An insulating wall is the homogeneous Neumann closure. A conducting
-wall of a ``layered_duct`` is the thin wall of :mod:`lmhdx.poisson`: the sheet
-conductance ``sigma_w t_w / sigma`` of its region and thickness (a length,
-the wall conductance ratio times the half-width), with no cells of its own, so
-the solution covers the fluid alone. Both walls of an axis must match.
+*Walls.* An insulating wall is the homogeneous Neumann closure. The conducting
+walls of a ``layered_duct`` follow ``geometry.wall_model``. ``"thin"`` makes
+each a sheet of conductance ``sigma_w t_w / sigma`` (:mod:`lmhdx.poisson`) with no
+cells of its own, which needs equal walls on one axis. ``"resolved"`` gives the
+walls of one axis ``wall_cells`` uniform cells of their own conductivity,
+insulated outside: one wall, two different walls, or a layer that no boundary
+names (``ChannelProblem.wall_layers``); the reported fields cover the fluid. The
+default ``"auto"`` is thin where that holds and resolved otherwise. Thin
+walls may conduct on both axes, joined in series at the corners; resolved
+walls conduct on one.
 
 *Field.* A constant field is three numbers; an analytic or tabulated one is
 sampled at the cell centres as an :class:`~lmhdx.core3d.ImposedField`, and the
@@ -124,7 +129,7 @@ def channel_problem(case: CaseSpec) -> ChannelProblem:
         magnetic_field=field,
         forcing=(1.0, 0.0, 0.0),
         dt=min(halves) ** 2 / viscosity,
-        wall_conductance=_wall_conductance(case, conductivity),
+        **_walls(case, conductivity),
     )
 
 
@@ -379,50 +384,76 @@ def _check(case: CaseSpec) -> None:
             raise NotImplementedError(f"the staggered core does not impose {boundary.kind!r} boundaries")
 
 
-def _wall_conductance(case: CaseSpec, conductivity: float) -> tuple[float, float, float]:
-    """Return the thin-wall sheet conductance ``sigma_w t_w / sigma`` of each axis.
+def _walls(case: CaseSpec, conductivity: float) -> dict:
+    """Return the ``wall_conductance`` or the ``wall_layers`` of the case's conducting walls.
 
-    A side is conducting when a ``conducting_wall`` boundary names it, and
-    insulating when an ``insulating`` one does or when it has no wall cells. A
-    wall layer that no boundary names would conduct through its cells as a thick
-    wall, which the core does not model, unless its material is a perfect insulator.
+    A side is conducting when a ``conducting_wall`` boundary names it, or when it
+    has wall cells that no boundary names and the first solid region conducts
+    (the cell-centred solver's fallback); it is insulating when an
+    ``insulating`` boundary names it or it has no wall. ``geometry.wall_model``
+    chooses the closure: ``"thin"`` makes each wall a sheet of conductance
+    ``sigma_w t_w / sigma``, which needs equal walls on an axis, on either or both axes; ``"resolved"``
+    gives the walls of one axis ``wall_cells`` cells of their own; ``"auto"``
+    is thin where that holds and resolved otherwise.
     """
     regions = {region.name: region for region in case.regions}
-    sides: dict[str, float] = {}
+    geometry, sides = case.geometry, {}
     for boundary in case.boundary_conditions:
         if boundary.kind not in {"insulating", "conducting_wall"}:
             continue
         names = _side_names(boundary)
         if boundary.kind == "insulating":
             for name in names:
-                sides.setdefault(name, 0.0)
+                sides.setdefault(name, None)
             continue
         region = regions.get(boundary.region)
-        if case.geometry.kind != "layered_duct" or region is None or not names:
+        if geometry.kind != "layered_duct" or region is None or not names:
             raise NotImplementedError("a conducting wall needs a layered duct, a solid region and its sides")
         for name in names:
-            thickness = case.geometry.wall_thickness[list(_SIDES).index(name)]
-            if thickness <= 0.0:
-                raise NotImplementedError(f"conducting wall {name!r} has no thickness")
-            sides[name] = region.conductivity * thickness / conductivity if conductivity > 0.0 else 0.0
+            sides[name] = region
     solids = [region for region in case.regions if region.kind == "solid"]
+    walled = geometry.kind == "layered_duct"
     for index, name in enumerate(_SIDES):
-        cells = case.geometry.wall_cells[index] if case.geometry.kind == "layered_duct" else 0
-        if name not in sides and cells and solids and solids[0].conductivity > 0.0:
-            raise NotImplementedError(
-                f"wall {name!r} is a thick conducting layer; the core models thin walls"
-            )
-    conductance = [0.0, 0.0, 0.0]
-    for axis in (1, 2):
-        lower, upper = (sides.get(name, 0.0) for name, (index, _) in _SIDES.items() if index == axis)
-        if lower != upper:
-            raise NotImplementedError(
-                "the thin-wall solve needs equal conductances on the two walls of an axis"
-            )
-        conductance[axis] = lower
-    if conductance[1] > 0.0 and conductance[2] > 0.0:
-        raise NotImplementedError("the thin-wall solve needs one insulating axis")
-    return tuple(conductance)
+        if (
+            name not in sides
+            and walled
+            and geometry.wall_cells[index]
+            and solids
+            and solids[0].conductivity > 0.0
+        ):
+            sides[name] = solids[0]
+    ends = {}
+    for index, name in enumerate(_SIDES):
+        region = sides.get(name)
+        if region is None or not region.conductivity or not conductivity:
+            continue
+        thickness, cells = geometry.wall_thickness[index], geometry.wall_cells[index]
+        if thickness <= 0.0:
+            raise NotImplementedError(f"conducting wall {name!r} has no thickness")
+        ends[name] = (region.conductivity / conductivity, thickness, cells)
+    axes = {_SIDES[name][0] for name in ends}
+    pairs = {axis: [ends.get(name) for name, (index, _) in _SIDES.items() if index == axis] for axis in axes}
+    thin = all(
+        None not in pair and pair[0][0] * pair[0][1] == pair[1][0] * pair[1][1] for pair in pairs.values()
+    )
+    model = geometry.wall_model
+    if model not in {"auto", "thin", "resolved"}:
+        raise ValueError(f"wall_model must be 'auto', 'thin' or 'resolved', got {model!r}")
+    if model == "thin" or (model == "auto" and thin):
+        if not thin:
+            raise NotImplementedError("thin walls need equal conducting walls on both sides of an axis")
+        conductance = [0.0, 0.0, 0.0]
+        for axis, pair in pairs.items():
+            conductance[axis] = pair[0][0] * pair[0][1]
+        return {"wall_conductance": tuple(conductance)}
+    if len(axes) > 1:
+        raise NotImplementedError("walls resolved in cells conduct on one axis; the corners are not modelled")
+    layers = [None, None, None]
+    for axis, pair in pairs.items():
+        if any(end is not None and end[2] < 1 for end in pair):
+            raise NotImplementedError("a wall resolved in cells needs wall_cells")
+        layers[axis] = tuple(None if end is None else (end[0], (end[1] / end[2],) * end[2]) for end in pair)
+    return {"wall_layers": tuple(layers)}
 
 
 def _side_names(boundary) -> tuple[str, ...]:

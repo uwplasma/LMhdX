@@ -398,6 +398,7 @@ ny = 8
 nz = 8
 wall_thickness = [0.0, 0.0, 0.0, 0.0]
 wall_cells = [0, 0, 0, 0]
+wall_model = "resolved"
 target_ha = 20.0
 
 [magnetic_field]
@@ -491,6 +492,7 @@ side = "max"
 
     assert config.case.name == "hartmann_toml_demo"
     assert config.case.geometry.kind == "rect_duct"
+    assert config.case.geometry.wall_model == "resolved"
     assert config.case.output.directory == str((tmp_path / "out").resolve())
     assert config.case.output.history_stride == 3
     assert config.case.solver.kind == "fully_developed_inductionless"
