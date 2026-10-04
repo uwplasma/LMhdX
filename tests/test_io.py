@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
-from lmhdx.cases import make_hartmann_case
+from lmhdx.cases import Diagnostics, MHDState, Solution, make_hartmann_case
 from lmhdx.fully_developed import case_mesh as _build_mesh
 from lmhdx.io import (
     _prepare_plot_output,
@@ -19,7 +19,6 @@ from lmhdx.io import (
     write_solution_npz,
     write_solution_outputs,
 )
-from lmhdx.specs import Diagnostics, MHDState, Solution
 
 pytestmark = pytest.mark.unit
 

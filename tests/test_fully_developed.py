@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import lmhdx
+from lmhdx.cases import BoundaryCondition, MagneticFieldSpec, RegionSpec, write_tabulated_field_npz
 from lmhdx.core3d import ImposedField, duct_problem
 from lmhdx.fully_developed import (
     case_mesh,
@@ -16,8 +17,6 @@ from lmhdx.fully_developed import (
     solve_fully_developed_fields,
     solve_fully_developed_transient,
 )
-from lmhdx.mesh import write_tabulated_field_npz
-from lmhdx.specs import BoundaryCondition, MagneticFieldSpec, RegionSpec
 from validation.shercliff import flow_rate, quadrant_flow_rate
 
 pytestmark = pytest.mark.numerical

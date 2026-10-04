@@ -27,7 +27,6 @@ _TEST_SHARDS = {
         "tests/test_cli.py",
         "tests/test_config.py",
         "tests/test_io.py",
-        "tests/test_mesh.py",
         "tests/test_runtime_logging.py",
         "tests/test_units_and_wall_models.py",
         "tests/test_freemhd.py",
@@ -90,12 +89,11 @@ _ALL_TESTS = tuple(dict.fromkeys(path.split("::")[0] for shard in _TEST_SHARDS.v
 _CHANGE_TEST_NAMES = {
     "__init__": "config cli example_runner",
     "__main__": "cli",
-    "cases": "config physics fully_developed",
+    "cases": "config physics fully_developed units_and_wall_models design cli runtime_logging io",
     "cli": "cli example_runner",
     "axial": "axial example_runner",
     "core3d": "core3d timeloop steady coreflow axial",
     "coreflow": "coreflow freemhd",
-    "design": "design fully_developed",
     "fully_developed": "fully_developed design config cli example_runner",
     "steady": "steady fully_developed axial",
     "grid": "grid ops core3d timeloop steady pipe axial",
@@ -104,10 +102,7 @@ _CHANGE_TEST_NAMES = {
     "poisson": "poisson core3d timeloop steady pipe axial",
     "pipe": "pipe",
     "io": "io cli example_runner",
-    "mesh": "mesh physics",
-    "physics": "physics",
     "q2d": "physics q2d_identities example_runner",
-    "specs": "config physics cli",
     "validation": "benchmarks physics example_runner cli",
 }
 _CHANGE_TESTS = {

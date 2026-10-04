@@ -12,7 +12,7 @@ solver that served those cases until 1.7 was removed in step 4.6.
 
 At fixed field, materials and geometry the fully developed inductionless problem
 is linear in the drive, so the volumetric flow rate is $Q=Gf$ for a single
-response $G$ that one solve measures. `lmhdx.design` uses that directly: the drive
+response $G$ that one solve measures. `lmhdx.fully_developed` uses that directly: the drive
 delivering a requested throughput is $f=Q_{\rm target}/G$ exactly, and its
 derivative is $df/dQ=1/G$.
 
@@ -197,7 +197,7 @@ faces.
 
 These modules supply geometry, operators, the scalar solve and the electric
 coupling. The cell-centred fully developed solver keeps its own mesh,
-`lmhdx.mesh`.
+`lmhdx.cases`.
 
 ## The projection step and its two stiffnesses
 

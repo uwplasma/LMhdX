@@ -8,8 +8,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .mesh import StructuredMesh
-from .specs import Diagnostics, MHDState, Solution
+from .cases import Diagnostics, MHDState, Solution, StructuredMesh
 from .validation import extract_midplane_profile
 
 _DIAGNOSTIC_FIELDS = tuple(item.name for item in fields(Diagnostics))

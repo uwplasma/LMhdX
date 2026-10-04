@@ -10,16 +10,17 @@ import numpy as np
 import pytest
 
 import lmhdx
-from lmhdx.cases import make_hartmann_case, make_shercliff_case
+from lmhdx.cases import (
+    Diagnostics,
+    MHDState,
+    Solution,
+    make_hartmann_case,
+    make_shercliff_case,
+)
 from lmhdx.cases import solve as solve_steady
 from lmhdx.fully_developed import case_mesh as _build_mesh
 from lmhdx.fully_developed import solve_fully_developed_fields
 from lmhdx.q2d import Q2DProblem, make_q2d_case, solve_q2d
-from lmhdx.specs import (
-    Diagnostics,
-    MHDState,
-    Solution,
-)
 from lmhdx.validation import (
     extract_midplane_profile,
     hartmann_acceptance,
