@@ -20,6 +20,12 @@ conductance ``sigma_w t_w / sigma`` of its region and thickness (a length,
 the wall conductance ratio times the half-width), with no cells of its own, so
 the solution covers the fluid alone. Both walls of an axis must match.
 
+*Field.* A constant field is three numbers; an analytic or tabulated one is
+sampled at the cell centres as an :class:`~lmhdx.core3d.ImposedField`, and the
+layers follow its peak transverse strength. An axial component is kept: it
+adds no electromotive force to the axial flow, and on a varying field it can
+drive a secondary flow, which the cell-centred solver dropped.
+
 *Drive.* ``forcing`` is the axial force density. With zero forcing and an
 ``inlet_flow_rate`` boundary, the flow rate is met by scaling the unit-drive
 solution, which is exact because the problem is linear in the drive.
@@ -42,10 +48,10 @@ import numpy as np
 
 from ._programs import host_array
 from .bc import NEUMANN, PERIODIC, BoundaryCondition
-from .core3d import ChannelProblem
+from .core3d import ChannelProblem, ImposedField
 from .em import lorentz_force, wall_insulated
 from .grid import Grid, uniform_faces, wall_resolving_faces
-from .mesh import StructuredMesh, generate_rect_duct_mesh_from_faces
+from .mesh import StructuredMesh, generate_rect_duct_mesh_from_faces, sample_tabulated_cross_section_field
 from .ops import divergence
 from .specs import CaseSpec, Diagnostics, MHDState, Solution, require_finite
 from .steady import shared_or_embedded, solve_steady_state
@@ -70,8 +76,9 @@ def channel_problem(case: CaseSpec) -> ChannelProblem:
     """Return the staggered-core problem a fully developed case solves, at unit drive.
 
     Raise ``NotImplementedError`` for what the core does not represent: other
-    geometries, a field that is not a constant in the cross-section, thick or
-    mismatched conducting walls, several fluids, or an imposed current.
+    geometries, thick or mismatched conducting walls, several fluids, or an
+    imposed current. A constant field stays three numbers; an analytic or
+    tabulated one is sampled at the cell centres as an :class:`ImposedField`.
     """
     _check(case)
     fluid = _fluid(case)
@@ -80,12 +87,18 @@ def channel_problem(case: CaseSpec) -> ChannelProblem:
         float(fluid.viscosity or 1.0),
         fluid.conductivity,
     )
-    _, by, bz = (float(value) for value in case.magnetic_field.value)
     geometry = case.geometry
     halves = (0.5 * geometry.width, 0.5 * geometry.height)
-    along = 0 if abs(by) >= abs(bz) else 1
+    # The layers follow the strongest transverse field, sampled on a uniform section.
+    peak = [
+        float(np.max(np.abs(component)))
+        for component in _sampled_field(
+            case, *(uniform_faces(n, -h, h) for n, h in zip((geometry.ny, geometry.nz), halves))
+        )[1:]
+    ]
+    along = 0 if peak[0] >= peak[1] else 1
     # Ha on the half-width along the field; the layers are a/Ha and a/sqrt(Ha) there.
-    hartmann = halves[along] * float(np.hypot(by, bz)) * np.sqrt(conductivity / (density * viscosity))
+    hartmann = halves[along] * float(np.hypot(*peak)) * np.sqrt(conductivity / (density * viscosity))
     layers = [np.inf, np.inf]
     if hartmann > 0.0:
         layers = [halves[along] / hartmann] * 2
@@ -96,13 +109,19 @@ def channel_problem(case: CaseSpec) -> ChannelProblem:
         for count, half, layer in zip((geometry.ny, geometry.nz), halves, layers, strict=True)
     ]
     insulating = BoundaryCondition(NEUMANN)
+    grid = Grid(uniform_faces(1, 0.0, 1.0), *faces)
+    field = _sampled_field(case, *faces)
+    if case.magnetic_field.kind == "constant":
+        field = tuple(float(component.flat[0]) for component in field)
+    else:
+        field = ImposedField(grid, tuple(component[None] for component in field))
     return ChannelProblem(
-        grid=Grid(uniform_faces(1, 0.0, 1.0), *faces),
+        grid=grid,
         conditions=(BoundaryCondition(PERIODIC), insulating, insulating),
         density=density,
         viscosity=viscosity,
         conductivity=conductivity,
-        magnetic_field=(0.0, by, bz),
+        magnetic_field=field,
         forcing=(1.0, 0.0, 0.0),
         dt=min(halves) ** 2 / viscosity,
         wall_conductance=_wall_conductance(case, conductivity),
@@ -303,6 +322,28 @@ def _fields(problem: ChannelProblem, solution):
     return fields, currents
 
 
+def _sampled_field(case: CaseSpec, y_faces: np.ndarray, z_faces: np.ndarray) -> tuple[np.ndarray, ...]:
+    """Return ``(B_x, B_y, B_z)`` of the case at the cell centres of a section, each ``(ny, nz)``."""
+    y, z = (0.5 * (faces[1:] + faces[:-1]) for faces in (y_faces, z_faces))
+    spec = case.magnetic_field
+    if spec.kind == "constant":
+        return tuple(np.full((y.size, z.size), float(value)) for value in spec.value)
+    if spec.kind == "analytic":
+        if spec.fn is None:
+            raise ValueError("an analytic magnetic field needs fn")
+        sampled = spec.fn(*jnp.meshgrid(jnp.asarray(y), jnp.asarray(z), indexing="ij"))
+    elif spec.kind == "tabulated":
+        if spec.table_path is None:
+            raise ValueError("a tabulated magnetic field needs table_path")
+        sampled = sample_tabulated_cross_section_field(
+            spec.table_path, y=y[:, None] + 0 * z, z=0 * y[:, None] + z
+        )
+    else:
+        raise ValueError(f"unsupported magnetic field kind {spec.kind!r}")
+    sampled = np.asarray(sampled, dtype=np.float64)
+    return tuple(np.broadcast_to(sampled[..., axis], (y.size, z.size)) for axis in range(3))
+
+
 def _faces(count: int, half: float, layer: float, cells_in_layer: int) -> np.ndarray:
     """Wall-resolving faces as in ``duct_problem``; fewer layer cells when the mesh is too coarse."""
     if layer < half:
@@ -332,10 +373,8 @@ def _check(case: CaseSpec) -> None:
         raise ValueError("case must select the fully developed inductionless solver")
     if case.geometry.kind not in {"rect_duct", "layered_duct"}:
         raise NotImplementedError(f"the staggered core does not solve geometry {case.geometry.kind!r}")
-    if field.kind != "constant" or field.value is None:
-        raise NotImplementedError("the fully developed route needs a constant imposed field")
-    if float(field.value[0]) != 0.0:
-        raise NotImplementedError("a fully developed duct takes no axial field component")
+    if field.kind == "constant" and field.value is None:
+        raise ValueError("a constant magnetic field needs a value")
     if field.ramp_duration > 0.0:
         raise ValueError("steady fields require an unramped magnetic field")
     for boundary in case.boundary_conditions:

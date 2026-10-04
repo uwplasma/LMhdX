@@ -1382,7 +1382,7 @@ def solve(
     ``CaseSpec``, through :func:`lmhdx.fully_developed.solve_fully_developed`,
     which reports it on the case's cross-section; each is compiled once per
     problem. A steady case the core does not represent (thick or mismatched
-    conducting walls, several fluids, a varying field) keeps the cell-centred
+    conducting walls, several fluids) keeps the cell-centred
     solve, :func:`solve_steady`. A transient ``CaseSpec`` runs its pseudo-time
     loop, :func:`solve_transient`. A duct with an inlet and an outlet is
     solved by :func:`lmhdx.axial.solve_open_duct`.
