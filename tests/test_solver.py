@@ -26,6 +26,7 @@ from lmhdx.specs import (
     GeometrySpec,
     MHDState,
     NumericalFailure,
+    RegionSpec,
 )
 
 
@@ -467,10 +468,10 @@ def test_common_solve_routes_cases_to_the_core_and_keeps_every_dispatch(monkeypa
     monkeypatch.setattr(cases_impl, "solve_transient", lambda model: transient_result)
     assert cases_impl.solve(case) is core_result
     # A case the core does not represent keeps the cell-centred solve.
-    assert cases_impl.solve(make_hartmann_case(ha=5.0, ny=7, nz=8)) is steady_result
+    two_fluids = replace(case, regions=(*case.regions, RegionSpec("second", "fluid", 1.0, 1.0, 1.0)))
+    assert cases_impl.solve(two_fluids) is steady_result
     assert cases_impl.solve(replace(case, solver=replace(case.solver, mode="transient"))) is core_transient
-    odd = make_hartmann_case(ha=5.0, ny=7, nz=8)
-    assert cases_impl.solve(replace(odd, solver=replace(odd.solver, mode="transient"))) is transient_result
+    assert cases_impl.solve(replace(two_fluids, solver=replace(case.solver, mode="transient"))) is transient_result
     with pytest.raises(TypeError, match="ChannelProblem, CaseSpec, or Q2DProblem"):
         cases_impl.solve(SimpleNamespace())
 

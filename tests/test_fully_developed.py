@@ -352,12 +352,37 @@ def test_what_the_core_does_not_model_is_refused():
         channel_problem(
             _with(shercliff, magnetic_field=MagneticFieldSpec("constant", (0.0, 5.0, 0.0), ramp_duration=1.0))
         )
-    with pytest.raises(NotImplementedError, match="even cell count"):
-        channel_problem(lmhdx.make_shercliff_case(ha=20.0, ny=15, nz=16))
+
+
+def test_an_odd_mesh_is_as_accurate_as_its_even_neighbours():
+    """An odd cell count keeps one geometric centre cell; measured against the spectral mean velocity.
+
+    Office, float64, Ha 20: 15 / 16 cells +10.9 % / +7.7 %, 31 / 32 +0.94 % / +0.89 %,
+    63 / 64 +0.45 % / +0.44 % (the cell-centred solver on 31 cells: +2.7 %).
+    """
+    exact = flow_rate(20.0, 48)
+    errors = {}
+    for ny, nz in ((31, 31), (32, 32), (31, 32)):
+        solution = lmhdx.solve(lmhdx.make_shercliff_case(ha=20.0, ny=ny, nz=nz))
+        assert solution.state.u.shape == (ny, nz) and solution.residual < 1e-8
+        errors[ny, nz] = (_mean_velocity(solution) - exact) / exact
+    assert 0.0 < errors[31, 31] < 0.0100 and 0.0 < errors[31, 32] < 0.0100
+    assert errors[31, 31] == pytest.approx(errors[32, 32], rel=0.1)
+    case = lmhdx.make_shercliff_case(ha=20.0, ny=11, nz=13)
+    assert core_applies(case)
+
+    def throughput(scale):
+        return jnp.mean(solve_fully_developed_fields(case, magnetic_field_scale=scale)[0])
+
+    gradient = jax.grad(throughput)(1.0)
+    step = 1e-4
+    difference = (float(throughput(1.0 + step)) - float(throughput(1.0 - step))) / (2 * step)
+    assert float(gradient) == pytest.approx(difference, rel=1e-6) and float(gradient) < 0.0
 
 
 def test_a_case_the_core_does_not_represent_keeps_the_cell_centred_solve():
     case = lmhdx.make_shercliff_case(ha=5.0, ny=7, nz=8)
+    case = _with(case, regions=(*case.regions, RegionSpec("second", "fluid", 1.0, 1.0, 1.0)))
     assert not core_applies(case)
     velocity = lmhdx.solve_fully_developed_fields(case)[0]
     reference = cell_centred_fields(case)[0]

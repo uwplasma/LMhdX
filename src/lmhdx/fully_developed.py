@@ -11,8 +11,8 @@ follow :func:`lmhdx.core3d.duct_problem`: the walls normal to the field are
 clustered to the Hartmann layer ``delta = sqrt(rho nu / sigma) / |B|``, the
 others to the side layer ``sqrt(a delta)``, with ``a`` the half-width along the
 field, six cells in each layer (``hartmann_layer_cells`` overrides) and the
-gentlest stretching that spans the duct. A 2 x 2 duct with unit properties
-gets exactly the faces of ``duct_problem(hartmann=Ha, cells=n)``.
+gentlest stretching that spans the duct; an odd count adds one centre cell.
+A 2 x 2 duct with unit properties gets exactly the faces of ``duct_problem(hartmann=Ha, cells=n)``.
 
 *Walls.* An insulating wall is the homogeneous Neumann closure. The conducting
 walls of a ``layered_duct`` follow ``geometry.wall_model``. ``"thin"`` makes
@@ -592,10 +592,7 @@ def _faces(count: int, half: float, layer: float, cells_in_layer: int) -> np.nda
                     count, -half, half, layer_thickness=layer, cells_in_layer=cells, max_ratio=None
                 )
             except ValueError:
-                if count % 2:
-                    raise NotImplementedError(
-                        "the staggered core needs an even cell count along each axis of a duct with a field"
-                    ) from None
+                pass
     return uniform_faces(count, -half, half)
 
 
