@@ -779,6 +779,68 @@ A preconditioner that wins here has to brake the core as the Hartmann layers do
 local rate; on the open axial direction that needs the field-line solve per axial
 station rather than in the axial eigenbasis, and is left open.
 
+#### Field lines per axial station (measured, not adopted)
+
+That route was built as a prototype (outside the package) and loses too.
+
+**What was built.** The axial velocity gets the field-line (induction) solve of
+the uniform duct, one set of lines per axial face:
+
+- each line runs along $y$ at that station's $B_y^2$ (the cross-section mean,
+  averaged onto the face);
+- $z$ is handled in its eigenbasis, as in the uniform solve;
+- the axial direction is local, so axial viscosity and the axial EMF average
+  are dropped from the lines;
+- all stations are factorized in one batch.
+
+$u_y$ and $u_z$ keep the varying-field damping rate.
+
+**Variants measured.**
+
+- The added global rate on the axial lines (factor 0.3 or 1).
+- The peak rate on $u_y$ and $u_z$.
+- The axial eigenbasis with one effective field: peak or mean $B_y^2$, with
+  the open axis's EMF average.
+- The station lines as the model of the Schur inner solve of the section above:
+  flexible CG around $k$ inner PCG steps on $\mathbb P M\mathbb P$. Here $M$ is
+  the exact inverse of the line solves, its round trip checked to $10^{-13}$.
+
+CG iterations on the ANL duct of #184 (one A4000, JAX 0.10.2, `main` f0cd543,
+cold single solves, tolerance rule of #150):
+
+| preconditioner | Ha 100 ($32^2$) | Ha 400 ($48^2$) | Ha 1600 ($96^2$) |
+|---|---|---|---|
+| today's (#188 global rate) | 244 (7.4 s) | 728 (15.8 s) | 2,283 (125 s) |
+| station lines, $u_y,u_z$ at the global rate | 496 (9.5 s) | 930 (19.4 s) | 3,178 (173 s) |
+| station lines + 0.3 × global rate | 357 | 900 | 3,169 (358 s) |
+| station lines + 1 × global rate | 314 | 956 | |
+| station lines, $u_y,u_z$ at the peak rate | | 17,557 | |
+| axial eigenbasis, one field (peak / mean) | 1,747 / 1,374 | | |
+| Schur inner solve on the station lines, $k$ 4 / 12 | 281 / 350 | 1,029 ($k$ 4, 116 s) | |
+
+What the table shows:
+
+- **No variant beats today's preconditioner at any Hartmann number.**
+- **The count still grows**: $Ha^{0.89}$ from Ha 400 to 1600 for the station
+  lines, against $Ha^{0.82}$ today.
+- **Solving the line model more exactly makes CG worse** ($k$ 4 → 12: 281 →
+  350), as with the local rate above. The line model is spectrally further from
+  the operator than the single global rate is.
+- **The line model is the wrong model for these modes.** It brakes the axial
+  odd-even modes, which the true operator leaves unbraked, because the axial EMF
+  average is not in the per-station lines. Where the field varies, the slow modes
+  are not invariant along $x$, which is what makes the lines exact in a
+  uniform field. The axial eigenbasis keeps the average but over-brakes the
+  weak-field region.
+
+**Runs not made.** Ha 3200, $10^4$ and $2	imes10^4$ were not run. The cheapest
+variant took 2.9× the wall time at Ha 1600, and its first Ha 3200 attempt ran
+out of memory on the shared card.
+
+Nothing is adopted. 2b.4's exit gate (iterations within 3× of the uniform
+counts) is restated as **not met by any preconditioner measured**. Today's
+global rate stays.
+
 ## Derivative policy
 
 The derivative algorithm is part of each numerical method. Converged linear or
