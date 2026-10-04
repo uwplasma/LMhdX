@@ -771,6 +771,8 @@ def test_a_new_field_on_the_same_mesh_reuses_the_compiled_solve(monkeypatch):
     import lmhdx._programs as _programs
     import lmhdx.steady as steady
 
+    # In-process sharing only: what earlier processes stored in the cache directory is not read.
+    monkeypatch.setattr(_programs, "_store_path", lambda key, suffix: None)
     monkeypatch.setattr(steady, "_SHAPES", {})
     base = _duct(24, 20.0, conductance=0.027)
     for hartmann in (20.0, 30.0, 40.0):
@@ -799,8 +801,11 @@ def test_a_new_mesh_of_a_known_shape_is_solved_without_a_trace(monkeypatch, cond
     Each Hartmann number clusters its own mesh, so the grid metric, the field and every
     factorization differ; they are built on the host and passed to the shape's program.
     """
+    import lmhdx._programs as _programs
     import lmhdx.steady as steady
 
+    # In-process sharing only: what earlier processes stored in the cache directory is not read.
+    monkeypatch.setattr(_programs, "_store_path", lambda key, suffix: None)
     monkeypatch.setattr(steady, "_SHAPES", {})
     steady._program.cache_clear()
     traces = []
@@ -856,7 +861,13 @@ def test_a_known_shape_is_solved_in_a_new_process_without_a_trace(tmp_path):
     import subprocess
     import sys
 
-    environment = {**os.environ, "LMHDX_COMPILATION_CACHE": str(tmp_path), "JAX_PLATFORMS": "cpu"}
+    environment = {**os.environ, "JAX_PLATFORMS": "cpu"}
+    # Either variable may name the cache; a runner that sets JAX's own would otherwise win.
+    environment.update(
+        LMHDX_COMPILATION_CACHE=str(tmp_path),
+        JAX_COMPILATION_CACHE_DIR=str(tmp_path),
+        JAX_ENABLE_COMPILATION_CACHE="true",
+    )
 
     def process(*hartmanns):
         completed = subprocess.run(
