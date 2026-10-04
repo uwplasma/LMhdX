@@ -460,14 +460,17 @@ def test_public_solvers_reject_unknown_solver_kind(solver, mode):
 
 def test_common_solve_routes_cases_to_the_core_and_keeps_every_dispatch(monkeypatch: pytest.MonkeyPatch):
     case = make_hartmann_case(ha=5.0, ny=8, nz=8)
-    core_result, steady_result, transient_result = object(), object(), object()
+    core_result, steady_result, transient_result, core_transient = object(), object(), object(), object()
     monkeypatch.setattr("lmhdx.fully_developed.solve_fully_developed", lambda model: core_result)
+    monkeypatch.setattr("lmhdx.fully_developed.solve_fully_developed_transient", lambda model: core_transient)
     monkeypatch.setattr(cases_impl, "solve_steady", lambda model: steady_result)
     monkeypatch.setattr(cases_impl, "solve_transient", lambda model: transient_result)
     assert cases_impl.solve(case) is core_result
     # A case the core does not represent keeps the cell-centred solve.
     assert cases_impl.solve(make_hartmann_case(ha=5.0, ny=7, nz=8)) is steady_result
-    assert cases_impl.solve(replace(case, solver=replace(case.solver, mode="transient"))) is transient_result
+    assert cases_impl.solve(replace(case, solver=replace(case.solver, mode="transient"))) is core_transient
+    odd = make_hartmann_case(ha=5.0, ny=7, nz=8)
+    assert cases_impl.solve(replace(odd, solver=replace(odd.solver, mode="transient"))) is transient_result
     with pytest.raises(TypeError, match="ChannelProblem, CaseSpec, or Q2DProblem"):
         cases_impl.solve(SimpleNamespace())
 

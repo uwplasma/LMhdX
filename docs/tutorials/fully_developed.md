@@ -37,9 +37,11 @@ the flow rate is within 1 % of the spectral reference from Ha 20 to 1000.
 `result.residual` is the relative steady residual `||R(u)|| / ||R(0)||`,
 certified to 1e-9; a solve that fails raises. The case's pseudo-time controls
 (time step, relaxation, potential and coupling iterations) do not enter.
-`lmhdx.solve` refuses a `"transient"` case: the pseudo-time loop of the
-cell-centred solver is `lmhdx.cases.solve_transient`, and a time history on the
-core is `lmhdx.advance` on `lmhdx.fully_developed.channel_problem(case)`.
+A `"transient"` case runs on the core too
+(`lmhdx.fully_developed.solve_fully_developed_transient`): implicit Euler steps
+of `time_stepper.dt` to `t_final`, each one CG solve with the Lorentz force
+inside, so it is first order in time at any `dt` and settles on the steady
+state; `output.history_stride` sets the recorded steps.
 
 Use `dataclasses.replace` to change a visible part of a frozen case:
 

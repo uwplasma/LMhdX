@@ -45,20 +45,22 @@ with float64 enabled is solved in float64 and returned in float32.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import solvax
 
 from ._programs import host_array
 from .bc import NEUMANN, PERIODIC, BoundaryCondition
-from .core3d import ChannelProblem, ImposedField
+from .core3d import ChannelProblem, ImposedField, face_currents, zero_velocity
 from .em import lorentz_force, wall_insulated
 from .grid import Grid, uniform_faces, wall_resolving_faces
 from .mesh import StructuredMesh, generate_rect_duct_mesh_from_faces, sample_tabulated_cross_section_field
 from .ops import divergence
-from .specs import CaseSpec, Diagnostics, MHDState, Solution, require_finite
+from .specs import CaseSpec, Diagnostics, MHDState, Solution, SolverStepRecord, require_finite
 from .steady import shared_or_embedded, solve_steady_state
 
 __all__ = [
@@ -67,11 +69,13 @@ __all__ = [
     "core_applies",
     "solve_fully_developed",
     "solve_fully_developed_fields",
+    "solve_fully_developed_transient",
 ]
 
 # Relative CG tolerance by the precision JAX computes in: float32 floors near 1e-6.
 _TOLERANCE = {"float64": 1.0e-9, "float32": 1.0e-5}
 _CELLS_IN_LAYER = 6
+_MAX_CG = 12000
 _SIDES = {"left": (1, 0), "right": (1, 1), "bottom": (2, 0), "top": (2, 1)}
 _PAIRS = {"left_right": ("left", "right"), "top_bottom": ("bottom", "top")}
 _IGNORED = {"no_slip", "inlet_velocity", "inlet_flow_rate", "outlet_pressure"}
@@ -213,22 +217,8 @@ def solve_fully_developed(case: CaseSpec, *, logger=None, start_time: float = 0.
     u, phi, jy, jz, lorentz = (value.astype(case.dtype) for value in fields)
     require_finite("fully developed solve", velocity=u, potential=phi, residual=evidence["residual"])
     areas = jnp.asarray(mesh.dy, dtype=u.dtype)[:, None] * jnp.asarray(mesh.dz, dtype=u.dtype)[None, :]
-    flow_rate = jnp.sum(areas * u)
-    area = jnp.sum(areas)
-    record = {
-        "residual_history": evidence["residual"],
-        "courant_like": 0.0,
-        "ohmic_power": jnp.sum(areas * (jy**2 + jz**2)) / max(problem.conductivity, 1e-300),
-        "u_max_history": jnp.max(jnp.abs(u)),
-        "mean_velocity_history": flow_rate / area,
-        "applied_forcing_history": drive,
-        "current_max_history": jnp.max(jnp.hypot(jy, jz)),
-        "lorentz_max_history": jnp.max(jnp.abs(lorentz)),
-        "volumetric_flow_rate_history": flow_rate,
-        "mean_current_magnitude_history": jnp.sum(areas * jnp.hypot(jy, jz)) / area,
-        "lorentz_power_history": jnp.sum(areas * u * lorentz),
-        "div_current_max_history": evidence["div_current_max"],
-    }
+    record = _summary(problem, areas, (u, jy, jz, lorentz), drive)
+    record.update(residual_history=evidence["residual"], div_current_max_history=evidence["div_current_max"])
     values = {name: float(value) for name, value in jax.device_get(record).items()}
     diagnostics = Diagnostics(
         time_history=jnp.asarray([start_time]),
@@ -239,6 +229,249 @@ def solve_fully_developed(case: CaseSpec, *, logger=None, start_time: float = 0.
     if logger is not None:
         logger.emit_footer(solution)
     return solution
+
+
+def solve_fully_developed_transient(
+    case: CaseSpec,
+    logger=None,
+    *,
+    initial_state: MHDState | None = None,
+    initial_diagnostics: Diagnostics | None = None,
+    append_diagnostics: bool = False,
+    restart_info=None,
+) -> Solution:
+    """Run a transient fully developed case on the core, by implicit Euler steps.
+
+    Each step is ``(u - u_n)/dt = A u + b`` for the core's Stokes-limit operator
+    ``A`` and drive ``b``, solved by the steady solve's CG with a mass term and its
+    preconditioner factorized at the step (see :func:`_transient_programs`). The
+    steps run at ``time_stepper.dt`` from ``initial_state`` (or rest plus
+    ``initial_velocity``) to ``t_final``, at most ``max_steps``, compiled as one
+    scan between kept records. A ramped field scales the Lorentz force step by
+    step. With an ``inlet_flow_rate`` and zero forcing each step meets the flow
+    rate exactly. The other pseudo-time controls of the cell-centred loop
+    (relaxation, update limit, coupling and potential iterations) do not enter.
+    ``output.history_stride`` keeps every ``stride``-th step and the last (``0``,
+    the last alone); ``residual_history`` is the step's largest velocity change,
+    ``linear_iterations_history`` its CG iterations, and ``status`` is
+    ``"completed"``. A step whose CG fails gives nonfinite fields, which raise.
+    """
+    stride = case.output.history_stride
+    if stride < 0:
+        raise ValueError("history_stride must be non-negative")
+    controls = case.time_stepper
+    if controls.dt <= 0.0:
+        raise ValueError("Time-step size dt must be positive")
+    if case.solver.time_scheme != "implicit_euler":
+        raise NotImplementedError("the transient core run is first order, as implicit_euler")
+    problem = dataclasses.replace(channel_problem(case), dt=float(controls.dt), forcing=(0.0, 0.0, 0.0))
+    mesh = case_mesh(case)
+    start = 0.0 if initial_state is None else float(initial_state.time)
+    remaining = max(0.0, float(controls.t_final) - start) / float(controls.dt)
+    steps = min(
+        int(controls.max_steps), int(np.floor(remaining + 16.0 * np.finfo(float).eps * max(1.0, remaining)))
+    )
+    steps = max(steps, 0)
+    target = _target_flow_rate(case)
+    velocity = zero_velocity(problem)
+    profile = case.initial_velocity if initial_state is None else jnp.asarray(initial_state.u)
+    axial = velocity[0].data + jnp.asarray(profile, dtype=velocity[0].data.dtype)
+    velocity = (velocity[0].replace_data(axial), *velocity[1:])
+    if logger is not None:
+        mean = None if target is None else target / (case.geometry.width * case.geometry.height)
+        logger.emit_header(
+            case=case,
+            mesh=mesh,
+            mode="transient",
+            potential_solver="staggered core / fast diagonalization",
+            target_mean_velocity=mean,
+            reference_mean_velocity=mean,
+            restart=restart_info,
+        )
+    times = start + controls.dt * np.arange(1, steps + 1)
+    scales = np.asarray([_ramp(case.magnetic_field, time) for time in times], dtype=float)
+    kept = [index for index in range(steps) if stride and (index % stride == 0 or index == steps - 1)]
+    kept = kept or ([steps - 1] if steps else [])
+    run, report = _transient_programs(problem, target is not None)
+    drive = jnp.asarray(case.forcing if target is None else target, dtype=jnp.result_type(float))
+    records, done = [], 0
+    for index in kept:
+        velocity, change, forcing, iterations = run(velocity, jnp.asarray(scales[done : index + 1]), drive)
+        done = index + 1
+        record = report(velocity, jnp.asarray(scales[index]), forcing, change, iterations)
+        records.append(record)
+        if logger is not None:
+            values = {name: float(value) for name, value in jax.device_get(record[1]).items()}
+            logger.emit_step(_step_record(done, float(times[index]), values))
+    if records:
+        fields = tuple(value.astype(case.dtype) for value in records[-1][0])
+        histories = {name: np.asarray([float(r[1][name]) for r in records]) for name in records[0][1]}
+    else:
+        fields, histories = _initial_fields(case, initial_state), {}
+    u, phi, jy, jz, lorentz = fields
+    histories["time_history"] = times[kept] if steps else np.zeros(0)
+    residual = (
+        float(histories["residual_history"][-1])
+        if records
+        else float(getattr(initial_state, "residual", 0.0))
+    )
+    require_finite("transient core run", velocity=u, potential=phi, residual=residual)
+    diagnostics = _transient_diagnostics(
+        histories, initial_diagnostics if stride else None, append_diagnostics
+    )
+    state = MHDState(u, phi, jy, jz, lorentz, float(start + steps * controls.dt), residual)
+    solution = Solution(mesh, state, diagnostics, case.name, converged=None, status="completed", steps=steps)
+    if logger is not None:
+        logger.emit_footer(solution)
+    return solution
+
+
+def _initial_fields(case: CaseSpec, state: MHDState | None) -> tuple[jax.Array, ...]:
+    """The fields a run with no steps reports: the restart's, or rest plus the initial velocity."""
+    if state is not None:
+        return tuple(
+            jnp.asarray(value, case.dtype)
+            for value in (state.u, state.phi, state.jy, state.jz, state.lorentz_x)
+        )
+    zeros = jnp.zeros((case.geometry.ny, case.geometry.nz), case.dtype)
+    return (zeros + case.initial_velocity, zeros, zeros, zeros, zeros)
+
+
+def _ramp(spec, time: float) -> float:
+    """The clipped affine startup ramp of the field, ``(t - t_start) / (duration + 1e-6)``."""
+    if spec.ramp_duration <= 0.0:
+        return 1.0
+    return float(np.clip((time - spec.ramp_start) / (spec.ramp_duration + 1.0e-6), 0.0, 1.0))
+
+
+@functools.lru_cache(maxsize=16)
+def _transient_programs(problem: ChannelProblem, fixed_flow: bool):
+    """Compile the steps between two kept records, and the record of a state, for one problem.
+
+    A step is implicit Euler, ``(u - u_n)/dt = A u + b``: with ``-A`` symmetric
+    positive definite on the divergence-free fields, ``(I/dt - A) u = u_n/dt + b``
+    is the steady CG system of :mod:`lmhdx.steady` plus a mass term, and the
+    steady preconditioner factorized at the time step (one projection step) is
+    that system's own approximate inverse. A fixed flow rate adds the solve of a
+    unit drive from rest and the multiple of it that meets the rate.
+    """
+    from .steady import _face_weights, _preconditioner, _projection_solves_at, _rest_residual, steady_residual
+
+    dt = float(problem.dt)
+    factorization = problem.factorization()
+    potential_factorization = problem.potential_factorization()
+    weights = _face_weights(problem)
+    precond = _preconditioner(problem, factorization, _projection_solves_at(problem, dt), dt)
+    unit = _rest_residual(problem, factorization, (1.0, 0.0, 0.0))
+    tolerance = _TOLERANCE[jnp.result_type(float).name]
+    dy, dz = (np.asarray(widths) for widths in problem.grid.widths[1:])
+    areas = jnp.asarray(dy[:, None] * dz[None, :])
+
+    def implicit(previous, scale, drive):
+        def matvec(y):
+            velocity = jax.tree.map(jnp.divide, y, weights)
+            applied = steady_residual(
+                velocity, problem, factorization, forcing=(0.0, 0.0, 0.0), field_scale=scale
+            )
+            return jax.tree.map(lambda u, a: u / dt - a, velocity, applied)
+
+        rhs = jax.tree.map(lambda u, b: u / dt + drive * b, previous, unit)
+        result = solvax.pcg(
+            matvec,
+            rhs,
+            x0=jax.tree.map(jnp.multiply, previous, weights),
+            precond=lambda r: jax.tree.map(jnp.multiply, precond(r), weights),
+            rtol=tolerance,
+            max_steps=_MAX_CG,
+        )
+        failed = ~(result.converged & jnp.isfinite(result.residual_norm))
+        velocity = jax.tree.map(lambda y, w: jnp.where(failed, jnp.nan, y / w), result.x, weights)
+        return velocity, result.iterations
+
+    @jax.jit
+    def run(velocity, scales, drive):
+        def single(state, scale):
+            if fixed_flow:
+                free, iterations = implicit(state, scale, 0.0)
+                response, more = implicit(jax.tree.map(jnp.zeros_like, state), scale, 1.0)
+                forcing = (drive - jnp.sum(areas * free[0].data[0])) / jnp.sum(areas * response[0].data[0])
+                updated = jax.tree.map(lambda a, b: a + forcing * b, free, response)
+                iterations = iterations + more
+            else:
+                updated, iterations = implicit(state, scale, drive)
+                forcing = drive
+            change = jnp.max(jnp.abs(updated[0].data - state[0].data))
+            return updated, (change, forcing, iterations)
+
+        final, (changes, forcings, iterations) = jax.lax.scan(single, velocity, scales)
+        return final, changes[-1], forcings[-1], iterations[-1]
+
+    @jax.jit
+    def report(velocity, scale, forcing, change, iterations):
+        potential, currents, field = face_currents(velocity, problem, potential_factorization, scale)
+        fields, _ = _fields(problem, velocity, potential, currents, field)
+        values = _summary(problem, areas, (fields[0], *fields[2:]), forcing)
+        values.update(
+            residual_history=change,
+            courant_like=jnp.max(jnp.abs(fields[0])) * problem.dt / min(float(dy.min()), float(dz.min())),
+            div_current_max_history=jnp.max(jnp.abs(divergence(currents).data)),
+            linear_iterations_history=iterations,
+        )
+        return fields, values
+
+    return run, report
+
+
+def _transient_diagnostics(histories: dict, initial: Diagnostics | None, append: bool) -> Diagnostics:
+    def history(name):
+        values = jnp.asarray(histories.get(name, np.zeros(0)), dtype=float)
+        if initial is None or not append:
+            return values
+        return jnp.concatenate([jnp.asarray(getattr(initial, name), dtype=float), values])
+
+    names = [entry.name for entry in dataclasses.fields(Diagnostics)]
+    return Diagnostics(**{name: history(name) for name in names})
+
+
+def _summary(problem: ChannelProblem, areas, fields, forcing) -> dict:
+    """The section integrals and peaks a record reports, from ``(u, jy, jz, lorentz)``."""
+    u, jy, jz, lorentz = fields
+    flow_rate, area, magnitude = jnp.sum(areas * u), jnp.sum(areas), jnp.hypot(jy, jz)
+    return {
+        "courant_like": jnp.zeros(()),
+        "ohmic_power": jnp.sum(areas * (jy**2 + jz**2)) / max(problem.conductivity, 1e-300),
+        "u_max_history": jnp.max(jnp.abs(u)),
+        "mean_velocity_history": flow_rate / area,
+        "applied_forcing_history": forcing,
+        "current_max_history": jnp.max(magnitude),
+        "lorentz_max_history": jnp.max(jnp.abs(lorentz)),
+        "volumetric_flow_rate_history": flow_rate,
+        "mean_current_magnitude_history": jnp.sum(areas * magnitude) / area,
+        "lorentz_power_history": jnp.sum(areas * u * lorentz),
+    }
+
+
+# SolverStepRecord fields read from a transient record; the rest are the cell-centred loop's and zero.
+_STEP_FIELDS = {
+    "u_max": "u_max_history",
+    "mean_velocity": "mean_velocity_history",
+    "current_max": "current_max_history",
+    "lorentz_max": "lorentz_max_history",
+    "residual": "residual_history",
+    "linear_iterations": "linear_iterations_history",
+    "applied_forcing": "applied_forcing_history",
+    "courant_like": "courant_like",
+    "ohmic_power": "ohmic_power",
+    "volumetric_flow_rate": "volumetric_flow_rate_history",
+    "div_current_max": "div_current_max_history",
+}
+
+
+def _step_record(index: int, time: float, values: dict) -> SolverStepRecord:
+    names = [entry.name for entry in dataclasses.fields(SolverStepRecord)][2:]
+    return SolverStepRecord(
+        index, time, **{name: values.get(_STEP_FIELDS.get(name, ""), 0.0) for name in names}
+    )
 
 
 def _driven(problem: ChannelProblem, fixed_flow: bool, drive, field_scale):
@@ -298,7 +531,9 @@ def _compiled(problem: ChannelProblem):
         velocity = solution.velocity
         dy, dz = (host_array(problem.grid, _widths, axis) for axis in (1, 2))
         weights = dy[:, None] * dz[None, :]
-        fields, currents = _fields(problem, solution)
+        fields, currents = _fields(
+            problem, solution.velocity, solution.potential, solution.currents, solution.magnetic_field
+        )
         # The solve's own residuals, at rest and at the root: evaluating them again doubled the program.
         scale = solution.initial_residual_norm
         evidence = {
@@ -314,9 +549,7 @@ def _widths(grid: Grid, axis: int) -> np.ndarray:
     return grid.widths[axis]
 
 
-def _fields(problem: ChannelProblem, solution):
-    velocity, potential = solution.velocity, solution.potential
-    currents, field = solution.currents, solution.magnetic_field
+def _fields(problem: ChannelProblem, velocity, potential, currents, field):
     scalar = problem.scalar_conditions
     closed = tuple(wall_insulated(current, axis, scalar[axis]) for axis, current in enumerate(currents))
     force = lorentz_force(closed, field, scalar)
@@ -380,7 +613,7 @@ def _check(case: CaseSpec) -> None:
         raise NotImplementedError(f"the staggered core does not solve geometry {case.geometry.kind!r}")
     if field.kind == "constant" and field.value is None:
         raise ValueError("a constant magnetic field needs a value")
-    if field.ramp_duration > 0.0:
+    if field.ramp_duration > 0.0 and case.solver.mode != "transient":
         raise ValueError("steady fields require an unramped magnetic field")
     for boundary in case.boundary_conditions:
         if boundary.kind not in _IGNORED | {"insulating", "conducting_wall"}:
