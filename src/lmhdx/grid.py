@@ -308,7 +308,8 @@ def wall_resolving_faces(
     ``max_ratio=None`` fits the gentlest ratio that still spans the domain. The
     widths are rescaled to fill the half-width either way, so a ratio larger
     than the cell count needs buys no resolution -- it buys an operator whose
-    entries span orders of magnitude for nothing.
+    entries span orders of magnitude for nothing. An odd ``count`` puts one
+    centre cell, the next width of the progression, on the midplane.
     """
     if layer_thickness <= 0.0:
         raise ValueError("layer_thickness must be positive")
@@ -325,14 +326,13 @@ def wall_resolving_faces(
         )
     if max_ratio < 1.0:
         raise ValueError("max_ratio must be at least one")
-    if count % 2:
-        raise ValueError("count must be even when clustering at both ends")
     half_cells, half_width = count // 2, 0.5 * (upper - lower)
     if layer_thickness > half_width:
         raise ValueError("layer_thickness must not exceed the half-width")
     first = layer_thickness / _geometric_sum(cells_in_layer, max_ratio)
-    widths = first * max_ratio ** np.arange(half_cells)
-    reach = float(np.sum(widths))
+    # An odd count keeps one centre cell, the next term of the progression, split across the midplane.
+    widths = first * max_ratio ** np.arange(half_cells + count % 2)
+    reach = float(np.sum(widths[:half_cells]) + 0.5 * np.sum(widths[half_cells:]))
     if reach < half_width:
         raise ValueError(
             f"{count} cells reach {reach:.4g} of the required {half_width:.4g}; "
@@ -341,18 +341,17 @@ def wall_resolving_faces(
     # Scaling down to fill the half-width only thins the inner cells further,
     # so the layer request is still satisfied after this rescaling.
     widths *= half_width / reach
-    half = np.concatenate([[0.0], np.cumsum(widths)])
-    return np.concatenate([lower + half[:-1], upper - half[::-1]])
+    half = np.concatenate([[0.0], np.cumsum(widths[:half_cells])])
+    return np.concatenate([lower + half[: len(half) - 1 + count % 2], upper - half[::-1]])
 
 
 def _fitted_ratio(count: int, half_width: float, layer_thickness: float, cells_in_layer: int) -> float:
     """Return the smallest growth ratio whose widths still reach ``half_width``."""
-    if count % 2:
-        raise ValueError("count must be even when clustering at both ends")
 
     def reaches(ratio: float) -> bool:
         first = layer_thickness / _geometric_sum(cells_in_layer, ratio)
-        return float(np.sum(first * ratio ** np.arange(count // 2))) >= half_width
+        terms = first * ratio ** np.arange(count // 2 + count % 2)
+        return float(np.sum(terms[: count // 2]) + 0.5 * np.sum(terms[count // 2 :])) >= half_width
 
     low, high = 1.0, 4.0
     if not reaches(high):
