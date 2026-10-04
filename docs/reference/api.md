@@ -54,7 +54,7 @@ wanted. The remaining result types expose `converged`, `status`, `steps`,
 `residual`, `fields`, and `diagnostics`; specialized solve functions provide
 restart, progress, logging, and timing hooks in their owning modules.
 
-## Case schema
+## Cases: schema, builders, meshes, units and walls
 
 ```{eval-rst}
 .. automodule:: lmhdx.cases
@@ -83,24 +83,10 @@ restart, progress, logging, and timing hooks in their owning modules.
    :members:
 ```
 
-## Imposed fields
-
-```{eval-rst}
-.. automodule:: lmhdx.cases
-   :members:
-```
-
 ## Fully developed cases on the staggered core
 
 ```{eval-rst}
 .. automodule:: lmhdx.fully_developed
-   :members:
-```
-
-## Case builders
-
-```{eval-rst}
-.. automodule:: lmhdx.cases
    :members:
 ```
 
@@ -115,12 +101,5 @@ restart, progress, logging, and timing hooks in their owning modules.
 
 ```{eval-rst}
 .. automodule:: lmhdx.validation
-   :members:
-```
-
-## Units and walls
-
-```{eval-rst}
-.. automodule:: lmhdx.cases
    :members:
 ```
