@@ -11,7 +11,7 @@ from pathlib import Path
 import jax.numpy as jnp
 
 from .cases import make_hartmann_case, make_hunt_case, make_shercliff_case, solve_steady, solve_transient
-from .fully_developed import case_mesh, core_applies, solve_fully_developed
+from .fully_developed import case_mesh, core_applies, solve_fully_developed, solve_fully_developed_transient
 from .io import (
     _portable_path,
     load_restart_bundle,
@@ -62,6 +62,15 @@ def _solve_case_with_optional_logger(
     append_diagnostics: bool = False,
     restart_info: RestartLogInfo | None = None,
 ):
+    if solve_mode == "transient" and isinstance(case, CaseSpec) and core_applies(case):
+        return solve_fully_developed_transient(
+            case,
+            logger=logger,
+            initial_state=initial_state,
+            initial_diagnostics=initial_diagnostics,
+            append_diagnostics=append_diagnostics,
+            restart_info=restart_info,
+        )
     if solve_mode == "transient":
         try:
             return solve_transient(
@@ -174,9 +183,7 @@ def _run_config(config: RunConfig) -> dict[str, object]:
         restart_bundle = load_restart_bundle(config.restart.path)
         validate_restart_bundle(
             restart_bundle,
-            mesh=case_mesh(case)
-            if case.solver.mode != "transient" and core_applies(case)
-            else _build_mesh(case),
+            mesh=case_mesh(case) if core_applies(case) else _build_mesh(case),
             geometry_kind=case.geometry.kind,
             case_name=case.name,
         )

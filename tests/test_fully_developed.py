@@ -18,6 +18,7 @@ from lmhdx.fully_developed import (
     core_applies,
     solve_fully_developed,
     solve_fully_developed_fields,
+    solve_fully_developed_transient,
 )
 from lmhdx.mesh import write_tabulated_field_npz
 from lmhdx.specs import BoundaryCondition, MagneticFieldSpec, RegionSpec
@@ -397,3 +398,75 @@ def test_a_sweep_inside_a_trace_runs_the_shape_program():
             return jnp.mean(lmhdx.solve_fully_developed_fields(case, forcing=drive)[0])
 
         assert float(jax.jit(objective)(2.0)) == pytest.approx(float(objective(2.0)), rel=1e-12)
+
+
+def _transient(case, dt, t_final, stride=0, **changes):
+    return _with(
+        case,
+        solver=dataclasses.replace(case.solver, mode="transient"),
+        time_stepper=dataclasses.replace(case.time_stepper, dt=dt, t_final=t_final, max_steps=10**6),
+        output=dataclasses.replace(case.output, history_stride=stride),
+        **changes,
+    )
+
+
+def _startup_mean(time, terms=200):
+    """Mean velocity of the unit-forced square duct started from rest: the eigenfunction series."""
+    odd = np.arange(1, 2 * terms, 2)
+    m, n = np.meshgrid(odd, odd, indexing="ij")
+    rate = np.pi**2 / 4 * (m**2 + n**2)
+    return float(np.sum(64 / (np.pi**4 * m**2 * n**2 * rate) * (1 - np.exp(-rate * time))))
+
+
+@pytest.mark.parametrize("hartmann", [1e-9, 20.0])
+def test_a_transient_case_runs_on_the_core_at_first_order_in_time(hartmann):
+    """Implicit Euler, the Lorentz force inside the CG solve: first order whatever ``dt sigma B^2 / rho``.
+
+    Office, float64. Started from rest without a field, 64² at t = 0.5: dt 0.01/0.005/0.0025 give
+    -0.44/-0.17/-0.04 % against the eigenfunction series. Ha 20 on 32², t = 0.1 (dt sigma B^2 = 0.8):
+    dt 0.002/0.001 give 0.034498/0.034597, the cell-centred loop 0.034937 at dt 0.002 on its own mesh;
+    Ha 100, t = 0.02: 0.0080035/0.0080156 against 0.0079559. 200 steps on 32² at Ha 20/100 take
+    6.4-6.9 s cold and 0.35-0.54 s warm on the core, 98-102 s in the cell-centred loop.
+    """
+    duct = lmhdx.make_shercliff_case(ha=hartmann, ny=16, nz=16)
+    means = []
+    for dt in (0.02, 0.01, 0.005):
+        solution = lmhdx.solve(_transient(duct, dt, 0.2))
+        assert solution.status == "completed" and solution.steps == round(0.2 / dt)
+        means.append(_mean_velocity(solution))
+    assert 1.7 < (means[1] - means[0]) / (means[2] - means[1]) < 2.3
+    if hartmann < 1.0:
+        assert means[2] == pytest.approx(_startup_mean(0.2), rel=0.01)
+
+
+def test_a_transient_run_restarts_holds_its_flow_rate_and_settles_on_the_steady_state():
+    case = _transient(_case(10.0, 0.0, 12), 0.05, 1.0, stride=4)
+    straight = solve_fully_developed_transient(case)
+    assert straight.diagnostics.time_history.shape == (6,) and straight.state.time == pytest.approx(1.0)
+    half = solve_fully_developed_transient(
+        _with(case, time_stepper=dataclasses.replace(case.time_stepper, t_final=0.5))
+    )
+    resumed = solve_fully_developed_transient(case, initial_state=half.state)
+    np.testing.assert_allclose(resumed.state.u, straight.state.u, rtol=1e-10, atol=1e-14)
+    settled = solve_fully_developed_transient(
+        _with(case, time_stepper=dataclasses.replace(case.time_stepper, t_final=6.0))
+    )
+    assert _mean_velocity(settled) == pytest.approx(
+        _mean_velocity(lmhdx.solve(_case(10.0, 0.0, 12))), rel=1e-4
+    )
+    fixed = _transient(
+        _case(10.0, 0.0, 12),
+        0.05,
+        0.5,
+        stride=2,
+        forcing=0.0,
+        boundary_conditions=(BoundaryCondition("in", "inlet_flow_rate", 0.1),),
+    )
+    rates = np.asarray(solve_fully_developed_transient(fixed).diagnostics.volumetric_flow_rate_history)
+    np.testing.assert_allclose(rates, 0.1, rtol=1e-12)
+    ramped = _with(
+        case,
+        magnetic_field=MagneticFieldSpec("constant", (0.0, 10.0, 0.0), ramp_start=1.0, ramp_duration=1.0),
+    )
+    ramped_mean = _mean_velocity(solve_fully_developed_transient(ramped))
+    assert ramped_mean > _mean_velocity(straight)
