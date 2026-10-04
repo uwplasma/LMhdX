@@ -24,8 +24,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lmhdx.bc import NEUMANN, BoundaryCondition
-from lmhdx.grid import CENTER, Field, Grid, uniform_faces
+from lmhdx.grid import CENTER, NEUMANN, BoundaryCondition, Field, Grid, uniform_faces
 from lmhdx.ops import cell_inner_product, divergence, face_gradient, face_inner_product
 from lmhdx.poisson import fast_diagonal_poisson
 

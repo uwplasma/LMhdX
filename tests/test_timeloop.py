@@ -8,12 +8,18 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lmhdx import core3d, timeloop
-from lmhdx.bc import NEUMANN, PERIODIC, BoundaryCondition
-from lmhdx.core3d import ChannelProblem, step, zero_velocity
-from lmhdx.grid import Grid, uniform_faces
+from lmhdx import core3d
+from lmhdx.core3d import (
+    ChannelProblem,
+    advance,
+    energy_budget,
+    kinetic_energy,
+    step,
+    trajectory_diagnostics,
+    zero_velocity,
+)
+from lmhdx.grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces
 from lmhdx.ops import divergence
-from lmhdx.timeloop import advance, energy_budget, kinetic_energy, trajectory_diagnostics
 
 pytestmark = pytest.mark.unit
 
@@ -70,7 +76,7 @@ def test_the_end_state_carries_the_final_pressure_and_potential():
 
 def test_the_time_loop_holds_no_host_synchronisation():
     """A single `float(...)` inside the loop would serialise the device queue."""
-    source = inspect.getsource(timeloop) + inspect.getsource(core3d)
+    source = inspect.getsource(core3d)
     for pattern in (r"\bfloat\(\s*[a-z_]+\.data", r"\bbool\(", r"device_get", r"\.item\(\)"):
         assert not re.search(pattern, source), pattern
 

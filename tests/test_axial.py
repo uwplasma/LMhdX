@@ -17,9 +17,8 @@ from lmhdx.axial import (
     station_flow_rates,
     station_pressure,
 )
-from lmhdx.bc import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, pad
 from lmhdx.core3d import ChannelProblem, velocity_offset, zero_velocity
-from lmhdx.grid import Grid, uniform_faces
+from lmhdx.grid import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Grid, pad, uniform_faces
 from lmhdx.poisson import fast_diagonal_helmholtz, fast_diagonal_poisson
 from lmhdx.steady import _face_weights, _orthogonal_projection, steady_residual, with_inflow
 

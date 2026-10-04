@@ -42,9 +42,20 @@ import jax.numpy as jnp
 import numpy as np
 import solvax
 
-from .bc import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition
 from .em import thin_wall_current, wall_insulated
-from .grid import CENTER, FACE, POLAR, Field, Grid, uniform_faces, wall_resolving_faces
+from .grid import (
+    CENTER,
+    DIRICHLET,
+    FACE,
+    NEUMANN,
+    PERIODIC,
+    POLAR,
+    BoundaryCondition,
+    Field,
+    Grid,
+    uniform_faces,
+    wall_resolving_faces,
+)
 from .ops import divergence, face_average, face_average_adjoint, face_gradient
 from .poisson import fast_diagonal_polar_poisson
 

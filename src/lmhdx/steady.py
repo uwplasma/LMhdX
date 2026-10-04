@@ -50,7 +50,6 @@ import solvax
 
 from . import _programs
 from ._programs import attribute, bound, host_array, host_scalar, shape_program
-from .advect import momentum_advection
 from .core3d import (
     ChannelProblem,
     ImposedField,
@@ -65,7 +64,7 @@ from .core3d import (
     zero_velocity,
 )
 from .grid import CENTER, FACE, Field
-from .ops import face_inner_product, staggered_laplacian
+from .ops import face_inner_product, momentum_advection, staggered_laplacian
 from .poisson import (
     FastDiagonalHelmholtz,
     FastDiagonalPoisson,

@@ -8,7 +8,6 @@ import numpy as np
 import pytest
 
 import lmhdx
-from lmhdx.bc import NEUMANN, PERIODIC, BoundaryCondition
 from lmhdx.core3d import ChannelProblem, duct_problem
 from lmhdx.design import (
     DuctResponse,
@@ -25,7 +24,7 @@ from lmhdx.design import (
     pressure_drop,
     volumetric_flow_rate,
 )
-from lmhdx.grid import Grid, uniform_faces
+from lmhdx.grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces
 from lmhdx.steady import solve_steady_state
 from validation.shercliff import flow_rate
 

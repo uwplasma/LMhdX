@@ -5,8 +5,18 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lmhdx.bc import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition
-from lmhdx.grid import CENTER, Field, Grid, geometric_faces, tanh_faces, uniform_faces
+from lmhdx.grid import (
+    CENTER,
+    DIRICHLET,
+    NEUMANN,
+    PERIODIC,
+    BoundaryCondition,
+    Field,
+    Grid,
+    geometric_faces,
+    tanh_faces,
+    uniform_faces,
+)
 from lmhdx.ops import laplacian
 from lmhdx.poisson import assemble_axis_laplacian, fast_diagonal_poisson
 
