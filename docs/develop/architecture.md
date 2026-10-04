@@ -4,8 +4,7 @@ LMhdX is organized by physical ownership:
 
 ```text
 ChannelProblem ──> staggered core (grid, ops, em, poisson) ──> steady / timeloop / axial
-CaseSpec ── fully developed ──> the core where it applies ──────> Solution
-                           └──> cell-centred solver (mesh, solvers) otherwise
+CaseSpec ── fully developed ──> the core, steady or transient ──> Solution
 Q2DProblem ──> vorticity dynamics ──> SOLVAX periodic Poisson ──> Q2DResult
 ```
 
@@ -17,8 +16,9 @@ requests them.
 
 `lmhdx.core3d` and `lmhdx.steady` are the 3-D interface; `lmhdx.axial` adds
 an inlet and an outlet, and `lmhdx.coreflow` the inertialess core-flow model.
-The cell-centred fully developed solver (`lmhdx.mesh`, `lmhdx.solvers`,
-`lmhdx.cases`) serves the cases the core does not represent yet.
+`lmhdx.fully_developed` maps a `CaseSpec` onto the core; `lmhdx.cases` holds
+the case builders and `lmhdx.solve`. The cell-centred solver it replaced was
+removed in 1.8 (step 4.6).
 
 Package sources live under `src/lmhdx`, so an editable installation and a wheel
 resolve the same module tree. The wheel includes `lmhdx/py.typed`; every root API

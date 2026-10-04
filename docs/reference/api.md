@@ -36,15 +36,13 @@ live in the module that owns their concepts.
 | Meshes | `generate_rect_duct_mesh`, `generate_rect_duct_mesh_from_faces`, `generate_layered_duct_mesh`, `generate_layered_duct_mesh_from_fluid_faces`, `generate_multilayer_duct_mesh` |
 | Wall models | `WallLayer`, `wall_conductance_ratio`, `effective_pinhole_conductance_ratio`, `tangential_stack_conductance_ratio`, `normal_stack_leakage_ratio`, `equivalent_single_layer`, `nested_wall_layer_resolution_summary` |
 | Units | `dynamic_to_kinematic_viscosity`, `kinematic_to_dynamic_viscosity`, `hartmann_number`, `reynolds_number`, `interaction_parameter`, `magnetic_reynolds_number`, `magnetic_field_from_hartmann` |
-| Evidence | Power balance in `lmhdx.solvers` and the analytical, conservation, and packaged benchmark tools in `lmhdx.validation` |
+| Evidence | The energy budget of `lmhdx.timeloop` and the analytical, conservation, and packaged benchmark tools in `lmhdx.validation` |
 | Runtime | `enable_compilation_cache` |
 
 `solve(model)` accepts a `ChannelProblem`, `CaseSpec` or `Q2DProblem`. A
 steady fully developed `CaseSpec` runs on the staggered core through
-`lmhdx.fully_developed`, as does `solve_fully_developed_fields`; a case the core
-does not represent (thick or mismatched conducting walls, several fluids, a
-varying field, an odd cell count across a field) keeps the cell-centred solver
-of `lmhdx.cases`. A transient `CaseSpec` runs its pseudo-time loop. A duct with
+`lmhdx.fully_developed`, as does `solve_fully_developed_fields`, and a transient
+`CaseSpec` runs implicit Euler steps there too. A duct with
 an inlet and an outlet is solved by `lmhdx.axial.solve_open_duct`.
 
 `duct_problem(hartmann=..., cells=..., wall_conductance=...)` builds a square
@@ -99,7 +97,7 @@ restart, progress, logging, and timing hooks in their owning modules.
    :members:
 ```
 
-## Case builders and the cell-centred validation lane
+## Case builders
 
 ```{eval-rst}
 .. automodule:: lmhdx.cases

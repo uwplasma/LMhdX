@@ -1,12 +1,10 @@
 """The projection step: incompressibility, the damping treatment, and duct flow.
 
 The strongest check here is the last one. A periodic duct driven by a constant
-body force reaches the fully developed state, which LMhdX already solves by an
-entirely different route in :func:`lmhdx.solve_fully_developed_fields`: a
-two-dimensional cross-section solve on `lmhdx.mesh`, with its own operators and its
-own linear algebra. Agreement between the two exercises the new staggered core,
-its electric coupling and its projection at once, against code that shares none
-of them.
+body force reaches the fully developed state, which
+:func:`lmhdx.solve_fully_developed_fields` solves in one CG solve; the time loop
+reaching it by projection steps checks the step against the steady solve, and
+`validation.shercliff` checks both against code that shares none of them.
 """
 
 import dataclasses
@@ -17,7 +15,7 @@ import numpy as np
 import pytest
 
 from lmhdx.bc import NEUMANN, PERIODIC, BoundaryCondition
-from lmhdx.cases import make_hartmann_case, solve_fully_developed_fields
+from lmhdx.cases import make_hartmann_case
 from lmhdx.core3d import (
     ChannelProblem,
     duct_problem,
@@ -28,6 +26,7 @@ from lmhdx.core3d import (
     velocity_offset,
     zero_velocity,
 )
+from lmhdx.fully_developed import solve_fully_developed_fields
 from lmhdx.grid import CENTER, Field, Grid, tanh_faces, uniform_faces, wall_resolving_faces
 from lmhdx.ops import divergence
 from lmhdx.timeloop import advance
@@ -476,9 +475,8 @@ def test_a_manufactured_flow_converges_at_second_order_with_convection_on(advect
 
 # --- Reconciliation with the production solver and an independent reference ---
 #
-# `lmhdx.solve_fully_developed_fields` solves the same duct on a two-dimensional
-# cross-section mesh with its own operators. Its conventions had to be matched
-# before the two could be compared at all: `GeometrySpec.width` and `height` are
+# `lmhdx.solve_fully_developed_fields` solves the same duct as one steady CG
+# solve of a `CaseSpec`, whose conventions are these: `GeometrySpec.width` and `height` are
 # the *full* transverse extents, so a `width=height=2` case is the grid
 # `[-1, 1]^2` used here; `CaseSpec.forcing` is the axial pressure gradient
 # `-dp/dx` and enters the momentum equation divided by the density, exactly as

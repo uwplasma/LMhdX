@@ -8,14 +8,10 @@ import numpy as np
 import pytest
 
 import lmhdx
-from lmhdx.cases import solve_fully_developed_fields as cell_centred_fields
-from lmhdx.cases import solve_steady as cell_centred_solve
 from lmhdx.core3d import ImposedField, duct_problem
-from lmhdx.design import fluid_cell_areas
 from lmhdx.fully_developed import (
     case_mesh,
     channel_problem,
-    core_applies,
     solve_fully_developed,
     solve_fully_developed_fields,
     solve_fully_developed_transient,
@@ -219,7 +215,7 @@ def test_a_varying_field_runs_on_the_core_and_converges_to_the_cell_centred_answ
     assert isinstance(channel_problem(case).magnetic_field, ImposedField)
     mean = _mean_velocity(lmhdx.solve(case))
     assert mean == pytest.approx(0.0387386, rel=0.007)
-    assert mean == pytest.approx(_mean_velocity(cell_centred_solve(case)), rel=0.01)
+    assert mean == pytest.approx(0.0391165, rel=0.01)  # the retired cell-centred solver on 32 cells
     section = case_mesh(case)
     y, z = (np.asarray(centres) for centres in (section.y_centers, section.z_centers))
     yy, zz = np.meshgrid(y, z, indexing="ij")
@@ -339,14 +335,14 @@ def test_what_the_core_does_not_model_is_refused():
     shercliff, hunt = _case(5.0, 0.0, 8), _case(5.0, 0.05, 8)
     refused = [
         _with(shercliff, geometry=dataclasses.replace(shercliff.geometry, kind="pipe_ogrid")),
-        _with(shercliff, regions=(*shercliff.regions, RegionSpec("second", "fluid", 1.0, 1.0, 1.0))),
+        _with(shercliff, regions=(*shercliff.regions, RegionSpec("second", "fluid", 3.0, 1.0, 1.0))),
         _with(shercliff, boundary_conditions=(BoundaryCondition("j", "imposed_current_density", 1.0),)),
         _with(shercliff, boundary_conditions=(BoundaryCondition("w", "conducting_wall", side="left_right"),)),
         # Thin walls must be equal on an axis.
         _with(_one_wall(hunt), geometry=dataclasses.replace(hunt.geometry, wall_model="thin")),
     ]
     for case in refused:
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(ValueError):
             channel_problem(case)
     with pytest.raises(ValueError, match="unramped"):
         channel_problem(
@@ -369,7 +365,6 @@ def test_an_odd_mesh_is_as_accurate_as_its_even_neighbours():
     assert 0.0 < errors[31, 31] < 0.0100 and 0.0 < errors[31, 32] < 0.0100
     assert errors[31, 31] == pytest.approx(errors[32, 32], rel=0.1)
     case = lmhdx.make_shercliff_case(ha=20.0, ny=11, nz=13)
-    assert core_applies(case)
 
     def throughput(scale):
         return jnp.mean(solve_fully_developed_fields(case, magnetic_field_scale=scale)[0])
@@ -380,14 +375,27 @@ def test_an_odd_mesh_is_as_accurate_as_its_even_neighbours():
     assert float(gradient) == pytest.approx(difference, rel=1e-6) and float(gradient) < 0.0
 
 
-def test_a_case_the_core_does_not_represent_keeps_the_cell_centred_solve():
-    case = lmhdx.make_shercliff_case(ha=5.0, ny=7, nz=8)
-    case = _with(case, regions=(*case.regions, RegionSpec("second", "fluid", 1.0, 1.0, 1.0)))
-    assert not core_applies(case)
-    velocity = lmhdx.solve_fully_developed_fields(case)[0]
-    reference = cell_centred_fields(case)[0]
-    assert bool(jnp.array_equal(velocity, reference))
-    assert fluid_cell_areas(case).shape == velocity.shape
+def test_case_builders_and_the_solve_dispatch(monkeypatch: pytest.MonkeyPatch):
+    case = lmhdx.make_hunt_case(
+        ha=20.0, fluid_conductivity=2.0, wall_conductance_ratio=0.05, ny=16, nz=16, wall_cells=2
+    )
+    regions = {region.name: region.conductivity for region in case.regions}
+    assert regions["conducting_wall"] == pytest.approx(0.05 * 2.0 * 1.0 / 0.1)
+    assert regions["insulating_wall"] == pytest.approx(2.0e-12)
+    assert case.geometry.wall_cells == (2, 2, 2, 2) and case.solver.kind == "fully_developed_inductionless"
+    override = lmhdx.make_hunt_case(ha=20.0, wall_conductivity=7.5, ny=16, nz=16)
+    assert next(r.conductivity for r in override.regions if r.name == "conducting_wall") == 7.5
+    steady, transient = object(), object()
+    monkeypatch.setattr("lmhdx.fully_developed.solve_fully_developed", lambda model: steady)
+    monkeypatch.setattr("lmhdx.fully_developed.solve_fully_developed_transient", lambda model: transient)
+    assert lmhdx.solve(case) is steady
+    assert lmhdx.solve(_with(case, solver=dataclasses.replace(case.solver, mode="transient"))) is transient
+    with pytest.raises(TypeError, match="ChannelProblem, CaseSpec, or Q2DProblem"):
+        lmhdx.solve(object())
+    # A case gives regions no geometry: a second fluid of other properties cannot be placed.
+    with pytest.raises(ValueError, match="one fluid"):
+        channel_problem(_with(case, regions=(*case.regions, RegionSpec("second", "fluid", 3.0, 1.0, 1.0))))
+    assert channel_problem(_with(case, regions=(*case.regions, case.regions[0]))) == channel_problem(case)
 
 
 def test_a_derivative_in_the_drive_differentiates_no_solve():

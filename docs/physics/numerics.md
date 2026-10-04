@@ -1,16 +1,12 @@
 # Numerical methods
 
-LMhdX has two discretizations. The staggered core (`lmhdx.grid`, `lmhdx.ops`,
-`lmhdx.core3d`, `lmhdx.steady`, `lmhdx.axial`) places velocity on faces and
-pressure and potential at cell centres; it solves periodic and open ducts, the
-pipe, and the fully developed cases it represents. The cell-centred
-fully developed solver (`lmhdx.solvers`, `lmhdx.cases`) remains for the cases
-the core does not represent: thick or mismatched conducting walls, several
-fluids, varying fields across the section and meshes that are not symmetric
-across the field. Its solve alternates electric potential, current/Lorentz
-reconstruction and the axial momentum update until the configured physical
-gate passes. Gauge constraints remove constant nullspaces where the boundary
-conditions leave them unconstrained.
+LMhdX has one discretization for ducts. The staggered core (`lmhdx.grid`,
+`lmhdx.ops`, `lmhdx.core3d`, `lmhdx.steady`, `lmhdx.axial`) places velocity on
+faces and pressure and potential at cell centres; it solves periodic and open
+ducts, the pipe, and every fully developed `CaseSpec` (`lmhdx.fully_developed`):
+thin or resolved conducting walls, wall stacks, varying and axial fields, odd
+meshes, and transient runs by implicit Euler. The cell-centred fully developed
+solver that served those cases until 1.7 was removed in step 4.6.
 
 ## Fully developed design: eliminating the drive
 

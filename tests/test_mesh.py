@@ -4,15 +4,11 @@ import pytest
 
 from lmhdx.mesh import (
     _smooth_boundary_layer_segment,
-    center_coordinates,
-    center_spacing_y,
-    center_spacing_z,
     generate_layered_duct_mesh,
     generate_layered_duct_mesh_from_fluid_faces,
     generate_multilayer_duct_mesh,
     generate_rect_duct_mesh,
     generate_rect_duct_mesh_from_faces,
-    gradient_scalar,
     load_tabulated_field,
     make_divergence_free_cross_section_field,
     sample_cross_section_field,
@@ -195,82 +191,6 @@ def test_generate_multilayer_duct_mesh_aligns_interfaces_and_sigma():
     assert any(abs(value - 0.51) < 1.0e-6 for value in y_faces)
     assert any(abs(value + 0.51) < 1.0e-6 for value in z_faces)
     assert any(abs(value - 0.51) < 1.0e-6 for value in z_faces)
-
-
-def test_gradient_of_linear_field():
-    mesh = generate_rect_duct_mesh(width=2.0, height=2.0, ny=32, nz=32)
-    y, z = jnp.meshgrid(mesh.y_centers, mesh.z_centers, indexing="ij")
-    field = 2.0 * y - 3.0 * z
-    gy, gz = gradient_scalar(field, mesh)
-    assert jnp.allclose(gy[2:-2, 2:-2], 2.0, atol=5e-2)
-    assert jnp.allclose(gz[2:-2, 2:-2], -3.0, atol=5e-2)
-
-
-def test_gradient_preserves_float32_field_dtype_on_float64_mesh():
-    mesh = generate_rect_duct_mesh(width=2.0, height=2.0, ny=8, nz=8)
-    y, z = jnp.meshgrid(mesh.y_centers, mesh.z_centers, indexing="ij")
-    field = (0.25 * y - 0.5 * z).astype(jnp.float32)
-
-    gy, gz = gradient_scalar(field, mesh)
-
-    assert gy.dtype == field.dtype
-    assert gz.dtype == field.dtype
-
-
-def test_gradient_of_linear_field_on_clustered_mesh_is_exact_near_boundaries():
-    mesh = generate_layered_duct_mesh(
-        width=2.0,
-        height=2.0,
-        ny=48,
-        nz=48,
-        wall_thickness=(0.0, 0.0, 0.1, 0.1),
-        wall_cells=(0, 0, 2, 2),
-        target_ha=100.0,
-    )
-    y, z = jnp.meshgrid(mesh.y_centers, mesh.z_centers, indexing="ij")
-    field = 2.0 * y - 3.0 * z
-    gy, gz = gradient_scalar(field, mesh)
-    assert jnp.allclose(gy[:, 2:-2], 2.0, atol=5e-2)
-    assert jnp.allclose(gz[2:-2, :], -3.0, atol=5e-2)
-
-
-def test_operator_helpers_cover_spacings():
-    mesh = generate_rect_duct_mesh(width=2.0, height=3.0, ny=3, nz=4)
-    yy, zz = center_coordinates(mesh)
-    assert yy.shape == mesh.yz_shape
-    assert zz.shape == mesh.yz_shape
-    assert center_spacing_y(mesh).shape == (mesh.ny - 1,)
-    assert center_spacing_z(mesh).shape == (mesh.nz - 1,)
-
-
-def test_center_spacing_returns_empty_for_single_cell_axes():
-    mesh = generate_rect_duct_mesh(width=1.0, height=1.0, ny=1, nz=1)
-    assert center_spacing_y(mesh).shape == (0,)
-    assert center_spacing_z(mesh).shape == (0,)
-
-
-def test_gradient_observed_order_for_smooth_manufactured_solution():
-    errors_y = []
-    errors_z = []
-    spacings = []
-
-    for n in (16, 32, 64):
-        mesh = generate_rect_duct_mesh(width=2.0, height=2.0, ny=n, nz=n)
-        y, z = jnp.meshgrid(mesh.y_centers, mesh.z_centers, indexing="ij")
-        field = jnp.sin(jnp.pi * y) * jnp.cos(0.5 * jnp.pi * z)
-        exact_y = jnp.pi * jnp.cos(jnp.pi * y) * jnp.cos(0.5 * jnp.pi * z)
-        exact_z = -0.5 * jnp.pi * jnp.sin(jnp.pi * y) * jnp.sin(0.5 * jnp.pi * z)
-
-        grad_y, grad_z = gradient_scalar(field, mesh)
-        sl = (slice(2, -2), slice(2, -2))
-        errors_y.append(float(jnp.sqrt(jnp.mean((grad_y[sl] - exact_y[sl]) ** 2))))
-        errors_z.append(float(jnp.sqrt(jnp.mean((grad_z[sl] - exact_z[sl]) ** 2))))
-        spacings.append(float(jnp.max(mesh.dy)))
-
-    order_y = jnp.log(errors_y[0] / errors_y[1]) / jnp.log(spacings[0] / spacings[1])
-    order_z = jnp.log(errors_z[0] / errors_z[1]) / jnp.log(spacings[0] / spacings[1])
-    assert float(order_y) > 1.8
-    assert float(order_z) > 1.8
 
 
 def test_divergence_free_cross_section_field_has_small_discrete_divergence():

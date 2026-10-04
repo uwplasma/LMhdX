@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import pytest
 
 from lmhdx.cases import make_hartmann_case
-from lmhdx.solvers import _build_mesh
+from lmhdx.fully_developed import case_mesh as _build_mesh
 from lmhdx.specs import (
     Diagnostics,
     LoggingSpec,

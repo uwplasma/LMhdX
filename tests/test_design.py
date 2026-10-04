@@ -1,6 +1,5 @@
 """Fully developed duct design: linearity, exact drive elimination and gradients."""
 
-import dataclasses
 from pathlib import Path
 
 import jax
@@ -259,28 +258,6 @@ def test_channel_flow_rate_is_exactly_linear_in_the_drive():
     single, double, zero = (float(flow_at(drive)) for drive in (1.0, 2.0, 0.0))
     assert double / (2.0 * single) - 1.0 == 0.0
     assert zero == 0.0
-
-
-@pytest.mark.parametrize(("hartmann", "bound"), [(0.0, 2e-3), (5.0, 2e-2)])
-def test_channel_flow_response_reconciles_with_the_cell_centred_route_on_a_matched_uniform_mesh(
-    hartmann, bound
-):
-    """Measured 0.104% at Ha 0, 1.498% at Ha 5, against the older solver of ``lmhdx.cases``.
-
-    NOT gated at Ha 20: a uniform mesh resolves neither route's a/Ha layer there
-    (see test_core3d.py's own Ha 20 test), so both are already >10% off spectral.
-    """
-    from lmhdx.cases import solve_fully_developed_fields as cell_centred_fields
-    from lmhdx.solvers import _build_mesh
-
-    cells = 32
-    new = float(channel_flow_response(_uniform_duct(hartmann, cells)).flow_per_unit_drive)
-    case = lmhdx.make_hartmann_case(ha=hartmann, width=2.0, height=2.0, ny=cells, nz=cells)
-    case = dataclasses.replace(case, geometry=dataclasses.replace(case.geometry, target_ha=None))
-    mesh = _build_mesh(case)
-    areas = np.asarray(mesh.dy)[:, None] * np.asarray(mesh.dz)[None, :]
-    older = float(np.sum(areas * np.asarray(cell_centred_fields(case, forcing=1.0)[0])))
-    assert abs(new - older) / older < bound
 
 
 def test_channel_fixed_flow_power_matches_finite_differences_in_the_field_scale():
