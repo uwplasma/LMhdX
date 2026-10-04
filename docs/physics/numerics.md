@@ -600,6 +600,62 @@ not global, which the projection forbids in this form; a preconditioner that
 solves the Schur complement (an inner iteration, so flexible CG) is the
 remaining route and is not attempted here.
 
+#### The Schur-complement inner solve (measured, not adopted)
+
+The remaining route was built and measured as a prototype (outside the package):
+outer CG made flexible (Notay's truncated FCG(1), `beta = -(z, q)/(p, q)`, one
+extra inner product per step), and a preconditioner that runs $k$ steps of PCG
+on a model Stokes operator, $\mathbb P(\nu\nabla^2 - D)\mathbb P$ on the
+constrained divergence-free fields, preconditioned by the projection step
+above. The inner iteration solves the Schur complement of the projection, so
+the model's damping $D$ may vary in space without the deficit that made a
+varying damping lose. Three models: the global rate above, the peak rate, and
+the local Lorentz rate on each face component,
+$D_i = \alpha\,\sigma(|\mathbf B|^2 - B_i^2)/\rho$ averaged to the faces.
+
+What it shows:
+
+- The Schur deficit of the projection is not what limits CG. Solving it exactly
+  for the global rate changes little: ANL Ha 100 244 → 229 iterations, Ha 400
+  728 → 806, periodic fringe Ha 300 1,361 → 937–951 ($k$ 4 and 16); the peak
+  rate gives 1,390.
+- A varying damping now helps, but only scaled well below the Joule rate.
+  At $\alpha=1$ the local model over-brakes the core flows, which the true
+  operator brakes only through the Hartmann layers (an $O(Ha)$, not
+  $O(Ha^2)$, rate), and solving it more exactly makes CG worse (periodic fringe
+  1,182 at $k=4$, 8,068 at $k=16$). At $\alpha=0.1$ the iterations fall 1.5–2.6×.
+- The gain saturates near 2.6× (2.5× at Ha 1600, 2.6× at 3200 and $10^4$) and
+  does not pay for the inner steps. More inner steps buy almost nothing
+  (Ha 1600: 921 at $k=4$, 867 at $k=8$), so the model, not the inner accuracy,
+  sets the count; one outer step with $k=4$ costs about
+  3× a plain one.
+
+A/B on the office host, one A4000 (JAX 0.10.2, `main` 1ae695f, fresh processes;
+the ANL duct of #184 with the tolerance rule of #150; warm times; local model
+$\alpha=0.1$, one projection inside the model, unless noted):
+
+| case | mesh | plain CG: iterations, warm | Schur, $k$: iterations, warm |
+|---|---|---|---|
+| periodic fringe Ha 300 (CPU, JAX 0.6.2) | $16\times24^2$ | 1,361, 6.7 s | global $k$ 4: 937, 18.1 s; local $k$ 8 (two projections): 861, 26.6 s |
+| ANL Ha 100 | $70\times32^2$ | 244, 1.2 s | global $k$ 4: 229, 3.5 s; local $k$ 8 (two projections): 160, 3.9 s |
+| ANL Ha 400 | $70\times48^2$ | 728, 8.6 s | $k$ 2: 551, 13.3 s; $k$ 4: 450, 16.0 s; $k$ 8 (two projections): 358, 25.8 s |
+| ANL Ha 1600 | $70\times96^2$ | 2,283, 111 s | $k$ 4: 921, 142 s; $k$ 8: 867, 218 s |
+| ANL Ha 3200 | $70\times128^2$ | 4,353, 424 s | $k$ 4: 1,655, 492 s |
+| ANL Ha $10^4$ (cold, one solve) | $70\times128^2$ | 13,406, 1,339 s (#188) | $k$ 4: 5,212, 1,581 s |
+
+Every variant reproduces the plain solve's drop within the solve tolerance
+($4\times10^{-10}$ relative at Ha 3200). It loses wall time at every Hartmann
+number measured: by 1.16× at Ha 3200 and 1.18× at Ha $10^4$, the closest.
+It is not adopted, and the code is not kept; the uniform-field path was never
+touched. (The Ha $10^4$ row compares cold single solves on the two cards of the
+host, the plain one from #188.) The model's count grows almost as fast as the
+plain one, as $Ha^{0.76}$ at $k=4$ against $Ha^{0.83}$, so the gain stays near
+2.6× and an inner solve would have to cost less than 1.6 plain steps to win.
+A preconditioner that wins here has to brake the core as the Hartmann layers do
+(the field-line form of the uniform duct, along $y$ at the local field), not by a
+local rate; on the open axial direction that needs the field-line solve per axial
+station rather than in the axial eigenbasis, and is left open.
+
 ## Derivative policy
 
 The derivative algorithm is part of each numerical method. Converged linear or
