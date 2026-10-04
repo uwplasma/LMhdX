@@ -274,7 +274,7 @@ def _probe(
     def build(grid: Grid):
         return jax.vmap(lambda data: apply(Field(data, offset, grid)).data)
 
-    program = (key, line.shape, line.geometry, offset, tuple(map(tuple, positions)), jax.devices("cpu")[0])
+    program = (key, line.shape, line.geometry, offset, tuple(map(tuple, positions)), "cpu")
     with jax.default_device(jax.devices("cpu")[0]):
         # One program per stencil shape, the line's metric its arguments: a new mesh is not traced (2b.1).
         applied = grid_program(program, build, line, jax.ShapeDtypeStruct(units.shape, units.dtype))(units)

@@ -823,6 +823,44 @@ def test_a_new_mesh_of_a_known_shape_is_solved_without_a_trace(monkeypatch, cond
     assert counts == [1, 1, 0]
 
 
+def test_a_known_shape_is_solved_in_a_new_process_without_a_trace(monkeypatch, tmp_path):
+    """2b.1: a shape's array keys and compiled program are kept beside the compilation cache.
+
+    A new process, here the in-process tables emptied, reads them back: its first problem of
+    the shape is neither traced nor compiled, and solves to round-off of its embedded program.
+    """
+    import lmhdx._programs as _programs
+    import lmhdx.steady as steady
+
+    previous = jax.config.jax_compilation_cache_dir
+    jax.config.update("jax_compilation_cache_dir", str(tmp_path))
+    try:
+        traces = []
+        original = steady.solve_steady_state
+
+        def counted(*arguments, **keywords):
+            traces.append(1)
+            return original(*arguments, **keywords)
+
+        monkeypatch.setattr(steady, "solve_steady_state", counted)
+        problems = [duct_problem(hartmann=h, cells=16, cells_in_layer=2) for h in (20.0, 30.0, 45.0)]
+        for process in ([problems[0], problems[1]], [problems[2]]):
+            monkeypatch.setattr(steady, "_SHAPES", {})
+            monkeypatch.setattr(_programs, "_GRID_PROGRAMS", {})
+            steady._program.cache_clear()
+            before = len(traces)
+            solutions = [steady.solve_compiled(problem).velocity for problem in process]
+        assert len(traces) == before
+        assert isinstance(next(iter(steady._SHAPES.values())), _programs._StoredProgram)
+        embedded = jax.jit(steady._solve_program(problems[2]))()[0]
+        for got, expected in zip(solutions[0], embedded, strict=True):
+            np.testing.assert_allclose(got.data, expected.data, rtol=1e-12, atol=1e-14)
+            assert got.grid is problems[2].grid
+    finally:
+        jax.config.update("jax_compilation_cache_dir", previous)
+        steady._program.cache_clear()
+
+
 def _extruded_duct(hartmann: float) -> ChannelProblem:
     duct = duct_problem(hartmann=hartmann, cells=10, cells_in_layer=1)
     return dataclasses.replace(

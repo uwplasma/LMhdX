@@ -5,7 +5,12 @@ from __future__ import annotations
 import collections
 import contextlib
 import contextvars
+import functools
 import hashlib
+import importlib
+import os
+import pickle
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -24,6 +29,8 @@ __all__ = [
     "host_scalar",
     "problem_arrays",
     "shape_program",
+    "store",
+    "stored",
 ]
 
 
@@ -296,10 +303,13 @@ class ShapeProgram:
     def __init__(self, build, problem, arguments, keys):
         objects = {ROOT: problem}
         values = problem_arrays(problem, keys, objects)
+        trees = []
 
         def traced(values, *arguments):
             with _tracing(_Trace(problem, dict(zip(keys, values, strict=True)), objects)):
-                return build(problem)(*arguments)
+                leaves, tree = jax.tree.flatten(build(problem)(*arguments))
+            trees.append(tree)
+            return leaves
 
         with _constants_as_constvars():
             staged = jax.jit(traced).trace(values, *arguments)
@@ -309,8 +319,10 @@ class ShapeProgram:
             if np.issubdtype(np.asarray(value).dtype, np.inexact) and np.size(value) > 1
         ]
         if leaked:
-            raise Unbound(f"the trace kept {len(leaked)} floating-point array constants")
-        self.keys = keys
+            raise Unbound(
+                f"the trace kept floating-point array constants of shapes {[np.shape(v) for v in leaked]}"
+            )
+        self.keys, self.tree = keys, trees[-1]
         self.signature = [(np.shape(value), _signature_dtype(value)) for value in values]
         lowered = staged.lower()
         # Equal for every problem of the shape; a problem's value in the program would change it.
@@ -327,12 +339,138 @@ class ShapeProgram:
         self._first = None
         if [(np.shape(value), _signature_dtype(value)) for value in values] != self.signature:
             raise Unbound("the problem's arrays differ in shape from the program's")
-        executable, grid = self.executable, problem if isinstance(problem, Grid) else problem.grid
-        return lambda *arguments: _regrid(executable(values, *arguments), grid)
+        executable, grid, tree = self.executable, _grid_of(problem), self.tree
+        return lambda *arguments: _regrid(jax.tree.unflatten(tree, executable(values, *arguments)), grid)
+
+    def serialized(self) -> bytes:
+        """The compiled program as bytes, for :func:`store` to keep across processes."""
+        from jax.experimental.serialize_executable import serialize
+
+        return pickle.dumps(serialize(self.executable), protocol=4)
+
+
+def _grid_of(problem) -> Grid:
+    return problem if isinstance(problem, Grid) else problem.grid
 
 
 def _signature_dtype(value) -> str:
     return "scalar" if isinstance(value, float) else str(value.dtype)
+
+
+# Across processes: the keys of a shape's arrays and its compiled program, kept beside JAX's
+# persistent compilation cache. A new process then builds the host arrays and runs the program
+# it reads back, instead of tracing and compiling the solve (2b.1).
+
+_STORE_FORMAT = 1
+_LEAF = object()
+
+
+@functools.cache
+def _code_stamp() -> str:
+    """The source of every package a solve traces, and the JAX that traced it."""
+    import jaxlib
+
+    device = jax.devices()[0]
+    stamp = (_STORE_FORMAT, jax.__version__, jaxlib.__version__, device.platform, device.device_kind)
+    digest = hashlib.sha256(repr(stamp).encode() + device.client.platform_version.encode())
+    for package in ("lmhdx", "solvax"):
+        root = Path(importlib.import_module(package).__file__).parent
+        for path in sorted(root.rglob("*.py")):
+            digest.update(path.relative_to(root).as_posix().encode() + path.read_bytes())
+    return digest.hexdigest()
+
+
+def _store_path(key, suffix: str) -> Path | None:
+    directory = jax.config.jax_compilation_cache_dir
+    if not directory:
+        return None
+    try:
+        blob = pickle.dumps(key, protocol=4)
+    except (pickle.PicklingError, AttributeError, TypeError):
+        return None
+    flags = repr((jax.config.jax_enable_x64, jax.config.jax_default_matmul_precision))
+    digest = hashlib.sha256((_code_stamp() + flags).encode() + blob).hexdigest()
+    return Path(directory) / "lmhdx_shapes" / f"{digest}.{suffix}"
+
+
+def _skeleton(tree):
+    """A picklable description of a program's outputs: tuples, lists and dicts of fields and arrays."""
+    if isinstance(tree, Field):
+        return ("field", tree.offset)
+    if tree is _LEAF:
+        return ("leaf",)
+    if type(tree) in (tuple, list):
+        return (type(tree).__name__, [_skeleton(item) for item in tree])
+    if type(tree) is dict:
+        # Flattened in sorted key order.
+        return ("dict", [(name, _skeleton(tree[name])) for name in sorted(tree)])
+    raise Unbound(f"a program output of type {type(tree).__name__} is not stored")
+
+
+def _rebuild(skeleton, leaves, grid):
+    if skeleton[0] == "field":
+        return Field(next(leaves), skeleton[1], grid)
+    if skeleton[0] == "leaf":
+        return next(leaves)
+    if skeleton[0] == "dict":
+        return {name: _rebuild(item, leaves, grid) for name, item in skeleton[1]}
+    items = [_rebuild(item, leaves, grid) for item in skeleton[1]]
+    return tuple(items) if skeleton[0] == "tuple" else items
+
+
+class _StoredProgram:
+    """A :class:`ShapeProgram` read back in another process: host arrays in, no trace."""
+
+    def __init__(self, keys, signature, skeleton, serialized: bytes):
+        from jax.experimental.serialize_executable import deserialize_and_load
+
+        self.keys, self.signature, self.skeleton = keys, signature, skeleton
+        self.call = deserialize_and_load(*pickle.loads(serialized))
+
+    def bind(self, problem):
+        values = problem_arrays(problem, self.keys)
+        if [(np.shape(value), _signature_dtype(value)) for value in values] != self.signature:
+            raise Unbound("the problem's arrays differ in shape from the program's")
+        call, skeleton, grid = self.call, self.skeleton, _grid_of(problem)
+        return lambda *arguments: _rebuild(skeleton, iter(call(values, *arguments)), grid)
+
+
+def stored(key):
+    """What an earlier process kept for ``key``: a program to bind, the array keys, or None."""
+    path = _store_path(key, "keys")
+    if path is None or not path.exists():
+        return None
+    try:
+        keys = pickle.loads(path.read_bytes())
+        program = path.with_suffix(".program")
+        if program.exists():
+            return _StoredProgram(keys, *pickle.loads(program.read_bytes()))
+        return keys
+    # A stale, truncated or foreign entry is ignored, as JAX ignores an unreadable cache entry.
+    except Exception:
+        return None
+
+
+def store(key, entry) -> None:
+    """Keep ``entry`` (a shape's array keys, or its :class:`ShapeProgram`) for later processes."""
+    path = _store_path(key, "keys")
+    if path is None:
+        return
+    try:
+        if isinstance(entry, ShapeProgram):
+            outputs = jax.tree.unflatten(entry.tree, [_LEAF] * entry.tree.num_leaves)
+            payload = (entry.signature, _skeleton(outputs), entry.serialized())
+            path = path.with_suffix(".program")
+        else:
+            payload = list(entry)
+        blob = pickle.dumps(payload, protocol=4)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(f".{os.getpid()}.tmp")
+        temporary.write_bytes(blob)
+        os.replace(temporary, path)
+    # Keeping a program is an optimization: one that cannot be pickled or exported is not kept.
+    except Exception:
+        return
 
 
 def discovering(problem):
@@ -353,14 +491,19 @@ def grid_program(key, build, grid: Grid, *arguments):
     """
     entry = _GRID_PROGRAMS.get(key, ROOT)
     if entry is ROOT:
-        entry = None
-        with discovering(grid) as trace:
-            jax.make_jaxpr(build(grid))(*arguments)
-        if trace.complete:
-            try:
-                entry = ShapeProgram(build, grid, arguments, list(trace.keys))
-            except Unbound:
-                entry = None
+        # An earlier process's program of the stencil, compiled; else trace it here and keep it.
+        entry = stored(key)
+        if not isinstance(entry, _StoredProgram):
+            with discovering(grid) as trace:
+                jax.make_jaxpr(build(grid))(*arguments)
+            entry = None
+            if trace.complete:
+                try:
+                    entry = ShapeProgram(build, grid, arguments, list(trace.keys))
+                    store(key, list(trace.keys))
+                    store(key, entry)
+                except Unbound:
+                    entry = None
         _GRID_PROGRAMS[key] = entry
     if entry is not None:
         try:
