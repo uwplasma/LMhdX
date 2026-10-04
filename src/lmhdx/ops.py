@@ -337,6 +337,10 @@ def _shaped(values: np.ndarray, axis: int) -> np.ndarray:
     return values.reshape([-1 if position == axis else 1 for position in range(3)])
 
 
+def _broadcast(values: np.ndarray, axis: int, dtype) -> jnp.ndarray:
+    return jnp.asarray(_shaped(values, axis), dtype=dtype)
+
+
 def foldable(shape: tuple[int, ...]) -> bool:
     """Whether a metric product of this shape is formed on the host: a line or a plane, never a volume.
 
