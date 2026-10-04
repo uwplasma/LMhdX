@@ -54,7 +54,7 @@ case = replace(hartmann, forcing=2.0)
 After solving, check more than the update norm:
 
 ```python
-from lmhdx.validation import hartmann_validation, validation_summary
+from lmhdx.io import hartmann_validation, validation_summary
 
 comparison = hartmann_validation(result, ha=20)
 metrics = validation_summary(result, case.name, ha=20)

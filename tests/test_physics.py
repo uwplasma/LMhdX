@@ -20,8 +20,7 @@ from lmhdx.cases import (
 from lmhdx.cases import solve as solve_steady
 from lmhdx.fully_developed import case_mesh as _build_mesh
 from lmhdx.fully_developed import solve_fully_developed_fields
-from lmhdx.q2d import Q2DProblem, make_q2d_case, solve_q2d
-from lmhdx.validation import (
+from lmhdx.io import (
     extract_midplane_profile,
     hartmann_acceptance,
     hartmann_analytic_profile,
@@ -32,6 +31,7 @@ from lmhdx.validation import (
     write_metrics_json,
     write_profile_csv,
 )
+from lmhdx.q2d import Q2DProblem, make_q2d_case, solve_q2d
 
 _EXPECTED_HARTMANN_CENTERLINE = jnp.asarray(
     [

@@ -24,10 +24,8 @@ _TEST_TIERS = {
 }
 _TEST_SHARDS = {
     "support": (
-        "tests/test_cli.py",
         "tests/test_config.py",
         "tests/test_io.py",
-        "tests/test_runtime_logging.py",
         "tests/test_units_and_wall_models.py",
         "tests/test_freemhd.py",
         "tests/test_benchmarks.py",
@@ -87,23 +85,21 @@ _TEST_SHARDS = {
 
 _ALL_TESTS = tuple(dict.fromkeys(path.split("::")[0] for shard in _TEST_SHARDS.values() for path in shard))
 _CHANGE_TEST_NAMES = {
-    "__init__": "config cli example_runner",
-    "__main__": "cli",
-    "cases": "config physics fully_developed units_and_wall_models design cli runtime_logging io",
-    "cli": "cli example_runner",
+    "__init__": "config example_runner",
+    "__main__": "io",
+    "cases": "config physics fully_developed units_and_wall_models design io",
     "axial": "axial example_runner",
     "core3d": "core3d timeloop steady coreflow axial",
     "coreflow": "coreflow freemhd",
-    "fully_developed": "fully_developed design config cli example_runner",
+    "fully_developed": "fully_developed design config example_runner",
     "steady": "steady fully_developed axial",
     "grid": "grid ops core3d timeloop steady pipe axial",
     "ops": "ops core3d timeloop steady pipe axial",
     "em": "em",
     "poisson": "poisson core3d timeloop steady pipe axial",
     "pipe": "pipe",
-    "io": "io cli example_runner",
+    "io": "io benchmarks physics example_runner config",
     "q2d": "physics q2d_identities example_runner",
-    "validation": "benchmarks physics example_runner cli",
 }
 _CHANGE_TESTS = {
     module: tuple(f"tests/test_{name}.py" for name in names.split())

@@ -38,9 +38,7 @@ CURRENT_STATE_TERMS = ("legacy", "deprecated", "previously", "no longer", "backw
 RESEARCH_STAGE: set[str] = set()
 COMPATIBILITY: set[str] = set()
 VISUALIZATION = {"io.py"}
-VALIDATION = {
-    "validation.py",
-}
+VALIDATION: set[str] = set()
 
 
 def _role(name: str) -> str:
@@ -242,18 +240,18 @@ def build_inventory(root: Path = ROOT) -> dict[str, Any]:
             },
         },
         "targets": {
-            "package_module_count_max": 18,
-            "total_package_lines_max": 10564,
+            "package_module_count_max": 16,
+            "total_package_lines_max": 10534,
             "largest_package_module_lines_max": 1404,
-            "maintained_core_lines_max": 9708,
-            "test_file_count_max": 23,
-            "test_lines_max": 9343,
+            "maintained_core_lines_max": 9375,
+            "test_file_count_max": 21,
+            "test_lines_max": 9334,
             "external_validation_file_count_max": 3,
             "largest_external_validation_lines_max": 599,
             "maintenance_script_count_max": 4,
             "stable_root_exports_max": 29,
             "curated_examples_max": 6,
-            "checkout_bytes_max": 2416486,
+            "checkout_bytes_max": 2416099,
             "root_import_median_seconds_max": 0.25,
             "sdist_bytes_max": 512 * 1024,
             "wheel_bytes_max": 384 * 1024,

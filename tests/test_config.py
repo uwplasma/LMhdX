@@ -309,7 +309,7 @@ def test_every_test_file_reaches_the_combined_coverage():
         (".github/actions/setup-lmhdx/action.yml", "true", "false", "true", "true"),
         ("src/lmhdx/cases.py", "true", "false", "true", "false"),
         ("src/lmhdx/q2d.py", "true", "false", "true", "false"),
-        ("src/lmhdx/validation.py", "true", "false", "true", "false"),
+        ("src/lmhdx/io.py", "true", "false", "true", "false"),
         ("validation/freemhd.py", "true", "false", "false", "true"),
         ("tests/test_grid.py", "true", "false", "false", "false"),
         ("scripts/run_full_test_suite.py", "false", "true", "false", "false"),
@@ -690,7 +690,7 @@ def test_stable_root_api_is_small_lazy_and_resolvable(
     import jax
 
     updates = []
-    monkeypatch.setattr("lmhdx.io.jax.config.update", lambda *args: updates.append(args))
+    monkeypatch.setattr("lmhdx._programs.jax.config.update", lambda *args: updates.append(args))
     cache = lmhdx.enable_compilation_cache(
         tmp_path / "jax-cache", min_compile_time_secs=2.0, min_entry_size_bytes=4096, share_across_values=True
     )
