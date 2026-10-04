@@ -21,8 +21,9 @@ cells of its own, which needs equal walls on one axis. ``"resolved"`` gives the
 walls of one axis ``wall_cells`` uniform cells of their own conductivity,
 insulated outside: one wall, two different walls, or a layer that no boundary
 names (``ChannelProblem.wall_layers``); the reported fields cover the fluid. The
-default ``"auto"`` is thin where that holds and resolved otherwise. Conducting
-walls on both axes are not represented.
+default ``"auto"`` is thin where that holds and resolved otherwise. Thin
+walls may conduct on both axes, joined in series at the corners; resolved
+walls conduct on one.
 
 *Field.* A constant field is three numbers; an analytic or tabulated one is
 sampled at the cell centres as an :class:`~lmhdx.core3d.ImposedField`, and the
@@ -394,7 +395,7 @@ def _walls(case: CaseSpec, conductivity: float) -> dict:
     (the cell-centred solver's fallback); it is insulating when an
     ``insulating`` boundary names it or it has no wall. ``geometry.wall_model``
     chooses the closure: ``"thin"`` makes each wall a sheet of conductance
-    ``sigma_w t_w / sigma``, which needs equal walls on an axis; ``"resolved"``
+    ``sigma_w t_w / sigma``, which needs equal walls on an axis, on either or both axes; ``"resolved"``
     gives the walls of one axis ``wall_cells`` cells of their own; ``"auto"``
     is thin where that holds and resolved otherwise.
     """
@@ -444,8 +445,6 @@ def _walls(case: CaseSpec, conductivity: float) -> dict:
     if model == "thin" or (model == "auto" and thin):
         if not thin:
             raise NotImplementedError("thin walls need equal conducting walls on both sides of an axis")
-        if len(axes) > 1:
-            raise NotImplementedError("the thin-wall solve needs one insulating axis")
         conductance = [0.0, 0.0, 0.0]
         for axis, pair in pairs.items():
             conductance[axis] = pair[0][0] * pair[0][1]

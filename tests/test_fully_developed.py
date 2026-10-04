@@ -286,6 +286,27 @@ def test_a_resolved_wall_differentiates_in_the_field():
     assert float(gradient) == pytest.approx(difference, rel=1e-6) and float(gradient) < 0.0
 
 
+def test_thin_walls_conduct_on_both_axes():
+    """Every wall a sheet, c = 0.05, joined in series at the corners.
+
+    Office, float64, mean velocity: Ha 20 core 32/64/96 0.022599/0.022526/0.022502, the
+    cell-centred solver with 0.02-thick walls in 8 cells 0.022559 (64 cells); Ha 100 core
+    0.0018350/0.0018283/0.0018280, cell-centred 0.0017987 (0.02 thick) and 0.0018113 (0.01
+    thick, 96 cells), approaching the core as the wall thins. The spectral side-wall reference
+    gives 0.0015121 there, 21 % lower, so it is not used as a gate.
+    """
+    case = _with(
+        _case(20.0, 0.05, 32),
+        boundary_conditions=(
+            BoundaryCondition(
+                "walls", "conducting_wall", region="conducting_wall", side="left,right,top,bottom"
+            ),
+        ),
+    )
+    assert channel_problem(case).wall_conductance == pytest.approx((0.0, 0.05, 0.05), rel=1e-12)
+    assert _mean_velocity(lmhdx.solve(case)) == pytest.approx(0.022559, rel=0.003)
+
+
 def test_what_the_core_does_not_model_is_refused():
     shercliff, hunt = _case(5.0, 0.0, 8), _case(5.0, 0.05, 8)
     refused = [
@@ -293,8 +314,8 @@ def test_what_the_core_does_not_model_is_refused():
         _with(shercliff, regions=(*shercliff.regions, RegionSpec("second", "fluid", 1.0, 1.0, 1.0))),
         _with(shercliff, boundary_conditions=(BoundaryCondition("j", "imposed_current_density", 1.0),)),
         _with(shercliff, boundary_conditions=(BoundaryCondition("w", "conducting_wall", side="left_right"),)),
-        # Conducting layers that no boundary names, on both axes: the corners are not modelled.
-        _with(hunt, boundary_conditions=(BoundaryCondition("walls", "no_slip"),)),
+        # Resolved walls on both axes: the corners are not modelled.
+        _resolved(_with(hunt, boundary_conditions=(BoundaryCondition("walls", "no_slip"),))),
         # Thin walls must be equal on an axis.
         _with(_one_wall(hunt), geometry=dataclasses.replace(hunt.geometry, wall_model="thin")),
     ]
