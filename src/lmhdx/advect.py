@@ -37,7 +37,7 @@ import numpy as np
 
 from .bc import BoundaryCondition, pad
 from .grid import Field
-from .ops import face_distances
+from .ops import _broadcast, _take, face_distances
 
 __all__ = ["advective_step_limit", "momentum_advection"]
 
@@ -176,11 +176,3 @@ def _interpolate(data, axis: int, condition: BoundaryCondition, grid) -> jnp.nda
 def _lower_weight(widths: np.ndarray) -> np.ndarray:
     ghosted = np.concatenate(([widths[0]], widths, [widths[-1]]))
     return ghosted[1:] / (ghosted[:-1] + ghosted[1:])
-
-
-def _take(data, axis: int, selection: slice):
-    return data[(slice(None),) * axis + (selection,)]
-
-
-def _broadcast(values: np.ndarray, axis: int, dtype) -> jnp.ndarray:
-    return jnp.asarray(values.reshape([-1 if position == axis else 1 for position in range(3)]), dtype=dtype)

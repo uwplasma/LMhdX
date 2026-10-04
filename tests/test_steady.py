@@ -2,6 +2,7 @@
 
 import dataclasses
 import functools
+import os
 
 import jax
 import jax.numpy as jnp
@@ -770,6 +771,8 @@ def test_a_new_field_on_the_same_mesh_reuses_the_compiled_solve(monkeypatch):
     import lmhdx._programs as _programs
     import lmhdx.steady as steady
 
+    # In-process sharing only: what earlier processes stored in the cache directory is not read.
+    monkeypatch.setattr(_programs, "_store_path", lambda key, suffix: None)
     monkeypatch.setattr(steady, "_SHAPES", {})
     base = _duct(24, 20.0, conductance=0.027)
     for hartmann in (20.0, 30.0, 40.0):
@@ -798,8 +801,11 @@ def test_a_new_mesh_of_a_known_shape_is_solved_without_a_trace(monkeypatch, cond
     Each Hartmann number clusters its own mesh, so the grid metric, the field and every
     factorization differ; they are built on the host and passed to the shape's program.
     """
+    import lmhdx._programs as _programs
     import lmhdx.steady as steady
 
+    # In-process sharing only: what earlier processes stored in the cache directory is not read.
+    monkeypatch.setattr(_programs, "_store_path", lambda key, suffix: None)
     monkeypatch.setattr(steady, "_SHAPES", {})
     steady._program.cache_clear()
     traces = []
@@ -821,6 +827,66 @@ def test_a_new_mesh_of_a_known_shape_is_solved_without_a_trace(monkeypatch, cond
             np.testing.assert_allclose(got.data, expected.data, rtol=1e-12, atol=1e-14)
             assert got.grid is problem.grid
     assert counts == [1, 1, 0]
+
+
+_PROCESS = """
+import json, sys
+import jax, jax.numpy as jnp
+import lmhdx
+lmhdx.enable_x64()
+jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.0)
+from lmhdx import _programs, steady
+from lmhdx.core3d import duct_problem
+traces = []
+original = steady.solve_steady_state
+steady.solve_steady_state = lambda *a, **k: traces.append(1) or original(*a, **k)
+flows = [float(jnp.sum(steady.solve_compiled(duct_problem(hartmann=h, cells=16, cells_in_layer=2)).velocity[0].data))
+         for h in map(float, sys.argv[1:])]
+kinds = [type(entry).__name__ for entry in steady._SHAPES.values()]
+broken = sum(getattr(entry, "broken", False) for entry in _programs._GRID_PROGRAMS.values())
+print(json.dumps({"flows": flows, "traces": len(traces), "kinds": kinds, "broken": broken}))
+"""
+
+
+def test_a_known_shape_is_solved_in_a_new_process_without_a_trace(tmp_path):
+    """2b.1: a shape's keys and compiled program are kept beside the compilation cache.
+
+    Three processes share one cache, as CI shards and users do. The second rebuilds the
+    stored program while JAX's cache holds its executable: one read back from that cache
+    serializes without its fused kernels, so the store must compile its own. The third
+    then runs the stored program with no trace and matches the first to round-off.
+    """
+    import json
+    import shutil
+    import subprocess
+    import sys
+
+    environment = {**os.environ, "JAX_PLATFORMS": "cpu"}
+    # Either variable may name the cache; a runner that sets JAX's own would otherwise win.
+    environment.update(
+        LMHDX_COMPILATION_CACHE=str(tmp_path),
+        JAX_COMPILATION_CACHE_DIR=str(tmp_path),
+        JAX_ENABLE_COMPILATION_CACHE="true",
+    )
+
+    def process(*hartmanns):
+        completed = subprocess.run(
+            [sys.executable, "-c", _PROCESS, *map(str, hartmanns)],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(completed.stdout.strip().splitlines()[-1])
+
+    first = process(20.0, 30.0)
+    shutil.rmtree(tmp_path / "lmhdx_shapes")
+    process(20.0, 30.0)
+    third = process(30.0)
+    assert third["traces"] == 0
+    assert third["broken"] == 0
+    assert third["kinds"] == ["_StoredProgram"]
+    assert third["flows"][0] == pytest.approx(first["flows"][1], rel=1e-12)
 
 
 def _extruded_duct(hartmann: float) -> ChannelProblem:

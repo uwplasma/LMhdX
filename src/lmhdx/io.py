@@ -15,9 +15,8 @@ from .validation import extract_midplane_profile
 _DIAGNOSTIC_FIELDS = tuple(item.name for item in fields(Diagnostics))
 
 
-def _portable_path(path: str | Path, *, relative_to: str | Path | None = None) -> str:
-    candidate = Path(path)
-    base = Path(relative_to) if relative_to is not None else Path.cwd()
+def _portable_path(path: str | Path) -> str:
+    candidate, base = Path(path), Path.cwd()
     try:
         return str(candidate.relative_to(base))
     except ValueError:
@@ -339,24 +338,14 @@ def _prepare_plot_output(out_dir: str | Path) -> Path:
     return output
 
 
-def _save_figure_pair(
-    fig,
-    out_dir: Path,
-    stem: str,
-    *,
-    dpi: int | None = None,
-    tight: bool = True,
-) -> list[Path]:
+def _save_figure_pair(fig, out_dir: Path, stem: str) -> list[Path]:
     """Save one figure as PNG and PDF, then release its Matplotlib state."""
 
     from matplotlib import pyplot
 
-    save_options = {"bbox_inches": "tight"} if tight else {}
-    if dpi is not None:
-        save_options["dpi"] = dpi
     paths = [out_dir / f"{stem}.png", out_dir / f"{stem}.pdf"]
     for path in paths:
-        fig.savefig(path, **save_options)
+        fig.savefig(path, bbox_inches="tight")
     pyplot.close(fig)
     return paths
 
