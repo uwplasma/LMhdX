@@ -59,6 +59,17 @@ _TEST_SHARDS = {
         "tests/test_coreflow.py",
     ),
     "steady": ("tests/test_steady.py",),
+    # The shared-program tests of 2b.1, split from steady to keep both inside their budgets.
+    "programs": tuple(
+        f"tests/test_steady.py::{name}"
+        for name in (
+            "test_the_shared_program_holds_no_value_of_the_problem",
+            "test_a_new_field_on_the_same_mesh_reuses_the_compiled_solve",
+            "test_a_new_mesh_of_a_known_shape_is_solved_without_a_trace",
+            "test_a_known_shape_is_solved_in_a_new_process_without_a_trace",
+            "test_a_program_stored_on_another_cpu_is_never_loaded",
+        )
+    ),
     "fully_developed": ("tests/test_fully_developed.py",),
     "gradients": tuple(
         f"tests/test_steady.py::{name}"

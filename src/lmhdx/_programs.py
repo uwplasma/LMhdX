@@ -372,8 +372,51 @@ def _signature_dtype(value) -> str:
 # persistent compilation cache. A new process then builds the host arrays and runs the program
 # it reads back, instead of tracing and compiling the solve (2b.1).
 
-_STORE_FORMAT = 2
+_STORE_FORMAT = 3
 _LEAF = object()
+
+
+@functools.cache
+def cpu_fingerprint() -> str | None:
+    """The host CPU's model and instruction-set flags; None where they cannot be read.
+
+    A CPU executable runs the instructions of the machine that compiled it, and one
+    loaded on a CPU without them dies of an illegal instruction, which Python cannot
+    catch. A store shared across machines (a cluster home directory, a restored CI
+    cache) therefore keeps one entry per fingerprint, and keeps none without one.
+    """
+    import platform
+    import subprocess
+
+    lines: list[str] = []
+    try:
+        lines = Path("/proc/cpuinfo").read_text().splitlines()
+    except OSError:
+        try:
+            names = [
+                "machdep.cpu.brand_string",
+                "machdep.cpu.features",
+                "machdep.cpu.leaf7_features",
+                "hw.optional",
+            ]
+            lines = subprocess.run(
+                ["sysctl", *names], capture_output=True, text=True, timeout=10
+            ).stdout.splitlines()
+        except (OSError, subprocess.SubprocessError):
+            return None
+    fields: dict[str, set[str]] = {}
+    for line in lines:
+        name, separator, value = line.partition(":")
+        name = name.strip()
+        if separator and (
+            name in ("model name", "flags", "Features", "CPU part", "CPU implementer")
+            or name.startswith(("machdep.cpu", "hw.optional"))
+        ):
+            fields.setdefault(name, set()).add(" ".join(sorted(value.split())))
+    if not any(name in fields for name in ("flags", "Features", "machdep.cpu.features", "hw.optional.neon")):
+        return None
+    text = repr((platform.machine(), sorted((name, sorted(values)) for name, values in fields.items())))
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 @functools.cache
@@ -384,6 +427,7 @@ def _code_stamp() -> str:
     device = jax.devices()[0]
     flags = os.environ.get("XLA_FLAGS", "")
     stamp = (_STORE_FORMAT, jax.__version__, jaxlib.__version__, device.platform, device.device_kind, flags)
+    stamp += (cpu_fingerprint(),)
     digest = hashlib.sha256(repr(stamp).encode() + device.client.platform_version.encode())
     for package in ("lmhdx", "solvax"):
         root = Path(importlib.import_module(package).__file__).parent
@@ -394,7 +438,7 @@ def _code_stamp() -> str:
 
 def _store_path(key, suffix: str) -> Path | None:
     directory = jax.config.jax_compilation_cache_dir
-    if not directory:
+    if not directory or cpu_fingerprint() is None:
         return None
     try:
         blob = pickle.dumps(key, protocol=4)
@@ -477,7 +521,11 @@ def stored(key):
         keys = pickle.loads(path.read_bytes())
         program = path.with_suffix(".program")
         if program.exists():
-            entry = _StoredProgram(keys, *pickle.loads(program.read_bytes()))
+            fingerprint, *payload = pickle.loads(program.read_bytes())
+            # Also in the key; checked again so a copied or renamed entry is never loaded.
+            if fingerprint != cpu_fingerprint():
+                return keys
+            entry = _StoredProgram(keys, *payload)
             entry.path = program
             return entry
         return keys
@@ -494,7 +542,7 @@ def store(key, entry) -> None:
     try:
         if isinstance(entry, ShapeProgram):
             outputs = jax.tree.unflatten(entry.tree, [_LEAF] * entry.tree.num_leaves)
-            payload = (entry.signature, _skeleton(outputs), entry.serialized())
+            payload = (cpu_fingerprint(), entry.signature, _skeleton(outputs), entry.serialized())
             path = path.with_suffix(".program")
         else:
             payload = list(entry)

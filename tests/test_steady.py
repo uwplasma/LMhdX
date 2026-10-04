@@ -889,6 +889,48 @@ def test_a_known_shape_is_solved_in_a_new_process_without_a_trace(tmp_path):
     assert third["flows"][0] == pytest.approx(first["flows"][1], rel=1e-12)
 
 
+def test_a_program_stored_on_another_cpu_is_never_loaded(monkeypatch, tmp_path):
+    """2b.1: a stored executable runs only on the CPU that compiled it.
+
+    One loaded on a CPU without its instructions dies of an illegal instruction, which no
+    fallback can catch. The fingerprint is in the key and in the entry: an entry whose
+    fingerprint differs is ignored and the solve traced, to round-off of its embedded program.
+    """
+    import pickle
+
+    import lmhdx._programs as _programs
+    import lmhdx.steady as steady
+
+    previous = jax.config.jax_compilation_cache_dir
+    jax.config.update("jax_compilation_cache_dir", str(tmp_path))
+    try:
+        problems = [duct_problem(hartmann=h, cells=16, cells_in_layer=2) for h in (20.0, 30.0, 45.0)]
+        monkeypatch.setattr(steady, "_SHAPES", {})
+        monkeypatch.setattr(_programs, "_GRID_PROGRAMS", {})
+        steady._program.cache_clear()
+        for problem in problems[:2]:
+            steady.solve_compiled(problem)
+        programs = sorted((tmp_path / "lmhdx_shapes").glob("*.program"))
+        assert programs
+        for path in programs:
+            _, *payload = pickle.loads(path.read_bytes())
+            path.write_bytes(pickle.dumps(("another cpu", *payload)))
+        monkeypatch.setattr(steady, "_SHAPES", {})
+        monkeypatch.setattr(_programs, "_GRID_PROGRAMS", {})
+        steady._program.cache_clear()
+        solution = steady.solve_compiled(problems[2]).velocity
+        assert not any(isinstance(entry, _programs._StoredProgram) for entry in steady._SHAPES.values())
+        assert not any(
+            isinstance(entry, _programs._StoredProgram) for entry in _programs._GRID_PROGRAMS.values()
+        )
+        embedded = jax.jit(steady._solve_program(problems[2]))()[0]
+        for got, expected in zip(solution, embedded, strict=True):
+            np.testing.assert_allclose(got.data, expected.data, rtol=1e-12, atol=1e-14)
+    finally:
+        jax.config.update("jax_compilation_cache_dir", previous)
+        steady._program.cache_clear()
+
+
 def _extruded_duct(hartmann: float) -> ChannelProblem:
     duct = duct_problem(hartmann=hartmann, cells=10, cells_in_layer=1)
     return dataclasses.replace(
