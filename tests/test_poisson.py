@@ -446,3 +446,55 @@ def test_mixed_precision_leaves_float32_states_alone():
         state, mixed = build().solve(rhs), build(precision="mixed").solve(rhs)
         assert mixed.dtype == state.dtype
         assert np.array_equal(np.asarray(mixed.data), np.asarray(state.data))
+
+
+def test_walls_resolved_in_cells_solve_the_dense_conductivity_jump():
+    """The Kronecker sum with wall nodes is the five-point operator of the fluid and wall cells together."""
+    from lmhdx.poisson import fast_diagonal_thin_wall_poisson
+
+    ny, nz = 10, 8
+    fy, fz = geometric_faces(ny, -1.0, 1.0, 1.2), uniform_faces(nz, -1.0, 1.0)
+    grid = Grid(uniform_faces(1, 0.0, 1.0), fy, fz)
+    lower, upper = (5.0, (0.03, 0.04, 0.05)), (0.5, (0.1, 0.1))
+    periodic, insulating = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN)
+    solver = fast_diagonal_thin_wall_poisson(
+        grid, (periodic, insulating, insulating), (0.0, 0.0, 0.0), layers=(None, (lower, upper), None)
+    )
+    volumes = np.diff(fy)[:, None] * np.diff(fz)[None, :]
+    rhs = np.random.default_rng(0).standard_normal((ny, nz))
+    rhs -= np.sum(rhs * volumes) / np.sum(volumes)
+    potential, walls = solver.solve_with_walls(Field(jnp.asarray(rhs[None]), (CENTER,) * 3, grid))
+    widths = np.concatenate([lower[1][::-1], np.diff(fy), upper[1]])
+    sigma = np.concatenate([[lower[0]] * 3, [1.0] * ny, [upper[0]] * 2])
+    rows, hz = widths.size, np.diff(fz)
+    matrix = np.zeros((rows * nz, rows * nz))
+    for i in range(rows):
+        for k in range(nz):
+            links = []
+            if i + 1 < rows:
+                links.append(
+                    (
+                        (i + 1) * nz + k,
+                        hz[k] / (0.5 * widths[i] / sigma[i] + 0.5 * widths[i + 1] / sigma[i + 1]),
+                    )
+                )
+            if k + 1 < nz:
+                links.append((i * nz + k + 1, sigma[i] * widths[i] / (0.5 * (hz[k] + hz[k + 1]))))
+            for other, link in links:
+                for a, b in ((i * nz + k, other), (other, i * nz + k)):
+                    matrix[a, a] -= link
+                    matrix[a, b] += link
+    source = np.zeros((rows, nz))
+    source[3 : 3 + ny] = rhs * volumes
+    dense = np.linalg.lstsq(matrix, source.ravel(), rcond=None)[0].reshape(rows, nz)
+    dense -= np.sum(dense[3 : 3 + ny] * volumes) / np.sum(volumes)
+    np.testing.assert_allclose(potential.data[0], dense[3 : 3 + ny], atol=1e-11 * np.max(np.abs(dense)))
+    # The reported interface potential carries the series current of the two half cells.
+    series = 1.0 / (0.5 * np.diff(fy)[0] + 0.5 * 0.03 / 5.0)
+    reported = (walls[1].data[0, 0] - potential.data[0, 0]) / (0.5 * np.diff(fy)[0])
+    np.testing.assert_allclose(reported, series * (dense[2] - dense[3]), rtol=1e-10)
+    assert walls[0] is None and walls[2] is None
+    with pytest.raises(ValueError, match="one axis"):
+        fast_diagonal_thin_wall_poisson(
+            grid, (periodic, insulating, insulating), (0.0, 0.0, 0.1), layers=(None, (lower, None), None)
+        )

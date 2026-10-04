@@ -771,6 +771,7 @@ def shape_key(problem: ChannelProblem) -> tuple:
         problem.precision,
         pattern,
         tuple(bool(c) for c in problem.wall_conductance),
+        tuple(pair and tuple(end and len(end[1]) for end in pair) for pair in problem.wall_layers),
         bool(problem.conductivity),
         jax.default_backend(),
     )

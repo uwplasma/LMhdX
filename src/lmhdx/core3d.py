@@ -196,6 +196,13 @@ class ChannelProblem:
     ``dirichlet`` with ``upper_kind="neumann"``, whose ``lower`` is the inlet
     profile of the velocity normal to it. :mod:`lmhdx.axial` builds and solves
     such a duct, in the Stokes limit only.
+
+    ``wall_conductance`` closes an axis with thin conducting walls, the same on
+    both. ``wall_layers`` resolves the walls of one axis in cells instead:
+    ``(lower, upper)``, each ``None`` (insulating) or ``(ratio, widths)``, the
+    wall's conductivity over the fluid's and its cell widths from the fluid
+    outwards, insulated outside. The wall carries potential and current only; it
+    spans the fluid's tangential extent, and no other axis may conduct.
     """
 
     grid: Grid
@@ -209,6 +216,7 @@ class ChannelProblem:
     advection: str = "off"
     wall_conductance: tuple[float, float, float] = (0.0, 0.0, 0.0)
     precision: str = "state"
+    wall_layers: tuple = (None, None, None)
 
     def __post_init__(self) -> None:
         if len(self.conditions) != 3:
@@ -226,6 +234,7 @@ class ChannelProblem:
             raise ValueError("wall conductance must not be negative")
         if self.precision not in ("state", "mixed"):
             raise ValueError(f"precision must be 'state' or 'mixed', got {self.precision!r}")
+        self._freeze_wall_layers()
         self._check_open_axis()
         field = self.magnetic_field
         if not isinstance(field, ImposedField):
@@ -244,6 +253,29 @@ class ChannelProblem:
         # True float32 contractions unless the user chose a precision; see lmhdx.enable_x64.
         _pin_matmul_precision()
 
+    def _freeze_wall_layers(self) -> None:
+        """Store ``wall_layers`` as nested tuples of floats, so the problem stays hashable."""
+        if len(self.wall_layers) != 3:
+            raise ValueError("a channel needs one wall-layer entry per axis")
+        frozen = tuple(
+            None
+            if not pair or not any(pair)
+            else tuple(
+                None if end is None else (float(end[0]), tuple(float(w) for w in end[1])) for end in pair
+            )
+            for pair in self.wall_layers
+        )
+        for axis, pair in enumerate(frozen):
+            if pair is None:
+                continue
+            if len(pair) != 2 or self.conditions[axis].is_periodic or float(self.wall_conductance[axis]):
+                raise ValueError(
+                    f"axis {axis} takes resolved walls as a (lower, upper) pair on a wall-bounded axis"
+                )
+            if any(end is not None and (end[0] <= 0.0 or not end[1] or min(end[1]) <= 0.0) for end in pair):
+                raise ValueError("a resolved wall needs a positive conductivity ratio and positive widths")
+        object.__setattr__(self, "wall_layers", frozen)
+
     def _check_open_axis(self) -> None:
         mixed = [axis for axis, condition in enumerate(self.conditions) if condition.is_mixed]
         if not mixed:
@@ -251,7 +283,7 @@ class ChannelProblem:
         condition = self.conditions[mixed[0]]
         if len(mixed) > 1 or condition.kinds != (DIRICHLET, NEUMANN) or np.any(condition.upper):
             raise ValueError("one inflow-outflow axis at most: a Dirichlet inlet below, a free outlet above")
-        if self.advection != "off" or float(self.wall_conductance[mixed[0]]):
+        if self.advection != "off" or float(self.wall_conductance[mixed[0]]) or self.wall_layers[mixed[0]]:
             raise ValueError("an inflow-outflow axis is solved in the Stokes limit and has no wall")
 
     @property
@@ -270,7 +302,7 @@ class ChannelProblem:
     @property
     def conducting_walls(self) -> bool:
         """Whether any wall carries current along itself."""
-        return any(float(value) > 0.0 for value in self.wall_conductance)
+        return any(float(value) > 0.0 for value in self.wall_conductance) or any(self.wall_layers)
 
     @property
     def scalar_conditions(self) -> tuple[BoundaryCondition, BoundaryCondition, BoundaryCondition]:
@@ -380,6 +412,7 @@ class ChannelProblem:
             tuple(float(value) for value in self.wall_conductance),
             self.precision,
             int(self.open_axis is not None),
+            self.wall_layers,
         )
 
 
@@ -666,13 +699,16 @@ def _thin_wall_factorization(
     conductance: tuple[float, float, float],
     precision: str,
     corrections: int = 0,
+    layers: tuple = (None, None, None),
 ) -> FastDiagonalThinWallPoisson:
     """Build the thin-wall factorization once; a periodic axis has no wall, so its conductance is ignored."""
     walls = tuple(
         0.0 if condition.is_periodic else value for condition, value in zip(conditions, conductance)
     )
     with jax.ensure_compile_time_eval():
-        factorization = fast_diagonal_thin_wall_poisson(grid, conditions, walls, precision=precision)
+        factorization = fast_diagonal_thin_wall_poisson(
+            grid, conditions, walls, precision=precision, layers=layers
+        )
     return dataclasses.replace(factorization, corrections=corrections)
 
 

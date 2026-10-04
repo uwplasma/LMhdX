@@ -29,7 +29,10 @@ second case compiled, with no trace. `ny` and `nz` are fluid cells, clustered to
 Hartmann layer `a/Ha` on the walls normal to the field and to the side layer
 `a/sqrt(Ha)` on the others, exactly as `lmhdx.duct_problem` does. Hunt's
 conducting walls are thin walls of conductance ratio `c = sigma_w t_w / (sigma a)`:
-the solution covers the fluid, and `wall_cells` do not enter. On 32-64 cells
+the solution covers the fluid, and `wall_cells` do not enter. With
+`wall_model="resolved"` on the geometry, the walls of one axis get `wall_cells`
+cells of their own instead; that is also the closure for one conducting wall or
+two different ones. On 32-64 cells
 the flow rate is within 1 % of the spectral reference from Ha 20 to 1000.
 `result.residual` is the relative steady residual `||R(u)|| / ||R(0)||`,
 certified to 1e-9; a solve that fails raises. The case's pseudo-time controls
