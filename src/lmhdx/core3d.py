@@ -89,6 +89,7 @@ from .poisson import (
     FastDiagonalHelmholtz,
     FastDiagonalPoisson,
     FastDiagonalThinWallPoisson,
+    _wall_cells,
     fast_diagonal_helmholtz,
     fast_diagonal_poisson,
     fast_diagonal_thin_wall_poisson,
@@ -198,11 +199,13 @@ class ChannelProblem:
     such a duct, in the Stokes limit only.
 
     ``wall_conductance`` closes an axis with thin conducting walls, the same on
-    both. ``wall_layers`` resolves the walls of one axis in cells instead:
-    ``(lower, upper)``, each ``None`` (insulating) or ``(ratio, widths)``, the
-    wall's conductivity over the fluid's and its cell widths from the fluid
-    outwards, insulated outside. The wall carries potential and current only; it
-    spans the fluid's tangential extent, and no other axis may conduct.
+    both. ``wall_layers`` resolves walls in cells instead: per axis
+    ``(lower, upper)``, each ``None`` (insulating) or ``(ratios, widths)``, each
+    cell's conductivity over the fluid's (one number for all) and its width, from
+    the fluid outwards, insulated outside; stored per cell. A wall carries
+    potential and current only and spans the fluid's tangential extent. Two axes
+    may have them when the third has one cell; a corner cell then takes the
+    nearer wall's layer (:func:`lmhdx.poisson.fast_diagonal_thin_wall_poisson`).
     """
 
     grid: Grid
@@ -254,27 +257,30 @@ class ChannelProblem:
         _pin_matmul_precision()
 
     def _freeze_wall_layers(self) -> None:
-        """Store ``wall_layers`` as nested tuples of floats, so the problem stays hashable."""
+        """Store ``wall_layers`` as per-cell ``(ratios, widths)`` tuples, so the problem stays hashable."""
         if len(self.wall_layers) != 3:
             raise ValueError("a channel needs one wall-layer entry per axis")
-        frozen = tuple(
-            None
-            if not pair or not any(pair)
-            else tuple(
-                None if end is None else (float(end[0]), tuple(float(w) for w in end[1])) for end in pair
-            )
-            for pair in self.wall_layers
-        )
-        for axis, pair in enumerate(frozen):
-            if pair is None:
+        frozen = []
+        for axis, pair in enumerate(self.wall_layers):
+            if not pair or not any(pair):
+                frozen.append(None)
                 continue
             if len(pair) != 2 or self.conditions[axis].is_periodic or float(self.wall_conductance[axis]):
                 raise ValueError(
                     f"axis {axis} takes resolved walls as a (lower, upper) pair on a wall-bounded axis"
                 )
-            if any(end is not None and (end[0] <= 0.0 or not end[1] or min(end[1]) <= 0.0) for end in pair):
-                raise ValueError("a resolved wall needs a positive conductivity ratio and positive widths")
-        object.__setattr__(self, "wall_layers", frozen)
+            cells = [None if end is None else _wall_cells(end) for end in pair]
+            frozen.append(
+                tuple(
+                    None if end is None else tuple(tuple(map(float, part)) for part in end) for end in cells
+                )
+            )
+        resolved = [axis for axis, pair in enumerate(frozen) if pair]
+        if len(resolved) > 1 and (len(resolved) > 2 or self.grid.shape[3 - sum(resolved)] != 1):
+            raise ValueError("walls resolved in cells on two axes need one cell along the third")
+        if resolved and any(float(value) for value in self.wall_conductance):
+            raise ValueError("walls resolved in cells take no thin wall on another axis")
+        object.__setattr__(self, "wall_layers", tuple(frozen))
 
     def _check_open_axis(self) -> None:
         mixed = [axis for axis, condition in enumerate(self.conditions) if condition.is_mixed]

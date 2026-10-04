@@ -77,4 +77,6 @@ host-side setup, not a differentiable live coil/geometry interface. Keep source
 provenance, interpolation error and independent Maxwell checks with each run.
 
 Run `python examples/li_aln_wall_stack_example.py` for explicit conducting and
-insulating layers.
+insulating layers: each wall is a stack of cells of its own conductivity
+(`ChannelProblem.wall_layers`), solved on the staggered core with the corner
+cells taking the nearer wall's layer.

@@ -11,33 +11,28 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 
 from lmhdx import (
+    ChannelProblem,
     WallLayer,
     dynamic_to_kinematic_viscosity,
     effective_pinhole_conductance_ratio,
+    enable_x64,
     generate_multilayer_duct_mesh,
     hartmann_number,
     interaction_parameter,
     magnetic_reynolds_number,
     normal_stack_leakage_ratio,
     reynolds_number,
+    solve_steady_state,
     tangential_stack_conductance_ratio,
 )
-from lmhdx.cases import solve_steady
-from lmhdx.specs import (
-    BoundaryCondition,
-    CaseSpec,
-    GeometrySpec,
-    MagneticFieldSpec,
-    OutputSpec,
-    RegionSpec,
-    SolverConfig,
-    TimeStepperConfig,
-)
-from lmhdx.validation import validation_summary
+from lmhdx.bc import NEUMANN, PERIODIC, BoundaryCondition
+from lmhdx.grid import Grid, uniform_faces, wall_resolving_faces
+from lmhdx.ops import divergence
 
 # Inputs: edit material, geometry, wall, numerics, and output choices here.
 OUTPUT_DIR = Path("artifacts/examples/li_aln_wall_stack")
@@ -56,13 +51,8 @@ METAL_CONDUCTIVITY_S_M = 1.35e6
 METAL_THICKNESS_M = 1.0e-3
 METAL_CELLS = 2
 PINHOLE_FRACTIONS = (0.0, 1.0e-6, 1.0e-4, 1.0e-2, 1.0)
-FLUID_CELLS_Y = 4
-FLUID_CELLS_Z = 4
-TIME_STEP_S = 1.0e-3
-FINAL_TIME_S = 4.0e-3
-MAX_STEPS = 4
-POTENTIAL_ITERATIONS = 200  # Per cold potential solve inside the steady affine solve.
-
+FLUID_CELLS = 24
+LAYER_CELLS = 3  # Fluid cells inside each Hartmann layer.
 
 # Set up dimensional and reduced electrical properties.
 width = height = 2.0 * LENGTH_SCALE_M
@@ -128,81 +118,44 @@ pinhole_conductance = [
     for fraction in PINHOLE_FRACTIONS
 ]
 
-# Run the same prescribed-flow solve for each explicit wall stack.
+# Run the same prescribed-flow solve for each explicit wall stack, on the staggered core.
+enable_x64()
+half = 0.5 * width
+faces = wall_resolving_faces(
+    FLUID_CELLS,
+    -half,
+    half,
+    layer_thickness=half / nondimensional["hartmann_number"],
+    cells_in_layer=LAYER_CELLS,
+    max_ratio=None,
+)
+areas = np.diff(faces)[:, None] * np.diff(faces)[None, :]
 results: dict[str, dict[str, object]] = {}
 meshes = {}
 for model in WALL_MODELS:
     layers = model_layers[model]
-    stacks = {side: layers for side in ("left", "right", "bottom", "top")}
-    mesh = generate_multilayer_duct_mesh(
-        width=width,
-        height=height,
-        length=LENGTH_SCALE_M,
-        nx=1,
-        ny=FLUID_CELLS_Y,
-        nz=FLUID_CELLS_Z,
-        wall_layers=stacks,
-        fluid_conductivity=LITHIUM_CONDUCTIVITY_S_M,
+    # Each wall cell: its conductivity over lithium's, and its width, from the fluid outwards.
+    ratios = [layer.conductivity / LITHIUM_CONDUCTIVITY_S_M for layer in layers for _ in range(layer.cells)]
+    widths = [layer.thickness / layer.cells for layer in layers for _ in range(layer.cells)]
+    stack = (tuple(ratios), tuple(widths))
+    problem = ChannelProblem(
+        grid=Grid(uniform_faces(1, 0.0, LENGTH_SCALE_M), faces, faces),
+        conditions=(BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN), BoundaryCondition(NEUMANN)),
+        density=LITHIUM_DENSITY_KG_M3,
+        viscosity=kinematic_viscosity,
+        conductivity=LITHIUM_CONDUCTIVITY_S_M,
+        magnetic_field=(0.0, MAGNETIC_FIELD_T, 0.0),
+        forcing=(1.0, 0.0, 0.0),  # One pascal per metre; the flow is linear in it.
+        dt=half**2 / kinematic_viscosity,
+        wall_layers=(None, (stack, stack), (stack, stack)),
     )
-    case = CaseSpec(
-        name=f"li_aln_{model}",
-        geometry=GeometrySpec(
-            kind="rect_duct",
-            width=width,
-            height=height,
-            length=LENGTH_SCALE_M,
-            ny=FLUID_CELLS_Y,
-            nz=FLUID_CELLS_Z,
-        ),
-        regions=(
-            RegionSpec(
-                "fluid",
-                "fluid",
-                LITHIUM_CONDUCTIVITY_S_M,
-                LITHIUM_DENSITY_KG_M3,
-                kinematic_viscosity,
-            ),
-        ),
-        magnetic_field=MagneticFieldSpec(kind="constant", value=(0.0, MAGNETIC_FIELD_T, 0.0)),
-        boundary_conditions=(
-            BoundaryCondition("walls", "no_slip"),
-            BoundaryCondition(
-                "flow_rate",
-                "inlet_flow_rate",
-                value=MEAN_VELOCITY_M_S * width * height,
-                axis="x",
-            ),
-        ),
-        time_stepper=TimeStepperConfig(
-            dt=TIME_STEP_S,
-            t_final=FINAL_TIME_S,
-            max_steps=MAX_STEPS,
-            potential_iterations=POTENTIAL_ITERATIONS,
-            potential_tolerance=1.0e-7,
-            relaxation=0.35,
-            velocity_update_limit=2.0e-2,
-        ),
-        solver=SolverConfig(coupling_iterations=4, coupling_tolerance=1.0e-7),
-        output=OutputSpec(
-            write_paraview=False,
-            write_csv_profiles=False,
-            write_npz=False,
-            write_json_summary=False,
-        ),
-        initial_velocity=MEAN_VELOCITY_M_S,
-        reference_pressure_gradient=-1.0,
-        reference_phi_cell=(mesh.ny // 2, mesh.nz // 2),
-    )
-    solution = solve_steady(case, mesh=mesh)
-    diagnostics = validation_summary(solution, case.name)
-    face_current = float(solution.diagnostics.face_current_max_history[-1])
-    spacing = min(float(np.min(mesh.dy)), float(np.min(mesh.dz)))
-    diagnostics["charge_balance_relative"] = (
-        abs(float(diagnostics["charge_balance_residual"])) * spacing / max(abs(face_current), 1.0e-30)
-    )
-    diagnostics["interface_current_relative"] = abs(float(diagnostics["interface_current_residual"])) / max(
-        abs(face_current), 1.0e-30
-    )
+    solution = solve_steady_state(problem)
+    gradient = MEAN_VELOCITY_M_S * float(np.sum(areas)) / float(np.sum(areas * solution.velocity[0].data[0]))
+    currents = [gradient * jnp.asarray(current.data[0]) for current in solution.currents]
+    current_y = 0.5 * (currents[1][:-1] + currents[1][1:])
+    current_z = 0.5 * (currents[2][:, :-1] + currents[2][:, 1:])
+    face_current = max(float(jnp.max(jnp.abs(current))) for current in currents[1:])
+    charge = gradient * float(jnp.max(jnp.abs(divergence(solution.currents).data)))
     results[model] = {
         "layers": [layer.__dict__ for layer in layers],
         "tangential_conductance_ratio": tangential_stack_conductance_ratio(
@@ -215,11 +168,23 @@ for model in WALL_MODELS:
             fluid_conductivity=LITHIUM_CONDUCTIVITY_S_M,
             length_scale=LENGTH_SCALE_M,
         ),
-        "mesh_shape": list(mesh.yz_shape),
-        "status": solution.status,
-        "validation": diagnostics,
+        "pressure_gradient_pa_m": gradient,
+        "validation": {
+            "relative_residual": float(solution.residual_norm / solution.initial_residual_norm),
+            "charge_balance_relative": charge * float(np.min(np.diff(faces))) / max(face_current, 1.0e-30),
+            "mean_current_magnitude": float(np.sum(areas * jnp.hypot(current_y, current_z)) / np.sum(areas)),
+        },
     }
-    meshes[model] = mesh
+    meshes[model] = generate_multilayer_duct_mesh(
+        width=width,
+        height=height,
+        length=LENGTH_SCALE_M,
+        nx=1,
+        ny=FLUID_CELLS,
+        nz=FLUID_CELLS,
+        wall_layers={side: layers for side in ("left", "right", "bottom", "top")},
+        fluid_conductivity=LITHIUM_CONDUCTIVITY_S_M,
+    )
 
 # Save a compact, reproducible summary and a three-panel visual comparison.
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

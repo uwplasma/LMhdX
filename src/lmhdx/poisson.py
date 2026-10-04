@@ -37,7 +37,7 @@ solved in float32 as before.
 from __future__ import annotations
 
 import functools
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import jax
 import jax.numpy as jnp
@@ -767,8 +767,9 @@ def assemble_thick_wall_operator(
     """Return the one-dimensional potential operator with a wall resolved in cells at each end, and its weights.
 
     ``layers`` is ``(lower, upper)``: ``None`` for an insulating wall, else
-    ``(ratio, widths)``, the wall conductivity over the fluid's and its cell
-    widths from the fluid outwards, insulated outside. A wall cell is weighted by
+    ``(ratios, widths)``, each cell's conductivity over the fluid's (one number
+    for all) and its width, from the fluid outwards, insulated outside; adjacent
+    cells join through their half cells in series. A wall cell is weighted by
     the ratio times its width, so the tangential axes conduct through it at the
     wall's conductivity and the operator stays a Kronecker sum, as for
     :func:`assemble_thin_wall_operator`; the wall must span the fluid's
@@ -783,7 +784,7 @@ def assemble_thick_wall_operator(
     insulating = assemble_axis_laplacian(grid, axis, BoundaryCondition(NEUMANN))
     prescribed = assemble_axis_laplacian(grid, axis, BoundaryCondition(DIRICHLET))
     cell = np.asarray(grid.widths[axis], dtype=float)
-    ends = [(float(layer[0]), np.asarray(layer[1], dtype=float)) if layer else None for layer in layers]
+    ends = [_wall_cells(layer) if layer else None for layer in layers]
     counts = [0 if end is None else end[1].size for end in ends]
     count, lead = cell.size, counts[0]
     size = count + sum(counts)
@@ -794,20 +795,28 @@ def assemble_thick_wall_operator(
         if end is None:
             continue
         ratio, widths = end
-        if ratio <= 0.0 or widths.size == 0 or np.any(widths <= 0.0):
-            raise ValueError("a resolved wall needs a positive conductivity ratio and positive widths")
         index = 0 if side == 0 else count - 1
         # The production stencil's half-cell conductance, then the wall's half cell in series.
         half = cell[index] * (insulating[index, index] - prescribed[index, index])
-        fractions[side] = 1.0 / (1.0 + half * 0.5 * widths[0] / ratio)
+        fractions[side] = 1.0 / (1.0 + half * 0.5 * widths[0] / ratio[0])
         nodes = [lead + index] + [lead - 1 - k if side == 0 else lead + count + k for k in range(widths.size)]
         weights[nodes[1:]] = ratio * widths
-        links = [half * fractions[side]] + list(ratio / (0.5 * (widths[:-1] + widths[1:])))
+        resistance = 0.5 * widths / ratio
+        links = [half * fractions[side]] + list(1.0 / (resistance[:-1] + resistance[1:]))
         for (first, second), link in zip(zip(nodes[:-1], nodes[1:]), links, strict=True):
             for row, column in ((first, second), (second, first)):
                 operator[row, column] += link / weights[row]
                 operator[row, row] -= link / weights[row]
     return operator, weights, tuple(fractions)
+
+
+def _wall_cells(layer) -> tuple[np.ndarray, np.ndarray]:
+    """Return a resolved wall's per-cell conductivity ratios and widths, checked."""
+    widths = np.asarray(layer[1], dtype=float)
+    ratios = np.broadcast_to(np.asarray(layer[0], dtype=float), widths.shape).copy()
+    if widths.ndim != 1 or widths.size == 0 or np.any(widths <= 0.0) or np.any(ratios <= 0.0):
+        raise ValueError("a resolved wall needs positive conductivity ratios and positive widths")
+    return ratios, widths
 
 
 @dataclass(frozen=True)
@@ -832,6 +841,8 @@ class FastDiagonalThinWallPoisson(FastDiagonalPoisson):
     # Wall nodes below and above each axis, and the interface fractions of resolved walls.
     pads: tuple[tuple[int, int], ...] | None = None
     fractions: tuple[tuple[float, float], ...] | None = None
+    # Resolved walls on two axes: the corner cells' indices, and the Woodbury basis and capacitance.
+    corner_fix: tuple | None = None
 
     def _pads(self) -> tuple[tuple[int, int], ...]:
         if self.pads is not None:
@@ -891,6 +902,14 @@ class FastDiagonalThinWallPoisson(FastDiagonalPoisson):
             jnp.moveaxis(jnp.tensordot(matrix, values, axes=([1], [axis])), 0, axis)
             for axis, matrix in enumerate(matrices)
         )
+        if self.corner_fix is not None:
+            indices = self.corner_fix[0]
+            difference = host_array(self, _thin_wall_entry, "corner_fix", 3, dtype=total.dtype)
+            inverse_weights = host_array(self, _corner_inverse_weights, dtype=total.dtype)
+            local = (
+                jnp.zeros(values.size, total.dtype).at[indices].set(difference @ values.reshape(-1)[indices])
+            )
+            return total + local.reshape(values.shape) * inverse_weights
         if self.corner_gain is None:
             return total
         edge = self._edge()
@@ -899,6 +918,16 @@ class FastDiagonalThinWallPoisson(FastDiagonalPoisson):
 
     def _corrected(self, data: jnp.ndarray, single: bool = False) -> jnp.ndarray:
         solution = self._direct(data, single)
+        if self.corner_fix is not None:
+            # Woodbury: the corner cells' links as they are, not as the Kronecker sum makes them.
+            dtype = solution.dtype
+            basis = host_array(self, _thin_wall_entry, "corner_fix", 1, dtype=dtype)
+            capacitance = host_array(self, _thin_wall_entry, "corner_fix", 2, dtype=dtype)
+            inverse_weights = host_array(self, _corner_inverse_weights, dtype=dtype)
+            indices = self.corner_fix[0]
+            modes = capacitance @ (basis.T @ solution.reshape(-1)[indices])
+            source = jnp.zeros(solution.size, dtype).at[indices].set(basis @ modes)
+            return solution - self._direct(source.reshape(solution.shape) * inverse_weights, single)
         if self.corner_gain is None:
             return solution
         edge, dtype = self._edge(), solution.dtype
@@ -910,6 +939,10 @@ class FastDiagonalThinWallPoisson(FastDiagonalPoisson):
 
     def _edge(self) -> int:
         return next(axis for axis, value in enumerate(self.conductance) if not float(value) > 0.0)
+
+
+def _corner_inverse_weights(factorization) -> np.ndarray:
+    return 1.0 / factorization._measure()
 
 
 def _thin_wall_entry(factorization, name: str, axis: int | None) -> np.ndarray:
@@ -944,17 +977,20 @@ def fast_diagonal_thin_wall_poisson(
 
     Zero keeps the insulating closure of ``conditions``; a conducting axis must
     have insulating (Neumann) walls to replace, and one axis at least must not
-    conduct. ``layers`` gives an axis walls resolved in cells instead
+    conduct. ``layers`` gives axes walls resolved in cells instead
     (:func:`assemble_thick_wall_operator`), ``(lower, upper)`` per axis or
-    ``None``; such an axis is then the only one that conducts, since the
-    Kronecker sum would give a corner cell the product of two walls' ratios.
+    ``None``, with no thin wall. Two axes may have them when the third has one
+    cell: the Kronecker sum would give a corner cell the product of its two
+    walls' ratios, which :func:`_corner_fix` corrects exactly.
     """
     _require_separable(grid)
     layers = (None, None, None) if layers is None else tuple(layers)
     resolved = [axis for axis, pair in enumerate(layers) if pair and any(pair)]
     conducting = [axis for axis, value in enumerate(conductance) if float(value) > 0.0]
-    if resolved and (len(resolved) > 1 or conducting):
-        raise ValueError("walls resolved in cells conduct on one axis, with no thin wall on another")
+    if resolved and conducting:
+        raise ValueError("walls resolved in cells take no thin wall on another axis")
+    if len(resolved) > 1 and (len(resolved) > 2 or grid.shape[3 - sum(resolved)] != 1):
+        raise ValueError("walls resolved in cells on two axes need one cell along the third")
     conducting = conducting + resolved
     pads, fractions = [], []
     if len(conditions) != 3 or len(conductance) != 3 or len(conducting) == 3 or min(conductance) < 0.0:
@@ -987,7 +1023,7 @@ def fast_diagonal_thin_wall_poisson(
     singular = _is_singular(values)
     if singular:
         vectors, values = _promote_null_mode(vectors, values)
-    return FastDiagonalThinWallPoisson(
+    factorization = FastDiagonalThinWallPoisson(
         grid,
         tuple(conditions),
         tuple(vectors),
@@ -1005,6 +1041,99 @@ def fast_diagonal_thin_wall_poisson(
         pads=tuple(pads) if resolved else None,
         fractions=tuple(fractions) if resolved else None,
     )
+    if len(resolved) == 2:
+        factorization = replace(factorization, corner_fix=_corner_fix(factorization, grid, resolved, layers))
+    return factorization
+
+
+def _corner_fix(factorization: FastDiagonalThinWallPoisson, grid: Grid, axes: list[int], layers) -> tuple:
+    """Return the Woodbury correction that gives the corner cells of two resolved walls their own links.
+
+    In the Kronecker sum a corner cell conducts at the product of its two walls'
+    ratios, and joins its neighbours accordingly. Here a corner cell takes the
+    ratio of the nearer wall at its depth (the cell-centred solver's
+    nearest-side rule, ties to the first axis), and every link touching it is
+    the two half cells in series. The difference ``D`` of the symmetric flux
+    matrices lives on those links; with ``D = U L U^T`` on their cells, the solve
+    becomes ``x - K^-1 W^-1 U C U^T x`` for ``C = (L^-1 + U^T K^-1 U)^-1``, one
+    more fast solve. Returned: the flat indices of those cells, ``U``, ``C`` and
+    ``D`` restricted to them (for the assembled operator).
+    """
+    first, second = axes
+    edge = 3 - first - second
+    shape = tuple(len(weight) for weight in factorization.weights)
+    geometry, ratio, depth, wall = [], [], [], []
+    for axis in axes:
+        pads = factorization.pads[axis]
+        widths = np.asarray(grid.widths[axis], dtype=float)
+        cells = [_wall_cells(layer) if layer else (np.zeros(0), np.zeros(0)) for layer in layers[axis]]
+        lower, upper = cells
+        geometry.append(np.concatenate([lower[1][::-1], widths, upper[1]]))
+        ratio.append(np.concatenate([lower[0][::-1], np.ones(widths.size), upper[0]]))
+        inside = np.zeros(geometry[-1].size, dtype=bool)
+        inside[: pads[0]] = inside[geometry[-1].size - pads[1] :] = True
+        wall.append(inside)
+        centres = np.cumsum(geometry[-1]) - 0.5 * geometry[-1]
+        edges = (centres[pads[0]] - 0.5 * widths[0], centres[pads[0] + widths.size - 1] + 0.5 * widths[-1])
+        depth.append(
+            np.where(
+                centres < edges[0], edges[0] - centres, np.where(centres > edges[1], centres - edges[1], 0.0)
+            )
+        )
+    corner = wall[0][:, None] & wall[1][None, :]
+    nearer_first = depth[0][:, None] <= depth[1][None, :]
+    sigma = np.where(
+        corner,
+        np.where(nearer_first, ratio[0][:, None], ratio[1][None, :]),
+        np.where(wall[0][:, None], ratio[0][:, None], np.where(wall[1][None, :], ratio[1][None, :], 1.0)),
+    )
+    weight = [np.asarray(factorization.weights[axis]) for axis in axes]
+    stiffness = [
+        weight[k][:, None] * np.asarray(factorization.operators[axis]) for k, axis in enumerate(axes)
+    ]
+    plane = (shape[first], shape[second])
+    links = []
+    for i, k in zip(*np.nonzero(corner)):
+        for di, dk in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            j, m = i + di, k + dk
+            if not (0 <= j < plane[0] and 0 <= m < plane[1]) or (corner[j, m] and (j, m) < (i, k)):
+                continue
+            along = 0 if di else 1
+            a, b = ((i, j), (k, m)) if along == 0 else ((k, m), (i, j))
+            across = k if along == 0 else i
+            kron = stiffness[along][a[0], a[1]] * weight[1 - along][across]
+            h = geometry[along]
+            area = geometry[1 - along][across]
+            true = area / (0.5 * h[a[0]] / sigma[i, k] + 0.5 * h[a[1]] / sigma[j, m])
+            links.append(((i, k), (j, m), true - kron))
+    cells = sorted({cell for link in links for cell in link[:2]})
+    position = {cell: index for index, cell in enumerate(cells)}
+    difference = np.zeros((len(cells), len(cells)))
+    for p, q, change in links:
+        a, b = position[p], position[q]
+        difference[a, b] += change
+        difference[b, a] += change
+        difference[a, a] -= change
+        difference[b, b] -= change
+    # The third axis has one cell: its width scales every in-plane flux.
+    difference *= float(np.asarray(factorization.weights[edge])[0])
+    eigenvalues, eigenvectors = np.linalg.eigh(difference)
+    keep = np.abs(eigenvalues) > 1e-12 * np.max(np.abs(eigenvalues))
+    eigenvalues, basis = eigenvalues[keep], eigenvectors[:, keep]
+    full = [0, 0, 0]
+    indices = []
+    for i, k in cells:
+        full[first], full[second], full[edge] = i, k, 0
+        indices.append(int(np.ravel_multi_index(tuple(full), shape)))
+    indices = np.asarray(indices)
+    inverse_weights = 1.0 / factorization._measure()
+    columns = np.zeros((basis.shape[1], *shape))
+    columns.reshape(basis.shape[1], -1)[:, indices] = basis.T
+    columns *= inverse_weights[None]
+    solved = np.asarray(jax.vmap(factorization._direct)(jnp.asarray(columns)))
+    projected = solved.reshape(basis.shape[1], -1)[:, indices] @ basis
+    capacitance = np.linalg.inv(np.diag(1.0 / eigenvalues) + projected)
+    return indices, basis, capacitance, difference
 
 
 def _corner_gain(vectors, values, scales, edge: int) -> np.ndarray | None:
