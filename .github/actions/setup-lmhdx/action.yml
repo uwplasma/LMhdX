@@ -33,12 +33,20 @@ runs:
         enable-cache: true
         cache-dependency-glob: pyproject.toml
 
+    - name: Fingerprint the CPU's instruction set
+      id: cpu
+      shell: bash
+      run: |
+        # An executable compiled on a runner with other CPU flags dies with SIGILL when loaded.
+        flags=$(grep -m1 '^flags' /proc/cpuinfo 2>/dev/null || uname -m)
+        echo "flags=$(printf '%s' "$flags" | sha256sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+
     - name: Restore JAX compilation cache
       uses: actions/cache@v6
       with:
         path: ${{ runner.temp }}/lmx-jax-cache
-        key: lmx-jax-${{ runner.os }}-${{ runner.arch }}-py${{ inputs.python-version }}-${{ inputs.cache-suffix }}-${{ hashFiles('pyproject.toml', 'src/**/*.py') }}
-        restore-keys: lmx-jax-${{ runner.os }}-${{ runner.arch }}-py${{ inputs.python-version }}-${{ inputs.cache-suffix }}-
+        key: lmx-jax-${{ runner.os }}-${{ runner.arch }}-${{ steps.cpu.outputs.flags }}-py${{ inputs.python-version }}-${{ inputs.cache-suffix }}-${{ hashFiles('pyproject.toml', 'src/**/*.py') }}
+        restore-keys: lmx-jax-${{ runner.os }}-${{ runner.arch }}-${{ steps.cpu.outputs.flags }}-py${{ inputs.python-version }}-${{ inputs.cache-suffix }}-
 
     - name: Enable bounded persistent compilation caching
       shell: bash
