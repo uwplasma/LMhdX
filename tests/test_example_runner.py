@@ -57,11 +57,15 @@ def test_li_aln_wall_stack_example_runs_explicit_models(tmp_path: Path):
         summary["models"]["bare_metal"]["tangential_conductance_ratio"]
         > summary["models"]["intact_aln"]["tangential_conductance_ratio"]
     )
-    assert all(model["validation"]["linear_residual"] >= 0.0 for model in summary["models"].values())
     assert all(
-        model["validation"]["charge_balance_relative"] < 1.0e-8
-        and model["validation"]["interface_current_relative"] < 1.0e-5
+        model["validation"]["relative_residual"] < 1.0e-8
+        and model["validation"]["charge_balance_relative"] < 1.0e-8
         for model in summary["models"].values()
+    )
+    # The intact coating insulates the walls; bare 316L has c Ha = 2.3, so about three times the gradient.
+    models = summary["models"]
+    assert (
+        models["intact_aln"]["pressure_gradient_pa_m"] < 0.5 * models["bare_metal"]["pressure_gradient_pa_m"]
     )
     assert (summary_path.parent / "li_aln_wall_stack.png").is_file()
 

@@ -276,6 +276,33 @@ def test_walls_resolved_in_cells_converge_to_the_cell_centred_answer(walls, fine
     assert _mean_velocity(solution) == pytest.approx(cell_centred, rel=0.01)
 
 
+def test_resolved_walls_on_both_axes_match_the_cell_centred_corners():
+    """Hartmann walls 4x and side walls 0.5x the fluid's conductivity, 0.05 thick in 8 cells.
+
+    Office, float64, mean velocity at Ha 20, core 32/64/96/128 0.0123907/0.0123487/0.0123297/0.0123234,
+    cell-centred 32/64/96 0.0123993/0.0123538/0.0123333; Ha 100 core 0.00078544/0.00078017/0.00077984/
+    0.00077940, cell-centred 0.00073014/0.00075151/0.00076372 (converging from below). Thin walls
+    of the same conductance sit 0.16 % (Ha 20) and 0.45 % (Ha 100) lower.
+    """
+    base = lmhdx.make_hunt_case(ha=20.0, ny=32, nz=32, wall_thickness=0.05, wall_cells=8)
+    case = _resolved(
+        _with(
+            base,
+            regions=(
+                base.regions[0],
+                RegionSpec("hart", "solid", 4.0, 1.0, 1.0, 0.05),
+                RegionSpec("side", "solid", 0.5, 1.0, 1.0, 0.05),
+            ),
+            boundary_conditions=(
+                BoundaryCondition("h", "conducting_wall", region="hart", side="left_right"),
+                BoundaryCondition("s", "conducting_wall", region="side", side="top_bottom"),
+            ),
+        )
+    )
+    assert all(channel_problem(case).wall_layers[1:])
+    assert _mean_velocity(lmhdx.solve(case)) == pytest.approx(0.0123993, rel=0.001)
+
+
 def test_a_resolved_wall_differentiates_in_the_field():
     case = _one_wall(_case(20.0, 0.1, 12))
 
@@ -315,8 +342,6 @@ def test_what_the_core_does_not_model_is_refused():
         _with(shercliff, regions=(*shercliff.regions, RegionSpec("second", "fluid", 1.0, 1.0, 1.0))),
         _with(shercliff, boundary_conditions=(BoundaryCondition("j", "imposed_current_density", 1.0),)),
         _with(shercliff, boundary_conditions=(BoundaryCondition("w", "conducting_wall", side="left_right"),)),
-        # Resolved walls on both axes: the corners are not modelled.
-        _resolved(_with(hunt, boundary_conditions=(BoundaryCondition("walls", "no_slip"),))),
         # Thin walls must be equal on an axis.
         _with(_one_wall(hunt), geometry=dataclasses.replace(hunt.geometry, wall_model="thin")),
     ]

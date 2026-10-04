@@ -751,8 +751,14 @@ def test_resolved_wall_layers_are_frozen_and_checked():
     grid = Grid(uniform_faces(1, 0.0, 1.0), uniform_faces(4, -1.0, 1.0), uniform_faces(4, -1.0, 1.0))
     conditions = (PERIODIC_X, WALL, WALL)
     problem = ChannelProblem(grid, conditions, wall_layers=(None, ([2, [0.1, 0.1]], None), None))
-    assert problem.wall_layers == (None, ((2.0, (0.1, 0.1)), None), None) and problem.conducting_walls
+    assert problem.wall_layers == (None, (((2.0, 2.0), (0.1, 0.1)), None), None) and problem.conducting_walls
     assert hash(problem) == hash(ChannelProblem(grid, conditions, wall_layers=problem.wall_layers))
+    assert ChannelProblem(
+        grid, conditions, wall_layers=(None, *problem.wall_layers[1:2] * 2)
+    ).conducting_walls
+    deep = Grid(uniform_faces(2, 0.0, 1.0), grid.faces[1], grid.faces[2])
+    with pytest.raises(ValueError, match="one cell along the third"):
+        ChannelProblem(deep, conditions, wall_layers=(None, *problem.wall_layers[1:2] * 2))
     for layers in ((((1.0, (0.1,)), None), None, None), (None, ((0.0, (0.1,)), None), None)):
         with pytest.raises(ValueError):
             ChannelProblem(grid, conditions, wall_layers=layers)
