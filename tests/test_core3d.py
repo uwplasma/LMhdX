@@ -529,8 +529,7 @@ def _duct_mean_velocity(cells: int, hartmann: float, *, resolve_layers: bool = F
 def _production_duct(cells: int, hartmann: float) -> np.ndarray:
     """Solve the same duct through the production fully developed route."""
     case = make_hartmann_case(ha=hartmann, width=2.0, height=2.0, ny=cells, nz=cells)
-    uniform = dataclasses.replace(case.geometry, target_ha=None)
-    return np.asarray(solve_fully_developed_fields(dataclasses.replace(case, geometry=uniform))[0])
+    return np.asarray(solve_fully_developed_fields(case)[0])
 
 
 def test_the_hydrodynamic_duct_reconciles_with_the_production_solver():

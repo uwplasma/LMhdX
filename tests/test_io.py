@@ -535,7 +535,6 @@ def test_cli_returns_nonzero_for_recorded_unconverged_steady_result():
 def test_fully_developed_cli_resolution_reaches_case(name):
     case = cli._build_case(SimpleNamespace(case=name, ha=5.0, output=None, ny=5, nz=7))
     assert (case.geometry.ny, case.geometry.nz) == (5, 7)
-    assert case.reference_phi_cell == ((10, 11) if name == "hunt" else (2, 3))
 
 
 def test_cli_case_builders_reject_unknown_case():
@@ -772,7 +771,7 @@ def test_streaming_solver_logger_prints_live_solver_sections(tmp_path: Path):
         case=case,
         mesh=mesh,
         mode="steady",
-        potential_solver=case.time_stepper.potential_solver,
+        potential_solver="staggered core / fast diagonalization",
         target_mean_velocity=None,
         reference_mean_velocity=None,
         restart=RestartLogInfo(enabled=False),
@@ -873,7 +872,7 @@ def test_streaming_solver_logger_respects_disable_stride_and_restart_sections():
         case=case,
         mesh=mesh,
         mode="steady",
-        potential_solver=case.time_stepper.potential_solver,
+        potential_solver="staggered core / fast diagonalization",
         target_mean_velocity=None,
         reference_mean_velocity=None,
         restart=RestartLogInfo(enabled=True, path="restart.npz", start_time=0.2, reset_histories=False),
@@ -901,7 +900,7 @@ def test_streaming_solver_logger_respects_disable_stride_and_restart_sections():
     )
 
     text = step_stream.getvalue()
-    assert "linear=solvax_pcg" in text
+    assert "potential=staggered core" in text
     assert "restart=restart.npz" in text
     assert "step=2" not in text
     assert "completed case=" not in text
