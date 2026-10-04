@@ -35,8 +35,8 @@ cells of their own instead; that is also the closure for one conducting wall or
 two different ones. On 32-64 cells
 the flow rate is within 1 % of the spectral reference from Ha 20 to 1000.
 `result.residual` is the relative steady residual `||R(u)|| / ||R(0)||`,
-certified to 1e-9; a solve that fails raises. The case's pseudo-time controls
-(time step, relaxation, potential and coupling iterations) do not enter.
+certified to 1e-9; a solve that fails raises. The case's time stepper does not
+enter a steady solve.
 A `"transient"` case runs on the core too
 (`lmhdx.fully_developed.solve_fully_developed_transient`): implicit Euler steps
 of `time_stepper.dt` to `t_final`, each one CG solve with the Lorentz force

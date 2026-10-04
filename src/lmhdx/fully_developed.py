@@ -36,8 +36,7 @@ drive a secondary flow, which the retired cell-centred solver dropped.
 ``inlet_flow_rate`` boundary, the flow rate is met by scaling the unit-drive
 solution, which is exact because the problem is linear in the drive.
 
-The pseudo-time controls of the case (time step, relaxation, potential and
-coupling iterations, steady tolerance) do not enter; the steady state is one
+The case's time stepper does not enter a steady solve: the steady state is one
 preconditioned CG solve to a relative residual of 1e-9. Without
 :func:`lmhdx.enable_x64` it runs in float32 to 1e-5, which the solve reaches at
 Ha 20 on 32 cells and not at Ha 100 on 48, where it raises; a float32 case
@@ -274,8 +273,7 @@ def solve_fully_developed_transient(
     ``initial_velocity``) to ``t_final``, at most ``max_steps``, compiled as one
     scan between kept records. A ramped field scales the Lorentz force step by
     step. With an ``inlet_flow_rate`` and zero forcing each step meets the flow
-    rate exactly. The other pseudo-time controls of the retired cell-centred loop
-    (relaxation, update limit, coupling and potential iterations) do not enter.
+    rate exactly.
     ``output.history_stride`` keeps every ``stride``-th step and the last (``0``,
     the last alone); ``residual_history`` is the step's largest velocity change,
     ``linear_iterations_history`` its CG iterations, and ``status`` is

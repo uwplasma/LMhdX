@@ -494,15 +494,8 @@ side = "max"
     assert config.case.output.history_stride == 3
     assert config.case.solver.kind == "fully_developed_inductionless"
     assert config.case.solver.mode == "steady"
-    assert config.case.solver.preconditioner == "jacobi"
-    assert config.case.solver.coupling_iterations == 9
-    assert config.case.solver.coupling_acceleration == "aitken"
-    assert config.case.solver.coupling_min_relaxation == pytest.approx(0.1)
-    assert config.case.solver.coupling_max_relaxation == pytest.approx(12.0)
-    assert config.case.solver.coupling_history_depth == 5
-    assert config.case.solver.coupling_regularization == pytest.approx(1.0e-9)
-    assert config.case.solver.coupling_damping == pytest.approx(0.8)
-    assert config.case.time_stepper.potential_solver == "cg"
+    # Keys of the retired solver are read and ignored.
+    assert not hasattr(config.case.solver, "coupling_iterations")
     assert config.logging.step_stride == 2
     assert config.restart.enabled is True
     assert config.restart.path == (tmp_path / "previous_results.npz").resolve()
