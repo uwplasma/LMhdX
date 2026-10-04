@@ -11,8 +11,7 @@ from pathlib import Path
 
 from lmhdx import make_hunt_case, solve
 from lmhdx.fully_developed import hydraulic_power, volumetric_flow_rate
-from lmhdx.io import write_case_overview_plots, write_solution_outputs
-from lmhdx.validation import validation_summary
+from lmhdx.io import validation_summary, write_case_overview_plots, write_solution_outputs
 
 # Inputs: geometry, wall model, material properties, numerics, and outputs.
 OUTPUT_DIR = Path("artifacts/examples/hunt")

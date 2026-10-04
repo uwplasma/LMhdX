@@ -11,8 +11,12 @@ from dataclasses import replace
 from pathlib import Path
 
 from lmhdx import make_hartmann_case, solve
-from lmhdx.io import write_case_overview_plots, write_solution_outputs
-from lmhdx.validation import hartmann_validation, validation_summary
+from lmhdx.io import (
+    hartmann_validation,
+    validation_summary,
+    write_case_overview_plots,
+    write_solution_outputs,
+)
 
 # Inputs: geometry, material properties, numerics, and output controls.
 OUTPUT_DIR = Path("artifacts/examples/hartmann")

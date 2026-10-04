@@ -23,7 +23,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 import lmhdx  # noqa: E402
-from lmhdx.validation import extract_midplane_profile  # noqa: E402
+from lmhdx.io import extract_midplane_profile  # noqa: E402
 
 STATIC = Path(__file__).resolve().parents[1] / "docs" / "_static"
 
