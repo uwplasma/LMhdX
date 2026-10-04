@@ -456,15 +456,18 @@ def _face_axis_laplacian(field: Field, axis: int, condition: BoundaryCondition) 
     inner = (
         _take(gradient, axis, slice(1, None)) - _take(gradient, axis, slice(None, -1))
     ) * inverse_distances
+    if not condition.is_mixed:
+        # Zero at the wall faces; a pad, as zeros built under ``vmap`` would be a constant of the
+        # batch that a program shared across grids cannot hold (2b.1).
+        return jnp.pad(inner, [(1, 1) if position == axis else (0, 0) for position in range(inner.ndim)])
     zeros = jnp.zeros_like(_take(data, axis, slice(None, 1)))
     ends = [zeros, zeros]
-    if condition.is_mixed:
-        # A Neumann end of an inflow-outflow axis is an unknown face with zero normal gradient:
-        # the flux beyond it vanishes over the half cell it owns, which keeps the operator symmetric.
-        for end, (kind, sign, at) in enumerate(zip(condition.kinds, (1.0, -1.0), (0, -1), strict=True)):
-            if kind == "neumann":
-                edge = _take(gradient, axis, slice(at, None) if at else slice(None, 1))
-                ends[end] = sign * edge * host_scalar(grid, _inverse_half_width, axis, at)
+    # A Neumann end of an inflow-outflow axis is an unknown face with zero normal gradient:
+    # the flux beyond it vanishes over the half cell it owns, which keeps the operator symmetric.
+    for end, (kind, sign, at) in enumerate(zip(condition.kinds, (1.0, -1.0), (0, -1), strict=True)):
+        if kind == "neumann":
+            edge = _take(gradient, axis, slice(at, None) if at else slice(None, 1))
+            ends[end] = sign * edge * host_scalar(grid, _inverse_half_width, axis, at)
     return jnp.concatenate((ends[0], inner, ends[1]), axis=axis)
 
 
