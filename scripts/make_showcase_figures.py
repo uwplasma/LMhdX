@@ -276,7 +276,7 @@ def _reference_rate(hartmann: float, conductance: float) -> float:
 
 def pipe_sweep(hartmann_numbers: tuple[float, ...] = (0.0, 20.0, 100.0, 400.0)) -> None:
     """A circular pipe across the Hartmann range: core, layers and flow rate."""
-    from lmhdx.pipe import flow_rate, pipe_problem, solve_pipe
+    from lmhdx.poisson import flow_rate, pipe_problem, solve_pipe
 
     lmhdx.enable_x64()
     profiles, rates, maps = {}, {}, None

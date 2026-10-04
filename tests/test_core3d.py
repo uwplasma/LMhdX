@@ -296,7 +296,7 @@ def test_a_constant_field_given_as_arrays_is_the_uniform_field_bit_for_bit():
 def test_a_uniform_field_and_conductivity_are_broadcast_not_captured():
     """Under tracing both are broadcast scalars: captured, they were six cell-sized constants per step."""
     from lmhdx.core3d import _attribute_value, _constant, _imposed_field
-    from lmhdx.em import face_conductivity, face_electromotive_force
+    from lmhdx.ops import face_conductivity, face_electromotive_force
 
     problem = _problem(_duct(), magnetic_field=(0.0, 20.0, 0.0))
     scalar = problem.scalar_conditions
@@ -615,7 +615,7 @@ def _mean_free(problem: ChannelProblem, seed: int) -> Field:
 
 def _charge(problem: ChannelProblem, potential: Field, walls):
     """Charge balance at rest and sheet residuals; ``walls=None`` is the replaced first-order closure."""
-    from lmhdx.em import face_conductivity, face_current, thin_wall_current, thin_wall_flux, wall_insulated
+    from lmhdx.ops import face_conductivity, face_current, thin_wall_current, thin_wall_flux, wall_insulated
 
     scalar = problem.scalar_conditions
     sigma = Field(jnp.full(problem.grid.shape, float(problem.conductivity)), (CENTER,) * 3, problem.grid)

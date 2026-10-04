@@ -10,7 +10,7 @@ is then an interior point of the representation and needs no condition at all;
 this is Trefethen's construction for the Poisson equation on a disk.
 
 The system is the same one :mod:`validation.shercliff` solves, in the geometry
-:mod:`lmhdx.pipe` solves it in. With :math:`\\mathbf u = u(r,\\theta)\\hat z` and
+:mod:`lmhdx.poisson` solves it in. With :math:`\\mathbf u = u(r,\\theta)\\hat z` and
 :math:`\\mathbf B = B\\hat x`,
 
 .. math::

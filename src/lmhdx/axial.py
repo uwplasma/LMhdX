@@ -45,8 +45,8 @@ from .core3d import (
     project,
     zero_velocity,
 )
-from .em import face_electromotive_force
 from .grid import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid, uniform_faces
+from .ops import face_electromotive_force
 from .steady import (
     _norm,
     _preconditioner,

@@ -1,7 +1,7 @@
 """One projection step for inductionless duct flow on the staggered grid.
 
 The step is the classical fractional one, assembled from the pieces earlier plan
-steps settled: the potential is solved first, the face currents of :mod:`lmhdx.em`
+steps settled: the potential is solved first, the face currents of :mod:`lmhdx.ops`
 supply the Lorentz force, the momentum is advanced, and a pressure Poisson solve
 projects the velocity back onto the discretely divergence-free space.
 
@@ -23,7 +23,7 @@ is built on, never from a separately differenced potential. In the core the
 balance is :math:`-\\nabla p + \\mathbf J\\times\\mathbf B = 0` to
 :math:`O(Ha^{-2})`, so any inconsistency between the two is amplified by
 :math:`Ha^2`. The insulating wall is part of that consistency: the motional term
-is dropped on wall faces by :func:`lmhdx.em.wall_insulated` before its divergence
+is dropped on wall faces by :func:`lmhdx.ops.wall_insulated` before its divergence
 is taken, because the operator that receives it has no wall flux either. Leaving
 it in makes the potential absorb a boundary current the wall cannot carry, and a
 square duct at :math:`Ha=20` then runs at less than half its correct flow rate.
@@ -93,14 +93,6 @@ import numpy as np
 
 from . import _pin_matmul_precision
 from ._programs import attribute, bound, host_array, host_scalar
-from .em import (
-    face_conductivity,
-    face_current,
-    face_electromotive_force,
-    lorentz_force,
-    thin_wall_current,
-    wall_insulated,
-)
 from .grid import (
     CENTER,
     DIRICHLET,
@@ -116,10 +108,16 @@ from .grid import (
 from .ops import (
     divergence,
     face_average,
+    face_conductivity,
+    face_current,
+    face_electromotive_force,
     face_gradient,
     face_inner_product,
+    lorentz_force,
     momentum_advection,
     staggered_laplacian,
+    thin_wall_current,
+    wall_insulated,
 )
 from .poisson import (
     FastDiagonalHelmholtz,
@@ -527,7 +525,7 @@ def face_lorentz_force(
     """Carry the cell-centred Lorentz force onto the velocity faces.
 
     :func:`lmhdx.ops.face_average` is the transpose of the cell average that
-    :func:`lmhdx.em.face_electromotive_force` applies to the velocity, so the work
+    :func:`lmhdx.ops.face_electromotive_force` applies to the velocity, so the work
     this force does on any impermeable velocity is exactly minus the face
     current dotted with that velocity's electromotive force. The step, the
     steady residual and the energy budget all take the force from here.
