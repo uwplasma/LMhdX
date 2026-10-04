@@ -36,7 +36,7 @@ live in the module that owns their concepts.
 | Meshes | `generate_rect_duct_mesh`, `generate_rect_duct_mesh_from_faces`, `generate_layered_duct_mesh`, `generate_layered_duct_mesh_from_fluid_faces`, `generate_multilayer_duct_mesh` |
 | Wall models | `WallLayer`, `wall_conductance_ratio`, `effective_pinhole_conductance_ratio`, `tangential_stack_conductance_ratio`, `normal_stack_leakage_ratio`, `equivalent_single_layer`, `nested_wall_layer_resolution_summary` |
 | Units | `dynamic_to_kinematic_viscosity`, `kinematic_to_dynamic_viscosity`, `hartmann_number`, `reynolds_number`, `interaction_parameter`, `magnetic_reynolds_number`, `magnetic_field_from_hartmann` |
-| Evidence | The energy budget of `lmhdx.timeloop` and the analytical, conservation, and packaged benchmark tools in `lmhdx.validation` |
+| Evidence | The energy budget of `lmhdx.core3d` and the analytical, conservation, and packaged benchmark tools in `lmhdx.validation` |
 | Runtime | `enable_compilation_cache` |
 
 `solve(model)` accepts a `ChannelProblem`, `CaseSpec` or `Q2DProblem`. A

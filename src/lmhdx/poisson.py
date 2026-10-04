@@ -45,8 +45,18 @@ import numpy as np
 import solvax
 
 from ._programs import attribute, grid_program, host_array
-from .bc import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition
-from .grid import CENTER, FACE, POLAR, Field, Grid, uniform_faces
+from .grid import (
+    CENTER,
+    DIRICHLET,
+    FACE,
+    NEUMANN,
+    PERIODIC,
+    POLAR,
+    BoundaryCondition,
+    Field,
+    Grid,
+    uniform_faces,
+)
 from .ops import foldable, laplacian, staggered_laplacian
 
 __all__ = [

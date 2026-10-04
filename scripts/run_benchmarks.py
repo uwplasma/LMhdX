@@ -214,11 +214,9 @@ def _core3d_case(
     import jax.numpy as jnp
     import numpy as np
 
-    from lmhdx.bc import NEUMANN, PERIODIC, BoundaryCondition
-    from lmhdx.core3d import ChannelProblem, zero_velocity
-    from lmhdx.grid import Grid, uniform_faces
+    from lmhdx.core3d import ChannelProblem, advance, zero_velocity
+    from lmhdx.grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces
     from lmhdx.ops import divergence
-    from lmhdx.timeloop import advance
 
     periodic, wall = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN)
     grid = Grid(

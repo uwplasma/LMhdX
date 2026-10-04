@@ -14,10 +14,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lmhdx.bc import NEUMANN, PERIODIC, BoundaryCondition
 from lmhdx.cases import make_hartmann_case
 from lmhdx.core3d import (
     ChannelProblem,
+    advance,
     duct_problem,
     enforce_face_constraints,
     project,
@@ -27,9 +27,18 @@ from lmhdx.core3d import (
     zero_velocity,
 )
 from lmhdx.fully_developed import solve_fully_developed_fields
-from lmhdx.grid import CENTER, Field, Grid, tanh_faces, uniform_faces, wall_resolving_faces
+from lmhdx.grid import (
+    CENTER,
+    NEUMANN,
+    PERIODIC,
+    BoundaryCondition,
+    Field,
+    Grid,
+    tanh_faces,
+    uniform_faces,
+    wall_resolving_faces,
+)
 from lmhdx.ops import divergence
-from lmhdx.timeloop import advance
 from validation.shercliff import flow_rate
 
 # Physics validation rather than unit checks: the channel cases integrate to a

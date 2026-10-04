@@ -132,7 +132,7 @@ _EXPORTS = {
     "ChannelProblem": ("lmhdx.core3d", "ChannelProblem"),
     "duct_problem": ("lmhdx.core3d", "duct_problem"),
     "solve_steady_state": ("lmhdx.steady", "solve_steady_state"),
-    "advance": ("lmhdx.timeloop", "advance"),
+    "advance": ("lmhdx.core3d", "advance"),
     "Q2DProblem": ("lmhdx.q2d", "Q2DProblem"),
     "solve": ("lmhdx.cases", "solve"),
     "generate_rect_duct_mesh": ("lmhdx.mesh", "generate_rect_duct_mesh"),

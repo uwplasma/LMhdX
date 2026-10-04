@@ -48,8 +48,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ._programs import host_array
-from .bc import NEUMANN, BoundaryCondition, pad
-from .grid import CENTER, FACE, Field, Grid
+from .grid import CENTER, FACE, NEUMANN, BoundaryCondition, Field, Grid, pad
 from .ops import (
     _broadcast,
     divergence,
