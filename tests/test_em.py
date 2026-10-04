@@ -5,17 +5,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lmhdx.em import (
-    cell_average,
-    charge_residual,
-    face_conductivity,
-    face_current,
-    face_electromotive_force,
-    lorentz_force,
-    thin_wall_current,
-    thin_wall_flux,
-    wall_insulated,
-)
 from lmhdx.grid import (
     CENTER,
     DIRICHLET,
@@ -30,8 +19,22 @@ from lmhdx.grid import (
     uniform_faces,
     wall_resolving_faces,
 )
-from lmhdx.ops import cell_inner_product, face_average, face_average_adjoint, face_inner_product
-from lmhdx.pipe import pipe_grid
+from lmhdx.ops import (
+    cell_average,
+    cell_inner_product,
+    charge_residual,
+    face_average,
+    face_average_adjoint,
+    face_conductivity,
+    face_current,
+    face_electromotive_force,
+    face_inner_product,
+    lorentz_force,
+    thin_wall_current,
+    thin_wall_flux,
+    wall_insulated,
+)
+from lmhdx.poisson import pipe_grid
 
 pytestmark = pytest.mark.unit
 

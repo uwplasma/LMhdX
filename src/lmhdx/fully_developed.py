@@ -87,9 +87,8 @@ from .cases import (
     sample_tabulated_cross_section_field,
 )
 from .core3d import ChannelProblem, ImposedField, face_currents, zero_velocity
-from .em import lorentz_force, wall_insulated
 from .grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces, wall_resolving_faces
-from .ops import divergence
+from .ops import divergence, lorentz_force, wall_insulated
 from .steady import shared_or_embedded, solve_steady_state
 
 __all__ = [
