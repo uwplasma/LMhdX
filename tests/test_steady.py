@@ -2,6 +2,7 @@
 
 import dataclasses
 import functools
+import os
 
 import jax
 import jax.numpy as jnp
@@ -823,42 +824,58 @@ def test_a_new_mesh_of_a_known_shape_is_solved_without_a_trace(monkeypatch, cond
     assert counts == [1, 1, 0]
 
 
-def test_a_known_shape_is_solved_in_a_new_process_without_a_trace(monkeypatch, tmp_path):
-    """2b.1: a shape's array keys and compiled program are kept beside the compilation cache.
+_PROCESS = """
+import json, sys
+import jax, jax.numpy as jnp
+import lmhdx
+lmhdx.enable_x64()
+jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.0)
+from lmhdx import _programs, steady
+from lmhdx.core3d import duct_problem
+traces = []
+original = steady.solve_steady_state
+steady.solve_steady_state = lambda *a, **k: traces.append(1) or original(*a, **k)
+flows = [float(jnp.sum(steady.solve_compiled(duct_problem(hartmann=h, cells=16, cells_in_layer=2)).velocity[0].data))
+         for h in map(float, sys.argv[1:])]
+kinds = [type(entry).__name__ for entry in steady._SHAPES.values()]
+broken = sum(getattr(entry, "broken", False) for entry in _programs._GRID_PROGRAMS.values())
+print(json.dumps({"flows": flows, "traces": len(traces), "kinds": kinds, "broken": broken}))
+"""
 
-    A new process, here the in-process tables emptied, reads them back: its first problem of
-    the shape is neither traced nor compiled, and solves to round-off of its embedded program.
+
+def test_a_known_shape_is_solved_in_a_new_process_without_a_trace(tmp_path):
+    """2b.1: a shape's keys and compiled program are kept beside the compilation cache.
+
+    Three processes share one cache, as CI shards and users do. The second rebuilds the
+    stored program while JAX's cache holds its executable: one read back from that cache
+    serializes without its fused kernels, so the store must compile its own. The third
+    then runs the stored program with no trace and matches the first to round-off.
     """
-    import lmhdx._programs as _programs
-    import lmhdx.steady as steady
+    import json
+    import shutil
+    import subprocess
+    import sys
 
-    previous = jax.config.jax_compilation_cache_dir
-    jax.config.update("jax_compilation_cache_dir", str(tmp_path))
-    try:
-        traces = []
-        original = steady.solve_steady_state
+    environment = {**os.environ, "LMHDX_COMPILATION_CACHE": str(tmp_path), "JAX_PLATFORMS": "cpu"}
 
-        def counted(*arguments, **keywords):
-            traces.append(1)
-            return original(*arguments, **keywords)
+    def process(*hartmanns):
+        completed = subprocess.run(
+            [sys.executable, "-c", _PROCESS, *map(str, hartmanns)],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(completed.stdout.strip().splitlines()[-1])
 
-        monkeypatch.setattr(steady, "solve_steady_state", counted)
-        problems = [duct_problem(hartmann=h, cells=16, cells_in_layer=2) for h in (20.0, 30.0, 45.0)]
-        for process in ([problems[0], problems[1]], [problems[2]]):
-            monkeypatch.setattr(steady, "_SHAPES", {})
-            monkeypatch.setattr(_programs, "_GRID_PROGRAMS", {})
-            steady._program.cache_clear()
-            before = len(traces)
-            solutions = [steady.solve_compiled(problem).velocity for problem in process]
-        assert len(traces) == before
-        assert isinstance(next(iter(steady._SHAPES.values())), _programs._StoredProgram)
-        embedded = jax.jit(steady._solve_program(problems[2]))()[0]
-        for got, expected in zip(solutions[0], embedded, strict=True):
-            np.testing.assert_allclose(got.data, expected.data, rtol=1e-12, atol=1e-14)
-            assert got.grid is problems[2].grid
-    finally:
-        jax.config.update("jax_compilation_cache_dir", previous)
-        steady._program.cache_clear()
+    first = process(20.0, 30.0)
+    shutil.rmtree(tmp_path / "lmhdx_shapes")
+    process(20.0, 30.0)
+    third = process(30.0)
+    assert third["traces"] == 0
+    assert third["broken"] == 0
+    assert third["kinds"] == ["_StoredProgram"]
+    assert third["flows"][0] == pytest.approx(first["flows"][1], rel=1e-12)
 
 
 def _extruded_duct(hartmann: float) -> ChannelProblem:

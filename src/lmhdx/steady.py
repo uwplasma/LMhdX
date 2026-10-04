@@ -837,12 +837,15 @@ def shared_or_embedded(problem: ChannelProblem, build, *arguments):
 def _shared(key, problem: ChannelProblem, build, arguments):
     """The shape's program bound to ``problem``, compiling it on the second problem; None if it cannot be."""
     entry = _SHAPES[key]
-    if entry is None:
+    if entry is None or getattr(entry, "broken", False):
+        _SHAPES[key] = None
         return None
     try:
         if isinstance(entry, list):
             entry = _SHAPES[key] = _programs.ShapeProgram(build, problem, arguments, entry)
             _programs.store(key, entry)
+        if isinstance(entry, _programs._StoredProgram):
+            return entry.bind(problem, lambda: shape_program(build(problem), *arguments))
         return entry.bind(problem)
     except _programs.Unbound:
         if not isinstance(entry, _programs.ShapeProgram):

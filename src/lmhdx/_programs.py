@@ -327,7 +327,14 @@ class ShapeProgram:
         lowered = staged.lower()
         # Equal for every problem of the shape; a problem's value in the program would change it.
         self.fingerprint = hashlib.sha256(lowered.as_text().encode()).hexdigest()
-        self.executable = lowered.compile()
+        # An executable read back from JAX's persistent cache serializes without its fused kernels
+        # (``Function ..._fusion not found`` in the process that loads it; jaxlib 0.6.2 and 0.10.2
+        # alike), and a later compile in this process returns that one. One that may be stored
+        # across processes is therefore compiled with that cache off.
+        from jax._src import config
+
+        with config.enable_compilation_cache(not jax.config.jax_compilation_cache_dir):
+            self.executable = lowered.compile()
         self._first = (problem, values)
 
     def bind(self, problem):
@@ -343,7 +350,11 @@ class ShapeProgram:
         return lambda *arguments: _regrid(jax.tree.unflatten(tree, executable(values, *arguments)), grid)
 
     def serialized(self) -> bytes:
-        """The compiled program as bytes, for :func:`store` to keep across processes."""
+        """The compiled program as bytes, for :func:`store` to keep across processes.
+
+        A stored program that still fails to run is dropped on first use
+        (:meth:`_StoredProgram.bind`) and the solve traced instead.
+        """
         from jax.experimental.serialize_executable import serialize
 
         return pickle.dumps(serialize(self.executable), protocol=4)
@@ -361,7 +372,7 @@ def _signature_dtype(value) -> str:
 # persistent compilation cache. A new process then builds the host arrays and runs the program
 # it reads back, instead of tracing and compiling the solve (2b.1).
 
-_STORE_FORMAT = 1
+_STORE_FORMAT = 2
 _LEAF = object()
 
 
@@ -371,7 +382,8 @@ def _code_stamp() -> str:
     import jaxlib
 
     device = jax.devices()[0]
-    stamp = (_STORE_FORMAT, jax.__version__, jaxlib.__version__, device.platform, device.device_kind)
+    flags = os.environ.get("XLA_FLAGS", "")
+    stamp = (_STORE_FORMAT, jax.__version__, jaxlib.__version__, device.platform, device.device_kind, flags)
     digest = hashlib.sha256(repr(stamp).encode() + device.client.platform_version.encode())
     for package in ("lmhdx", "solvax"):
         root = Path(importlib.import_module(package).__file__).parent
@@ -426,13 +438,34 @@ class _StoredProgram:
 
         self.keys, self.signature, self.skeleton = keys, signature, skeleton
         self.call = deserialize_and_load(*pickle.loads(serialized))
+        self.path, self.broken = None, False
 
-    def bind(self, problem):
+    def bind(self, problem, fallback):
+        """The program of ``problem``; if the executable read back cannot run, ``fallback()``'s.
+
+        An executable that fails its first run is dropped from the store, and the
+        function ``fallback`` returns (a traced program) runs instead.
+        """
         values = problem_arrays(problem, self.keys)
         if [(np.shape(value), _signature_dtype(value)) for value in values] != self.signature:
             raise Unbound("the problem's arrays differ in shape from the program's")
         call, skeleton, grid = self.call, self.skeleton, _grid_of(problem)
-        return lambda *arguments: _rebuild(skeleton, iter(call(values, *arguments)), grid)
+        replacement = []
+
+        def run(*arguments):
+            if replacement:
+                return replacement[0](*arguments)
+            try:
+                leaves = jax.block_until_ready(call(values, *arguments))
+            except Exception:
+                self.broken = True
+                if self.path is not None:
+                    self.path.unlink(missing_ok=True)
+                replacement.append(fallback())
+                return replacement[0](*arguments)
+            return _rebuild(skeleton, iter(leaves), grid)
+
+        return run
 
 
 def stored(key):
@@ -444,7 +477,9 @@ def stored(key):
         keys = pickle.loads(path.read_bytes())
         program = path.with_suffix(".program")
         if program.exists():
-            return _StoredProgram(keys, *pickle.loads(program.read_bytes()))
+            entry = _StoredProgram(keys, *pickle.loads(program.read_bytes()))
+            entry.path = program
+            return entry
         return keys
     # A stale, truncated or foreign entry is ignored, as JAX ignores an unreadable cache entry.
     except Exception:
@@ -505,8 +540,10 @@ def grid_program(key, build, grid: Grid, *arguments):
                 except Unbound:
                     entry = None
         _GRID_PROGRAMS[key] = entry
-    if entry is not None:
+    if entry is not None and not getattr(entry, "broken", False):
         try:
+            if isinstance(entry, _StoredProgram):
+                return entry.bind(grid, lambda: shape_program(build(grid), *arguments))
             return entry.bind(grid)
         except Unbound:
             pass
