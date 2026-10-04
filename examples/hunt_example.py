@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from lmhdx import make_hunt_case, solve
-from lmhdx.design import hydraulic_power, volumetric_flow_rate
+from lmhdx.fully_developed import hydraulic_power, volumetric_flow_rate
 from lmhdx.io import write_case_overview_plots, write_solution_outputs
 from lmhdx.validation import validation_summary
 

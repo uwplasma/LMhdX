@@ -10,7 +10,16 @@ from pathlib import Path
 
 import jax.numpy as jnp
 
-from .cases import make_hartmann_case, make_hunt_case, make_shercliff_case
+from .cases import (
+    RestartLogInfo,
+    RunConfig,
+    StreamingSolverLogger,
+    default_log_path,
+    load_run_config,
+    make_hartmann_case,
+    make_hunt_case,
+    make_shercliff_case,
+)
 from .fully_developed import case_mesh, solve_fully_developed, solve_fully_developed_transient
 from .io import (
     _portable_path,
@@ -19,13 +28,6 @@ from .io import (
     write_paraview,
     write_restart_npz,
     write_solution_outputs,
-)
-from .specs import (
-    RestartLogInfo,
-    RunConfig,
-    StreamingSolverLogger,
-    default_log_path,
-    load_run_config,
 )
 from .validation import (
     benchmark_solver,

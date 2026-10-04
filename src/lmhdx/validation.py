@@ -13,8 +13,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .cases import make_hartmann_case
-from .specs import Solution
+from .cases import Solution, make_hartmann_case
 
 
 @dataclass(frozen=True)

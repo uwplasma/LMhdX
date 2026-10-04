@@ -4,9 +4,7 @@ from pathlib import Path
 import jax.numpy as jnp
 import pytest
 
-from lmhdx.cases import make_hartmann_case
-from lmhdx.fully_developed import case_mesh as _build_mesh
-from lmhdx.specs import (
+from lmhdx.cases import (
     Diagnostics,
     LoggingSpec,
     MHDState,
@@ -15,7 +13,9 @@ from lmhdx.specs import (
     SolverStepRecord,
     StreamingSolverLogger,
     default_log_path,
+    make_hartmann_case,
 )
+from lmhdx.fully_developed import case_mesh as _build_mesh
 
 pytestmark = pytest.mark.unit
 

@@ -5,32 +5,30 @@ uses the same case/result model as the named duct workflows.
 
 ## Wall layers
 
-Start with `WallLayer` to state thickness, resolution, and conductivity explicitly,
-then pass the layers to the layered mesh builders. LMhdX distinguishes fluid,
-conducting solid, and insulating regions; interface conductance uses the
-adjacent material values and face distances.
+State each layer's thickness, resolution and conductivity with `WallLayer`, then
+give the solver the stack as wall cells: one conductivity ratio (wall over fluid)
+and one width per cell, from the fluid outwards. `ChannelProblem(wall_layers=...)`
+takes one stack per end of each wall-normal axis; the staggered core resolves the
+currents in it, with interface conductance from the adjacent material values and
+face distances.
 
 ```python
-from lmhdx import WallLayer, generate_multilayer_duct_mesh
+from lmhdx import WallLayer
 
+fluid_conductivity = 3.2e6
 layers = (
     WallLayer(name="steel", thickness=2e-3, cells=3, conductivity=8e5),
     WallLayer(name="insulator", thickness=5e-4, cells=2, conductivity=1e-8),
 )
-mesh = generate_multilayer_duct_mesh(
-    width=0.2,
-    height=0.1,
-    ny=48,
-    nz=32,
-    wall_layers={"left": layers, "right": layers},
-)
+ratios = tuple(layer.conductivity / fluid_conductivity for layer in layers for _ in range(layer.cells))
+widths = tuple(layer.thickness / layer.cells for layer in layers for _ in range(layer.cells))
+stack = (ratios, widths)
+# ChannelProblem(..., wall_layers=(None, (stack, stack), (stack, stack)))
 ```
 
-Inspect the resulting regime with `wall_conductance_ratio`,
-`tangential_stack_conductance_ratio`, and
-`normal_stack_leakage_ratio` to document the physical regime. The mesh and
-validation helpers report the resolved layer thicknesses and interface-current
-residuals.
+`examples/li_aln_wall_stack_example.py` solves a full Li | AlN | 316L duct this
+way. Inspect the regime with `wall_conductance_ratio`,
+`tangential_stack_conductance_ratio`, and `normal_stack_leakage_ratio`.
 
 ## Add an analytic field
 
@@ -51,8 +49,8 @@ from pathlib import Path
 from dataclasses import replace
 import numpy as np
 from lmhdx import make_hartmann_case
-from lmhdx.mesh import write_tabulated_field_npz, sample_tabulated_cross_section_field
-from lmhdx.specs import MagneticFieldSpec
+from lmhdx.cases import write_tabulated_field_npz, sample_tabulated_cross_section_field
+from lmhdx.cases import MagneticFieldSpec
 
 y = z = np.linspace(-1.2, 1.2, 17)
 yy, zz = np.meshgrid(y, z, indexing="ij")

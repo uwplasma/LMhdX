@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from lmhdx import cli
-from lmhdx.specs import LoggingSpec, RestartSpec, RunConfig
+from lmhdx.cases import LoggingSpec, RestartSpec, RunConfig
 
 pytestmark = pytest.mark.unit
 

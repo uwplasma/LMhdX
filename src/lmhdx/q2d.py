@@ -15,7 +15,7 @@ from solvax import (
 )
 
 from . import _pin_matmul_precision
-from .specs import require_finite
+from .cases import require_finite
 
 __all__ = ["Q2DDiagnostics", "Q2DProblem", "Q2DResult", "evolve_q2d", "make_q2d_case", "solve_q2d"]
 

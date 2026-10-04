@@ -18,8 +18,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10
     import tomli as tomllib
 
 import lmhdx
-from lmhdx.cases import _wall_conductivity_from_conductance_ratio
-from lmhdx.specs import _parse_boundary_value, load_run_config
+from lmhdx.cases import _parse_boundary_value, _wall_conductivity_from_conductance_ratio, load_run_config
 from scripts.audit_architecture import (
     _checkout_size,
     architecture_budget_errors,
@@ -121,7 +120,7 @@ import jax
 import jax.numpy as jnp
 import lmhdx
 from dataclasses import replace
-from lmhdx import axial, cases, mesh, physics, q2d
+from lmhdx import axial, cases, q2d
 initial = jax.config.x64_enabled
 assert initial == EXPECTED
 assert jax.config.jax_default_matmul_precision is None
@@ -308,11 +307,11 @@ def test_every_test_file_reaches_the_combined_coverage():
         (".github/workflows/docs.yml", "true", "false", "true", "false"),
         (".github/workflows/external-validation.yml", "true", "false", "false", "true"),
         (".github/actions/setup-lmhdx/action.yml", "true", "false", "true", "true"),
-        ("src/lmhdx/mesh.py", "true", "false", "true", "false"),
+        ("src/lmhdx/cases.py", "true", "false", "true", "false"),
         ("src/lmhdx/q2d.py", "true", "false", "true", "false"),
         ("src/lmhdx/validation.py", "true", "false", "true", "false"),
         ("validation/freemhd.py", "true", "false", "false", "true"),
-        ("tests/test_mesh.py", "true", "false", "false", "false"),
+        ("tests/test_grid.py", "true", "false", "false", "false"),
         ("scripts/run_full_test_suite.py", "false", "true", "false", "false"),
         ("docs/index.md", "false", "false", "true", "false"),
         ("README.md", "false", "false", "true", "false"),
@@ -640,11 +639,7 @@ EXPECTED_ROOT_API = {
     "solve_fully_developed_fields",
     "Q2DProblem",
     "solve",
-    "generate_rect_duct_mesh",
     "generate_rect_duct_mesh_from_faces",
-    "generate_layered_duct_mesh",
-    "generate_layered_duct_mesh_from_fluid_faces",
-    "generate_multilayer_duct_mesh",
     "WallLayer",
     "dynamic_to_kinematic_viscosity",
     "kinematic_to_dynamic_viscosity",
