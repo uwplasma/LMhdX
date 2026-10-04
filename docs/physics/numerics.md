@@ -504,6 +504,116 @@ excess is still 71 % above the core-flow value, and the extrapolation is not
 accurate to 1 %. The absolute drop falls from 0.228 to 0.121 over the same
 range, against TM-228's 0.0932.
 
+#### The gap is the layers' conductance (rows 7 and 24)
+
+*Lane A, 2026-10-04.* The tools for this were converged meshes at Ha $10^4$ and
+$2\times10^4$, a second wall conductance ($c=0.1$), and the core-flow model run at
+the conductances the layers add. With them, the three-dimensional core and the
+core-flow model agree. The gap above is a finite-Hartmann-number effect of the
+Hartmann and side layers, which TM-228's core flow leaves out. At $c=0.02$ that
+effect decays too slowly for the 1 % gate to be reachable.
+
+**Meshes at high Ha.** The Ha $10^4$ run of #188 reused the Ha 3200 mesh. The
+refinements below change the excess by less than 0.1 %:
+
+- $70\times192^2$ gives 0.025772, against 0.02576 on $70\times128^2$;
+- halving the axial spacing ($118\times128^2$) gives 0.025783;
+- at $c=0.1$, Ha $2\times10^4$, tightening the CG tolerance from $10^{-7}$ to
+  $10^{-8}$ moves the excess by $1\times10^{-12}$, and $70\times256^2$ gives 0.042063
+  against 0.042087 on $70\times192^2$ (0.06 %).
+
+Ha $2\times10^4$ on $70\times192^2$ takes 25,000–26,000 CG iterations, about 100
+minutes on one A4000. The balances hold to round-off: flow rate 2e-16, mass
+2e-16, charge 1–2e-13.
+
+**The layers act as extra wall conductance.** LMhdX's own fully developed
+gradient lies above Walker's thin-wall value $1/(1+1/c_t+1/(3c_s))$ at every
+finite Ha. Count the Hartmann layers as conductance $1/Ha$ added to $c_t$, and
+invert Walker's formula for the side walls. The result is
+$c_{s,\mathrm{eff}} = c + k\,Ha^{-1/2}$, the classical side-layer flux:
+
+- at $c=0.02$, $k$ = 1.91, 1.46, 1.28, 1.19, 1.11 and 1.07 at Ha 400, 800, 1600,
+  3200, $10^4$ and $2\times10^4$;
+- at $c=0.1$, $k$ = 1.40, 1.24, 1.14, 1.04, 0.83 and 0.64 at the same Ha.
+
+Relative to the wall, the added conductance is $k/(c\sqrt{Ha})$: 55 % at
+$c=0.02$, Ha $10^4$, but 8 % at $c=0.1$. The excess is sensitive to it. In the
+core-flow model, doubling $c_s$ from 0.02 to 0.04 raises the excess from 0.0178
+to 0.0282 (TM-228's fit is $0.126\,c^{1/2}$).
+
+**The core-flow model at the layers' conductances.** Both conductances are
+inputs of `lmhdx.coreflow.CoreFlow.solve`, so no code change is needed. Two
+closures were run, each with its own locally fully developed drop:
+
+- *global*: $c_t = c + 1/Ha$ and $c_s = c_{s,\mathrm{eff}}(Ha)$, uniform along
+  the duct. Scalars, through the public API.
+- *local*: the same laws at the local field, $c_t = c + 1/(Ha\,B)$ and
+  $c_s = c + k(Ha\,B)/\sqrt{Ha\,B}$, with $k$ interpolated in $\log Ha$. This
+  needs conductances that vary along $x$, which the model's assembly takes
+  elementwise; the diagnosis patched its weights rather than change the API.
+  Where $Ha\,B < 1$ the correction is frozen. Freezing it at $Ha\,B < 100$ or
+  $1000$ instead moves the result by at most 0.6 % at $2\times10^4$ and 11 % at 3200.
+
+Excess over $[-6,2]$:
+
+| Ha | $c=0.02$: 3-D core | global | local | $c=0.1$: 3-D core | global | local |
+|---|---|---|---|---|---|---|
+| 400 | 0.04503 | 0.04967 | 0.0895 | 0.05510 | 0.05522 | 0.0786 |
+| 800 | 0.03893 | 0.03865 | 0.0639 | 0.05077 | 0.04973 | 0.0641 |
+| 1600 | 0.03419 | 0.03261 | 0.0471 | 0.04751 | 0.04621 | 0.0549 |
+| 3200 | 0.03042 | 0.02855 | 0.0329–0.0369 | 0.04506 | 0.04379 | 0.0492 |
+| $10^4$ | 0.02577 | 0.02415 | 0.0274–0.0280 | 0.04230 | 0.04124 | 0.0433–0.0439 |
+| $2\times10^4$ | 0.02375 | 0.02235 | 0.0248–0.0249 | 0.04209 | 0.04022 | 0.0418–0.0421 |
+| $\infty$ | | 0.01783 | 0.01783 | | 0.03901 | 0.03901 |
+
+What the table shows:
+
+- **The two closures bracket the 3-D core** from Ha 800 up, at both
+  conductances, and both tend to 1.9c's value as Ha grows.
+- **The 3-D core approaches the local closure.** At $c=0.02$ it lies 6–8 % below
+  at Ha $10^4$ and 4–5 % below at $2\times10^4$. At $c=0.1$ it lies 2–4 % below
+  at $10^4$ and inside the closure's own 0.6 % range at $2\times10^4$ (0.04209
+  against 0.04184–0.04209).
+- **The fully developed parts agree to 0.05 %.** The local closure's
+  $\Delta p_{FD}$ matches the 3-D one: 0.08365 against 0.08366, and 0.37050
+  against 0.37066 at $2\times10^4$.
+
+So at $c=0.1$, Ha $2\times10^4$, the three-dimensional core agrees with the
+core-flow model to within 1 % once the model carries the layers' conductance at
+the local field. That is row 24's comparison, at finite Ha.
+
+**Extrapolation to TM-228's limit.** The free power law of #184 (fit $Ha^{-0.35}$,
+limit 0.0158–0.0168) is the wrong form, because the layers enter through
+$k/(c\sqrt{Ha})$. Even with the right form, the extrapolation does not settle
+the gate:
+
+- At $c=0.02$, fits in $Ha^{-1/2}$ and $Ha^{-1}$ through Ha 400–$2\times10^4$
+  give 0.0183–0.0211 (3–18 % above 0.01783). The limit falls toward 0.01783 as
+  the lowest points are dropped, and the excess is still 33 % above it at
+  $2\times10^4$.
+- At $c=0.1$, the same fits give 0.0395–0.0405 (1–4 % above 0.03901), with
+  residuals of 1 %. The excess falls only 0.5 % from $10^4$ to $2\times10^4$,
+  while the local closure falls 4 %.
+
+Reaching TM-228's value itself to 1 % at $c=0.02$ needs the side-layer term
+below about 1.5 % of $c$: $c\sqrt{Ha}\gtrsim 70$, Ha ≳ $10^7$. No
+three-dimensional solve reaches that, with or without 2b.4.
+
+**Verdict for rows 7 and 24.**
+
+- No modelling error was found in the three-dimensional core, the core-flow
+  model or the buffers. The meshes are converged, the balances hold to
+  round-off, and the fully developed parts agree to 0.05 %.
+- The gap is a physics difference. TM-228's inertialess core flow is the
+  $c\sqrt{Ha}\to\infty$ limit, without the layers' $O(Ha^{-1})$ and
+  $O(Ha^{-1/2})$ conductance.
+- Row 7's 1 % gate at $c=0.02$ against 0.0178 is **not met and not reachable on
+  the three-dimensional core**.
+- At finite Ha, the core-flow model with the layers' conductance at the local
+  field agrees with the 3-D core within 1 % at $c=0.1$, Ha $2\times10^4$, and
+  within 5 % at $c=0.02$.
+- Restating rows 7 and 24 as that comparison is the plan owner's decision.
+
 ### The varying-field preconditioner (2b.4)
 
 Plan step 2b.4 asked for a two-level preconditioner whose coarse space is the
