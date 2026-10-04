@@ -494,7 +494,70 @@ def test_walls_resolved_in_cells_solve_the_dense_conductivity_jump():
     reported = (walls[1].data[0, 0] - potential.data[0, 0]) / (0.5 * np.diff(fy)[0])
     np.testing.assert_allclose(reported, series * (dense[2] - dense[3]), rtol=1e-10)
     assert walls[0] is None and walls[2] is None
-    with pytest.raises(ValueError, match="one axis"):
+    with pytest.raises(ValueError, match="no thin wall"):
         fast_diagonal_thin_wall_poisson(
             grid, (periodic, insulating, insulating), (0.0, 0.0, 0.1), layers=(None, (lower, None), None)
         )
+
+
+def test_resolved_walls_on_two_axes_give_each_corner_cell_its_nearer_wall():
+    """The Woodbury corner correction against the five-point operator of fluid, walls and corners."""
+    from lmhdx.poisson import fast_diagonal_thin_wall_poisson
+
+    ny, nz = 10, 8
+    fy, fz = geometric_faces(ny, -1.0, 1.0, 1.2), uniform_faces(nz, -1.0, 1.0)
+    grid = Grid(uniform_faces(1, 0.0, 0.7), fy, fz)
+    walls_y = (((5.0, 0.2, 0.2), (0.03, 0.04, 0.05)), (0.5, (0.1, 0.1)))
+    walls_z = ((3.0, (0.05, 0.05)), ((2.0, 0.1), (0.02, 0.06)))
+    periodic, insulating = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN)
+    solver = fast_diagonal_thin_wall_poisson(
+        grid, (periodic, insulating, insulating), (0.0, 0.0, 0.0), layers=(None, walls_y, walls_z)
+    )
+    volumes = np.diff(fy)[:, None] * np.diff(fz)[None, :]
+    rhs = np.random.default_rng(0).standard_normal((ny, nz))
+    rhs -= np.sum(rhs * volumes) / np.sum(volumes)
+    potential = solver.solve(Field(jnp.asarray(rhs[None]), (CENTER,) * 3, grid)).data[0]
+
+    def axis(walls, fluid):
+        (low_ratio, low_widths), (high_ratio, high_widths) = walls
+        widths = np.concatenate([low_widths[::-1], fluid, high_widths])
+        ratios = np.concatenate(
+            [
+                np.broadcast_to(low_ratio, len(low_widths))[::-1],
+                np.ones(fluid.size),
+                np.broadcast_to(high_ratio, len(high_widths)),
+            ]
+        )
+        centres = np.cumsum(widths) - 0.5 * widths
+        lower, upper = (
+            centres[len(low_widths)] - 0.5 * fluid[0],
+            centres[-len(high_widths) - 1] + 0.5 * fluid[-1],
+        )
+        depth = np.maximum(lower - centres, 0.0) + np.maximum(centres - upper, 0.0)
+        return widths, ratios, depth, len(low_widths)
+
+    hy, sy, dy, ly = axis(walls_y, np.diff(fy))
+    hz, sz, dz, lz = axis(walls_z, np.diff(fz))
+    wy, wz = dy[:, None] > 0, dz[None, :] > 0
+    sigma = np.where(wy & wz, np.where(dy[:, None] <= dz[None, :], sy[:, None], sz[None, :]), 1.0)
+    sigma = np.where(wy & ~wz, sy[:, None], np.where(wz & ~wy, sz[None, :], sigma))
+    rows, columns = hy.size, hz.size
+    matrix = np.zeros((rows * columns, rows * columns))
+    for i in range(rows):
+        for k in range(columns):
+            for j, m, area, h0, h1 in (
+                (i + 1, k, hz[k], hy[i], hy[min(i + 1, rows - 1)]),
+                (i, k + 1, hy[i], hz[k], hz[min(k + 1, columns - 1)]),
+            ):
+                if j < rows and m < columns:
+                    link = area / (0.5 * h0 / sigma[i, k] + 0.5 * h1 / sigma[j, m])
+                    for a, b in ((i * columns + k, j * columns + m), (j * columns + m, i * columns + k)):
+                        matrix[a, a] -= link
+                        matrix[a, b] += link
+    source = np.zeros((rows, columns))
+    source[ly : ly + ny, lz : lz + nz] = rhs * volumes
+    dense = np.linalg.lstsq(matrix, source.ravel(), rcond=None)[0].reshape(rows, columns)[
+        ly : ly + ny, lz : lz + nz
+    ]
+    dense -= np.sum(dense * volumes) / np.sum(volumes)
+    np.testing.assert_allclose(potential, dense, atol=1e-12 * np.max(np.abs(dense)))
