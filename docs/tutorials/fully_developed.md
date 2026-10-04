@@ -82,7 +82,7 @@ thermal effects. It is not a complete blanket pumping budget.
 
 ## Cross-section weights on the staggered core
 
-`lmhdx.design.channel_cross_section_weights(problem)` is the `ChannelProblem`
+`lmhdx.fully_developed.channel_cross_section_weights(problem)` is the `ChannelProblem`
 counterpart of `fluid_cell_areas`: it returns the transverse `(y, z)`
 integration weight of every cell, $\Delta y_j \Delta z_k$, for a
 `lmhdx.core3d.ChannelProblem`. Axis 0 is the flow axis of every channel this
@@ -95,7 +95,7 @@ the weights sum to the full cross-section area:
 import numpy as np
 
 from lmhdx.core3d import duct_problem
-from lmhdx.design import channel_cross_section_weights
+from lmhdx.fully_developed import channel_cross_section_weights
 
 problem = duct_problem(hartmann=20.0, cells=32)
 weights = np.asarray(channel_cross_section_weights(problem))
@@ -110,7 +110,7 @@ and pumping-power metrics are measured against.
 
 ## Throughput and pumping power on the staggered core
 
-`lmhdx.design.channel_flow_rate`, `channel_flow_response`,
+`lmhdx.fully_developed.channel_flow_rate`, `channel_flow_response`,
 `channel_drive_for_flow_rate` and `channel_fixed_flow_hydraulic_power` are the
 `ChannelProblem` counterparts of `volumetric_flow_rate`, `linear_flow_response`,
 `drive_for_flow_rate` and `fixed_flow_hydraulic_power` above, reusing
@@ -121,7 +121,7 @@ and pumping-power metrics are measured against.
 import numpy as np
 
 from lmhdx.core3d import duct_problem
-from lmhdx.design import channel_drive_for_flow_rate, channel_flow_rate
+from lmhdx.fully_developed import channel_drive_for_flow_rate, channel_flow_rate
 from lmhdx.steady import solve_steady_state
 
 problem = duct_problem(hartmann=20.0, cells=32)
@@ -168,7 +168,7 @@ import numpy as np
 from scipy.optimize import minimize
 
 import lmhdx
-from lmhdx.design import fluid_cell_areas
+from lmhdx.fully_developed import fluid_cell_areas
 
 jax.config.update("jax_enable_x64", True)
 case = lmhdx.make_shercliff_case(ha=5, ny=12, nz=12)
@@ -214,6 +214,6 @@ certificate. Validate inferred parameters with the reporting solver and a
 held-out finer mesh before using them in a design study.
 
 For a prescribed flow rate rather than a profile, avoid optimizing drive:
-`lmhdx.design.linear_flow_response(case).drive_for(target_flow_rate)` eliminates
+`lmhdx.fully_developed.linear_flow_response(case).drive_for(target_flow_rate)` eliminates
 it exactly using the linear response. Neither fit is a thermal blanket design;
 wall/geometry optimization and heat-transfer validation have separate gates.

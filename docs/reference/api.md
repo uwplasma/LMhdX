@@ -33,7 +33,7 @@ live in the module that owns their concepts.
 |---|---|
 | Staggered core | `ChannelProblem`, `duct_problem`, `solve_steady_state`, `advance` |
 | Cases and solves | `make_hartmann_case`, `make_shercliff_case`, `make_hunt_case`, `make_q2d_case`, `solve_fully_developed_fields`, `evolve_q2d`, `Q2DProblem`, `solve` |
-| Meshes | `generate_rect_duct_mesh`, `generate_rect_duct_mesh_from_faces`, `generate_layered_duct_mesh`, `generate_layered_duct_mesh_from_fluid_faces`, `generate_multilayer_duct_mesh` |
+| Meshes | `generate_rect_duct_mesh_from_faces` (the mesh a case's solution reports) |
 | Wall models | `WallLayer`, `wall_conductance_ratio`, `effective_pinhole_conductance_ratio`, `tangential_stack_conductance_ratio`, `normal_stack_leakage_ratio`, `equivalent_single_layer`, `nested_wall_layer_resolution_summary` |
 | Units | `dynamic_to_kinematic_viscosity`, `kinematic_to_dynamic_viscosity`, `hartmann_number`, `reynolds_number`, `interaction_parameter`, `magnetic_reynolds_number`, `magnetic_field_from_hartmann` |
 | Evidence | The energy budget of `lmhdx.core3d` and the analytical, conservation, and packaged benchmark tools in `lmhdx.validation` |
@@ -54,10 +54,10 @@ wanted. The remaining result types expose `converged`, `status`, `steps`,
 `residual`, `fields`, and `diagnostics`; specialized solve functions provide
 restart, progress, logging, and timing hooks in their owning modules.
 
-## Case schema
+## Cases: schema, builders, meshes, units and walls
 
 ```{eval-rst}
-.. automodule:: lmhdx.specs
+.. automodule:: lmhdx.cases
    :members:
    :show-inheritance:
 ```
@@ -83,24 +83,10 @@ restart, progress, logging, and timing hooks in their owning modules.
    :members:
 ```
 
-## Imposed fields
-
-```{eval-rst}
-.. automodule:: lmhdx.mesh
-   :members:
-```
-
 ## Fully developed cases on the staggered core
 
 ```{eval-rst}
 .. automodule:: lmhdx.fully_developed
-   :members:
-```
-
-## Case builders
-
-```{eval-rst}
-.. automodule:: lmhdx.cases
    :members:
 ```
 
@@ -115,12 +101,5 @@ restart, progress, logging, and timing hooks in their owning modules.
 
 ```{eval-rst}
 .. automodule:: lmhdx.validation
-   :members:
-```
-
-## Units and walls
-
-```{eval-rst}
-.. automodule:: lmhdx.physics
    :members:
 ```

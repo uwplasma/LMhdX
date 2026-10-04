@@ -21,7 +21,6 @@ from lmhdx import (
     dynamic_to_kinematic_viscosity,
     effective_pinhole_conductance_ratio,
     enable_x64,
-    generate_multilayer_duct_mesh,
     hartmann_number,
     interaction_parameter,
     magnetic_reynolds_number,
@@ -130,7 +129,7 @@ faces = wall_resolving_faces(
 )
 areas = np.diff(faces)[:, None] * np.diff(faces)[None, :]
 results: dict[str, dict[str, object]] = {}
-meshes = {}
+stacks = {}
 for model in WALL_MODELS:
     layers = model_layers[model]
     # Each wall cell: its conductivity over lithium's, and its width, from the fluid outwards.
@@ -174,16 +173,7 @@ for model in WALL_MODELS:
             "mean_current_magnitude": float(np.sum(areas * jnp.hypot(current_y, current_z)) / np.sum(areas)),
         },
     }
-    meshes[model] = generate_multilayer_duct_mesh(
-        width=width,
-        height=height,
-        length=LENGTH_SCALE_M,
-        nx=1,
-        ny=FLUID_CELLS,
-        nz=FLUID_CELLS,
-        wall_layers={side: layers for side in ("left", "right", "bottom", "top")},
-        fluid_conductivity=LITHIUM_CONDUCTIVITY_S_M,
-    )
+    stacks[model] = stack
 
 # Save a compact, reproducible summary and a three-panel visual comparison.
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -201,11 +191,17 @@ summary_path = OUTPUT_DIR / "li_aln_wall_stack_summary.json"
 summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 
 figure, axes = plt.subplots(1, 3, figsize=(11.0, 3.4), constrained_layout=True)
-intact_mesh = meshes["intact_aln"]
-conductivity = np.asarray(intact_mesh.sigma, dtype=float)
-image = axes[0].imshow(np.log10(np.maximum(conductivity, 1.0e-30)).T, origin="lower")
-axes[0].set(title="Explicit Li | AlN | 316L mesh", xlabel="y cell", ylabel="z cell")
-figure.colorbar(image, ax=axes[0], label=r"$\log_{10}(\sigma\,[S/m])$")
+# The wall-normal conductivity the solver sees: the last fluid cell, then each wall cell.
+ratios, widths = stacks["intact_aln"]
+edges = np.concatenate(([-float(np.diff(faces)[-1])], np.cumsum((0.0, *widths))))
+values = np.concatenate(([LITHIUM_CONDUCTIVITY_S_M], np.asarray(ratios) * LITHIUM_CONDUCTIVITY_S_M))
+axes[0].stairs(values, 1.0e3 * edges, color="#334155")
+axes[0].set(
+    title="Li | AlN | 316L wall stack",
+    xlabel="distance into the wall [mm]",
+    ylabel=r"$\sigma$ [S/m]",
+    yscale="log",
+)
 axes[1].loglog(PINHOLE_FRACTIONS[1:], pinhole_conductance[1:], "o-", color="#0f766e")
 axes[1].set(title="Pinhole current path", xlabel="pinhole fraction", ylabel="effective c")
 currents = [float(results[name]["validation"]["mean_current_magnitude"]) for name in WALL_MODELS]

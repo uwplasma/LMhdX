@@ -9,7 +9,7 @@ import pytest
 
 import lmhdx
 from lmhdx.core3d import ChannelProblem, duct_problem
-from lmhdx.design import (
+from lmhdx.fully_developed import (
     DuctResponse,
     channel_cross_section_weights,
     channel_drive_for_flow_rate,

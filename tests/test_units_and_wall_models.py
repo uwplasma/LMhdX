@@ -1,5 +1,7 @@
 import math
 
+import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from lmhdx import (
@@ -18,7 +20,15 @@ from lmhdx import (
     tangential_stack_conductance_ratio,
     wall_conductance_ratio,
 )
-from lmhdx.physics import normal_leakage_ratio
+from lmhdx.cases import (
+    generate_rect_duct_mesh_from_faces,
+    load_tabulated_field,
+    make_divergence_free_cross_section_field,
+    normal_leakage_ratio,
+    sample_cross_section_field,
+    sample_tabulated_cross_section_field,
+    write_tabulated_field_npz,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -299,3 +309,103 @@ def test_wall_resolution_summary_validates_controls():
     layers = (WallLayer("wall", 1.0, 1.0),)
     with pytest.raises(ValueError, match="minimum_cells"):
         nested_wall_layer_resolution_summary(layers, minimum_cells_per_layer=0)
+
+
+# Meshes and tabulated fields.
+
+
+def test_generate_rect_duct_mesh_from_faces_preserves_explicit_faces():
+    mesh = generate_rect_duct_mesh_from_faces(
+        y_faces=jnp.asarray([-0.1, -0.05, 0.0, 0.1]),
+        z_faces=jnp.asarray([-0.2, 0.0, 0.2]),
+        length=3.0,
+        nx=3,
+    )
+
+    assert mesh.geometry == "rect_duct"
+    assert mesh.nx == 3
+    assert mesh.ny == 3
+    assert mesh.nz == 2
+    assert mesh.y_centers.tolist() == pytest.approx([-0.075, -0.025, 0.05])
+    assert mesh.z_centers.tolist() == pytest.approx([-0.1, 0.1])
+
+
+def test_generate_rect_duct_mesh_from_faces_rejects_invalid_faces():
+    with pytest.raises(ValueError, match="strictly increasing"):
+        generate_rect_duct_mesh_from_faces(y_faces=jnp.asarray([0.0, 0.0]), z_faces=jnp.asarray([0.0, 1.0]))
+    with pytest.raises(ValueError, match="one-dimensional"):
+        generate_rect_duct_mesh_from_faces(y_faces=jnp.ones((2, 2)), z_faces=jnp.asarray([0.0, 1.0]))
+    with pytest.raises(ValueError, match="at least two"):
+        generate_rect_duct_mesh_from_faces(y_faces=jnp.asarray([0.0]), z_faces=jnp.asarray([0.0, 1.0]))
+
+
+def test_divergence_free_cross_section_field_has_small_discrete_divergence():
+    field_fn = make_divergence_free_cross_section_field(width=2.0, height=1.5, base_bz=10.0, perturbation=0.1)
+    y, z, field = sample_cross_section_field(field_fn, width=2.0, height=1.5, ny=61, nz=61)
+    divergence = np.gradient(field[..., 1], y, axis=0) + np.gradient(field[..., 2], z, axis=1)
+    assert np.max(np.abs(divergence)) < 0.2
+    assert np.sqrt(np.mean(divergence**2)) < 0.05
+
+
+def test_sample_cross_section_field_returns_expected_shape():
+    field_fn = make_divergence_free_cross_section_field(width=2.0, height=1.0, base_bz=8.0, perturbation=0.1)
+    y, z, field = sample_cross_section_field(field_fn, width=2.0, height=1.0, ny=21, nz=25)
+    assert y.shape == (21,)
+    assert z.shape == (25,)
+    assert field.shape == (21, 25, 3)
+
+
+def test_tabulated_field_npz_round_trip_and_sampling(tmp_path):
+    field_fn = make_divergence_free_cross_section_field(width=2.0, height=1.0, base_bz=8.0, perturbation=0.1)
+    y, z, field = sample_cross_section_field(field_fn, width=2.0, height=1.0, ny=21, nz=25)
+    path = write_tabulated_field_npz(
+        tmp_path / "field.npz",
+        y=y,
+        z=z,
+        bx=field[..., 0],
+        by=field[..., 1],
+        bz=field[..., 2],
+    )
+    payload = load_tabulated_field(path)
+    assert set(payload) == {"y", "z", "bx", "by", "bz"}
+    sampled = sample_tabulated_cross_section_field(
+        path, y=field[..., 0] * 0.0 + y[:, None], z=field[..., 0] * 0.0 + z[None, :]
+    )
+    assert sampled.shape == field.shape
+    assert abs(float(sampled[..., 2].mean()) - float(field[..., 2].mean())) < 1.0e-8
+
+
+def test_tabulated_field_validation_and_dimension_mismatch_paths(tmp_path):
+    text_path = tmp_path / "field.txt"
+    text_path.write_text("not npz")
+    with pytest.raises(ValueError, match="NPZ"):
+        load_tabulated_field(text_path)
+
+    incomplete = tmp_path / "incomplete.npz"
+    np.savez(incomplete, y=[0.0], z=[0.0], bx=[[0.0]])
+    with pytest.raises(ValueError, match="must contain"):
+        load_tabulated_field(incomplete)
+
+    x = np.asarray([0.0, 1.0])
+    y = np.asarray([0.0, 1.0])
+    z = np.asarray([0.0, 1.0])
+    zeros = np.zeros((2, 2, 2))
+    field3d = write_tabulated_field_npz(tmp_path / "field3d.npz", x=x, y=y, z=z, bx=zeros, by=zeros, bz=zeros)
+    with pytest.raises(ValueError, match="needs an x coordinate"):
+        sample_tabulated_cross_section_field(field3d, y=np.asarray([[0.0]]), z=np.asarray([[0.0]]))
+
+    field2d = write_tabulated_field_npz(
+        tmp_path / "field2d.npz", y=y, z=z, bx=zeros[0], by=zeros[0], bz=zeros[0]
+    )
+    sampled = sample_tabulated_cross_section_field(field2d, y=np.asarray([[0.5]]), z=np.asarray([[0.5]]))
+    assert sampled.shape == (1, 1, 3)
+    for axis in ([0.0], [0.0, 0.0], [1.0, 0.0], [0.0, np.nan], [[0.0, 1.0]]):
+        np.savez(incomplete, y=axis, z=z, bx=zeros[0], by=zeros[0], bz=zeros[0])
+        with pytest.raises(ValueError, match="axes"):
+            load_tabulated_field(incomplete)
+    for component in (np.zeros((2, 3)), np.full((2, 2), np.nan)):
+        np.savez(incomplete, y=y, z=z, bx=component, by=zeros[0], bz=zeros[0])
+        with pytest.raises(ValueError, match="components"):
+            load_tabulated_field(incomplete)
+    with pytest.raises(ValueError, match="inside the tabulated domain"):
+        sample_tabulated_cross_section_field(field2d, y=np.asarray([1.01]), z=np.asarray([0.5]))
