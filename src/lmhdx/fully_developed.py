@@ -21,7 +21,7 @@ cells of its own, which needs equal walls on one axis. ``"resolved"`` gives each
 wall ``wall_cells`` uniform cells of its own conductivity, insulated outside:
 one wall, two different walls, or a layer that no boundary names
 (``ChannelProblem.wall_layers``); a corner cell takes the nearer wall's
-material, as the cell-centred solver assigned it, and the reported fields
+material, as the retired cell-centred solver assigned it, and the reported fields
 cover the fluid. The default ``"auto"`` is thin where that holds and resolved
 otherwise. A wall stack of several materials is a ``ChannelProblem`` with
 per-cell ratios.
@@ -30,7 +30,7 @@ per-cell ratios.
 sampled at the cell centres as an :class:`~lmhdx.core3d.ImposedField`, and the
 layers follow its peak transverse strength. An axial component is kept: it
 adds no electromotive force to the axial flow, and on a varying field it can
-drive a secondary flow, which the cell-centred solver dropped.
+drive a secondary flow, which the retired cell-centred solver dropped.
 
 *Drive.* ``forcing`` is the axial force density. With zero forcing and an
 ``inlet_flow_rate`` boundary, the flow rate is met by scaling the unit-drive
@@ -67,7 +67,6 @@ from .steady import shared_or_embedded, solve_steady_state
 __all__ = [
     "case_mesh",
     "channel_problem",
-    "core_applies",
     "solve_fully_developed",
     "solve_fully_developed_fields",
     "solve_fully_developed_transient",
@@ -85,10 +84,11 @@ _IGNORED = {"no_slip", "inlet_velocity", "inlet_flow_rate", "outlet_pressure"}
 def channel_problem(case: CaseSpec) -> ChannelProblem:
     """Return the staggered-core problem a fully developed case solves, at unit drive.
 
-    Raise ``NotImplementedError`` for what the core does not represent: other
-    geometries, thick or mismatched conducting walls, several fluids, or an
-    imposed current. A constant field stays three numbers; an analytic or
-    tabulated one is sampled at the cell centres as an :class:`ImposedField`.
+    Raise ``ValueError`` for what a case cannot mean: fluids of different
+    properties (a ``CaseSpec`` gives regions no geometry), an imposed current
+    density, unequal thin walls, a conducting wall without a layered duct. A
+    constant field stays three numbers; an analytic or tabulated one is sampled
+    at the cell centres as an :class:`ImposedField`.
     """
     _check(case)
     fluid = _fluid(case)
@@ -138,15 +138,6 @@ def channel_problem(case: CaseSpec) -> ChannelProblem:
     )
 
 
-def core_applies(case: CaseSpec) -> bool:
-    """Return whether the staggered core represents ``case``; the other cases keep the cell-centred solve."""
-    try:
-        channel_problem(case)
-    except NotImplementedError:
-        return False
-    return True
-
-
 def case_mesh(case: CaseSpec) -> StructuredMesh:
     """Return the fluid cross-section the core solves ``case`` on, as a :class:`StructuredMesh`."""
     grid = channel_problem(case).grid
@@ -168,18 +159,12 @@ def solve_fully_developed_fields(
     All five are cell-centred ``(ny, nz)`` arrays in the case's dtype: axial
     velocity, potential (zero volume mean), the ``y`` and ``z`` currents
     averaged from their faces, and the axial Lorentz force density.
-    A case the core does not represent is solved by the cell-centred route,
-    :func:`lmhdx.cases.solve_fully_developed_fields`, on its own mesh.
     ``forcing`` and ``magnetic_field_scale`` are continuous design inputs,
     differentiable through the implicit solve of :func:`lmhdx.steady.solve_steady_state`;
     the case itself is static, so close over it outside :func:`jax.jit`. A
     solve that fails raises :class:`~lmhdx.specs.NumericalFailure` when called
     with concrete inputs and gives nonfinite fields under tracing.
     """
-    if not core_applies(case):
-        from .cases import solve_fully_developed_fields as cell_centred
-
-        return cell_centred(case, forcing=forcing, magnetic_field_scale=magnetic_field_scale)
     problem = channel_problem(case)
     target = _target_flow_rate(case) if forcing is None else None
     drive = target if target is not None else (case.forcing if forcing is None else forcing)
@@ -250,7 +235,7 @@ def solve_fully_developed_transient(
     ``initial_velocity``) to ``t_final``, at most ``max_steps``, compiled as one
     scan between kept records. A ramped field scales the Lorentz force step by
     step. With an ``inlet_flow_rate`` and zero forcing each step meets the flow
-    rate exactly. The other pseudo-time controls of the cell-centred loop
+    rate exactly. The other pseudo-time controls of the retired cell-centred loop
     (relaxation, update limit, coupling and potential iterations) do not enter.
     ``output.history_stride`` keeps every ``stride``-th step and the last (``0``,
     the last alone); ``residual_history`` is the step's largest velocity change,
@@ -452,7 +437,7 @@ def _summary(problem: ChannelProblem, areas, fields, forcing) -> dict:
     }
 
 
-# SolverStepRecord fields read from a transient record; the rest are the cell-centred loop's and zero.
+# SolverStepRecord fields read from a transient record; the rest were the retired cell-centred loop's and are zero.
 _STEP_FIELDS = {
     "u_max": "u_max_history",
     "mean_velocity": "mean_velocity_history",
@@ -598,8 +583,10 @@ def _faces(count: int, half: float, layer: float, cells_in_layer: int) -> np.nda
 
 def _fluid(case: CaseSpec):
     fluids = [region for region in case.regions if region.kind == "fluid"]
-    if len(fluids) != 1:
-        raise NotImplementedError("the staggered core solves one fluid region")
+    properties = {(region.conductivity, region.density, region.viscosity) for region in fluids}
+    if len(properties) != 1:
+        # The retired cell-centred solver silently took the first; a region has no geometry to place another.
+        raise ValueError("a case fills its duct with one fluid; fluid regions must not differ")
     return fluids[0]
 
 
@@ -608,14 +595,14 @@ def _check(case: CaseSpec) -> None:
     if case.solver.kind != "fully_developed_inductionless":
         raise ValueError("case must select the fully developed inductionless solver")
     if case.geometry.kind not in {"rect_duct", "layered_duct"}:
-        raise NotImplementedError(f"the staggered core does not solve geometry {case.geometry.kind!r}")
+        raise ValueError(f"the staggered core does not solve geometry {case.geometry.kind!r}")
     if field.kind == "constant" and field.value is None:
         raise ValueError("a constant magnetic field needs a value")
     if field.ramp_duration > 0.0 and case.solver.mode != "transient":
         raise ValueError("steady fields require an unramped magnetic field")
     for boundary in case.boundary_conditions:
         if boundary.kind not in _IGNORED | {"insulating", "conducting_wall"}:
-            raise NotImplementedError(f"the staggered core does not impose {boundary.kind!r} boundaries")
+            raise ValueError(f"the staggered core does not impose {boundary.kind!r} boundaries")
 
 
 def _walls(case: CaseSpec, conductivity: float) -> dict:
@@ -623,7 +610,7 @@ def _walls(case: CaseSpec, conductivity: float) -> dict:
 
     A side is conducting when a ``conducting_wall`` boundary names it, or when it
     has wall cells that no boundary names and the first solid region conducts
-    (the cell-centred solver's fallback); it is insulating when an
+    (the retired cell-centred solver's fallback); it is insulating when an
     ``insulating`` boundary names it or it has no wall. ``geometry.wall_model``
     chooses the closure: ``"thin"`` makes each wall a sheet of conductance
     ``sigma_w t_w / sigma``, which needs equal walls on an axis, on either or both axes; ``"resolved"``
@@ -642,7 +629,7 @@ def _walls(case: CaseSpec, conductivity: float) -> dict:
             continue
         region = regions.get(boundary.region)
         if geometry.kind != "layered_duct" or region is None or not names:
-            raise NotImplementedError("a conducting wall needs a layered duct, a solid region and its sides")
+            raise ValueError("a conducting wall needs a layered duct, a solid region and its sides")
         for name in names:
             sides[name] = region
     solids = [region for region in case.regions if region.kind == "solid"]
@@ -663,7 +650,7 @@ def _walls(case: CaseSpec, conductivity: float) -> dict:
             continue
         thickness, cells = geometry.wall_thickness[index], geometry.wall_cells[index]
         if thickness <= 0.0:
-            raise NotImplementedError(f"conducting wall {name!r} has no thickness")
+            raise ValueError(f"conducting wall {name!r} has no thickness")
         ends[name] = (region.conductivity / conductivity, thickness, cells)
     axes = {_SIDES[name][0] for name in ends}
     pairs = {axis: [ends.get(name) for name, (index, _) in _SIDES.items() if index == axis] for axis in axes}
@@ -675,7 +662,7 @@ def _walls(case: CaseSpec, conductivity: float) -> dict:
         raise ValueError(f"wall_model must be 'auto', 'thin' or 'resolved', got {model!r}")
     if model == "thin" or (model == "auto" and thin):
         if not thin:
-            raise NotImplementedError("thin walls need equal conducting walls on both sides of an axis")
+            raise ValueError("thin walls need equal conducting walls on both sides of an axis")
         conductance = [0.0, 0.0, 0.0]
         for axis, pair in pairs.items():
             conductance[axis] = pair[0][0] * pair[0][1]
@@ -683,7 +670,7 @@ def _walls(case: CaseSpec, conductivity: float) -> dict:
     layers = [None, None, None]
     for axis, pair in pairs.items():
         if any(end is not None and end[2] < 1 for end in pair):
-            raise NotImplementedError("a wall resolved in cells needs wall_cells")
+            raise ValueError("a wall resolved in cells needs wall_cells")
         layers[axis] = tuple(None if end is None else (end[0], (end[1] / end[2],) * end[2]) for end in pair)
     return {"wall_layers": tuple(layers)}
 

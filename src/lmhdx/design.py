@@ -22,12 +22,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import jax
 import jax.numpy as jnp
 
 from .core3d import ChannelProblem
-from .fully_developed import channel_problem, core_applies, solve_fully_developed_fields
-from .solvers import _build_mesh
+from .fully_developed import channel_problem, solve_fully_developed_fields
 from .specs import CaseSpec
 from .steady import solve_steady_state
 
@@ -51,16 +49,9 @@ def fluid_cell_areas(case: CaseSpec) -> jnp.ndarray:
     """Return the cross-section weights of the fluid mesh a case is solved on.
 
     That mesh is :func:`lmhdx.fully_developed.case_mesh`, the one the velocity of
-    :func:`lmhdx.solve_fully_developed_fields` and :func:`lmhdx.solve` lives on,
-    or, for a case the core does not represent, the cell-centred mesh with zero
-    weight outside the fluid.
+    :func:`lmhdx.solve_fully_developed_fields` and :func:`lmhdx.solve` lives on.
     """
-    if core_applies(case):
-        return channel_cross_section_weights(channel_problem(case)).astype(case.dtype)
-    with jax.ensure_compile_time_eval():
-        mesh = _build_mesh(case)
-        areas = jnp.asarray(mesh.dy)[:, None] * jnp.asarray(mesh.dz)[None, :]
-        return areas if mesh.fluid_mask is None else jnp.where(mesh.fluid_mask, areas, 0.0)
+    return channel_cross_section_weights(channel_problem(case)).astype(case.dtype)
 
 
 def channel_cross_section_weights(problem: ChannelProblem) -> jnp.ndarray:

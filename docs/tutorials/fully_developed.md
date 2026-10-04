@@ -62,8 +62,7 @@ print(comparison.l2_error, metrics["div_current_max"])
 ```
 
 `result.diagnostics` holds the flow rate, the Lorentz and ohmic power and the
-largest cell divergence of the current. `lmhdx.solvers.fully_developed_power_balance`
-audits the cell-centred solver of `lmhdx.cases`, not this one.
+largest cell divergence of the current.
 Increase wall and fluid resolution together for high Hartmann number cases;
 the mesh-quality helpers report cells across Hartmann and side layers.
 

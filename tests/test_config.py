@@ -136,8 +136,6 @@ for dtype in ("float32", "float64"):
     assert len(recorded) == int(dtype == "float64" and not initial)
     if recorded:
         assert recorded[0].category is DeprecationWarning
-    grid, materials, _, _ = cases._prepare_fully_developed_case(case)
-    assert grid.y_faces.dtype == materials.conductivity.dtype == case.dtype
     objective = lambda x: jnp.mean(lmhdx.solve_fully_developed_fields(case, forcing=x)[0])
     x = jnp.asarray(1., dtype=case.dtype)
     value, grad = jax.jit(jax.value_and_grad(objective))(x)

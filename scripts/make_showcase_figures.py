@@ -23,7 +23,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 import lmhdx  # noqa: E402
-from lmhdx.cases import solve_steady  # noqa: E402
 from lmhdx.validation import extract_midplane_profile  # noqa: E402
 
 STATIC = Path(__file__).resolve().parents[1] / "docs" / "_static"
@@ -112,7 +111,7 @@ def hunt_sweep(hartmann_numbers: tuple[float, ...] = (20.0, 100.0, 500.0, 1000.0
     """Hunt duct profiles versus Ha: side-layer jets and their Ha^-1/2 thickness."""
     profiles, maps, peaks = {}, {}, []
     for ha in hartmann_numbers:
-        solution = solve_steady(lmhdx.make_hunt_case(ha=ha, ny=cells, nz=cells))
+        solution = lmhdx.solve(lmhdx.make_hunt_case(ha=ha, ny=cells, nz=cells))
         if not solution.converged:
             raise RuntimeError(f"Hunt Ha={ha:g} ended with {solution.status}")
         profile = extract_midplane_profile(solution, axis="z")
