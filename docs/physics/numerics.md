@@ -549,9 +549,11 @@ closures were run, each with its own locally fully developed drop:
   the duct. Scalars, through the public API.
 - *local*: the same laws at the local field, $c_t = c + 1/(Ha\,B)$ and
   $c_s = c + k(Ha\,B)/\sqrt{Ha\,B}$, with $k$ interpolated in $\log Ha$. This
-  needs conductances that vary along $x$, which the model's assembly takes
-  elementwise; the diagnosis patched its weights rather than change the API.
-  Where $Ha\,B < 1$ the correction is frozen. Freezing it at $Ha\,B < 100$ or
+  needs conductances that vary along $x$. `CoreFlow.solve` takes them per
+  station (an array or a callable of $x$), and
+  `lmhdx.coreflow.layer_conductances(c_t, c_s, Ha, B, k)` builds them, with
+  $k$ from `lmhdx.coreflow.side_layer_coefficient(c, Ha)` (one fully developed
+  solve on the core). Where $Ha\,B < 1$ the correction is frozen (`floor`). Freezing it at $Ha\,B < 100$ or
   $1000$ instead moves the result by at most 0.6 % at $2\times10^4$ and 11 % at 3200.
 
 Excess over $[-6,2]$:
@@ -598,6 +600,17 @@ the gate:
 Reaching TM-228's value itself to 1 % at $c=0.02$ needs the side-layer term
 below about 1.5 % of $c$: $c\sqrt{Ha}\gtrsim 70$, Ha ≳ $10^7$. No
 three-dimensional solve reaches that, with or without 2b.4.
+
+The comparison at $c=0.1$, Ha $2\times10^4$ is a test
+(`tests/test_coreflow.py`, from the stored 3-D numbers, so no 3-D solve runs):
+
+```python
+from lmhdx.coreflow import CoreFlow, layer_conductances
+
+k = ((100, 400, 800, 1600, 3200, 1e4, 2e4), (2.585, 1.397, 1.242, 1.138, 1.041, 0.832, 0.636))
+c_t, c_s = layer_conductances(0.1, 0.1, 2e4, field, k)   # field: B_y at the stations of x
+result = CoreFlow(x, nz=20, ny=20).solve(field, c_t=c_t, c_s=c_s)
+```
 
 **Verdict for rows 7 and 24.**
 

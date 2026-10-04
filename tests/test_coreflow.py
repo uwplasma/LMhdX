@@ -6,7 +6,13 @@ import numpy as np
 import pytest
 
 from lmhdx.core3d import fringe_field
-from lmhdx.coreflow import CoreFlow, fully_developed_gradient, midplane_field
+from lmhdx.coreflow import (
+    CoreFlow,
+    fully_developed_gradient,
+    layer_conductances,
+    midplane_field,
+    side_layer_coefficient,
+)
 from lmhdx.grid import Grid, uniform_faces
 
 pytestmark = pytest.mark.unit
@@ -153,3 +159,80 @@ def test_invalid_meshes_and_fields_are_refused():
         CoreFlow(np.linspace(0.0, 1.0, 5), nz=1)
     with pytest.raises(ValueError, match="stations"):
         CoreFlow(np.linspace(0.0, 1.0, 5)).solve(np.ones(4), c_t=0.1, c_s=0.1)
+    with pytest.raises(ValueError, match="each of the 5 stations"):
+        CoreFlow(np.linspace(0.0, 1.0, 5)).solve(np.ones(5), c_t=np.full(4, 0.1), c_s=0.1)
+
+
+def test_conductances_that_vary_along_the_duct_keep_the_operator_symmetric_and_the_adjoint_exact():
+    x = np.linspace(-4.0, 2.0, 25)
+    model = CoreFlow(x, aspect=0.9, nz=6, ny=5)
+    field = _anl(x)
+    # A constant array, a callable and a number are the same conductance.
+    reference = float(model.solve(field, c_t=0.03, c_s=0.05).pressure_drop)
+    as_array = model.solve(field, c_t=np.full(x.size, 0.03), c_s=lambda stations: 0.05 + 0 * stations)
+    assert float(as_array.pressure_drop) == pytest.approx(reference, rel=1e-13)
+    c_t = 0.03 + 0.02 * field
+    c_s = 0.05 * (1.0 + 0.5 * np.cos(x))
+    matrix = model.operator(field, c_t=c_t, c_s=c_s)
+    assert abs(matrix - matrix.T).max() / abs(matrix).max() < 1e-12
+
+    def drop(conductances):
+        return model.solve(field, c_t=conductances[0], c_s=conductances[1]).pressure_drop
+
+    point = jnp.asarray(np.stack([c_t, c_s]))
+    gradient = np.asarray(jax.jit(jax.grad(drop))(point))
+    direction = np.random.default_rng(1).standard_normal(point.shape) * np.asarray(point)
+    step = 1e-5
+    central = (float(drop(point + step * direction)) - float(drop(point - step * direction))) / (2 * step)
+    assert float(np.sum(gradient * direction)) == pytest.approx(central, rel=1e-6)
+    # A Hartmann wall conducting only where the field is strong costs less than everywhere.
+    assert float(drop(point)) < float(drop(jnp.full_like(point, 0.0) + jnp.asarray([[0.05], [0.075]])))
+
+
+# #204, 70 x 192^2 and 70 x 256^2 on the A4000: excess of the 3-D core over [-6, 2] at c 0.1, Ha 2e4,
+# and its locally fully developed drop (the 2-D sections, 0.37066).
+_CORE_3D_EXCESS = (0.042087, 0.042063)
+_CORE_3D_FULLY_DEVELOPED = 0.37066
+# k of the side layers at c 0.1 from side_layer_coefficient (#204, 48-64 cells).
+_K_TABLE = (
+    (100.0, 400.0, 800.0, 1600.0, 3200.0, 1e4, 2e4),
+    (2.585, 1.397, 1.242, 1.138, 1.041, 0.832, 0.636),
+)
+
+
+@pytest.mark.validation
+def test_the_layer_corrected_model_matches_the_3d_core_at_c_01_and_ha_2e4():
+    """Rows 7/24 (#204): with the layers' conductance at the local field, within 1 % of the 3-D core.
+
+    Measured: the closure's excess is 0.042093 (frozen below Ha B = 1), 0.042000 (100) and 0.041840
+    (1000) against 0.042087 and 0.042063; its fully developed drop 0.370505 against 0.37066.
+    """
+    hartmann, c = 2e4, 0.1
+    x = np.linspace(-10.0, 6.0, 161)
+    model, section = CoreFlow(x, nz=20, ny=20), CoreFlow(np.linspace(0.0, 2.0, 9), nz=20, ny=20)
+    c_t, c_s = layer_conductances(c, c, hartmann, _anl(x), _K_TABLE)
+    pressure = np.asarray(model.solve(_anl(x), c_t=c_t, c_s=c_s).pressure).mean(axis=1)
+    drop = np.interp(-6.0, x, pressure) - np.interp(2.0, x, pressure)
+
+    def gradient(field):
+        local_t, local_s = layer_conductances(c, c, hartmann, field, _K_TABLE)
+        result = section.solve(np.ones(9), c_t=float(local_t), c_s=float(local_s))
+        return float(result.pressure_drop) / 2.0 * field**2
+
+    nodes, weights = np.polynomial.legendre.leggauss(24)
+    fringe = sum(
+        w * gradient(_anl(np.array([s]))[0]) for w, s in zip(weights, 2.5 * nodes - 0.5, strict=True)
+    )
+    fully_developed = 3.0 * gradient(1.0) + 2.5 * fringe
+    assert fully_developed == pytest.approx(_CORE_3D_FULLY_DEVELOPED, rel=1e-3)
+    for core in _CORE_3D_EXCESS:
+        assert drop - fully_developed == pytest.approx(core, rel=0.01)
+
+
+@pytest.mark.physics
+def test_the_side_layer_coefficient_comes_from_the_fully_developed_core():
+    """#204 measured k = 1.397 at c 0.1, Ha 400 on 48 cells."""
+    k = side_layer_coefficient(0.1, 400.0, cells=48)
+    assert k == pytest.approx(1.397, rel=0.01)
+    c_t, c_s = layer_conductances(0.1, 0.1, 400.0, 1.0, k)
+    assert float(c_t) == pytest.approx(0.1025) and float(c_s) == pytest.approx(0.1 + k / 20.0)
