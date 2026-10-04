@@ -9,7 +9,8 @@ import pytest
 
 import lmhdx
 from lmhdx.cases import solve_fully_developed_fields as cell_centred_fields
-from lmhdx.core3d import duct_problem
+from lmhdx.cases import solve_steady as cell_centred_solve
+from lmhdx.core3d import ImposedField, duct_problem
 from lmhdx.design import fluid_cell_areas
 from lmhdx.fully_developed import (
     case_mesh,
@@ -18,6 +19,7 @@ from lmhdx.fully_developed import (
     solve_fully_developed,
     solve_fully_developed_fields,
 )
+from lmhdx.mesh import write_tabulated_field_npz
 from lmhdx.specs import BoundaryCondition, MagneticFieldSpec, RegionSpec
 from validation.shercliff import flow_rate, quadrant_flow_rate
 
@@ -189,11 +191,56 @@ def _with(case, **changes):
     return dataclasses.replace(case, **changes)
 
 
+def _sheared(case, axial=0.0):
+    """The case's field times ``1 + 0.3 z``, a divergence-free shear, with an optional axial component."""
+    strength = case.magnetic_field.value[1]
+
+    def field(y, z):
+        return jnp.stack([axial + 0 * y, strength * (1.0 + 0.3 * z) + 0 * y, 0 * y], axis=-1)
+
+    return _with(case, magnetic_field=MagneticFieldSpec("analytic", fn=field))
+
+
+def test_an_axial_field_component_leaves_the_fully_developed_flow_alone():
+    """``u x B`` of an axial flow has no ``B_x`` part, and the transverse force it adds is a gradient."""
+    case = _case(10.0, 0.0, 12)
+    axial = _with(case, magnetic_field=MagneticFieldSpec("constant", (3.0, *case.magnetic_field.value[1:])))
+    assert channel_problem(axial).magnetic_field == (3.0, 10.0, 0.0)
+    reference = solve_fully_developed_fields(case)[0]
+    np.testing.assert_allclose(solve_fully_developed_fields(axial)[0], reference, rtol=1e-9, atol=1e-12)
+
+
+def test_a_varying_field_runs_on_the_core_and_converges_to_the_cell_centred_answer(tmp_path):
+    """Office, float64, Ha 20, ``B_y (1 + 0.3 z)``: core 16/32/64/128 cells 0.042082/0.039003/0.038792/0.038739
+    (differences shrink 14.6x then 4.0x: second order); cell-centred 16/32/64 0.044505/0.039116/0.038733.
+    """
+    case = _sheared(_case(20.0, 0.0, 32))
+    assert isinstance(channel_problem(case).magnetic_field, ImposedField)
+    mean = _mean_velocity(lmhdx.solve(case))
+    assert mean == pytest.approx(0.0387386, rel=0.007)
+    assert mean == pytest.approx(_mean_velocity(cell_centred_solve(case)), rel=0.01)
+    section = case_mesh(case)
+    y, z = (np.asarray(centres) for centres in (section.y_centers, section.z_centers))
+    yy, zz = np.meshgrid(y, z, indexing="ij")
+    path = write_tabulated_field_npz(
+        tmp_path / "field.npz", y=y, z=z, bx=0 * yy, by=20.0 * (1 + 0.3 * zz), bz=0 * yy
+    )
+    tabulated = _with(case, magnetic_field=MagneticFieldSpec("tabulated", table_path=str(path)))
+    sampled, analytic = (channel_problem(c).magnetic_field.components for c in (tabulated, case))
+    np.testing.assert_allclose(sampled, analytic, rtol=1e-12, atol=1e-12)
+    small = _sheared(_case(20.0, 0.0, 12), axial=2.0)
+
+    def throughput(scale):
+        return jnp.mean(solve_fully_developed_fields(small, magnetic_field_scale=scale)[0])
+
+    gradient = jax.grad(throughput)(1.0)
+    difference = (float(throughput(1.0 + 1e-4)) - float(throughput(1.0 - 1e-4))) / 2e-4
+    assert float(gradient) == pytest.approx(difference, rel=1e-6) and float(gradient) < 0.0
+
+
 def test_what_the_core_does_not_model_is_refused():
     shercliff, hunt = _case(5.0, 0.0, 8), _case(5.0, 0.05, 8)
     refused = [
-        _with(shercliff, magnetic_field=MagneticFieldSpec("constant", (1.0, 5.0, 0.0))),
-        _with(shercliff, magnetic_field=MagneticFieldSpec("analytic", fn=lambda y, z: y)),
         _with(shercliff, geometry=dataclasses.replace(shercliff.geometry, kind="pipe_ogrid")),
         _with(shercliff, regions=(*shercliff.regions, RegionSpec("second", "fluid", 1.0, 1.0, 1.0))),
         _with(shercliff, boundary_conditions=(BoundaryCondition("j", "imposed_current_density", 1.0),)),
