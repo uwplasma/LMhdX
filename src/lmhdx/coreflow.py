@@ -65,7 +65,14 @@ import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
-__all__ = ["CoreFlow", "CoreFlowResult", "fully_developed_gradient", "midplane_field"]
+__all__ = [
+    "CoreFlow",
+    "CoreFlowResult",
+    "fully_developed_gradient",
+    "layer_conductances",
+    "midplane_field",
+    "side_layer_coefficient",
+]
 
 
 def fully_developed_gradient(c_t, c_s, aspect: float = 1.0):
@@ -79,6 +86,59 @@ def midplane_field(field) -> tuple[np.ndarray, np.ndarray]:
     x, y = (np.asarray(values) for values in grid.centers[:2])
     b_y = np.asarray(field.components[1])[:, int(np.argmin(np.abs(y))), :]
     return x, b_y.mean(axis=-1)
+
+
+def layer_conductances(c_t, c_s, hartmann: float, field, k, *, floor: float = 1.0):
+    """Return the wall conductances with the layers' finite-Ha conductance at the local field.
+
+    At a finite Hartmann number the Hartmann layers conduct like ``1/Ha`` of extra
+    Hartmann-wall conductance and the side layers like ``k/sqrt(Ha)`` of extra
+    side-wall conductance; at a station of field ``B`` the local Hartmann number is
+    ``Ha |B|``, so ``c_t + 1/(Ha |B|)`` and ``c_s + k/sqrt(Ha |B|)`` (#204: with
+    these the 3-D core and the core-flow model agree within 1 % at c 0.1,
+    Ha 2e4). ``k`` is a number, a callable of the local Hartmann number, or a
+    table ``(hartmann_numbers, k_values)`` interpolated in ``log Ha``, for example
+    from :func:`side_layer_coefficient`. Where ``Ha |B|`` is below ``floor`` the
+    correction is frozen at ``floor``. ``c_t``, ``c_s`` and ``field`` are numbers
+    or one value per station; the result is two arrays for :meth:`CoreFlow.solve`.
+    """
+    local = jnp.maximum(hartmann * jnp.abs(jnp.asarray(field, dtype=jnp.result_type(float))), floor)
+    if callable(k):
+        coefficient = k(local)
+    elif isinstance(k, tuple):
+        table, values = (np.asarray(item, dtype=float) for item in k)
+        coefficient = jnp.interp(jnp.log(local), jnp.asarray(np.log(table)), jnp.asarray(values))
+    else:
+        coefficient = k
+    return c_t + 1.0 / local, c_s + coefficient / jnp.sqrt(local)
+
+
+def side_layer_coefficient(c: float, hartmann: float, *, cells: int = 48) -> float:
+    """Return ``k`` of the side layers in a square duct with both walls of conductance ratio ``c``.
+
+    The fully developed gradient of LMhdX's own 2-D solve on the staggered core
+    (:func:`lmhdx.core3d.duct_problem`, thin walls on both axes) is set equal to
+    Walker's ``1/(1 + 1/c_t + 1/(3 c_s))`` with ``c_t = c + 1/Ha``, which is
+    inverted for ``c_s = c + k/sqrt(Ha)``. One steady solve; ``cells`` must
+    resolve the layers (48 to 64 cells from Ha 400 to 2e4, #204).
+    """
+    from .core3d import ChannelProblem, duct_problem
+    from .steady import solve_steady_state
+
+    base = duct_problem(hartmann=hartmann, cells=cells, wall_conductance=c)
+    section = ChannelProblem(
+        grid=base.grid,
+        conditions=base.conditions,
+        magnetic_field=(0.0, hartmann, 0.0),
+        forcing=(1.0, 0.0, 0.0),
+        dt=1.0,
+        wall_conductance=(0.0, c, c),
+    )
+    velocity = solve_steady_state(section, tolerance=1e-10, linear_max_restarts=600).velocity[0].data
+    area = np.asarray(section.grid.face_areas(0)[0])
+    gradient = 4.0 / float(np.sum(np.asarray(velocity)[0] * area)) / hartmann**2
+    side = 1.0 / (3.0 * (1.0 / gradient - 1.0 - 1.0 / (c + 1.0 / hartmann)))
+    return float((side - c) * np.sqrt(hartmann))
 
 
 class CoreFlowResult(NamedTuple):
@@ -250,13 +310,16 @@ class CoreFlow:
         wx = jnp.asarray(self.wx)
         wz = jnp.asarray(self._wz)
         wy = jnp.asarray(self._wy)
+        # Conductances at the stations; the x-fluxes take the mean of a face's two stations.
+        c_t, c_s = (jnp.broadcast_to(jnp.asarray(c, dtype=beta.dtype), beta.shape) for c in (c_t, c_s))
+        c_t_face, c_s_face = (0.5 * (c[1:] + c[:-1]) for c in (c_t, c_s))
         closure = dz * wx / (2.0 * a * stiffness)
         weights = {
             "px": jnp.repeat(-a * square_face * h * dz, nz),
             "pz": jnp.repeat(-a * stiffness * wx * dz, nz - 1),
-            "tx": c_t * h * dz * jnp.tile(wz, beta.size - 1),
+            "tx": jnp.repeat(c_t_face, nz) * h * dz * jnp.tile(wz, beta.size - 1),
             "tz": jnp.repeat(c_t * wx * dz, nz),
-            "sx": c_s * h * dy * jnp.tile(wy, beta.size - 1),
+            "sx": jnp.repeat(c_s_face, ny + 1) * h * dy * jnp.tile(wy, beta.size - 1),
             "sy": jnp.repeat(c_s * wx * dy, ny),
             "coupling": jnp.repeat(-2.0 * a * slope * wx * dz, nz),
             "side": -2.0 * beta_face * h,
@@ -279,6 +342,7 @@ class CoreFlow:
     def operator(self, field, *, c_t, c_s, field_scale=1.0, beta_max=1000.0) -> sp.csr_matrix:
         """Return the assembled coupled operator on the free unknowns as a host sparse matrix."""
         field = jnp.asarray(field, dtype=jnp.result_type(float))
+        c_t, c_s = self._stations(c_t), self._stations(c_s)
         values = np.asarray(jax.jit(self._assemble)(field, c_t, c_s, field_scale, beta_max)[0])
         size = self.free.size
         return sp.csr_matrix((values, (self.rows, self.columns)), shape=(size, size))
@@ -298,6 +362,12 @@ class CoreFlow:
     ) -> CoreFlowResult:
         """Solve for ``p``, ``phi_t`` and ``phi_s`` together; differentiable in every traced argument.
 
+        ``c_t`` and ``c_s`` are the Hartmann- and side-wall conductance ratios: a
+        number, an array with one value per station of ``x``, or a callable of
+        ``x`` returning one (see :func:`layer_conductances`). A face of the ``x``
+        grid conducts at the mean of its two stations, so the functional, and the
+        operator, stay symmetric, and the derivatives in every conductance value
+        are exact.
         ``field`` is ``B_y`` at the stations of ``x`` (for example from
         :func:`lmhdx.core3d.fringe_field` through :func:`midplane_field`, or any 1-D
         array), multiplied by ``field_scale``. The inlet pressure is ``drive`` and
@@ -309,7 +379,20 @@ class CoreFlow:
             raise ValueError(f"the field must be sampled at the {self.x.size} stations of x")
         rescale = mean_velocity is not None
         target = mean_velocity if rescale else 1.0
+        c_t, c_s = self._stations(c_t), self._stations(c_s)
         return self._jitted(field, c_t, c_s, field_scale, drive, target, beta_max, rescale)
+
+    def _stations(self, conductance):
+        """Return a conductance as one number or one value per station: a callable is evaluated at ``x``."""
+        if callable(conductance):
+            conductance = conductance(self.x)
+        if jnp.ndim(conductance) not in (0, 1) or (
+            jnp.ndim(conductance) == 1 and jnp.shape(conductance) != self.x.shape
+        ):
+            raise ValueError(
+                f"a conductance is a number or one value at each of the {self.x.size} stations of x"
+            )
+        return conductance
 
     def _host_solve(self, values, target):
         """Solve with a SuperLU factorization, reused while the matrix values repeat (forward and adjoint)."""
