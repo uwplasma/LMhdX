@@ -301,28 +301,15 @@ def test_figure_pair_owner_writes_real_png_and_pdf(tmp_path: Path):
     assert pdf.read_bytes().startswith(b"%PDF")
 
 
-@pytest.mark.parametrize(
-    ("options", "expected"),
-    [
-        ({}, {"bbox_inches": "tight"}),
-        ({"dpi": 185}, {"bbox_inches": "tight", "dpi": 185}),
-        ({"tight": False}, {}),
-    ],
-)
-def test_figure_pair_owner_preserves_save_options(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    options: dict[str, object],
-    expected: dict[str, object],
-):
+def test_figure_pair_owner_saves_tight_png_and_pdf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     calls = []
     fig = SimpleNamespace(savefig=lambda path, **kwargs: calls.append((path, kwargs)))
     monkeypatch.setattr(plt, "close", lambda figure: None)
 
-    paths = _save_figure_pair(fig, tmp_path, "options", **options)
+    paths = _save_figure_pair(fig, tmp_path, "options")
 
     assert paths == [tmp_path / "options.png", tmp_path / "options.pdf"]
-    assert calls == [(path, expected) for path in paths]
+    assert calls == [(path, {"bbox_inches": "tight"}) for path in paths]
 
 
 def test_write_case_overview_plots_writes_overview_and_diagnostics(tmp_path: Path):
