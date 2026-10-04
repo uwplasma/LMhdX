@@ -1383,8 +1383,10 @@ def solve(
     which reports it on the case's cross-section; each is compiled once per
     problem. A steady case the core does not represent (thick or mismatched
     conducting walls, several fluids) keeps the cell-centred
-    solve, :func:`solve_steady`. A transient ``CaseSpec`` runs its pseudo-time
-    loop, :func:`solve_transient`. A duct with an inlet and an outlet is
+    solve, :func:`solve_steady`. A transient ``CaseSpec`` runs the core's
+    projection steps, :func:`lmhdx.fully_developed.solve_fully_developed_transient`,
+    or, where the core does not apply, the pseudo-time loop of
+    :func:`solve_transient`. A duct with an inlet and an outlet is
     solved by :func:`lmhdx.axial.solve_open_duct`.
     """
 
@@ -1395,10 +1397,10 @@ def solve(
 
         return solve_compiled(model)
     if isinstance(model, CaseSpec):
-        if model.solver.mode == "transient":
-            return solve_transient(model)
-        from .fully_developed import core_applies, solve_fully_developed
+        from .fully_developed import core_applies, solve_fully_developed, solve_fully_developed_transient
 
+        if model.solver.mode == "transient":
+            return solve_fully_developed_transient(model) if core_applies(model) else solve_transient(model)
         return solve_fully_developed(model) if core_applies(model) else solve_steady(model)
     from .q2d import Q2DProblem, solve_q2d
 
