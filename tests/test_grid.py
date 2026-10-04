@@ -172,9 +172,19 @@ def test_wall_resolving_faces_validate_their_inputs(kwargs, message):
         wall_resolving_faces(20, -1.0, 1.0, **kwargs)
 
 
-def test_wall_resolving_faces_require_an_even_cell_count():
-    with pytest.raises(ValueError, match="even"):
-        wall_resolving_faces(9, -1.0, 1.0, layer_thickness=0.1)
+def test_an_odd_cell_count_puts_one_geometric_cell_on_the_midplane():
+    faces = wall_resolving_faces(9, -1.0, 1.0, layer_thickness=0.1, cells_in_layer=2, max_ratio=None)
+    widths = np.diff(faces)
+    assert faces.shape == (10,) and faces[0] == -1.0 and faces[-1] == 1.0
+    assert np.allclose(widths, widths[::-1], rtol=1e-12)
+    ratios = widths[1:5] / widths[:4]
+    assert np.allclose(ratios, ratios[0], rtol=1e-9) and ratios[0] > 1.0
+    assert float(np.sum(widths[:2])) <= 0.1 * (1.0 + 1e-9)
+    even = wall_resolving_faces(8, -1.0, 1.0, layer_thickness=0.1, cells_in_layer=2, max_ratio=None)
+    assert even.shape == (9,) and even[4] == 0.0
+
+
+def test_geometric_faces_require_an_even_cell_count():
     with pytest.raises(ValueError, match="even"):
         geometric_faces(9, -1.0, 1.0, 1.2)
 
