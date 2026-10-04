@@ -51,6 +51,7 @@ from ._programs import host_array
 from .bc import NEUMANN, BoundaryCondition, pad
 from .grid import CENTER, FACE, Field, Grid
 from .ops import (
+    _broadcast,
     divergence,
     face_average,
     face_average_adjoint,
@@ -323,7 +324,3 @@ def lorentz_force(
             )
             components[target] = components[target] + sign * averaged.data
     return tuple(Field(component, (CENTER, CENTER, CENTER), grid) for component in components)
-
-
-def _broadcast(values: np.ndarray, axis: int, dtype) -> jnp.ndarray:
-    return jnp.asarray(values.reshape([-1 if position == axis else 1 for position in range(3)]), dtype=dtype)

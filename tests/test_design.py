@@ -187,10 +187,15 @@ def test_response_object_reports_its_field_and_converts_targets():
     )
 
 
-def test_flow_rate_rejects_a_mismatched_velocity():
-    case = _case()
+@pytest.mark.parametrize("route", ["case", "channel"])
+def test_flow_rate_rejects_a_mismatched_velocity(route):
+    problem, rate = (
+        (_case(), volumetric_flow_rate)
+        if route == "case"
+        else (duct_problem(hartmann=0.0, cells=8), channel_flow_rate)
+    )
     with pytest.raises(ValueError, match="does not match the mesh"):
-        volumetric_flow_rate(case, jnp.zeros((3, 3)))
+        rate(problem, jnp.zeros((3, 3)))
 
 
 def test_a_conducting_wall_costs_more_power_than_an_insulating_one():
@@ -229,12 +234,6 @@ def test_channel_flow_response_rejects_advection():
     problem = duct_problem(hartmann=0.0, cells=8, advection="central")
     with pytest.raises(ValueError, match="requires advection='off'"):
         channel_flow_response(problem)
-
-
-def test_channel_flow_rate_rejects_a_mismatched_velocity():
-    problem = duct_problem(hartmann=0.0, cells=8)
-    with pytest.raises(ValueError, match="does not match the mesh"):
-        channel_flow_rate(problem, jnp.zeros((3, 3)))
 
 
 @pytest.mark.parametrize(("hartmann", "cells", "bound"), [(20.0, 32, 0.02), (100.0, 48, 0.01)])
