@@ -90,14 +90,7 @@ restart, progress, logging, and timing hooks in their owning modules.
    :members:
 ```
 
-## Output and restart
-
-```{eval-rst}
-.. automodule:: lmhdx.io
-   :members:
-```
-
-## Validation
+## Outputs, validation reports and the command line
 
 ```{eval-rst}
 .. automodule:: lmhdx.io
