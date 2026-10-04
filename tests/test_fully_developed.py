@@ -285,8 +285,8 @@ def test_resolved_walls_on_both_axes_match_the_cell_centred_corners():
             base,
             regions=(
                 base.regions[0],
-                RegionSpec("hart", "solid", 4.0, 1.0, 1.0, 0.05),
-                RegionSpec("side", "solid", 0.5, 1.0, 1.0, 0.05),
+                RegionSpec("hart", "solid", 4.0, 1.0, 1.0),
+                RegionSpec("side", "solid", 0.5, 1.0, 1.0),
             ),
             boundary_conditions=(
                 BoundaryCondition("h", "conducting_wall", region="hart", side="left_right"),

@@ -2,8 +2,6 @@
 name = "hartmann_ha20_toml"
 forcing = 1.0
 initial_velocity = 0.0
-reference_pressure_gradient = -1.0
-reference_phi_cell = [0, 0]
 notes = "Explicit Hartmann duct example for `lmhdx input.toml`."
 
 [geometry]
@@ -16,7 +14,6 @@ ny = 32
 nz = 32
 wall_thickness = [0.0, 0.0, 0.0, 0.0]
 wall_cells = [0, 0, 0, 0]
-target_ha = 20.0
 
 [magnetic_field]
 kind = "constant"
@@ -27,21 +24,12 @@ ramp_duration = 0.0
 [solver]
 kind = "fully_developed_inductionless"
 mode = "steady"
-preconditioner = "jacobi"
 time_scheme = "implicit_euler"
-coupling_iterations = 16
-coupling_tolerance = 1.0e-8
 
 [time_stepper]
 dt = 0.002
 t_final = 0.1
 max_steps = 50
-potential_iterations = 400
-potential_tolerance = 1.0e-6
-potential_relaxation = 1.0
-potential_solver = "cg"
-steady_tolerance = 1.0e-8
-steady_potential_tolerance = 1.0e-6
 
 [output]
 directory = "../artifacts/examples/toml_hartmann"
@@ -51,7 +39,6 @@ write_npz = true
 write_json_summary = true
 write_plots = false
 copy_input_file = true
-write_stride = 1
 history_stride = 0
 
 [logging]

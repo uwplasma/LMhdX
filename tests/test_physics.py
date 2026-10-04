@@ -180,8 +180,7 @@ def test_small_hartmann_solution_matches_analytic_profile():
     case = make_hartmann_case(ha=10.0, ny=8, nz=8)
     case = replace(
         case,
-        time_stepper=replace(case.time_stepper, max_steps=12, potential_iterations=32),
-        solver=replace(case.solver, coupling_iterations=6),
+        time_stepper=replace(case.time_stepper, max_steps=12),
     )
 
     solution = solve_steady(case)

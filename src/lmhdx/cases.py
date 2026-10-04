@@ -520,10 +520,7 @@ BoundaryKind = Literal[
     "imposed_current_density",
 ]
 MagneticFieldKind = Literal["constant", "analytic", "tabulated"]
-PotentialSolverKind = Literal["auto", "jacobi", "cg", "cg_volume"]
-PreconditionerKind = Literal["none", "jacobi"]
 TimeSchemeKind = Literal["implicit_euler", "crank_nicolson"]
-CouplingAccelerationKind = Literal["none", "aitken", "anderson"]
 
 
 @dataclass(frozen=True)
@@ -539,7 +536,6 @@ class RegionSpec:
     conductivity: float
     density: float | None = None
     viscosity: float | None = None
-    wall_thickness: float | None = None
 
 
 @dataclass(frozen=True)
@@ -566,16 +562,7 @@ class MagneticFieldSpec:
 class SolverConfig:
     kind: SolverKind = "fully_developed_inductionless"
     mode: SolveMode = "steady"
-    preconditioner: PreconditionerKind = "jacobi"
     time_scheme: TimeSchemeKind = "implicit_euler"
-    coupling_iterations: int = 12
-    coupling_tolerance: float = 1e-8
-    coupling_acceleration: CouplingAccelerationKind = "none"
-    coupling_min_relaxation: float = 0.05
-    coupling_max_relaxation: float = 100.0
-    coupling_history_depth: int = 6
-    coupling_regularization: float = 1.0e-8
-    coupling_damping: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -583,14 +570,6 @@ class TimeStepperConfig:
     dt: float
     t_final: float
     max_steps: int
-    potential_iterations: int = 400
-    potential_tolerance: float | None = None
-    potential_relaxation: float = 1.0
-    potential_solver: PotentialSolverKind = "auto"
-    steady_tolerance: float = 1e-8
-    steady_potential_tolerance: float | None = None
-    relaxation: float = 0.35
-    velocity_update_limit: float = 1e-3
 
 
 @dataclass(frozen=True)
@@ -602,7 +581,6 @@ class OutputSpec:
     write_json_summary: bool = True
     write_plots: bool = False
     copy_input_file: bool = True
-    write_stride: int = 1
     history_stride: int = 0
 
 
@@ -617,8 +595,6 @@ class GeometrySpec:
     nz: int = 64
     wall_thickness: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
     wall_cells: tuple[int, int, int, int] = (0, 0, 0, 0)
-    target_ha: float | None = None
-    target_side_layer: float | None = None
     hartmann_layer_cells: int | None = None
     wall_model: WallModel = "auto"
 
@@ -635,8 +611,6 @@ class CaseSpec:
     output: OutputSpec = field(default_factory=OutputSpec)
     forcing: float = 1.0
     initial_velocity: float = 0.0
-    reference_pressure_gradient: float = -1.0
-    reference_phi_cell: tuple[int, int] = (0, 0)
     notes: str = ""
     dtype: str = "float64"
 
@@ -797,7 +771,6 @@ def _parse_regions(entries: list[dict[str, Any]]) -> tuple[RegionSpec, ...]:
             conductivity=float(_require(entry, "conductivity")),
             density=None if entry.get("density") is None else float(entry["density"]),
             viscosity=None if entry.get("viscosity") is None else float(entry["viscosity"]),
-            wall_thickness=None if entry.get("wall_thickness") is None else float(entry["wall_thickness"]),
         )
         for entry in entries
     )
@@ -861,10 +834,6 @@ def load_run_config(path: str | Path) -> RunConfig:
         wall_thickness=_optional_tuple(geometry_table, "wall_thickness", length=4, cast=float)
         or (0.0, 0.0, 0.0, 0.0),
         wall_cells=_optional_tuple(geometry_table, "wall_cells", length=4, cast=int) or (0, 0, 0, 0),
-        target_ha=None if geometry_table.get("target_ha") is None else float(geometry_table["target_ha"]),
-        target_side_layer=None
-        if geometry_table.get("target_side_layer") is None
-        else float(geometry_table["target_side_layer"]),
         wall_model=str(geometry_table.get("wall_model", "auto")),
     )
 
@@ -883,18 +852,6 @@ def load_run_config(path: str | Path) -> RunConfig:
         dt=float(_require(time_table, "dt")),
         t_final=float(_require(time_table, "t_final")),
         max_steps=int(_require(time_table, "max_steps")),
-        potential_iterations=int(time_table.get("potential_iterations", 400)),
-        potential_tolerance=None
-        if time_table.get("potential_tolerance") is None
-        else float(time_table["potential_tolerance"]),
-        potential_relaxation=float(time_table.get("potential_relaxation", 1.0)),
-        potential_solver=str(time_table.get("potential_solver", "auto")),
-        steady_tolerance=float(time_table.get("steady_tolerance", 1e-8)),
-        steady_potential_tolerance=None
-        if time_table.get("steady_potential_tolerance") is None
-        else float(time_table["steady_potential_tolerance"]),
-        relaxation=float(time_table.get("relaxation", 0.35)),
-        velocity_update_limit=float(time_table.get("velocity_update_limit", 1e-3)),
     )
 
     solver_mode = str(solver_table.get("mode", "steady"))
@@ -906,16 +863,7 @@ def load_run_config(path: str | Path) -> RunConfig:
     solver = SolverConfig(
         kind=solver_kind,
         mode=solver_mode,
-        preconditioner=str(solver_table.get("preconditioner", "jacobi")),
         time_scheme=str(solver_table.get("time_scheme", "implicit_euler")),
-        coupling_iterations=int(solver_table.get("coupling_iterations", 12)),
-        coupling_tolerance=float(solver_table.get("coupling_tolerance", 1e-8)),
-        coupling_acceleration=str(solver_table.get("coupling_acceleration", "none")),
-        coupling_min_relaxation=float(solver_table.get("coupling_min_relaxation", 0.05)),
-        coupling_max_relaxation=float(solver_table.get("coupling_max_relaxation", 100.0)),
-        coupling_history_depth=int(solver_table.get("coupling_history_depth", 6)),
-        coupling_regularization=float(solver_table.get("coupling_regularization", 1.0e-8)),
-        coupling_damping=float(solver_table.get("coupling_damping", 1.0)),
     )
     output_dir = output_table.get("directory")
     if output_dir is not None:
@@ -929,7 +877,6 @@ def load_run_config(path: str | Path) -> RunConfig:
         write_json_summary=bool(output_table.get("write_json_summary", True)),
         write_plots=bool(output_table.get("write_plots", False)),
         copy_input_file=bool(output_table.get("copy_input_file", True)),
-        write_stride=int(output_table.get("write_stride", 1)),
         history_stride=int(output_table.get("history_stride", 0)),
     )
 
@@ -944,8 +891,6 @@ def load_run_config(path: str | Path) -> RunConfig:
         output=output,
         forcing=float(case_table.get("forcing", 1.0)),
         initial_velocity=float(case_table.get("initial_velocity", 0.0)),
-        reference_pressure_gradient=float(case_table.get("reference_pressure_gradient", -1.0)),
-        reference_phi_cell=_optional_tuple(case_table, "reference_phi_cell", length=2, cast=int) or (0, 0),
         notes=str(case_table.get("notes", "")),
         dtype=str(case_table.get("dtype", "float64")),
     )
@@ -1051,15 +996,7 @@ class StreamingSolverLogger:
             f"domain=({case.geometry.length:.6e},{case.geometry.width:.6e},{case.geometry.height:.6e}) "
             f"dt={case.time_stepper.dt:.6e} end={case.time_stepper.t_final:.6e} max_steps={self._max_steps}"
         )
-        if solver is not None:
-            self._write(
-                f"linear=solvax_pcg preconditioner={solver.preconditioner} "
-                f"coupling_steps={solver.coupling_iterations} coupling_tolerance={solver.coupling_tolerance:.6e}"
-            )
-        self._write(
-            f"potential={potential_solver} max_steps={case.time_stepper.potential_iterations} "
-            f"tolerance={case.time_stepper.potential_tolerance}"
-        )
+        self._write(f"potential={potential_solver}")
         self._write(
             f"field={case.magnetic_field.kind} value={case.magnetic_field.value} forcing={case.forcing:.6e} "
             f"target_mean_velocity={target_mean_velocity} reference_mean_velocity={reference_mean_velocity}"
@@ -1174,43 +1111,11 @@ def _wall_conductivity_from_conductance_ratio(
     return wall_conductance_ratio * fluid_conductivity * hartmann_half_spacing / wall_thickness
 
 
-def _hunt_short_transient_controls(ha: float) -> TimeStepperConfig:
-    if ha <= 20.0:
-        return TimeStepperConfig(
-            dt=0.002,
-            t_final=1.0,
-            max_steps=500,
-            potential_iterations=400,
-            relaxation=0.08,
-            velocity_update_limit=2e-3,
-        )
-    if ha <= 100.0:
-        return TimeStepperConfig(
-            dt=0.002,
-            t_final=1.0,
-            max_steps=500,
-            potential_iterations=400,
-            relaxation=0.1,
-            velocity_update_limit=1e-3,
-        )
-    return TimeStepperConfig(
-        dt=0.002,
-        t_final=1.0,
-        max_steps=500,
-        potential_iterations=400,
-        relaxation=0.1,
-        velocity_update_limit=1e-3,
-    )
-
-
 def _fully_developed_solver(mode: str = "steady") -> SolverConfig:
     return SolverConfig(
         kind="fully_developed_inductionless",
         mode=mode,
-        preconditioner="jacobi",
         time_scheme="implicit_euler",
-        coupling_iterations=16,
-        coupling_tolerance=1e-8,
     )
 
 
@@ -1229,25 +1134,20 @@ def make_hartmann_case(
     """Build an insulating rectangular Hartmann-duct reference case."""
 
     bmag = _ha_to_b(ha, 0.5 * height, conductivity, density, viscosity)
-    anchor = (ny // 2, nz // 2)
     return CaseSpec(
         name=f"hartmann_ha{int(ha)}",
         dtype=dtype,
-        geometry=GeometrySpec(kind="rect_duct", width=width, height=height, ny=ny, nz=nz, target_ha=ha),
+        geometry=GeometrySpec(kind="rect_duct", width=width, height=height, ny=ny, nz=nz),
         regions=(RegionSpec("fluid", "fluid", conductivity, density, viscosity),),
         magnetic_field=MagneticFieldSpec(kind="constant", value=(0.0, 1.0 * bmag, 0.0)),
         boundary_conditions=(
             BoundaryCondition("walls", "no_slip"),
             BoundaryCondition("electric", "insulating"),
         ),
-        time_stepper=TimeStepperConfig(
-            dt=0.001, t_final=1.0, max_steps=400, potential_iterations=200, relaxation=0.1
-        ),
+        time_stepper=TimeStepperConfig(dt=0.001, t_final=1.0, max_steps=400),
         solver=_fully_developed_solver(),
         output=OutputSpec(directory=output_dir),
         forcing=1.0,
-        reference_pressure_gradient=-1.0,
-        reference_phi_cell=anchor,
         notes="Planar Hartmann-like reference configuration for solver smoke tests.",
     )
 
@@ -1267,25 +1167,20 @@ def make_shercliff_case(
     """Build an all-insulating rectangular Shercliff-duct case."""
 
     bmag = _ha_to_b(ha, 0.5 * width, conductivity, density, viscosity)
-    anchor = (ny // 2, nz // 2)
     return CaseSpec(
         name=f"shercliff_ha{int(ha)}",
         dtype=dtype,
-        geometry=GeometrySpec(kind="rect_duct", width=width, height=height, ny=ny, nz=nz, target_ha=ha),
+        geometry=GeometrySpec(kind="rect_duct", width=width, height=height, ny=ny, nz=nz),
         regions=(RegionSpec("fluid", "fluid", conductivity, density, viscosity),),
         magnetic_field=MagneticFieldSpec(kind="constant", value=(0.0, 1.0 * bmag, 0.0)),
         boundary_conditions=(
             BoundaryCondition("walls", "no_slip"),
             BoundaryCondition("electric", "insulating"),
         ),
-        time_stepper=TimeStepperConfig(
-            dt=0.001, t_final=1.5, max_steps=400, potential_iterations=225, relaxation=0.1
-        ),
+        time_stepper=TimeStepperConfig(dt=0.001, t_final=1.5, max_steps=400),
         solver=_fully_developed_solver(),
         output=OutputSpec(directory=output_dir),
         forcing=1.0,
-        reference_pressure_gradient=-1.0,
-        reference_phi_cell=anchor,
         notes="All-insulating Shercliff-style duct. Analytical validation hooks are staged through the benchmark and validation utilities.",
     )
 
@@ -1326,8 +1221,7 @@ def make_hunt_case(
         insulator_thickness = wall_thickness
     if insulator_conductivity is None:
         insulator_conductivity = fluid_conductivity * insulator_conductivity_ratio
-    anchor = ((ny + 2 * insulator_cells) // 2, (nz + 2 * wall_cells) // 2)
-    controls = _hunt_short_transient_controls(ha)
+    controls = TimeStepperConfig(dt=0.002, t_final=1.0, max_steps=500)
     return CaseSpec(
         name=f"hunt_ha{int(ha)}",
         dtype=dtype,
@@ -1339,14 +1233,11 @@ def make_hunt_case(
             nz=nz,
             wall_thickness=(insulator_thickness, insulator_thickness, wall_thickness, wall_thickness),
             wall_cells=(insulator_cells, insulator_cells, wall_cells, wall_cells),
-            target_ha=ha,
         ),
         regions=(
             RegionSpec("fluid", "fluid", fluid_conductivity, density, viscosity),
-            RegionSpec("conducting_wall", "solid", wall_conductivity, density, viscosity, wall_thickness),
-            RegionSpec(
-                "insulating_wall", "solid", insulator_conductivity, density, viscosity, insulator_thickness
-            ),
+            RegionSpec("conducting_wall", "solid", wall_conductivity, density, viscosity),
+            RegionSpec("insulating_wall", "solid", insulator_conductivity, density, viscosity),
         ),
         magnetic_field=MagneticFieldSpec(kind="constant", value=(0.0, 1.0 * bmag, 0.0)),
         boundary_conditions=(
@@ -1362,8 +1253,6 @@ def make_hunt_case(
         solver=_fully_developed_solver(),
         output=OutputSpec(directory=output_dir),
         forcing=1.0,
-        reference_pressure_gradient=-1.0,
-        reference_phi_cell=anchor,
         notes=(
             "Hunt-style duct with explicit conducting Hartmann-wall layers and insulating side-wall layers. "
             f"Default wall conductance ratio c={wall_conductance_ratio:g}."
