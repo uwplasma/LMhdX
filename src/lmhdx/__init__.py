@@ -102,7 +102,7 @@ def _enable_default_cache(config) -> None:
     choice = os.environ.get("LMHDX_COMPILATION_CACHE", "")
     if choice == "0" or config.jax_compilation_cache_dir or _cache_read_unsafe():
         return
-    from .io import enable_compilation_cache
+    from ._programs import enable_compilation_cache
 
     enable_compilation_cache(choice or None, min_compile_time_secs=1.0, share_across_values=True)
     config.update("jax_compilation_cache_max_size", 2**31)
@@ -118,7 +118,7 @@ def _cache_read_unsafe() -> bool:
 
 
 _EXPORTS = {
-    "enable_compilation_cache": ("lmhdx.io", "enable_compilation_cache"),
+    "enable_compilation_cache": ("lmhdx._programs", "enable_compilation_cache"),
     "make_hartmann_case": ("lmhdx.cases", "make_hartmann_case"),
     "make_shercliff_case": ("lmhdx.cases", "make_shercliff_case"),
     "make_hunt_case": ("lmhdx.cases", "make_hunt_case"),

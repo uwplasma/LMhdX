@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import lmhdx.validation as benchmarks
-from lmhdx.validation import (
+import lmhdx.io as benchmarks
+from lmhdx.io import (
     benchmark_solver,
     write_benchmark_report,
 )

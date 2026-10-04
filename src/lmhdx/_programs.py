@@ -24,6 +24,7 @@ __all__ = [
     "attribute",
     "bound",
     "discovering",
+    "enable_compilation_cache",
     "grid_program",
     "host_array",
     "host_scalar",
@@ -366,6 +367,35 @@ def _grid_of(problem) -> Grid:
 
 def _signature_dtype(value) -> str:
     return "scalar" if isinstance(value, float) else str(value.dtype)
+
+
+def enable_compilation_cache(
+    cache_dir: str | Path | None = None,
+    *,
+    min_compile_time_secs: float = 0.0,
+    min_entry_size_bytes: int = -1,
+    share_across_values: bool = False,
+) -> Path:
+    """Enable JAX's persistent compilation cache before a heavy compile.
+
+    With ``share_across_values`` the arrays a solve closes over (the field, the
+    factorizations) are passed to the compiled program as arguments rather than
+    embedded in it, where the installed JAX supports it, so a new Hartmann
+    number or field on the same mesh reuses the cached executable: on an RTX
+    A4000 a new Hartmann number then compiled in 0.45 s against 4.4 s. The
+    arguments are handed over on every call, which slowed a warm 48-cell solve
+    from 6.0 to 8–10 ms on a CPU, so it suits sweeps over new problems rather
+    than loops that reuse one compiled function; the default keeps them embedded.
+    """
+
+    target = Path(cache_dir or (Path.home() / ".cache" / "lmhdx" / "jax_compilation"))
+    target.mkdir(parents=True, exist_ok=True)
+    jax.config.update("jax_compilation_cache_dir", str(target))
+    jax.config.update("jax_persistent_cache_min_entry_size_bytes", min_entry_size_bytes)
+    jax.config.update("jax_persistent_cache_min_compile_time_secs", min_compile_time_secs)
+    if share_across_values and "jax_use_simplified_jaxpr_constants" in jax.config.values:
+        jax.config.update("jax_use_simplified_jaxpr_constants", True)
+    return target
 
 
 # Across processes: the keys of a shape's arrays and its compiled program, kept beside JAX's
