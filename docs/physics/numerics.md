@@ -94,7 +94,7 @@ carrying a value is refused instead of silently linearized. A guard rejects any
 axis operator that is not symmetric under the cell widths, which is the tripwire
 that a future three-point wall stencil would trip.
 
-`lmhdx.em` builds the electric coupling on those operators, following Ni et al.
+`lmhdx.ops` builds the electric coupling on those operators, following Ni et al.
 Its rule is that one face-normal current
 
 $$
@@ -141,7 +141,7 @@ stretched mesh: with it the steady operator was asymmetric by 1e-2 on a Ha 100
 layer mesh and the ohmic identity was off by up to 3e-3. The two interpolations
 coincide on uniform cells. On the layer meshes of the validation ladder the face
 average moves each insulating duct flow rate towards the spectral reference, by
-at most 0.3 % of it. The pipe solver of `lmhdx.pipe` uses the same pair, with the
+at most 0.3 % of it. The pipe solver of `lmhdx.poisson` uses the same pair, with the
 polar rotation of the field taken at the cell centres.
 
 A thin conducting wall of conductance ratio $c=\sigma_w t_w/(\sigma a)$ is a
@@ -202,7 +202,7 @@ coupling. The cell-centred fully developed solver keeps its own mesh,
 ## The projection step and its two stiffnesses
 
 `lmhdx.core3d` assembles one fractional step: the potential is solved, the face
-currents of `lmhdx.em` give the Lorentz force, momentum advances, and a pressure
+currents of `lmhdx.ops` give the Lorentz force, momentum advances, and a pressure
 Poisson solve returns the velocity to the discretely divergence-free space.
 
 The two stiffnesses are handled differently, on purpose. The velocity part of the

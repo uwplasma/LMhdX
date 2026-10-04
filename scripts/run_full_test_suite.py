@@ -94,10 +94,8 @@ _CHANGE_TEST_NAMES = {
     "fully_developed": "fully_developed design config example_runner",
     "steady": "steady fully_developed axial",
     "grid": "grid ops core3d timeloop steady pipe axial",
-    "ops": "ops core3d timeloop steady pipe axial",
-    "em": "em",
+    "ops": "ops em core3d timeloop steady pipe axial",
     "poisson": "poisson core3d timeloop steady pipe axial",
-    "pipe": "pipe",
     "io": "io benchmarks physics example_runner config",
     "q2d": "physics q2d_identities example_runner",
 }
