@@ -66,10 +66,11 @@ What is and is not established:
 - Doubling the buffers moves the drop over TM-228's window `[-6, 2]` by
   3.5e-9 at Ha 100.
 - Only the inertialess (Stokes-limit) flow is solved: `advection="off"`.
-- On the ANL case the excess drop over the locally fully developed drop falls
-  as Ha^-0.35 from Ha 100 to 3,200 and extrapolates 6–11 % below the
-  inertialess core-flow model (`lmhdx.coreflow`, TM-228 eqs. 4a–4c); the 1 %
-  agreement needs Ha ≥ 10⁴ on the 3-D core.
+- On the ANL case the excess drop over the locally fully developed drop agrees
+  within 1 % with the inertialess core-flow model (`lmhdx.coreflow`, TM-228
+  eqs. 4a–4c) once the model carries the layers' conductance
+  (`coreflow.layer_conductances`; c 0.1, Ha 2×10⁴). TM-228's uncorrected
+  value is the Ha → ∞ limit, which no 3-D solve reaches.
 - There is no straight pipe with an open axis yet, and no thick or layered wall.
 
 Run `python examples/fringe_duct_example.py` for the case above with its
