@@ -45,6 +45,7 @@ jobs:
           /tmp/lmhdx-wheel-check/bin/python -m pip install "$GITHUB_WORKSPACE"/dist/*.whl
           cd /tmp
           /tmp/lmhdx-wheel-check/bin/lmhdx --help >/dev/null
+          /tmp/lmhdx-wheel-check/bin/lmx --help >/dev/null
           /tmp/lmhdx-wheel-check/bin/python - <<'PY'
           import jax
           import jax.numpy as jnp

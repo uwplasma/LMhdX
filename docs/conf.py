@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 project = "LMhdX"
 author = "LMhdX contributors"
 copyright = f"{datetime.now(timezone.utc).year}, LMhdX contributors"
-release = "1.8.0"
+release = "1.9.0"
 
 extensions = [
     "myst_parser",

@@ -45,7 +45,7 @@ From source:
 git clone https://github.com/uwplasma/LMhdX.git
 cd LMhdX
 pip install ".[visualization]"
-lmhdx examples/hartmann_case.toml
+lmhdx examples/hartmann_case.toml   # or: lmx examples/hartmann_case.toml
 ```
 
 The [installation guide](https://lmhdx.readthedocs.io/en/latest/getting_started/install.html)
