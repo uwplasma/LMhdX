@@ -16,8 +16,8 @@ jax.config.update("jax_enable_x64", True)
 from ductopt.physics import _build_problem, cache_stats  # noqa: E402
 
 import lmhdx  # noqa: E402
-from lmhdx.design import channel_flow_response, linear_flow_response  # noqa: E402
-from lmhdx.specs import MagneticFieldSpec  # noqa: E402
+from lmhdx.cases import MagneticFieldSpec  # noqa: E402
+from lmhdx.fully_developed import channel_flow_response, linear_flow_response  # noqa: E402
 from lmhdx.steady import solve_steady_state  # noqa: E402
 
 HA, CELLS, LAYER = 200.0, 48, 6

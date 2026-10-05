@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 
 from lmhdx.core3d import duct_problem
-from lmhdx.design import channel_flow_response
+from lmhdx.fully_developed import channel_flow_response
 
 jax.config.update("jax_enable_x64", True)
 

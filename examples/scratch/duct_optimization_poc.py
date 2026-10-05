@@ -460,10 +460,9 @@ def ramp_summary(rows: list[dict]) -> dict:
 
 def stage_case_p_correction() -> None:
     print("Case P exact 1/R field correction...", flush=True)
-    from lmhdx.bc import PERIODIC, BoundaryCondition
     from lmhdx.core3d import ChannelProblem, ImposedField
-    from lmhdx.design import channel_cross_section_weights, channel_flow_rate
-    from lmhdx.grid import Grid, uniform_faces, wall_resolving_faces
+    from lmhdx.fully_developed import channel_cross_section_weights, channel_flow_rate
+    from lmhdx.grid import PERIODIC, BoundaryCondition, Grid, uniform_faces, wall_resolving_faces
     from lmhdx.steady import solve_steady_state
 
     cp = cases.case_p()
