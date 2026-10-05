@@ -14,10 +14,15 @@ import numpy as np
 
 jax.config.update("jax_enable_x64", True)
 
-from lmx.bc import PERIODIC, BoundaryCondition  # noqa: E402
-from lmx.core3d import ChannelProblem  # noqa: E402
-from lmx.design import channel_flow_response  # noqa: E402
-from lmx.grid import Grid, uniform_faces, wall_resolving_faces  # noqa: E402
+from lmhdx.core3d import ChannelProblem  # noqa: E402
+from lmhdx.fully_developed import channel_flow_response  # noqa: E402
+from lmhdx.grid import (  # noqa: E402  # noqa: E402
+    PERIODIC,
+    BoundaryCondition,
+    Grid,
+    uniform_faces,
+    wall_resolving_faces,
+)
 
 HA_UNIT = 100.0
 CELLS = 48

@@ -39,10 +39,9 @@ import jax
 import jax.monitoring
 import numpy as np
 
-from lmhdx.bc import PERIODIC, BoundaryCondition
 from lmhdx.core3d import ChannelProblem
-from lmhdx.design import channel_flow_rate, channel_flow_response
-from lmhdx.grid import Grid, uniform_faces, wall_resolving_faces
+from lmhdx.fully_developed import channel_flow_rate, channel_flow_response
+from lmhdx.grid import PERIODIC, BoundaryCondition, Grid, uniform_faces, wall_resolving_faces
 from lmhdx.steady import solve_steady_state
 
 _WALL = BoundaryCondition("neumann")

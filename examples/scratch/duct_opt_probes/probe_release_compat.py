@@ -14,9 +14,14 @@ import numpy as np
 
 jax.config.update("jax_enable_x64", True)
 
-from lmhdx.bc import PERIODIC, BoundaryCondition  # noqa: E402
 from lmhdx.core3d import ChannelProblem, ImposedField  # noqa: E402
-from lmhdx.grid import Grid, uniform_faces, wall_resolving_faces  # noqa: E402
+from lmhdx.grid import (  # noqa: E402  # noqa: E402
+    PERIODIC,
+    BoundaryCondition,
+    Grid,
+    uniform_faces,
+    wall_resolving_faces,
+)
 from lmhdx.steady import solve_steady_state  # noqa: E402
 
 WALL = BoundaryCondition("neumann")
