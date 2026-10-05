@@ -69,7 +69,13 @@ def _bisect_u(box: DesignBox, w: float, cells: int, cells_in_layer: int, u_lo: f
 
 
 def _quad_bracket(
-    box: DesignBox, u: float, w_center: float, w_lo: float, w_hi: float, cells: int, cells_in_layer: int,
+    box: DesignBox,
+    u: float,
+    w_center: float,
+    w_lo: float,
+    w_hi: float,
+    cells: int,
+    cells_in_layer: int,
     factors: np.ndarray,
 ) -> tuple[float, float, bool, list[dict], int]:
     """One bracket of 5 log-spaced samples around ``w_center``; a parabola through the best 3."""
@@ -130,8 +136,17 @@ def optimize(
         )
         meshes_built += n_new
         if record_path:
-            path.append({"round": round_index, "u": u, "w_center": w, "w_next": w_new, "W": W_new,
-                         "interior": interior, "evaluations": evaluated})
+            path.append(
+                {
+                    "round": round_index,
+                    "u": u,
+                    "w_center": w,
+                    "w_next": w_new,
+                    "W": W_new,
+                    "interior": interior,
+                    "evaluations": evaluated,
+                }
+            )
         if progress is not None:
             progress(round_index, u, w_new, W_new, interior)
         moved = abs(w_new - w)
@@ -144,7 +159,9 @@ def optimize(
 
     u_final = _bisect_u(box, w, cells, cells_in_layer, u_lo, u_hi)
     final = objective(box, u_final, w, cells, cells_in_layer)
-    dW_dw, meshes_built = _finite_diff_dw(box, u_final, w, cells, cells_in_layer, meshes_built_ref=[meshes_built])
+    dW_dw, meshes_built = _finite_diff_dw(
+        box, u_final, w, cells, cells_in_layer, meshes_built_ref=[meshes_built]
+    )
     converged = abs(dW_dw) <= 1.0e-4 * max(abs(final["W"]), 1e-300)
     return _finish(box, u_final, w, final, path, meshes_built, converged, dW_dw, u_lo, u_hi)
 
@@ -210,7 +227,11 @@ def taylor_test(box: DesignBox, u: float, w: float, cells: int, cells_in_layer: 
 
 
 def fd_step_study(
-    box: DesignBox, u: float, w: float, cells: int, cells_in_layer: int,
+    box: DesignBox,
+    u: float,
+    w: float,
+    cells: int,
+    cells_in_layer: int,
     hs: tuple[float, ...] = (3.0e-2, 1.0e-2, 3.0e-3, 1.0e-3, 3.0e-4, 1.0e-4),
     noise_jump_threshold: float = 0.5,
 ) -> dict:
@@ -271,8 +292,18 @@ def polish_w(value, w0: float, *, delta: float = 0.05, h: float = 0.01) -> dict:
     w_star = w0 + float(min(convex, key=abs))
     v_star = value(w_star)
     d_h, d_2h, d_small = (
-        (value(w_star + step) - value(w_star - step)) / (2.0 * step) / v_star for step in (h, 2.0 * h, 0.1 * h)
+        (value(w_star + step) - value(w_star - step)) / (2.0 * step) / v_star
+        for step in (h, 2.0 * h, 0.1 * h)
     )
-    return {"interior": True, "w_star": w_star, "beta_star": float(np.exp(w_star)), "value_star": v_star,
-            "dW_dw_rel_h": d_h, "dW_dw_rel_2h": d_2h, "dW_dw_rel_small": d_small,
-            "dW_dw_rel_richardson": (4.0 * d_h - d_2h) / 3.0, "delta": delta, "h": h}
+    return {
+        "interior": True,
+        "w_star": w_star,
+        "beta_star": float(np.exp(w_star)),
+        "value_star": v_star,
+        "dW_dw_rel_h": d_h,
+        "dW_dw_rel_2h": d_2h,
+        "dW_dw_rel_small": d_small,
+        "dW_dw_rel_richardson": (4.0 * d_h - d_2h) / 3.0,
+        "delta": delta,
+        "h": h,
+    }

@@ -37,13 +37,19 @@ for beta in BETAS:
     t = time.perf_counter()
     problem = _build_problem(beta, HA, CELLS, LAYER)
     build = time.perf_counter() - t
-    fn = jax.jit(jax.value_and_grad(lambda s: channel_flow_response(problem, magnetic_field_scale=s).flow_per_unit_drive))
+    fn = jax.jit(
+        jax.value_and_grad(
+            lambda s: channel_flow_response(problem, magnetic_field_scale=s).flow_per_unit_drive
+        )
+    )
     c0 = cache_stats()["compiles"]
     (q, _), cold = timed(lambda: fn(1.0))
     _, warm = timed(lambda: fn(1.0))
     steps = int(solve_steady_state(problem, forcing=(1.0, 0.0, 0.0), field_scale=1.0).steps)
-    print(f"  beta {beta:.2f}: build {build:.2f} s, cold {cold:6.2f} s, warm {warm * 1e3:6.1f} ms, "
-          f"compiles {cache_stats()['compiles'] - c0}, steps {steps}, q {float(q):.6e}")
+    print(
+        f"  beta {beta:.2f}: build {build:.2f} s, cold {cold:6.2f} s, warm {warm * 1e3:6.1f} ms, "
+        f"compiles {cache_stats()['compiles'] - c0}, steps {steps}, q {float(q):.6e}"
+    )
 
 print("route (ii): linear_flow_response(CaseSpec) at a concrete field scale")
 for i, beta in enumerate(BETAS):
@@ -52,5 +58,7 @@ for i, beta in enumerate(BETAS):
     c0 = cache_stats()["compiles"]
     r, cold = timed(lambda: linear_flow_response(case))
     _, warm = timed(lambda: linear_flow_response(case))
-    print(f"  #{i + 1} beta {beta:.2f}: first call {cold:6.2f} s, warm {warm * 1e3:6.1f} ms, "
-          f"compiles {cache_stats()['compiles'] - c0}, q {float(r.flow_per_unit_drive):.6e}")
+    print(
+        f"  #{i + 1} beta {beta:.2f}: first call {cold:6.2f} s, warm {warm * 1e3:6.1f} ms, "
+        f"compiles {cache_stats()['compiles'] - c0}, q {float(r.flow_per_unit_drive):.6e}"
+    )

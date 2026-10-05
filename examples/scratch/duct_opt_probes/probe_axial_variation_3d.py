@@ -34,7 +34,9 @@ k = 2.0 * np.pi / LAM
 
 peak = HA * (1 + DELTA * np.cosh(k))
 y = wall_resolving_faces(CELLS, -1.0, 1.0, layer_thickness=1.0 / peak, cells_in_layer=4, max_ratio=None)
-z = wall_resolving_faces(CELLS, -1.0, 1.0, layer_thickness=1.0 / np.sqrt(HA), cells_in_layer=4, max_ratio=None)
+z = wall_resolving_faces(
+    CELLS, -1.0, 1.0, layer_thickness=1.0 / np.sqrt(HA), cells_in_layer=4, max_ratio=None
+)
 grid = Grid(uniform_faces(NX, 0.0, LAM), y, z)
 
 xf, yf = np.asarray(grid.x_faces)[:, None], np.asarray(grid.y_faces)[None, :]

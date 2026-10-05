@@ -56,15 +56,24 @@ def _radial_stations(R_fw: float, depth: float, sign: float, n: int) -> tuple[St
     edges = R_fw + sign * depth * np.linspace(0.0, 1.0, n + 1)
     mids = 0.5 * (edges[:-1] + edges[1:])
     L = depth / n
-    return tuple(Station(B=float(B_FW * R_fw / R), L=float(L), label=f"station {k}", R=float(R)) for k, R in enumerate(mids))
+    return tuple(
+        Station(B=float(B_FW * R_fw / R), L=float(L), label=f"station {k}", R=float(R))
+        for k, R in enumerate(mids)
+    )
 
 
 def case_r_outboard(Q=Q_DEFAULT, V_min=V_MIN_DEFAULT, V_max=V_MAX_DEFAULT, n_stations=6) -> DesignBox:
     """Radial duct at the outboard midplane: B falls going into the blanket."""
     stations = _radial_stations(DEMO["R_outboard_fw_m"], DEMO["blanket_depth_outboard_m"], +1.0, n_stations)
     return DesignBox(
-        Q=Q, mu=PBLI["mu"], sigma=PBLI["sigma"], V_min=V_min, V_max=V_max,
-        beta_lo=BETA_LO, beta_hi=BETA_HI, stations=stations,
+        Q=Q,
+        mu=PBLI["mu"],
+        sigma=PBLI["sigma"],
+        V_min=V_min,
+        V_max=V_max,
+        beta_lo=BETA_LO,
+        beta_hi=BETA_HI,
+        stations=stations,
     )
 
 
@@ -72,8 +81,14 @@ def case_r_inboard(Q=Q_DEFAULT, V_min=V_MIN_DEFAULT, V_max=V_MAX_DEFAULT, n_stat
     """Radial duct at the inboard midplane: B rises going into the blanket."""
     stations = _radial_stations(DEMO["R_inboard_fw_m"], DEMO["blanket_depth_inboard_m"], -1.0, n_stations)
     return DesignBox(
-        Q=Q, mu=PBLI["mu"], sigma=PBLI["sigma"], V_min=V_min, V_max=V_max,
-        beta_lo=BETA_LO, beta_hi=BETA_HI, stations=stations,
+        Q=Q,
+        mu=PBLI["mu"],
+        sigma=PBLI["sigma"],
+        V_min=V_min,
+        V_max=V_max,
+        beta_lo=BETA_LO,
+        beta_hi=BETA_HI,
+        stations=stations,
     )
 
 
@@ -98,8 +113,13 @@ def case_p(Q=Q_DEFAULT, V_min=V_MIN_DEFAULT, V_max=V_MAX_DEFAULT, poloidal_lengt
     R_center = DEMO["R_outboard_fw_m"] + 0.5 * DEMO["blanket_depth_outboard_m"]
     B_center = B_FW * DEMO["R_outboard_fw_m"] / R_center
     box = DesignBox(
-        Q=Q, mu=PBLI["mu"], sigma=PBLI["sigma"], V_min=V_min, V_max=V_max,
-        beta_lo=BETA_LO, beta_hi=BETA_HI,
+        Q=Q,
+        mu=PBLI["mu"],
+        sigma=PBLI["sigma"],
+        V_min=V_min,
+        V_max=V_max,
+        beta_lo=BETA_LO,
+        beta_hi=BETA_HI,
         stations=(Station(B=B_center, L=poloidal_length, label="uniform (cross-duct 1/R neglected)"),),
     )
     return CaseP(box=box, R_center_m=R_center, B_center_T=B_center, poloidal_length_m=poloidal_length)

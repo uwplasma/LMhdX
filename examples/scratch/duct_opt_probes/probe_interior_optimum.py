@@ -46,4 +46,6 @@ for beta in (0.2, 0.1, 0.07, 0.05, 0.035, 0.025, 0.018, 0.012):
     a = 1.0 / np.sqrt(beta)
     ha = H * a
     q = float(channel_flow_response(problem(beta, ha)).flow_per_unit_drive)
-    print(f"  beta {beta:5.3f}  Ha {ha:6.1f}  b*sqrt(Ha)/a {beta * np.sqrt(ha):5.2f}  dp/dx {(4 * beta / q) / a**2:9.4f}")
+    print(
+        f"  beta {beta:5.3f}  Ha {ha:6.1f}  b*sqrt(Ha)/a {beta * np.sqrt(ha):5.2f}  dp/dx {(4 * beta / q) / a**2:9.4f}"
+    )

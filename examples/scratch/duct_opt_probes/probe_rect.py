@@ -33,7 +33,9 @@ HA_MAX = 300.0
 
 def rect(beta, ha_max=HA_MAX, ny=48, nz=48, cells_in_layer=6):
     """Half-widths 1 (along B, y) and beta (z); dimensionless like duct_problem."""
-    y = wall_resolving_faces(ny, -1.0, 1.0, layer_thickness=1.0 / ha_max, cells_in_layer=cells_in_layer, max_ratio=None)
+    y = wall_resolving_faces(
+        ny, -1.0, 1.0, layer_thickness=1.0 / ha_max, cells_in_layer=cells_in_layer, max_ratio=None
+    )
     z = wall_resolving_faces(
         nz, -beta, beta, layer_thickness=1.0 / np.sqrt(ha_max), cells_in_layer=cells_in_layer, max_ratio=None
     )
@@ -67,7 +69,9 @@ for _ in range(10):
 warm = (time.perf_counter() - t0) / 10
 print(f"4. cold {cold:.2f} s, warm {warm * 1e3:.1f} ms (square, Ha 300, 48^2)")
 
-print("2. Ha swept through the traced field scale on the Ha-300 mesh (square), against the spectral reference:")
+print(
+    "2. Ha swept through the traced field scale on the Ha-300 mesh (square), against the spectral reference:"
+)
 for ha in (30.0, 100.0, 200.0, 300.0):
     s = ha / HA_MAX
     value = float(q(s)) / 4.0  # mean velocity = Q / area, area 4 for the square

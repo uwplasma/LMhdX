@@ -25,7 +25,9 @@ def dp_dx(
     """Return ``(dp/dx, Ha)`` at fixed area 4, mu = sigma = 1, forcing = 1."""
     a = 1.0 / np.sqrt(beta)
     ha = H * a
-    q = q_only(beta, ha, ha_mesh or ha, cells, cells_in_layer, centre)  # default: ha_mesh = ha, this IS the design point
+    q = q_only(
+        beta, ha, ha_mesh or ha, cells, cells_in_layer, centre
+    )  # default: ha_mesh = ha, this IS the design point
     return (4.0 * beta / q) / a**2, ha
 
 
@@ -42,7 +44,9 @@ def polish_beta_star(
         def value(w):
             beta = float(np.exp(w))
             a = 1.0 / np.sqrt(beta)
-            return (4.0 * beta / (4.0 * beta * quadrant_flow_rate(H * a, spectral_points, aspect=beta))) / a**2
+            return (
+                4.0 * beta / (4.0 * beta * quadrant_flow_rate(H * a, spectral_points, aspect=beta))
+            ) / a**2
     else:
         ha_mesh = 1.1 * H / np.sqrt(guess)
 
@@ -54,13 +58,22 @@ def polish_beta_star(
         beta = result["beta_star"]
         ha_star = H / np.sqrt(beta)
         dp_square = value(0.0) if spectral_points else dp_dx(1.0, H, cells, cells_in_layer, guess, ha_mesh)[0]
-        result.update(H=H, Ha_star=ha_star, s_star=beta * np.sqrt(ha_star), dp_star=result["value_star"],
-                      dp_square=dp_square, reduction=1.0 - result["value_star"] / dp_square)
+        result.update(
+            H=H,
+            Ha_star=ha_star,
+            s_star=beta * np.sqrt(ha_star),
+            dp_star=result["value_star"],
+            dp_square=dp_square,
+            reduction=1.0 - result["value_star"] / dp_square,
+        )
     return result
 
 
 def richardson_gci(
-    values: list[float], cells: list[int], safety_factor: float = 1.25, assumed_order: float = 2.0,
+    values: list[float],
+    cells: list[int],
+    safety_factor: float = 1.25,
+    assumed_order: float = 2.0,
     order_range: tuple[float, float] = (1.0, 3.0),
 ) -> dict:
     """Three-mesh GCI (Celik et al. 2008 [O15]; Roache 1994 [O14]) for cells ``cells``, coarse to fine.
@@ -80,7 +93,9 @@ def richardson_gci(
     usable = observed is not None and order_range[0] <= observed <= order_range[1]
     p = observed if usable else assumed_order
     return {
-        "order": p, "order_is_assumed": not usable, "order_observed": observed,
+        "order": p,
+        "order_is_assumed": not usable,
+        "order_observed": observed,
         "extrapolated": float(f3 + e32 / (r32**p - 1.0)),
         "gci_fine": float(safety_factor * abs(e32 / f3) / (r32**p - 1.0)),
     }
