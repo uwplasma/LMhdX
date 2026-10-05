@@ -43,7 +43,8 @@ live in the module that owns their concepts.
 steady fully developed `CaseSpec` runs on the staggered core through
 `lmhdx.fully_developed`, as does `solve_fully_developed_fields`, and a transient
 `CaseSpec` runs implicit Euler steps there too. A duct with
-an inlet and an outlet is solved by `lmhdx.axial.solve_open_duct`.
+an inlet and an outlet is solved by `lmhdx.axial.solve_open_duct`. A pipe with an inlet and an outlet on the polar grid
+(`lmhdx.axial.fringe_pipe`) is solved in the Stokes limit by `lmhdx.axial.solve_open_pipe`.
 
 `duct_problem(hartmann=..., cells=..., wall_conductance=...)` builds a square
 insulating or Hunt duct with meshes that resolve the layers that exist -- `a/Ha`

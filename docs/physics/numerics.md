@@ -675,6 +675,86 @@ result = CoreFlow(x, nz=20, ny=20).solve(field, c_t=c_t, c_s=c_s)
   `lmhdx.coreflow.layer_conductances`). Row 7 is closed as not reachable on
   the three-dimensional core: a physical model difference, not a waiver.
 
+### The ALEX pipe on an open polar axis (row 6)
+
+Row 6 needs a measured or code-to-code reference that LMhdX's equations can
+reach. Two were on the table. Mistrangelo et al. 2025 is a magneto-convection
+benchmark: its observables are driven by buoyancy, which would need an energy
+equation and a Boussinesq force before any comparison, and its reference values
+are not packaged. The ALEX B1 pipe (Ha 6600, N 10700, $c=0.027$, a thin
+conducting wall, the measured field table and the digitized excess pressure
+gradient with an uncertainty of 0.002) is packaged with the benchmark data
+(`benchmarks/references/alex-b1-pipe.csv`). Its equations are LMhdX's: the
+open pipe below solves them in the Stokes limit, which is where the
+interaction parameter is large ($N=10700$ under the magnet; the duct's
+inertial share at $N=1000$ is 0.4 %, see above). So row 6 is run on the ALEX pipe.
+
+`lmhdx.axial.fringe_pipe` and `solve_open_pipe` give the polar grid an inlet
+and an outlet, the axial direction being the polar grid's third axis. The
+velocity is staggered, $u_r$ on radial faces, $u_\theta$ on azimuthal faces,
+$u_x$ on axial faces. The viscous operator is the Hessian of the discrete
+dissipation $\tfrac12\sum|\nabla\mathbf u|^2\,dV$ in cylindrical components,
+whose azimuthal entries carry the curvature terms
+$(\partial_\theta u_r-u_\theta)/r$ and $(\partial_\theta u_\theta+u_r)/r$; the
+electromotive force is formed at the cell centres in polar components of the
+transverse field $B=Ha\,b(x)$ and averaged to the faces, and the Lorentz force
+is minus its adjoint under the charge balance, with Walker's thin wall through
+the polar fast-diagonal factorization (a sheet node per azimuthal mode, which
+also conducts axially). The Stokes operator is therefore symmetric and negative
+definite in the face-volume inner product by construction, and the solve is one
+preconditioned CG, as in the duct, with the fully developed pipe of
+`lmhdx.poisson.solve_pipe` as the lift and component Helmholtz solves (one
+radial eigendecomposition per azimuthal mode) as the preconditioner. The polar
+factorization now treats Neumann at both axial ends as singular, as it does a
+periodic axis.
+
+Checks (test mesh $10\times12\times14$, Ha 20, $c=0.05$, CPU): operator
+symmetry 2.5e-14, energy identity (Lorentz work against Joule heat) 1e-15,
+charge 5e-14, flow rate 1e-13, mass 1e-14; under a uniform field the open pipe
+keeps the two-dimensional pipe's profile to 4e-13 and its gradient to 4e-13;
+the adjoint of the drop in the field scale matches central differences to
+2.8e-10.
+
+ALEX B1 (field table interpolated by a monotone cubic, $x\in[-15,10]$, axial
+spacing 0.25 over $[-6,7.5]$, Stokes limit; one A4000): the observable is
+$-\partial_x\bar p/(\sigma U B_0^2)$ minus its plateau over $x\ge7.5$, at the
+16 tabulated stations.
+
+| Ha | mesh $r\times\theta\times x$ | CG iterations | warm | upstream | integrated | RMS / $L_\infty$ (in uncertainties) |
+|---|---|---|---|---|---|---|
+| 400 | 24 × 32 × 41 (spacing 0.5) | 1,076 | 2.1 s | 0.0295 | +8.3 % | 2.51 / 4.2 |
+| 1600 | 32 × 48 × 41 (0.5) | 3,281 | 23 s | 0.0272 | −0.9 % | 2.36 / 4.9 |
+| 6600 | 48 × 64 × 76 | 11,245 | 156 s | 0.02664 | −3.3 % | 2.43 / 5.08 |
+| 6600 | 48 × 128 × 76 | 11,698 | 617 s | 0.02668 | −3.2 % | 2.44 / 5.08 |
+| 6600 | 64 × 64 × 76 (8 cells in the layer) | 11,671 | 437 s | 0.02664 | −3.3 % | 2.43 / 5.08 |
+| 6600 | 48 × 64 × 140 (spacing 0.125) | 11,437 | 740 s | 0.02665 | −3.3 % | 2.44 / 5.13 |
+
+Model against measurement at the stations $x=-15,-12.5,-10,-7.5,-5,-3,-2,-1,0,1,2,3,4,5,7.5,10$
+(Ha 6600, $48\times64\times76$): 0.0265, 0.0267, 0.0266, 0.0265, 0.0251, 0.0279,
+0.0230, 0.0159, 0.0054, 0.0023, −0.0001, −0.0005, −0.0002, −0.0001, 0, 0 against
+0.0250, 0.0252, 0.0250, 0.0247, 0.0235, 0.0220, 0.0205, 0.0185, 0.0155, 0.0125,
+0.0085, 0.0050, 0.0025, 0.0010, 0, 0.
+
+The cross-section is converged (doubling the azimuth or going to 64 radial
+cells moves no station by more than 3e-5). Upstream LMhdX gives 0.0266 against
+0.0250 measured (inside the 0.002 uncertainty); the integrated excess is within
+3.3 % (the frozen gate is 10 %). Station by station the model is outside the
+data: weighted RMS 2.4 against the frozen 1, $L_\infty$ 5.1 against 2. Two
+features carry it, and neither moves with the mesh. Upstream of the pole edge
+the model peaks at $x=-3$ (0.0279 against 0.0220), where the axial currents of
+the fringe add to the local gradient; the measured points show no peak.
+Downstream the model falls faster than the measurement: at $x=-1$, 0, 1 and 2
+it gives 0.0159, 0.0054, 0.0023 and $-0.0001$ against 0.0185, 0.0155, 0.0125
+and 0.0085, close to the locally fully developed $0.026\,b^2$. **Row 6 is
+therefore not met at its frozen station-wise tolerance**; it is met on the
+integrated excess and on the upstream gradient. The likeliest cause of the
+downstream gap is inertia, which this solve leaves out: the local interaction
+parameter $N b(x)^2$ falls from 10700 to 600 at $x=1$ and to 40 at $x=4$, while
+$Re=Ha^2/N\approx4100$, far beyond the Newton solve of the duct above. Other
+candidates, named and not tested: the table's resolution of the field near the
+pole edge (its own uncertainty is 0.03 in $b$), the finite wall thickness, and
+the field's three-dimensional components, which $B_y(x)$ alone omits.
+
 ### The varying-field preconditioner (2b.4)
 
 Plan step 2b.4 asked for a two-level preconditioner whose coarse space is the
