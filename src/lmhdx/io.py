@@ -1026,12 +1026,14 @@ def run_from_toml(path: str | Path) -> dict[str, object]:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv) if argv is not None else sys.argv[1:]
-    if argv and Path(argv[0]).suffix == ".toml":
-        return _summary_exit_code(run_from_toml(argv[0]))
+    # A TOML case runs directly (`lmhdx case.toml`); `run case.toml` is kept for old scripts.
+    toml = argv[1:2] if argv[:1] == ["run"] else argv[:1]
+    if toml and Path(toml[0]).suffix == ".toml":
+        return _summary_exit_code(run_from_toml(toml[0]))
 
     formatter = argparse.ArgumentDefaultsHelpFormatter
     parser = argparse.ArgumentParser(
-        prog="lmhdx",
+        prog="lmx" if sys.argv and Path(sys.argv[0]).name == "lmx" else "lmhdx",
         description="Run and validate differentiable inductionless MHD cases.",
         epilog="A TOML case may also be passed directly: lmhdx CASE.toml",
         formatter_class=formatter,

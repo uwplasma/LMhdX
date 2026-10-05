@@ -519,10 +519,11 @@ def test_cli_dispatches_direct_toml_run(monkeypatch: pytest.MonkeyPatch):
         lambda path: recorded.update(path=path) or {"case": "demo"},
     )
 
-    exit_code = cli.main(["/tmp/demo_case.toml"])
-
-    assert exit_code == 0
+    assert cli.main(["/tmp/demo_case.toml"]) == 0
     assert recorded["path"] == "/tmp/demo_case.toml"
+    # `run case.toml` from older scripts reaches the same path.
+    assert cli.main(["run", "/tmp/old_case.toml"]) == 0
+    assert recorded["path"] == "/tmp/old_case.toml"
 
 
 def test_cli_returns_nonzero_for_recorded_unconverged_steady_result():

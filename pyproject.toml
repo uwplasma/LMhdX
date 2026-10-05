@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lmhdx"
-version = "1.8.0"
+version = "1.9.0"
 description = "JAX-native inductionless MHD toolkit for research, benchmarking, and differentiable simulation"
 readme = "README.md"
 authors = [{name = "Rogerio Jorge"}]
@@ -58,6 +58,7 @@ visualization = [
 
 [project.scripts]
 lmhdx = "lmhdx.io:main"
+lmx = "lmhdx.io:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

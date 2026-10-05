@@ -1,6 +1,7 @@
 # CLI and TOML reference
 
-LMhdX accepts a TOML case directly or one of three commands:
+LMhdX accepts a TOML case directly or one of three commands. The command is
+installed as both `lmhdx` and `lmx`, so `lmx CASE.toml` works the same way:
 
 ```console
 lmhdx CASE.toml
