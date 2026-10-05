@@ -329,8 +329,8 @@ class ChannelProblem:
         condition = self.conditions[mixed[0]]
         if len(mixed) > 1 or condition.kinds != (DIRICHLET, NEUMANN) or np.any(condition.upper):
             raise ValueError("one inflow-outflow axis at most: a Dirichlet inlet below, a free outlet above")
-        if self.advection != "off" or float(self.wall_conductance[mixed[0]]) or self.wall_layers[mixed[0]]:
-            raise ValueError("an inflow-outflow axis is solved in the Stokes limit and has no wall")
+        if float(self.wall_conductance[mixed[0]]) or self.wall_layers[mixed[0]]:
+            raise ValueError("an inflow-outflow axis has no wall")
 
     @property
     def open_axis(self) -> int | None:
