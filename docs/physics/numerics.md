@@ -504,6 +504,51 @@ excess is still 71 % above the core-flow value, and the extrapolation is not
 accurate to 1 %. The absolute drop falls from 0.228 to 0.121 over the same
 range, against TM-228's 0.0932.
 
+#### Inertia on the open axis: the inertial share (1.9d)
+
+`solve_open_duct` solves an advective open duct (`advection="central"` or
+`"limited"`) by Newton's method from the Stokes-limit solution. The unknown is
+the correction to the lift, with the residual extended by the identity off the
+constrained divergence-free fields, so the Jacobian is invertible on every
+vector. Each Newton update is a flexible GMRES with recycling
+(`solvax.gcrot`, cycle 30, 10 recycled directions, forcing $10^{-3}$)
+right-preconditioned by the Stokes-limit CG solve itself, stopped at $10^{-2}$;
+`continuation` steps the flow rate toward its target. The root is
+differentiated by the implicit function theorem (`solvax.root_solve`), the
+transposed solve preconditioned by the transpose of the Stokes solve under the
+face-volume inner product. On the test mesh (Ha 10, Re 5) the adjoint of the
+drop matches central differences to 4e-10. The Picard iteration of #184, which
+diverged at Ha 100, N 1000, is not needed.
+
+ANL fringe as above ($c=0.02$, $B_y$ alone, 15/10 buffers, $70\times32^2$,
+central transport), one A4000 shared with other jobs. $Re=U a/\nu$ is the mean
+velocity, $N=Ha^2/Re$; the excess and drops are in $\sigma U B_0^2 a$, the
+inertial part is $\Delta p(Re)-\Delta p(0)$ and the share is that over the
+excess:
+
+| Ha | Re | N | $\Delta p$ | excess | inertial | share | Newton outer iterations | time |
+|---|---|---|---|---|---|---|---|---|
+| 100 | 0 | ∞ | 0.22765 | 0.06259 | | | (244 CG) | 1.2 s warm |
+| 100 | 10 | 1000 | 0.22792 | 0.06286 | 0.00026 | 0.42 % | 34 | 66 s cold, 23 s warm |
+| 200 | 0 | ∞ | 0.18153 | 0.05274 | | | (444 CG) | 4.4 s warm |
+| 200 | 40 | 1000 | 0.18276 | 0.05397 | 0.00123 | 2.3 % | 3,709 | 3.5 h cold |
+
+The Newton iteration converges in all of these (relative residual 1e-10 to
+5e-10; mass 2e-16, charge 1–2e-13, flow rate 4e-16), but its cost grows fast
+with Re: the Stokes preconditioner does not see transport, and downstream of
+the magnet, where $B\to0$, the flow is a plain viscous jet at the full Reynolds
+number. At Ha 100, Re 33 one Newton step takes several hundred outer
+iterations of about a hundred inner CG iterations each.
+
+**The fit.** At the same $N=1000$ the inertial share is 0.42 % at Ha 100,
+Re 10 and 2.3 % at Ha 200, Re 40: the inertial part is not a function of $N$
+alone, so the plan's $\beta N^{-1/3}$ term, which presumes inertia confined to
+the core at large $N$, does not describe it. With these points the data support only a
+statement of size: at $N=1000$ inertia adds 0.4–2.3 % to the excess, growing
+with Re at fixed N. A fit with an inertial term needs points at several Re per
+Ha, which this preconditioner makes too costly beyond Re ≈ 40 (Ha 100, Re 33
+did not finish in 5.5 h); a transport-aware preconditioner is the next step.
+
 #### The gap is the layers' conductance (rows 7 and 24)
 
 *Lane A, 2026-10-04.* The tools for this were converged meshes at Ha $10^4$ and

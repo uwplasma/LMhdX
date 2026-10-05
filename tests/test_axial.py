@@ -186,8 +186,13 @@ def test_invalid_open_axes_are_refused():
     grid = Grid(uniform_faces(4, 0.0, 1.0), uniform_faces(4, -1.0, 1.0), uniform_faces(4, -1.0, 1.0))
     with pytest.raises(ValueError, match="one inflow-outflow axis"):
         ChannelProblem(grid=grid, conditions=(_OPEN, _OPEN, _WALL))
-    with pytest.raises(ValueError, match="Stokes limit"):
-        ChannelProblem(grid=grid, conditions=(_OPEN, _WALL, _WALL), advection="central")
+    with pytest.raises(ValueError, match="has no wall"):
+        ChannelProblem(grid=grid, conditions=(_OPEN, _WALL, _WALL), wall_conductance=(0.1, 0.0, 0.0))
+    with pytest.raises(ValueError, match="end at 1"):
+        solve_open_duct(
+            ChannelProblem(grid=grid, conditions=(_OPEN, _WALL, _WALL), advection="central"),
+            continuation=(0.5,),
+        )
     with pytest.raises(ValueError, match="first axis"):
         solve_open_duct(ChannelProblem(grid=grid, conditions=(_WALL, _OPEN, _WALL)))
     from lmhdx.core3d import fringe_field
@@ -207,3 +212,36 @@ def test_invalid_open_axes_are_refused():
         BoundaryCondition(DIRICHLET, upper_kind="outflow")
     with pytest.raises(ValueError, match="lower <= core"):
         axial_faces(0.0, 1.0, (0.5, 2.0), 0.1)
+
+
+def test_newton_solves_the_inertial_fringe_balances_it_and_differentiates_it():
+    """1.9d: Ha 10, Re 5 (N 20), central transport; balances, the inertial drop, its adjoint against central differences."""
+    problem = _small_fringe(spacing=1.0, upstream=2.0, downstream=2.0, flow_rate=20.0, advection="central")
+    solve = jax.jit(lambda scale: solve_open_duct(problem, field_scale=scale))
+    solution = solve(1.0)
+    assert float(solution.residual_norm) <= 1e-9 * float(solution.initial_residual_norm)
+    assert float(jnp.max(jnp.abs(station_flow_rates(solution.velocity) - 20.0))) < 1e-12 * 20.0
+    assert float(mass_balance(solution.velocity)) < 1e-12
+    assert float(charge_balance(solution, problem)) < 1e-12
+    drop = float(pressure_drop(solution.pressure, -4.0, 2.0))
+    stokes = float(
+        pressure_drop(
+            solve_open_duct(
+                _small_fringe(spacing=1.0, upstream=2.0, downstream=2.0, flow_rate=20.0)
+            ).pressure,
+            -4.0,
+            2.0,
+        )
+    )
+    assert 1e-3 < abs(drop - stokes) / stokes < 0.2
+    gradient = float(
+        jax.jit(
+            jax.grad(lambda s: pressure_drop(solve_open_duct(problem, field_scale=s).pressure, -4.0, 2.0))
+        )(1.0)
+    )
+    step = 1e-4
+    central = (
+        float(pressure_drop(solve(1.0 + step).pressure, -4.0, 2.0))
+        - float(pressure_drop(solve(1.0 - step).pressure, -4.0, 2.0))
+    ) / (2.0 * step)
+    assert gradient == pytest.approx(central, rel=1e-6)
