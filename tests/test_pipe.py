@@ -211,3 +211,107 @@ def test_the_spectral_reference_returns_what_is_cached():
     for (hartmann, conductance), cached in SPECTRAL_FLOW_RATE.items():
         value = spectral(hartmann, 47, 48, wall_conductance=conductance)
         assert value == pytest.approx(cached, rel=1e-5), (hartmann, conductance)
+
+
+def _open_pipe(field, wall_conductance=0.05):
+    from lmhdx.axial import fringe_pipe
+
+    return fringe_pipe(
+        hartmann=20.0,
+        field=field,
+        wall_conductance=wall_conductance,
+        lower=-4.0,
+        upper=4.0,
+        core=(-2.0, 2.0),
+        spacing=0.5,
+        radial=10,
+        azimuthal=12,
+        cells_in_layer=3,
+    )
+
+
+def _fringe(x):
+    return 0.5 * (1.0 - np.tanh(x))
+
+
+def test_the_open_pipe_operator_is_symmetric_and_conserves_charge_and_energy():
+    """Row 6 machinery: -A symmetric definite in the face volume; the Lorentz work is minus the Joule heat."""
+    from lmhdx import axial
+
+    pipe = _open_pipe(_fringe)
+    metric, solvers = axial._pipe_metric(pipe), axial._pipe_solvers(pipe)
+    rng = np.random.default_rng(0)
+    shapes = (pipe.grid.face_shape(0), pipe.grid.shape, pipe.grid.face_shape(2))
+
+    def sample():
+        velocity = tuple(jnp.asarray(rng.standard_normal(shape)) for shape in shapes)
+        return axial._pipe_project(velocity, pipe, metric, solvers[0])[0]
+
+    def dot(first, second, weights=metric["weights"]):
+        return sum(float(jnp.sum(w * a * b)) for w, a, b in zip(weights, first, second, strict=True))
+
+    first, second = sample(), sample()
+    assert float(jnp.max(jnp.abs(axial._pipe_divergence(first, metric)))) < 1e-10
+    applied = [axial._pipe_residual(u, pipe, metric, solvers, 1.0)[0] for u in (first, second)]
+    assert abs(dot(first, applied[1]) - dot(applied[0], second)) < 1e-12 * abs(dot(first, applied[1]))
+    assert dot(first, applied[0]) < 0.0
+    _, currents, force = axial._pipe_electric(first, pipe, metric, solvers[1], 1.0)
+    net = axial._pipe_divergence(currents, metric) * metric["volume"]
+    assert float(jnp.max(jnp.abs(net))) < 1e-12 * float(jnp.max(jnp.abs(currents[0] * metric["area"][0])))
+    motional = axial._pipe_motional(first, pipe, metric, 1.0)
+    joule = -dot(currents, motional, axial._pipe_current_weights(metric))
+    assert dot(first, force) == pytest.approx(joule, rel=1e-12)
+
+
+def test_the_uniform_open_pipe_is_the_fully_developed_pipe():
+    """Under a uniform field the 3-D open pipe keeps the 2-D pipe's profile and gradient to round-off."""
+    from lmhdx.axial import pipe_station_pressure, solve_open_pipe
+
+    pipe = _open_pipe(np.ones_like)
+    solution = solve_open_pipe(pipe)
+    np.testing.assert_allclose(
+        np.asarray(solution.velocity[2]),
+        np.broadcast_to(pipe.inlet[:, :, None], pipe.grid.face_shape(2)),
+        atol=1e-10,
+    )
+    section = Grid(
+        pipe.grid.x_faces, pipe.grid.y_faces, uniform_faces(1, 0.0, 1.0), geometry=pipe.grid.geometry
+    )
+    profile, _ = solve_pipe(PipeProblem(section, 20.0, 0.05))
+    unit = float(np.sum(np.asarray(profile.data)[:, :, 0] * section.face_areas(2)[:, :, 0]))
+    centres, means = pipe_station_pressure(pipe, solution.pressure)
+    assert np.polyfit(centres, np.asarray(means), 1)[0] == pytest.approx(-np.pi / unit, rel=1e-10)
+
+
+def test_the_open_pipe_balances_mass_and_its_drop_adjoint_matches_central_differences():
+    import jax
+
+    from lmhdx.axial import _pipe_divergence, _pipe_metric, pipe_station_pressure, solve_open_pipe
+
+    pipe = _open_pipe(_fringe)
+    metric = _pipe_metric(pipe)
+    solution = solve_open_pipe(pipe)
+    flows = jnp.sum(solution.velocity[2] * metric["area"][2], axis=(0, 1))
+    assert float(jnp.max(jnp.abs(flows - np.pi))) < 1e-12 * np.pi
+    assert float(jnp.max(jnp.abs(_pipe_divergence(solution.velocity, metric) * metric["volume"]))) < 1e-12
+
+    def drop(scale):
+        centres, means = pipe_station_pressure(pipe, solve_open_pipe(pipe, field_scale=scale).pressure)
+        return jnp.interp(-3.0, centres, means) - jnp.interp(3.0, centres, means)
+
+    gradient = float(jax.grad(drop)(1.0))
+    central = (float(drop(1.0 + 1e-4)) - float(drop(1.0 - 1e-4))) / 2e-4
+    assert gradient == pytest.approx(central, rel=1e-6)
+
+
+def test_the_tabulated_field_is_monotone_and_not_extrapolated():
+    from lmhdx.axial import monotone_interpolant
+
+    table = np.array([-2.0, 0.0, 1.0, 3.0]), np.array([1.0, 0.8, 0.1, 0.0])
+    field = monotone_interpolant(*table)
+    points = np.linspace(-2.0, 3.0, 201)
+    values = field(points)
+    np.testing.assert_allclose(field(table[0]), table[1], atol=1e-14)
+    assert np.all(np.diff(values) <= 1e-14) and values.min() >= 0.0
+    with pytest.raises(ValueError, match="not extrapolated"):
+        field([3.5])

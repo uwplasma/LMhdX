@@ -584,7 +584,7 @@ def fast_diagonal_polar_poisson(
     axial_symmetric = axial_root[:, None] * axial / axial_root[None, :]
     axial_values, axial_vectors = np.linalg.eigh(0.5 * (axial_symmetric + axial_symmetric.T))
     axial_values, axial_vectors = axial_values[::-1], axial_vectors[:, ::-1]
-    singular = shift == 0.0 and conditions[0].kind == NEUMANN and conditions[2].is_periodic
+    singular = shift == 0.0 and conditions[0].kind == NEUMANN and DIRICHLET not in conditions[2].kinds
     return FastDiagonalPolarPoisson(
         grid,
         tuple(conditions),
