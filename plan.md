@@ -906,6 +906,146 @@ partial diagonalization (D24).
 
 Effort ≈ 3 weeks for 2b.0–2b.3, 2b.7 and 2b.11; 2b.4 follows 1.9c.
 
+#### 2b.4 follow-up: multigrid feasibility (2026-10-04)
+
+Preliminary study, prototypes outside the package, no package code changed. Question: can
+a coupled 3-D multigrid-class preconditioner make the varying-field Stokes-limit CG
+Ha-robust, and at what cost in JAX? Case: ANL fringe (`fringe_duct`, `B_y` alone, 15/10
+buffers) on a test mesh 41×16² (`cells_in_layer` 2, insulating walls), office host CPU,
+floor stack (JAX 0.6.2, SOLVAX 0.19.0), load 13–19. Today's CG on this mesh: 187, 650,
+2,140 iterations at Ha 100, 400, 1600 (Ha^0.88, as on the #188 meshes); c = 0.02 gives the
+same counts as c = 0 at Ha 100 and 400, so the study uses c = 0 (no thin-wall sheet
+potentials to rebuild).
+
+**How.** Keeping the potential φ and the pressure p as unknowns makes the operator
+sparse. The coupled (u, φ, p) system was assembled from LMhdX's own operators by colored
+JVPs (matches the map to 2e-16; 54,048 unknowns, 622k nonzeros). As CG's preconditioner
+its exact LU gives 2 iterations, and the drop matches today's to 1e-12, so the
+reconstruction is exact. Every candidate below replaces the projection step inside
+LMhdX's own CG (`solve_open_duct`, the #150 tolerance rule). Every run reproduces today's
+drop within the solve tolerance.
+
+**The bound: an augmented-Lagrangian form is Ha-robust.** Dropping p (CG already
+projects) and adding γ DᵀD (grad-div) gives a symmetric positive definite (u, φ) form
+K_γ = [[A + γDᵀD, B], [Bᵀ, C]], whose velocity Schur complement on divergence-free
+fields is the Stokes-limit operator. Then r ↦ Q [K_γ⁻¹ (W r, 0)]_u is a preconditioner
+that becomes exact as γ grows (γ relative to the largest diagonal of A).
+
+| preconditioner (exact K_γ solve) | Ha 100 | Ha 400 | Ha 1600 |
+|---|---|---|---|
+| today's projection step | 187 | 650 | 2,140 |
+| γ 0 | 126 | | |
+| γ 1 | 93 | | |
+| γ 10² | 25 | 29 | 51 |
+| γ 10⁴ | 9 | 10 | 10 |
+| γ 10⁶ | | | 4 |
+
+Iterations flat in Ha exist in principle. The question is what approximates K_γ⁻¹.
+
+**(a) Geometric multigrid, (b) algebraic, on K_γ.**
+- (a): x (axial) semicoarsening by 2, 5 levels to 3 cells. Galerkin coarse operators.
+  Cells piecewise constant, axial faces interpolated by cell width (divergence
+  preserving). yz-plane block Gauss–Seidel, forward then backward, so the V-cycle is
+  symmetric. Planes are exact in yz, where the Hartmann layers couple strongly.
+- (b): pyamg 5.3 smoothed aggregation on the same matrix.
+
+CG iterations:
+
+| preconditioner | γ | Ha 100 | Ha 400 | Ha 1600 |
+|---|---|---|---|---|
+| (b) smoothed aggregation, V(1,1) | 0 / 10² / 10⁴ | 763 / 160 / 816 | | |
+| (a) one plane per block | 0 / 10² / 10⁴ | 884 / 180 / 392 | | |
+| (a) overlapping two-plane blocks | 10² | 39 | 102 | 351 |
+| (a) overlapping two-plane blocks | 10⁴ | 24 | 43 | 85 |
+| (a) overlapping two-plane blocks | 10⁶ | **20** | **39** | **72** |
+| (a) two-plane, γ 10⁴, V(2,2) / W(1,1) | | | | 61 / 80 |
+| (a) two-plane, γ 10⁶, two-grid with an exact coarse solve | | 20 | | 73 |
+| (a) two-plane, γ 10⁶, 41×24² (today 2,233) | | | | 91 |
+
+- **The smoother must hold the grad-div kernel.** A curl of a y- or z-edge spans two
+  planes. Blocks that contain them (overlapping plane pairs) turn γ into a gain. Without
+  them, large γ makes CG worse: 392 for one plane per block, 816 for aggregation AMG.
+  This is the Schöberl / Arnold–Falk–Winther condition for augmented-Lagrangian
+  multigrid. Black-box AMG fails it.
+- **Not Ha-robust yet.** Iterations still grow as Ha^0.44 over Ha 400–1600 (today
+  Ha^0.88). They are 9–30× fewer than today, and grow mildly with the mesh (72 → 91 from
+  16² to 24²).
+- **The growth is in the two-grid, not the recursion.** An exact coarse solve gives the
+  same 73. W-cycles and V(2,2) move it little. What limits it is the axial prolongation
+  of φ, u_y and u_z, not the cycle.
+
+**(c) Multigrid on the projected operator** (today's step as the smoother, weighted by
+1/λ_max(TB) = 1/154). Coarse space Q P_u, x/8 semicoarsening, 4,672 vectors, with the
+coarse matrix probed from the true operator: 187 → 124 at Ha 100 and 650 → 423 at
+Ha 400, at 37–41× the wall time. As in #188, a coarse space under today's smoother
+barely helps. A preconditioner for CG, (a), wins over a smoother on the projected
+operator, (c).
+
+**The coupled saddle system is not a route.** Plane-Vanka over (u, φ, p) with the same
+x-semicoarsening and Galerkin coarse operators diverges, though its smoother alone
+converges (0.05 after 12 sweeps). The coarse correction grows the residual about 180×
+per two-grid cycle at Ha 100. The cause is an indefinite Galerkin coarse operator, and
+symmetrizing the rows does not fix it.
+
+**Cost (CPU, host prototype in scipy).** One V-cycle at 16² costs 0.14–0.20 s, against
+9–11 ms for one iteration of today's CG in JAX on the same CPU. That is 15–20× per
+iteration. Warm wall time:
+
+| Ha | today (JAX) | (a), γ 10⁶, two-plane |
+|---|---|---|
+| 100 | 1.7 s | 4.3 s |
+| 400 | 6.0 s | 7.5 s |
+| 1600, alternating A/B ×2 | 21.2 / 24.5 s | 12.6 / 12.3 s |
+| 1600 at 24² | 45 s | 40 s |
+
+Setup is extra: probing 11–40 s, which an analytic assembly would remove, and
+factorization 4–16 s. Each plane-pair block is a sparse LU of 8n² unknowns; it grows as
+n³ while today's iteration grows as n² log n.
+
+**JAX/XLA feasibility (GPU microbenchmark).** One A4000, JAX 0.10.2, SOLVAX 0.20.0, idle
+card. The workload is batched exact solves of one colour of plane-pair blocks: 23
+blocks, 8n² unknowns, bandwidth 8n + 16. A symmetric colored sweep needs 6 such phases
+per level.
+
+| n | banded LU solve per phase | factors | dense inverses per phase |
+|---|---|---|---|
+| 16 | 41 ms | 0.11 GB | 2.2 ms, 0.8 GB |
+| 24 | 88 ms | 0.35 GB | 10 ms, 3.9 GB |
+| 32 | 159 ms | 0.82 GB | 12 GB, out of memory |
+| 48 | XLA autotuning failure | 2.7 GB | |
+| 128 (estimate) | ≈ 2.5 s | ≈ 150 GB | |
+
+- **Speed.** The banded solve is a scan over 8n² rows, so it is latency-bound. A V-cycle
+  at 32² would take about 1 s per level. Today's whole CG iteration at 70×32² on this card
+  takes 4.9 ms (#188). That is about 1,000× per iteration against ≤ 30× fewer iterations.
+- **Memory.** Dense inverses would be fast but do not fit past n ≈ 24.
+- **Compile time.** 5–11 s per block shape and level; a 5-level hierarchy is about 1 min.
+- **Differentiability.** No change needed. The preconditioner is not differentiated: a
+  symmetric V-cycle on an SPD form is a valid preconditioner for the symmetric
+  `custom_linear_solve` of #174, so the adjoint reuses it unchanged. It is built at the
+  nominal field, so a sweep or a design loop rebuilds it whenever the field changes.
+
+**Decision: no-go for a production version now.** The Ha-robust target exists (exact
+K_γ, γ ≥ 10⁴: 4–10 iterations, flat in Ha), and multigrid gets a large part of it (9–30×
+fewer iterations, Ha^0.44) with one design: x-semicoarsening, overlapping plane-pair
+smoothing, an augmented-Lagrangian form. But its smoother is exact 2-D plane solves,
+which are latency-bound and memory-bound on the GPU at production meshes (96²–128²),
+and its iterations still grow with Ha.
+
+A production version needs two research items before any engineering:
+1. a GPU-parallel smoother that still holds the grad-div kernel, for example
+   edge-star or vertex-star patches as batched small dense solves, with yz coarsening
+   robust to the stretched layers;
+2. a prolongation for φ, u_y and u_z that keeps the two-grid flat in Ha.
+
+Estimates: 6–10 weeks with an uncertain outcome; the JAX engineering of the measured
+design alone, 4–6 weeks, would be slower than today on the GPU. Revisit if high-Ha
+fringing speed becomes a priority, or if a batched parallel (cyclic-reduction)
+plane solver becomes available. Existing tools: SOLVAX's `multigrid`,
+`semicoarsening_hierarchy`, `plane_smoother` and `line_smoother` serve scalar cell
+grids with rediscretized five-point operators, not the staggered coupled (u, φ)
+system; GKX and DKX have no multigrid. Today's global damping rate (#188) stays.
+
 Logical CPU devices share cores and memory, so they qualify placement
 correctness only; G5 stays open until fixed-resource measurements exist.
 Performance PRs name the profiled share of runtime they target (≥ 10 %) and
@@ -1405,3 +1545,4 @@ Process: pyOpenSci README guide · JOSS review criteria · Google small CLs · D
 | 2026-10-04 | 4.6 consolidation, pass 5 (lane C): the case schema loses the retired solver's fields that nothing read: `SolverConfig.preconditioner` and the eight `coupling_*`; `TimeStepperConfig.potential_iterations`, `potential_tolerance`, `potential_relaxation`, `potential_solver`, `steady_tolerance`, `steady_potential_tolerance`, `relaxation`, `velocity_update_limit`; `OutputSpec.write_stride`; `GeometrySpec.target_ha`, `target_side_layer`; `RegionSpec.wall_thickness`; `CaseSpec.reference_pressure_gradient`, `reference_phi_cell`; and the per-Ha Hunt time-stepper table whose branches differed only in those. **Breaking:** constructing a spec with those keyword arguments now raises; TOML run files that set them still load (the keys are read and ignored, as they were in effect before), and `examples/hartmann_case.toml` drops them. The solver log no longer prints the dead coupling and potential settings | the line target: the remaining gap is in features, not dead code |
 | 2026-10-04 | Owner: the size target is a direction, not a number; keep the TOML runs, restarts and ParaView output, and keep adding functionality. The command line runs a TOML case as `lmhdx case.toml` (`run case.toml` is still accepted) and is also installed as `lmx`. Release 1.9.0: varying conductances in `coreflow` (#206); 2b.4 field lines measured and not adopted (#209); consolidation to 14 modules and 10,391 lines (train #213); the `lmx` command | 2b.4 coupled 3-D preconditioner only if high-Ha fringing speed becomes a priority |
 | 2026-10-04 | 2b.4 and rows 7/24 finalized (owner), docs and plan only. 2b.4 is done: its exit is restated to at least 1.9× fewer CG iterations, met by #188's global rate on the ANL duct (ANL duct, one A4000, CG iterations before → after #188's global rate: Ha 100 783 → 244 (3.2×), Ha 400 2,047 → 728 (2.8×), Ha 1600 4,848 → 2,283 (2.1×), Ha 3200 8,307 → 4,353 (1.9×)); the Schur inner solve (#203) and the station field lines (#209) stay rejected. Row 24 is met against the layer-corrected core-flow model (1 % at c 0.1, Ha 2×10⁴, #206); row 7 is closed as not reachable on the 3-D core, a physical model difference (#204). plan.md, numerics.md, the validation page, the fringe tutorial and the README say the same | coupled 3-D multigrid preconditioner (feasibility study, another lane); 1.9d row 6 and the inertial share |
+| 2026-10-04 | 2b.4 follow-up: multigrid feasibility (docs and plan only; prototypes outside the package). The ANL fringe at 41×16², assembled as a sparse coupled (u, φ, p) system from LMhdX's own operators (exact to 2e-16, exact LU gives 2 CG iterations). The exact augmented-Lagrangian (u, φ) form with γ ≥ 10⁴ gives 4–10 iterations, flat over Ha 100–1600 (today 187/650/2,140). Geometric x-semicoarsening multigrid with overlapping yz plane-pair Gauss–Seidel gives 20/39/72 (Ha^0.44), and 1.9× faster warm on the CPU at Ha 1600. Without plane-pair blocks it gives 392; smoothed-aggregation AMG gives 816; Vanka on the saddle system diverges; a coarse space under today's step gives 124/423 at about 40× the cost. On the A4000 the plane solves are scan-bound (41–159 ms per phase at n 16–32) and do not fit past n ≈ 24–48: no-go for production now; 6–10 weeks of research before engineering | 2b.4: today's global rate stays; revisit with a GPU-parallel kernel-capturing smoother |
