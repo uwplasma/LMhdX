@@ -5,8 +5,8 @@ type: software
 authors:
   - family-names: Jorge
     given-names: Rogerio
-version: 1.9.0
-date-released: 2026-10-04
+version: 1.10.0
+date-released: 2026-10-05
 repository-code: "https://github.com/uwplasma/LMhdX"
 url: "https://lmhdx.readthedocs.io/"
 license: MIT
