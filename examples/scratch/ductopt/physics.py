@@ -72,9 +72,15 @@ def _build_problem(
     y = wall_resolving_faces(
         cells, -1.0, 1.0, layer_thickness=1.0 / ha_mesh, cells_in_layer=cells_in_layer, max_ratio=None
     )
-    side_layer = min(1.0 / np.sqrt(ha_mesh), 0.25 * (centre or beta), 1.0 / (ha_mesh * tilt) if tilt else np.inf)
+    side_layer = min(
+        1.0 / np.sqrt(ha_mesh), 0.25 * (centre or beta), 1.0 / (ha_mesh * tilt) if tilt else np.inf
+    )
     z = wall_resolving_faces(
-        cells, -(centre or beta), centre or beta, layer_thickness=side_layer, cells_in_layer=cells_in_layer,
+        cells,
+        -(centre or beta),
+        centre or beta,
+        layer_thickness=side_layer,
+        cells_in_layer=cells_in_layer,
         max_ratio=None,
     )
     if centre:
@@ -91,7 +97,9 @@ def _build_problem(
 
 
 @functools.lru_cache(maxsize=256)
-def _compiled_value_and_grad(beta: float, ha_mesh: float, cells: int, cells_in_layer: int, centre: float = 0.0):
+def _compiled_value_and_grad(
+    beta: float, ha_mesh: float, cells: int, cells_in_layer: int, centre: float = 0.0
+):
     """Return a jitted ``field_scale -> (q, dq/d field_scale)`` for one mesh."""
     problem = _build_problem(beta, ha_mesh, cells, cells_in_layer, centre)
 
@@ -141,8 +149,12 @@ jax.monitoring.register_event_duration_secs_listener(_count_compile)
 def cache_stats() -> dict:
     """Meshes built (cache misses) and XLA compiles in this process so far (R7)."""
     info = _compiled_value_and_grad.cache_info()
-    return {"hits": info.hits, "meshes_built": info.misses, "compiles": _COMPILES["count"],
-            "compile_s": _COMPILES["seconds"]}
+    return {
+        "hits": info.hits,
+        "meshes_built": info.misses,
+        "compiles": _COMPILES["count"],
+        "compile_s": _COMPILES["seconds"],
+    }
 
 
 @dataclass(frozen=True)
@@ -188,7 +200,13 @@ class DesignBox:
 
 
 def station_pressure_gradient(
-    box: DesignBox, station: Station, a: float, beta: float, cells: int, cells_in_layer: int, centre: float = 0.0
+    box: DesignBox,
+    station: Station,
+    a: float,
+    beta: float,
+    cells: int,
+    cells_in_layer: int,
+    centre: float = 0.0,
 ) -> dict:
     """Return ``F_k = -dp/dx`` (Pa/m) at one station and ``d ln F_k / d ln a`` at fixed beta.
 
@@ -211,7 +229,9 @@ def station_pressure_gradient(
     }
 
 
-def objective(box: DesignBox, u: float, w: float, cells: int, cells_in_layer: int, centre: float = 0.0) -> dict:
+def objective(
+    box: DesignBox, u: float, w: float, cells: int, cells_in_layer: int, centre: float = 0.0
+) -> dict:
     """Return W(u, w), its exact gradient in u (at fixed w), and per-station data.
 
     ``W = sum_k L_k Q F_k`` is the total pumping power; ``dW/du = sum_k L_k Q
@@ -248,7 +268,9 @@ def objective(box: DesignBox, u: float, w: float, cells: int, cells_in_layer: in
     }
 
 
-def objective_value(box: DesignBox, u: float, w: float, cells: int, cells_in_layer: int, centre: float = 0.0) -> float:
+def objective_value(
+    box: DesignBox, u: float, w: float, cells: int, cells_in_layer: int, centre: float = 0.0
+) -> float:
     return objective(box, u, w, cells, cells_in_layer, centre)["W"]
 
 
@@ -270,14 +292,22 @@ def spectral_value(box: DesignBox, u: float, w: float, points: int = 48) -> floa
 
     beta, a = float(np.exp(w)), box.a_of(u, w)
     return sum(
-        s.L * box.Q * box.mu * box.Q
+        s.L
+        * box.Q
+        * box.mu
+        * box.Q
         / (a**4 * 4.0 * beta * quadrant_flow_rate(s.B * a * np.sqrt(box.sigma / box.mu), points, aspect=beta))
         for s in box.stations
     )
 
 
 def tilted_flow(
-    beta: float, ha: float, tilt: float, cells: int = 48, cells_in_layer: int = 6, centre: float = 0.0,
+    beta: float,
+    ha: float,
+    tilt: float,
+    cells: int = 48,
+    cells_in_layer: int = 6,
+    centre: float = 0.0,
     ha_mesh: float = 0.0,
 ) -> float:
     """Flow per unit drive of a duct whose field of magnitude ``ha`` is tilted by ``arctan(tilt)`` in the

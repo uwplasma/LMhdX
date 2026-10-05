@@ -73,7 +73,9 @@ def three_d_excess(
         cells, -1.0, 1.0, layer_thickness=1.0 / ha_peak, cells_in_layer=cells_in_layer, max_ratio=None
     )
     side = min(1.0 / np.sqrt(ha_base), 0.25 * beta)
-    z = wall_resolving_faces(cells, -beta, beta, layer_thickness=side, cells_in_layer=cells_in_layer, max_ratio=None)
+    z = wall_resolving_faces(
+        cells, -beta, beta, layer_thickness=side, cells_in_layer=cells_in_layer, max_ratio=None
+    )
     grid = Grid(uniform_faces(nx, 0.0, lam_over_a), y, z)
     field = _modulated_field(grid, ha_base, lam_over_a)
     problem = ChannelProblem(
@@ -146,9 +148,7 @@ def validity_map(
             row["case"] = label
             rows.append(row)
             if gamma in refine_gamma:
-                fine = three_d_excess(
-                    gamma, beta, ha_base, cells=cells, cells_in_layer=cells_in_layer, nx=32
-                )
+                fine = three_d_excess(gamma, beta, ha_base, cells=cells, cells_in_layer=cells_in_layer, nx=32)
                 fine["case"] = label
                 fine["refinement_of"] = "nx16"
                 rows.append(fine)
@@ -185,8 +185,12 @@ def ramp_excess(
         cells, -1.0, 1.0, layer_thickness=1.0 / ha_hi, cells_in_layer=cells_in_layer, max_ratio=None
     )
     z = wall_resolving_faces(
-        cells, -beta, beta, layer_thickness=min(1.0 / np.sqrt(ha_mid), 0.25 * beta),
-        cells_in_layer=cells_in_layer, max_ratio=None,
+        cells,
+        -beta,
+        beta,
+        layer_thickness=min(1.0 / np.sqrt(ha_mid), 0.25 * beta),
+        cells_in_layer=cells_in_layer,
+        max_ratio=None,
     )
     step = float(np.clip(spacing, x0 / 40.0, x0 / 5.0))  # 5-40 cells across the half-ramp
     grid = Grid(axial_faces(-x0 - upstream, x0 + downstream, (-x0 - 1.0, x0 + 1.0), step), y, z)
@@ -194,8 +198,11 @@ def ramp_excess(
     faces = (ramp.faces[0], ramp.faces[1] + b_lo, ramp.faces[2])
     components = (ramp.components[0], ramp.components[1] + b_lo, ramp.components[2])
     walled = ChannelProblem(
-        grid=grid, conditions=(BoundaryCondition(PERIODIC), _WALL, _WALL), conductivity=1.0,
-        magnetic_field=ImposedField(grid, components, faces), dt=1.0,
+        grid=grid,
+        conditions=(BoundaryCondition(PERIODIC), _WALL, _WALL),
+        conductivity=1.0,
+        magnetic_field=ImposedField(grid, components, faces),
+        dt=1.0,
     )
     problem = open_duct(walled, 1.0)
     t0 = time.perf_counter()
@@ -206,8 +213,12 @@ def ramp_excess(
     dp = float(pressure_drop(solution.pressure, xa, xb))
 
     section = ChannelProblem(
-        grid=Grid(uniform_faces(1, 0.0, 1.0), y, z), conditions=walled.conditions, conductivity=1.0,
-        magnetic_field=(0.0, ha_hi, 0.0), forcing=(1.0, 0.0, 0.0), dt=1.0,
+        grid=Grid(uniform_faces(1, 0.0, 1.0), y, z),
+        conditions=walled.conditions,
+        conductivity=1.0,
+        magnetic_field=(0.0, ha_hi, 0.0),
+        forcing=(1.0, 0.0, 0.0),
+        dt=1.0,
     )
     q_fn = jax.jit(lambda s: channel_flow_response(section, magnetic_field_scale=s).flow_per_unit_drive)
 
@@ -218,15 +229,28 @@ def ramp_excess(
     s = x0 * nodes
     field = b_lo + d_b * (1.0 - np.sin(np.pi * s / (2.0 * x0))) / 2.0
     dp_fd = (
-        gradient(ha_hi) * (window) + x0 * sum(w * gradient(b) for w, b in zip(weights, field))
+        gradient(ha_hi) * (window)
+        + x0 * sum(w * gradient(b) for w, b in zip(weights, field))
         + gradient(b_lo) * window
     )
     return {
-        "gamma_sqrt_ha": gamma_sqrt_ha, "beta": beta, "ha_mid": ha_mid, "delta": delta, "x0": x0,
-        "cells": cells, "axial_cells": grid.shape[0], "spacing": step, "window": window,
-        "upstream": upstream, "downstream": downstream, "dp": dp, "dp_fd": dp_fd,
-        "excess_percent": 100.0 * (dp / dp_fd - 1.0), "iterations": int(solution.iterations),
+        "gamma_sqrt_ha": gamma_sqrt_ha,
+        "beta": beta,
+        "ha_mid": ha_mid,
+        "delta": delta,
+        "x0": x0,
+        "cells": cells,
+        "axial_cells": grid.shape[0],
+        "spacing": step,
+        "window": window,
+        "upstream": upstream,
+        "downstream": downstream,
+        "dp": dp,
+        "dp_fd": dp_fd,
+        "excess_percent": 100.0 * (dp / dp_fd - 1.0),
+        "iterations": int(solution.iterations),
         "residual": float(solution.residual_norm / solution.initial_residual_norm),
         "mass_balance": float(mass_balance(solution.velocity)),
-        "charge_balance": float(charge_balance(solution, problem)), "elapsed_s": elapsed,
+        "charge_balance": float(charge_balance(solution, problem)),
+        "elapsed_s": elapsed,
     }

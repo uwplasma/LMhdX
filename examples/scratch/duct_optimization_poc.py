@@ -68,12 +68,18 @@ CELLS_VERIFY = 96
 CELLS_IN_LAYER = 6
 CELLS_IN_LAYER_VERIFY = 9
 
-PARETO = {"R_out": cases.V_MIN_SWEEP, "R_in": cases.V_MIN_SWEEP, "P": (cases.V_MIN_DEFAULT,)}  # O3: P is a check
+PARETO = {
+    "R_out": cases.V_MIN_SWEEP,
+    "R_in": cases.V_MIN_SWEEP,
+    "P": (cases.V_MIN_DEFAULT,),
+}  # O3: P is a check
 MESHES = ((32, 4), (48, 6), (72, 9))  # C2: a constant refinement ratio of 1.5
 DESIGN_LAW_H = (10.0, 20.0, 30.0, 50.0, 100.0, 150.0, 200.0, 300.0)
 GCI_H = (30.0, 100.0, 300.0)  # the design-law points that also run the three meshes
 HIGH_H = (500.0, 1000.0)  # O4: Ha* about 2,400 and 6,100 by the law
-SPECTRAL_POINTS_HIGH = 80  # the reference at Ha* 2,400-6,100, checked against 64; 96 needs 3 x 2.8 GB, more than this VM has
+SPECTRAL_POINTS_HIGH = (
+    80  # the reference at Ha* 2,400-6,100, checked against 64; 96 needs 3 x 2.8 GB, more than this VM has
+)
 TILT_LAW_H = (30.0, 100.0, 300.0, 1000.0)  # Ha* of the aligned optimum: 57, 285, 1,223, 6,036
 TILT_LAW = (0.0, 0.02, 0.05, 0.1, 0.2, 0.3)  # B_p / B_T, up to 16.7 degrees
 TILTS = (0.1, 0.2)  # B_p / B_T, 5.7 and 11.3 degrees (C8)
@@ -86,7 +92,10 @@ CASE_BUILDERS = {"R_out": cases.case_r_outboard, "R_in": cases.case_r_inboard}
 # Restated exits of stage_2_plan.txt 5A (v4.1), fixed before any run and written into results.json.
 # No tolerance is relaxed after a run; a measurement that cannot be made is reported open.
 EXITS = {
-    "a_taylor_slope_u": (1.9, 2.1),  # exact u part; the w part is the step study until an exact gradient exists (C6)
+    "a_taylor_slope_u": (
+        1.9,
+        2.1,
+    ),  # exact u part; the w part is the step study until an exact gradient exists (C6)
     "b_s_star_rel": 0.03,  # beta* sqrt(Ha*) within 3 % of the uniform-field 2.09
     "b_a_star_rel": 0.05,  # a* within 5 % of the closed form of 4.3
     "c_dW_dw_rel": 1.0e-6,  # w-stationarity, exact w-gradient only; V = V_min active with multiplier >= 0
@@ -101,7 +110,10 @@ EXITS = {
     "i_collapse_rel": 0.20,  # Ha 50 and Ha 200 excess agree within 20 % at matched gamma sqrt(Ha) >= 0.1
     # 5A.C, fixed 2026-09-29 before the runs:
     "c_stationarity_rel": 1.0e-6,  # |dW/dw| / W at the polished optimum, on the scaled-mesh family, h and 2h
-    "gci_order_range": (1.0, 3.0),  # the observed order is used inside it, else the assumed 2 (and it is said)
+    "gci_order_range": (
+        1.0,
+        3.0,
+    ),  # the observed order is used inside it, else the assumed 2 (and it is said)
     "f_high_ha_budget_s": 7200.0,  # O4 is a bounded attempt: stop and record at 2 h of CPU
     # The tilt law (5A.C8 follow-up), fixed 2026-09-29 before its runs. The collapse in kappa = sqrt(Ha*_0) tan(theta)
     # was seen in coarse exploratory runs (48/6, a 12-point beta grid), so these runs confirm it on converged meshes:
@@ -112,8 +124,11 @@ EXITS = {
 }
 # 5A.C1, written before the 2 and 50 mm/s points run (4.3: Ha* ~ V_min^(-2/3)); 5 mm/s is the Tier 0 measurement:
 PREDICTIONS = {
-    "Ha_star_2mm_outboard": (550.0, 590.0), "Ha_star_2mm_inboard_max": 700.0,
-    "Ha_star_50mm": (65.0, 80.0), "Re_over_Ha_50mm": 23.0, "Re_over_sqrtHa_50mm": 190.0,
+    "Ha_star_2mm_outboard": (550.0, 590.0),
+    "Ha_star_2mm_inboard_max": 700.0,
+    "Ha_star_50mm": (65.0, 80.0),
+    "Re_over_Ha_50mm": 23.0,
+    "Re_over_sqrtHa_50mm": 190.0,
     "s_star_stations": (2.03, 2.16),
 }
 RAMP_HA = (50.0, 200.0)
@@ -143,9 +158,15 @@ def _validity_checks(box: DesignBox, u: float, w: float) -> dict:
         gamma_sqrt_ha = a / station.R * np.sqrt(Ha) if station.R else 0.0
         rows.append(
             {
-                "label": station.label, "B_T": station.B, "Ha": Ha, "Re": Re,
-                "Re_over_Ha": Re / Ha, "Re_over_sqrtHa": Re / np.sqrt(Ha), "N_interaction": Ha**2 / Re,
-                "gamma_sqrt_Ha": gamma_sqrt_ha, "gamma_sqrt_Ha_leq_0.2": bool(gamma_sqrt_ha <= EXITS["gamma_sqrt_ha_max"]),
+                "label": station.label,
+                "B_T": station.B,
+                "Ha": Ha,
+                "Re": Re,
+                "Re_over_Ha": Re / Ha,
+                "Re_over_sqrtHa": Re / np.sqrt(Ha),
+                "N_interaction": Ha**2 / Re,
+                "gamma_sqrt_Ha": gamma_sqrt_ha,
+                "gamma_sqrt_Ha_leq_0.2": bool(gamma_sqrt_ha <= EXITS["gamma_sqrt_ha_max"]),
                 "Re_over_Ha_leq_200": bool(Re / Ha <= EXITS["re_over_ha_max"]),
             }
         )
@@ -156,7 +177,8 @@ def _finer_mesh_check(box: DesignBox, u: float, w: float) -> dict:
     coarse = objective(box, u, w, CELLS_EXPLORE, CELLS_IN_LAYER)
     fine = objective(box, u, w, CELLS_VERIFY, CELLS_IN_LAYER_VERIFY)
     return {
-        "W_coarse": coarse["W"], "W_fine": fine["W"],
+        "W_coarse": coarse["W"],
+        "W_fine": fine["W"],
         "W_relative_change": abs(fine["W"] - coarse["W"]) / abs(fine["W"]),
     }
 
@@ -206,16 +228,30 @@ def stage_demo_r_out() -> None:
     print(f"  done: {demo.meshes_built} meshes, {elapsed:.0f} s, converged={demo.converged}", flush=True)
     checkpoint.set_key(
         ("demo_optimizer", "R_out"),
-        {"u0": u0, "w0": 0.0, "path": demo.path, "meshes_built": demo.meshes_built,
-         "converged": demo.converged, "time_s": elapsed, "w_final": demo.w, "u_final": demo.u},
+        {
+            "u0": u0,
+            "w0": 0.0,
+            "path": demo.path,
+            "meshes_built": demo.meshes_built,
+            "converged": demo.converged,
+            "time_s": elapsed,
+            "w_final": demo.w,
+            "u_final": demo.u,
+        },
     )
 
 
 def _pareto_point(box: DesignBox, v_min: float, w_guess: float) -> tuple[dict, float]:
     u0 = float(np.log(box.Q / v_min))
     sweep_box = DesignBox(
-        Q=box.Q, mu=box.mu, sigma=box.sigma, V_min=v_min, V_max=box.V_max,
-        beta_lo=box.beta_lo, beta_hi=box.beta_hi, stations=box.stations,
+        Q=box.Q,
+        mu=box.mu,
+        sigma=box.sigma,
+        V_min=v_min,
+        V_max=box.V_max,
+        beta_lo=box.beta_lo,
+        beta_hi=box.beta_hi,
+        stations=box.stations,
     )
     t0 = time.perf_counter()
     opt = optimize(sweep_box, u0, w_guess, CELLS_EXPLORE, CELLS_IN_LAYER, record_path=False)
@@ -226,11 +262,23 @@ def _pareto_point(box: DesignBox, v_min: float, w_guess: float) -> tuple[dict, f
     finer = _finer_mesh_check(sweep_box, opt.u, opt.w)
     beta = float(np.exp(opt.w))
     row = {
-        "V_min": v_min, "u": opt.u, "w": opt.w, "beta": beta, "a_m": sweep_box.a_of(opt.u, opt.w),
-        "b_m": beta * sweep_box.a_of(opt.u, opt.w), "W": opt.W, "converged": opt.converged,
-        "active_u_bound": opt.active_u_bound, "u_multiplier": opt.u_multiplier,
-        "dW_dw_final": opt.dW_dw_final, "meshes_built": opt.meshes_built, "time_s": elapsed,
-        "taylor_test": tt, "fd_step_study": fd_study, "validity": checks, "finer_mesh": finer,
+        "V_min": v_min,
+        "u": opt.u,
+        "w": opt.w,
+        "beta": beta,
+        "a_m": sweep_box.a_of(opt.u, opt.w),
+        "b_m": beta * sweep_box.a_of(opt.u, opt.w),
+        "W": opt.W,
+        "converged": opt.converged,
+        "active_u_bound": opt.active_u_bound,
+        "u_multiplier": opt.u_multiplier,
+        "dW_dw_final": opt.dW_dw_final,
+        "meshes_built": opt.meshes_built,
+        "time_s": elapsed,
+        "taylor_test": tt,
+        "fd_step_study": fd_study,
+        "validity": checks,
+        "finer_mesh": finer,
     }
     print(
         f"    V_min={v_min * 1000:.1f} mm/s: beta*={beta:.4f} W*={opt.W:.3e} bound={opt.active_u_bound} "
@@ -275,19 +323,33 @@ def stage_verify(tag: str, index: int) -> None:
         result.update(cells=cells, cells_in_layer=layer)
         result["u_multiplier"] = -objective(box, u, result["w_star"], cells, layer, centre)["dW_du"]
         out["meshes"].append(result)
-        print(f"  {cells}/{layer}: beta*={result['beta_star']:.5f} W*={result['value_star']:.5e} "
-              f"dW/dw h={result['dW_dw_rel_h']:.1e} 2h={result['dW_dw_rel_2h']:.1e} "
-              f"h/10={result['dW_dw_rel_small']:.1e} Richardson={result['dW_dw_rel_richardson']:.1e}", flush=True)
+        print(
+            f"  {cells}/{layer}: beta*={result['beta_star']:.5f} W*={result['value_star']:.5e} "
+            f"dW/dw h={result['dW_dw_rel_h']:.1e} 2h={result['dW_dw_rel_2h']:.1e} "
+            f"h/10={result['dW_dw_rel_small']:.1e} Richardson={result['dW_dw_rel_richardson']:.1e}",
+            flush=True,
+        )
     fv = out["meshes"][1]
     spectral = polish_w(lambda w: spectral_value(box, u, w), w0)
     at_fv = spectral_value(box, u, fv["w_star"])
-    out["spectral"] = {**spectral, "W_at_fv_beta": at_fv, "W_fv_over_spectral": fv["value_star"] / at_fv - 1.0,
-                       "beta_fv_over_spectral": fv["beta_star"] / spectral["beta_star"] - 1.0}
-    out["gci"] = {name: designlaw.richardson_gci([m[key] for m in out["meshes"]], [m["cells"] for m in out["meshes"]],
-                                                 order_range=EXITS["gci_order_range"])
-                  for name, key in (("W", "value_star"), ("beta", "beta_star"))}
-    print(f"  spectral: beta*={spectral['beta_star']:.5f}; FV/spectral W at the FV beta {out['spectral']['W_fv_over_spectral']:+.2e}",
-          flush=True)
+    out["spectral"] = {
+        **spectral,
+        "W_at_fv_beta": at_fv,
+        "W_fv_over_spectral": fv["value_star"] / at_fv - 1.0,
+        "beta_fv_over_spectral": fv["beta_star"] / spectral["beta_star"] - 1.0,
+    }
+    out["gci"] = {
+        name: designlaw.richardson_gci(
+            [m[key] for m in out["meshes"]],
+            [m["cells"] for m in out["meshes"]],
+            order_range=EXITS["gci_order_range"],
+        )
+        for name, key in (("W", "value_star"), ("beta", "beta_star"))
+    }
+    print(
+        f"  spectral: beta*={spectral['beta_star']:.5f}; FV/spectral W at the FV beta {out['spectral']['W_fv_over_spectral']:+.2e}",
+        flush=True,
+    )
     checkpoint.set_key(("verify", f"{tag}_{v_min * 1000:g}"), out)
 
 
@@ -295,7 +357,9 @@ def stage_dlaw(H: float) -> None:
     """C1, C2, O4: the fixed-area optimum on the scaled-mesh family, by the core and by the reference."""
     print(f"design law H={H:.0f}...", flush=True)
     guess = min((2.13 / np.sqrt(H)) ** (4.0 / 3.0), 1.0)
-    rough = designlaw.polish_beta_star(H, *MESHES[0], guess, delta=0.15)  # a wide first pass on the coarse mesh
+    rough = designlaw.polish_beta_star(
+        H, *MESHES[0], guess, delta=0.15
+    )  # a wide first pass on the coarse mesh
     start = rough["beta_star"] if rough["interior"] else guess
     out = {"H": H, "meshes": []}
     for cells, layer in MESHES if H in GCI_H else MESHES[1:] if H in HIGH_H else (MESHES[1],):
@@ -303,17 +367,29 @@ def stage_dlaw(H: float) -> None:
         result = designlaw.polish_beta_star(H, cells, layer, start)
         result.update(cells=cells, cells_in_layer=layer, wall_s=time.perf_counter() - t0)
         out["meshes"].append(result)
-        print(f"  {cells}/{layer}: beta*={result['beta_star']:.5f} Ha*={result['Ha_star']:.1f} s*={result['s_star']:.4f} "
-              f"reduction={100 * result['reduction']:.1f}% ({result['wall_s']:.0f} s)", flush=True)
-    out["spectral"] = designlaw.polish_beta_star(H, 0, 0, start, spectral_points=SPECTRAL_POINTS_HIGH if H in HIGH_H else 48)
-    print(f"  spectral: beta*={out['spectral']['beta_star']:.5f} s*={out['spectral']['s_star']:.4f}", flush=True)
+        print(
+            f"  {cells}/{layer}: beta*={result['beta_star']:.5f} Ha*={result['Ha_star']:.1f} s*={result['s_star']:.4f} "
+            f"reduction={100 * result['reduction']:.1f}% ({result['wall_s']:.0f} s)",
+            flush=True,
+        )
+    out["spectral"] = designlaw.polish_beta_star(
+        H, 0, 0, start, spectral_points=SPECTRAL_POINTS_HIGH if H in HIGH_H else 48
+    )
+    print(
+        f"  spectral: beta*={out['spectral']['beta_star']:.5f} s*={out['spectral']['s_star']:.4f}", flush=True
+    )
     if H in HIGH_H:
         out["spectral_64"] = designlaw.polish_beta_star(H, 0, 0, start, spectral_points=64)
         print(f"  spectral 64 points: beta*={out['spectral_64']['beta_star']:.5f}", flush=True)
     if len(out["meshes"]) == 3:
-        out["gci"] = {name: designlaw.richardson_gci([m[key] for m in out["meshes"]], [m["cells"] for m in out["meshes"]],
-                                                     order_range=EXITS["gci_order_range"])
-                      for name, key in (("dp", "dp_star"), ("beta", "beta_star"))}
+        out["gci"] = {
+            name: designlaw.richardson_gci(
+                [m[key] for m in out["meshes"]],
+                [m["cells"] for m in out["meshes"]],
+                order_range=EXITS["gci_order_range"],
+            )
+            for name, key in (("dp", "dp_star"), ("beta", "beta_star"))
+        }
     checkpoint.set_key(("dlaw", f"{H:.0f}"), out)
 
 
@@ -332,10 +408,17 @@ def stage_tiltlaw(H: float) -> None:
     """The tilt-aware design law: the fixed-area optimum in a tilted field, on three meshes, by continuation in tilt."""
     print(f"tilt law H={H:.0f}...", flush=True)
     aligned = next(m for m in checkpoint.load()["dlaw"][f"{H:.0f}"]["meshes"] if m["cells"] == CELLS_EXPLORE)
-    beta0, centre, out = aligned["beta_star"], aligned["beta_star"], {"H": H, "beta_aligned": aligned["beta_star"], "rows": []}
+    beta0, centre, out = (
+        aligned["beta_star"],
+        aligned["beta_star"],
+        {"H": H, "beta_aligned": aligned["beta_star"], "rows": []},
+    )
     for tilt in TILT_LAW:
         rough = None
-        for delta in (0.25, 0.5):  # a wide first pass on the coarse mesh, widened if the minimum is outside it
+        for delta in (
+            0.25,
+            0.5,
+        ):  # a wide first pass on the coarse mesh, widened if the minimum is outside it
             rough = polish_w(_tilt_value(H, tilt, *MESHES[0], centre), float(np.log(centre)), delta=delta)
             if rough["interior"]:
                 break
@@ -346,21 +429,37 @@ def stage_tiltlaw(H: float) -> None:
             found = polish_w(_tilt_value(H, tilt, cells, layer, start), float(np.log(start)))
             beta = found["beta_star"]
             found.update(
-                cells=cells, cells_in_layer=layer, Ha_star=H / float(np.sqrt(beta)),
-                dp_star=found["value_star"], dp_square=4.0 / tilted_flow(1.0, H, tilt, cells, layer),
-                dp_at_aligned_beta=4.0 * beta0**2 / tilted_flow(beta0, H / float(np.sqrt(beta0)), tilt, cells, layer),
+                cells=cells,
+                cells_in_layer=layer,
+                Ha_star=H / float(np.sqrt(beta)),
+                dp_star=found["value_star"],
+                dp_square=4.0 / tilted_flow(1.0, H, tilt, cells, layer),
+                dp_at_aligned_beta=4.0
+                * beta0**2
+                / tilted_flow(beta0, H / float(np.sqrt(beta0)), tilt, cells, layer),
             )
-            found.update(s_star=beta * float(np.sqrt(found["Ha_star"])), reduction=1.0 - found["dp_star"] / found["dp_square"],
-                         wall_s=time.perf_counter() - t0)
+            found.update(
+                s_star=beta * float(np.sqrt(found["Ha_star"])),
+                reduction=1.0 - found["dp_star"] / found["dp_square"],
+                wall_s=time.perf_counter() - t0,
+            )
             row["meshes"].append(found)
-        row["gci"] = {name: designlaw.richardson_gci([m[key] for m in row["meshes"]], [m["cells"] for m in row["meshes"]],
-                                                     order_range=EXITS["gci_order_range"])
-                      for name, key in (("dp", "dp_star"), ("beta", "beta_star"))}
+        row["gci"] = {
+            name: designlaw.richardson_gci(
+                [m[key] for m in row["meshes"]],
+                [m["cells"] for m in row["meshes"]],
+                order_range=EXITS["gci_order_range"],
+            )
+            for name, key in (("dp", "dp_star"), ("beta", "beta_star"))
+        }
         out["rows"].append(row)
         fine = row["meshes"][-1]
-        print(f"  tilt {tilt}: kappa={row['kappa']:.2f} beta*={fine['beta_star']:.5f} (x{fine['beta_star'] / beta0:.3f}) "
-              f"dp*/dp*_0={fine['dp_star'] / out['rows'][0]['meshes'][-1]['dp_star']:.4f} reduction={100 * fine['reduction']:.1f}% "
-              f"retune gain={100 * (1 - fine['dp_star'] / fine['dp_at_aligned_beta']):.1f}%", flush=True)
+        print(
+            f"  tilt {tilt}: kappa={row['kappa']:.2f} beta*={fine['beta_star']:.5f} (x{fine['beta_star'] / beta0:.3f}) "
+            f"dp*/dp*_0={fine['dp_star'] / out['rows'][0]['meshes'][-1]['dp_star']:.4f} reduction={100 * fine['reduction']:.1f}% "
+            f"retune gain={100 * (1 - fine['dp_star'] / fine['dp_at_aligned_beta']):.1f}%",
+            flush=True,
+        )
         centre = start
     checkpoint.set_key(("tiltlaw", f"{H:.0f}"), out)
 
@@ -371,8 +470,12 @@ def stage_tilt() -> None:
     rows = []
     for tag in ("R_out", "R_in"):
         box = CASE_BUILDERS[tag]()
-        pareto = next(r for r in checkpoint.load()["pareto"][tag] if abs(r["V_min"] - cases.V_MIN_DEFAULT) < 1e-15)
-        station = box.stations[len(box.stations) // 2]  # one mid-run field; the ratio barely depends on the station
+        pareto = next(
+            r for r in checkpoint.load()["pareto"][tag] if abs(r["V_min"] - cases.V_MIN_DEFAULT) < 1e-15
+        )
+        station = box.stations[
+            len(box.stations) // 2
+        ]  # one mid-run field; the ratio barely depends on the station
         area = float(np.exp(pareto["u"]))
         for design, beta in (("optimum", pareto["beta"]), ("square", 1.0)):
             a = float(np.sqrt(area / (4.0 * beta)))
@@ -384,8 +487,18 @@ def stage_tilt() -> None:
                 wall = time.perf_counter() - start
                 power = box.mu * box.Q**2 * station.L / (a**4 * q)
                 base = base or power
-                rows.append({"case": tag, "design": design, "beta": beta, "Ha": ha, "B_p_over_B_T": tilt,
-                             "W": power, "W_over_aligned": power / base, "wall_s": wall})
+                rows.append(
+                    {
+                        "case": tag,
+                        "design": design,
+                        "beta": beta,
+                        "Ha": ha,
+                        "B_p_over_B_T": tilt,
+                        "W": power,
+                        "W_over_aligned": power / base,
+                        "wall_s": wall,
+                    }
+                )
                 print(f"  {tag} {design} tilt {tilt}: W/W0={power / base:.5f} ({wall:.0f} s)", flush=True)
     checkpoint.set_key(("tilt",), rows)
 
@@ -393,7 +506,9 @@ def stage_tilt() -> None:
 def stage_validity(gamma: float, refine: bool = False) -> None:
     tag = f"gamma{gamma}" + ("_refine" if refine else "")
     print(f"validity map {tag}...", flush=True)
-    beta_star = RAMP_S_STAR / float(np.sqrt(50.0))  # R8: the design-law aspect at this Ha, not Tier 0's Ha-195 optimum
+    beta_star = RAMP_S_STAR / float(
+        np.sqrt(50.0)
+    )  # R8: the design-law aspect at this Ha, not Tier 0's Ha-195 optimum
     nx = 32 if refine else 16
     rows = []
     for beta, case_label in ((1.0, "square"), (beta_star, "beta*")):
@@ -422,8 +537,11 @@ def stage_ramp(ha: float, case: str) -> None:
         row.update(case=case, variant=label)
         rows.append(row)
         checkpoint.set_key(("ramp_excess", f"Ha{ha:.0f}_{case}"), rows)
-        print(f"  gamma sqrt(Ha)={gamma} {label}: excess={row['excess_percent']:+.4f}% "
-              f"x0={row['x0']:.3g} it={row['iterations']} ({row['elapsed_s']:.0f} s)", flush=True)
+        print(
+            f"  gamma sqrt(Ha)={gamma} {label}: excess={row['excess_percent']:+.4f}% "
+            f"x0={row['x0']:.3g} it={row['iterations']} ({row['elapsed_s']:.0f} s)",
+            flush=True,
+        )
         return row
 
     for gamma in RAMP_GAMMAS:
@@ -438,9 +556,16 @@ def ramp_summary(rows: list[dict]) -> dict:
     key = lambda r: (r["case"], r["ha_mid"], r["gamma_sqrt_ha"])  # noqa: E731
     base = {key(r): r for r in rows if r["variant"] == "base"}
     changes = [
-        {"case": r["case"], "ha": r["ha_mid"], "gamma_sqrt_ha": r["gamma_sqrt_ha"], "variant": r["variant"],
-         "relative_change": abs(r["excess_percent"] - base[key(r)]["excess_percent"]) / abs(base[key(r)]["excess_percent"])}
-        for r in rows if r["variant"] != "base"
+        {
+            "case": r["case"],
+            "ha": r["ha_mid"],
+            "gamma_sqrt_ha": r["gamma_sqrt_ha"],
+            "variant": r["variant"],
+            "relative_change": abs(r["excess_percent"] - base[key(r)]["excess_percent"])
+            / abs(base[key(r)]["excess_percent"]),
+        }
+        for r in rows
+        if r["variant"] != "base"
     ]
     collapse = []
     for case in ("square", "beta_star"):
@@ -448,8 +573,15 @@ def ramp_summary(rows: list[dict]) -> dict:
             lo, hi = base.get((case, RAMP_HA[0], gamma)), base.get((case, RAMP_HA[-1], gamma))
             if lo and hi and gamma >= 0.1:
                 e = sorted((lo["excess_percent"], hi["excess_percent"]))
-                collapse.append({"case": case, "gamma_sqrt_ha": gamma, "excess_ha_lo": lo["excess_percent"],
-                                 "excess_ha_hi": hi["excess_percent"], "relative_difference": 1.0 - e[0] / e[1]})
+                collapse.append(
+                    {
+                        "case": case,
+                        "gamma_sqrt_ha": gamma,
+                        "excess_ha_lo": lo["excess_percent"],
+                        "excess_ha_hi": hi["excess_percent"],
+                        "relative_difference": 1.0 - e[0] / e[1],
+                    }
+                )
     return {
         "mesh_changes": changes,
         "mesh_flagged": [c for c in changes if c["relative_change"] > EXITS["i_mesh_change_max"]],
@@ -478,8 +610,17 @@ def stage_case_p_correction() -> None:
 
     def toroidal_solve(a: float, beta: float, rc: float, B: float) -> dict:
         ha = B * a * np.sqrt(sigma / mu)
-        y = wall_resolving_faces(CELLS_EXPLORE, -1.0, 1.0, layer_thickness=1.0 / ha, cells_in_layer=CELLS_IN_LAYER, max_ratio=None)
-        z = wall_resolving_faces(CELLS_EXPLORE, -beta, beta, layer_thickness=1.0 / np.sqrt(ha), cells_in_layer=CELLS_IN_LAYER, max_ratio=None)
+        y = wall_resolving_faces(
+            CELLS_EXPLORE, -1.0, 1.0, layer_thickness=1.0 / ha, cells_in_layer=CELLS_IN_LAYER, max_ratio=None
+        )
+        z = wall_resolving_faces(
+            CELLS_EXPLORE,
+            -beta,
+            beta,
+            layer_thickness=1.0 / np.sqrt(ha),
+            cells_in_layer=CELLS_IN_LAYER,
+            max_ratio=None,
+        )
         grid = Grid(uniform_faces(1, 0.0, 1.0), y, z)
         rc_over_a = rc / a
         yv, zv = np.asarray(grid.y_faces), np.asarray(grid.z_faces)
@@ -488,12 +629,18 @@ def stage_case_p_correction() -> None:
         bz = -np.diff(A, axis=0) / grid.widths[1][:, None]
         faces = (np.zeros(grid.face_shape(0)), by[None], bz[None])
         centres = (
-            np.zeros(grid.shape), 0.5 * (faces[1][:, :-1] + faces[1][:, 1:]),
+            np.zeros(grid.shape),
+            0.5 * (faces[1][:, :-1] + faces[1][:, 1:]),
             0.5 * (faces[2][:, :, :-1] + faces[2][:, :, 1:]),
         )
         field = ImposedField(grid, centres, faces)
-        common = dict(grid=grid, conditions=(BoundaryCondition(PERIODIC), WALL, WALL), conductivity=1.0,
-                      forcing=(1.0, 0.0, 0.0), dt=1.0)
+        common = dict(
+            grid=grid,
+            conditions=(BoundaryCondition(PERIODIC), WALL, WALL),
+            conductivity=1.0,
+            forcing=(1.0, 0.0, 0.0),
+            dt=1.0,
+        )
         problem_uniform = ChannelProblem(magnetic_field=(0.0, ha, 0.0), **common)
         problem_exact = ChannelProblem(magnetic_field=field, **common)
         u_uniform = solve_steady_state(problem_uniform, forcing=(1.0, 0.0, 0.0)).velocity[0].data[0]
@@ -503,18 +650,34 @@ def stage_case_p_correction() -> None:
         wq = channel_cross_section_weights(problem_exact) * u_exact  # R2: weight by the cell areas
         centroid = float(jnp.sum(wq * grid.centers[2][None, :]) / jnp.sum(wq)) / beta
         wq0 = channel_cross_section_weights(problem_uniform) * u_uniform
-        centroid_uniform = float(jnp.sum(wq0 * grid.centers[2][None, :]) / jnp.sum(wq0)) / beta  # 0 by symmetry
-        return {"a_m": a, "beta": beta, "Rc_over_a": rc_over_a, "Ha": ha, "q_uniform": q_uniform,
-                "centroid_uniform_fraction": centroid_uniform,
-                "q_exact": q_exact, "flow_ratio": q_exact / q_uniform, "flow_centroid_fraction": centroid}
+        centroid_uniform = (
+            float(jnp.sum(wq0 * grid.centers[2][None, :]) / jnp.sum(wq0)) / beta
+        )  # 0 by symmetry
+        return {
+            "a_m": a,
+            "beta": beta,
+            "Rc_over_a": rc_over_a,
+            "Ha": ha,
+            "q_uniform": q_uniform,
+            "centroid_uniform_fraction": centroid_uniform,
+            "q_exact": q_exact,
+            "flow_ratio": q_exact / q_uniform,
+            "flow_centroid_fraction": centroid,
+        }
 
     t0 = time.perf_counter()
     square = toroidal_solve(a_star, 1.0, cp.R_center_m, cp.B_center_T)
     optimum = toroidal_solve(a_star, beta_star, cp.R_center_m, cp.B_center_T)
     elapsed = time.perf_counter() - t0
-    print(f"  square: flow_ratio={square['flow_ratio']:.6f} centroid={square['flow_centroid_fraction']:+.4f}", flush=True)
-    print(f"  optimum: flow_ratio={optimum['flow_ratio']:.6f} centroid={optimum['flow_centroid_fraction']:+.4f}"
-          f" ({elapsed:.0f} s)", flush=True)
+    print(
+        f"  square: flow_ratio={square['flow_ratio']:.6f} centroid={square['flow_centroid_fraction']:+.4f}",
+        flush=True,
+    )
+    print(
+        f"  optimum: flow_ratio={optimum['flow_ratio']:.6f} centroid={optimum['flow_centroid_fraction']:+.4f}"
+        f" ({elapsed:.0f} s)",
+        flush=True,
+    )
     checkpoint.set_key(("case_p_correction",), {"square": square, "at_optimum": optimum, "time_s": elapsed})
 
 
@@ -584,13 +747,18 @@ def finalize() -> None:
 
     results = {
         "meta": {
-            "git_sha": _git_sha(), "jax_version": jax.__version__, "solvax_version": solvax.__version__,
-            "python_version": platform.python_version(), "host": platform.platform(),
-            "cells_explore": CELLS_EXPLORE, "cells_verify": CELLS_VERIFY,
-            "exits": EXITS, "stage_cost": ckpt.get("stage_cost", {}), "reduced_scope_note":
-                "V_min sweep 3 points, design-law 5+2 H values, validity map 5+1 gamma values "
-                "(stage_2_plan.txt's full counts are 5-6, 8+3, 7+2 respectively; reduced for this "
-                "sandbox's per-call time budget, not for scientific reasons).",
+            "git_sha": _git_sha(),
+            "jax_version": jax.__version__,
+            "solvax_version": solvax.__version__,
+            "python_version": platform.python_version(),
+            "host": platform.platform(),
+            "cells_explore": CELLS_EXPLORE,
+            "cells_verify": CELLS_VERIFY,
+            "exits": EXITS,
+            "stage_cost": ckpt.get("stage_cost", {}),
+            "reduced_scope_note": "V_min sweep 3 points, design-law 5+2 H values, validity map 5+1 gamma values "
+            "(stage_2_plan.txt's full counts are 5-6, 8+3, 7+2 respectively; reduced for this "
+            "sandbox's per-call time budget, not for scientific reasons).",
         },
         "inputs": cases.inputs_record(),
     }
@@ -598,10 +766,13 @@ def finalize() -> None:
         box = cases.case_p().box if tag == "P" else CASE_BUILDERS[tag]()
         for row in ckpt["pareto"][tag]:  # flags follow EXITS as they stand now, not as the run stored them
             row["validity"] = _validity_checks(box, row["u"], row["w"])
-        entry = {"name": key, "landscape": ckpt["landscape"][tag]["rows"],
-                  "landscape_time_s": ckpt["landscape"][tag]["time_s"],
-                  "W_monotone_decreasing_in_area": ckpt["landscape"][tag]["monotone_in_area"],
-                  "pareto": ckpt["pareto"][tag]}
+        entry = {
+            "name": key,
+            "landscape": ckpt["landscape"][tag]["rows"],
+            "landscape_time_s": ckpt["landscape"][tag]["time_s"],
+            "W_monotone_decreasing_in_area": ckpt["landscape"][tag]["monotone_in_area"],
+            "pareto": ckpt["pareto"][tag],
+        }
         if tag == "R_out":
             entry["demo_optimizer"] = ckpt["demo_optimizer"]["R_out"]
         results[key] = entry
@@ -610,10 +781,15 @@ def finalize() -> None:
         base = next(m for m in out["meshes"] if m["cells"] == CELLS_EXPLORE)
         return {**base, "meshes": out["meshes"], "spectral": out["spectral"], "gci": out.get("gci")}
 
-    results["design_law"] = {"rows": [design_row(ckpt["dlaw"][f"{H:.0f}"]) for H in DESIGN_LAW_H],
-                             "high_ha": [design_row(ckpt["dlaw"][f"{H:.0f}"]) for H in HIGH_H
-                        if f"{H:.0f}" in ckpt["dlaw"] and "failed" not in ckpt["dlaw"][f"{H:.0f}"]],
-                             "time_s": sum(m["wall_s"] for out in ckpt["dlaw"].values() for m in out.get("meshes", []))}
+    results["design_law"] = {
+        "rows": [design_row(ckpt["dlaw"][f"{H:.0f}"]) for H in DESIGN_LAW_H],
+        "high_ha": [
+            design_row(ckpt["dlaw"][f"{H:.0f}"])
+            for H in HIGH_H
+            if f"{H:.0f}" in ckpt["dlaw"] and "failed" not in ckpt["dlaw"][f"{H:.0f}"]
+        ],
+        "time_s": sum(m["wall_s"] for out in ckpt["dlaw"].values() for m in out.get("meshes", [])),
+    }
     results["verify"] = ckpt["verify"]
     results["tilt"] = ckpt["tilt"]
     results["tilt_law"] = [ckpt["tiltlaw"][f"{H:.0f}"] for H in TILT_LAW_H]
@@ -623,19 +799,33 @@ def finalize() -> None:
         validity_rows.extend(ckpt["validity_map"][f"gamma{g}"])
     for g in VALIDITY_REFINE_GAMMA:
         validity_rows.extend(ckpt["validity_map"][f"gamma{g}_refine"])
-    results["validity_map"] = {"rows": validity_rows,
-                               "time_s": sum(r.get("elapsed_s", 0) for r in validity_rows)}
+    results["validity_map"] = {
+        "rows": validity_rows,
+        "time_s": sum(r.get("elapsed_s", 0) for r in validity_rows),
+    }
 
-    ramp_rows = [r for ha in RAMP_HA for case in ("square", "beta_star")
-                 for r in ckpt["ramp_excess"][f"Ha{ha:.0f}_{case}"]]
-    results["ramp_excess"] = {"rows": ramp_rows, "summary": ramp_summary(ramp_rows),
-                              "time_s": sum(r["elapsed_s"] for r in ramp_rows)}
-    results["case_p_correction"] = {"square": ckpt["case_p_correction"]["square"],
-                                     "at_optimum": ckpt["case_p_correction"]["at_optimum"]}
+    ramp_rows = [
+        r
+        for ha in RAMP_HA
+        for case in ("square", "beta_star")
+        for r in ckpt["ramp_excess"][f"Ha{ha:.0f}_{case}"]
+    ]
+    results["ramp_excess"] = {
+        "rows": ramp_rows,
+        "summary": ramp_summary(ramp_rows),
+        "time_s": sum(r["elapsed_s"] for r in ramp_rows),
+    }
+    results["case_p_correction"] = {
+        "square": ckpt["case_p_correction"]["square"],
+        "at_optimum": ckpt["case_p_correction"]["at_optimum"],
+    }
     results["meta"]["total_time_s"] = (
         sum(results[k]["landscape_time_s"] for k in ("case_r_outboard", "case_r_inboard", "case_p"))
         + results["case_r_outboard"]["demo_optimizer"]["time_s"]
-        + sum(sum(r["time_s"] for r in results[k]["pareto"]) for k in ("case_r_outboard", "case_r_inboard", "case_p"))
+        + sum(
+            sum(r["time_s"] for r in results[k]["pareto"])
+            for k in ("case_r_outboard", "case_r_inboard", "case_p")
+        )
         + results["design_law"]["time_s"]
         + results["validity_map"]["time_s"]
         + results["ramp_excess"]["time_s"]
@@ -643,6 +833,7 @@ def finalize() -> None:
     )
 
     import json as _json
+
     out_path = OUT_DIR / "results.json"
     with out_path.open("w") as fh:
         _json.dump(results, fh, indent=2, default=lambda o: float(o) if hasattr(o, "__float__") else str(o))
@@ -710,9 +901,15 @@ def main():
     before, t0 = cache_stats(), time.perf_counter()
     run_stage(args.stage)
     after = cache_stats()
-    checkpoint.set_key(("stage_cost", args.stage), {  # R7: measured in the process that ran the stage
-        "wall_s": time.perf_counter() - t0, "meshes_built": after["meshes_built"] - before["meshes_built"],
-        "compiles": after["compiles"] - before["compiles"], "compile_s": after["compile_s"] - before["compile_s"]})
+    checkpoint.set_key(
+        ("stage_cost", args.stage),
+        {  # R7: measured in the process that ran the stage
+            "wall_s": time.perf_counter() - t0,
+            "meshes_built": after["meshes_built"] - before["meshes_built"],
+            "compiles": after["compiles"] - before["compiles"],
+            "compile_s": after["compile_s"] - before["compile_s"],
+        },
+    )
 
 
 if __name__ == "__main__":

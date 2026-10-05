@@ -38,8 +38,14 @@ def rect(beta, ha, cells=48, field=None, nx=1, length=1.0):
     side = min(1.0 / np.sqrt(ha), 0.25 * beta)
     z = wall_resolving_faces(cells, -beta, beta, layer_thickness=side, cells_in_layer=6, max_ratio=None)
     g = Grid(uniform_faces(nx, 0.0, length), y, z)
-    return ChannelProblem(grid=g, conditions=(BoundaryCondition(PERIODIC), WALL, WALL), conductivity=1.0,
-                          magnetic_field=(0.0, ha, 0.0) if field is None else field(g), forcing=(1.0, 0.0, 0.0), dt=1.0)
+    return ChannelProblem(
+        grid=g,
+        conditions=(BoundaryCondition(PERIODIC), WALL, WALL),
+        conductivity=1.0,
+        magnetic_field=(0.0, ha, 0.0) if field is None else field(g),
+        forcing=(1.0, 0.0, 0.0),
+        dt=1.0,
+    )
 
 
 # 1. rectangle + traced field scale, value and gradient
@@ -50,7 +56,9 @@ v = float(q(0.5))
 cold = time.perf_counter() - t
 g = float(jax.jit(jax.grad(lambda s: flow(p, s)))(0.5))
 fd = (float(q(0.5 + 1e-4)) - float(q(0.5 - 1e-4))) / 2e-4
-print(f"1. rect + field_scale: q {v:.6e} (cold {cold:.1f} s); grad {g:.8e} vs fd {fd:.8e} rel {abs(g-fd)/abs(fd):.1e}")
+print(
+    f"1. rect + field_scale: q {v:.6e} (cold {cold:.1f} s); grad {g:.8e} vs fd {fd:.8e} rel {abs(g - fd) / abs(fd):.1e}"
+)
 
 # 2. fixed-area optimum at H = 100 (compare with the branch: 62.35 / 59.86 / 65.32)
 vals = []
@@ -92,4 +100,6 @@ p3 = rect(1.0, 50.0 * 1.1, cells=24, field=modulated, nx=16, length=25.0)
 sol = solve_steady_state(p3, forcing=(1.0, 0.0, 0.0), linear_max_restarts=600)
 _, dy, dz = p3.grid.widths
 g3 = float(np.sum(np.asarray(dy)[:, None] * np.asarray(dz)[None, :] * np.asarray(sol.velocity[0].data[0])))
-print(f"4. 3-D modulated duct: G {g3:.6e}, residual {float(sol.residual_norm):.1e}, {time.perf_counter() - t:.0f} s")
+print(
+    f"4. 3-D modulated duct: G {g3:.6e}, residual {float(sol.residual_norm):.1e}, {time.perf_counter() - t:.0f} s"
+)

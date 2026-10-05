@@ -51,7 +51,11 @@ def toroidal_field(g, rc):
     b_z = -np.diff(corners, axis=0) / g.widths[1][:, None]  # on z faces: (ny, nz+1)
     nx = g.shape[0]
     faces = (np.zeros(g.face_shape(0)), np.repeat(b_y[None], nx, axis=0), np.repeat(b_z[None], nx, axis=0))
-    centres = (np.zeros(g.shape), 0.5 * (faces[1][:, :-1] + faces[1][:, 1:]), 0.5 * (faces[2][:, :, :-1] + faces[2][:, :, 1:]))
+    centres = (
+        np.zeros(g.shape),
+        0.5 * (faces[1][:, :-1] + faces[1][:, 1:]),
+        0.5 * (faces[2][:, :, :-1] + faces[2][:, :, 1:]),
+    )
     return ImposedField(g, centres, faces)
 
 
@@ -83,7 +87,10 @@ for rc in (500.0, 50.0, 10.0):
     q, c, r, t, problem = solve(lambda g, rc=rc: toroidal_field(g, rc))
     field = problem.magnetic_field
     div = divergence(
-        tuple(Field(np.asarray(f), tuple(FACE if i == ax else CENTER for i in range(3)), problem.grid) for ax, f in enumerate(field.faces))
+        tuple(
+            Field(np.asarray(f), tuple(FACE if i == ax else CENTER for i in range(3)), problem.grid)
+            for ax, f in enumerate(field.faces)
+        )
     )
     spread = 2.0 * BETA / rc
     print(

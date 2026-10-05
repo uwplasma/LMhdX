@@ -17,4 +17,7 @@ for design, beta in (("optimum", 0.1497), ("square", 1.0)):
     for cells, layer in ((32, 4), (48, 6), (72, 9), (96, 12)):
         base = tilted_flow(beta, ha, 0.0, cells, layer)
         ratios = [base / tilted_flow(beta, ha, tilt, cells, layer) for tilt in (0.1, 0.2)]
-        print(f"{design:8s} Ha {ha:6.1f} {cells}/{layer}: W(0.1)/W0 = {ratios[0]:.5f}  W(0.2)/W0 = {ratios[1]:.5f}", flush=True)
+        print(
+            f"{design:8s} Ha {ha:6.1f} {cells}/{layer}: W(0.1)/W0 = {ratios[0]:.5f}  W(0.2)/W0 = {ratios[1]:.5f}",
+            flush=True,
+        )
