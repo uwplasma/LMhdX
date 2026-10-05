@@ -469,8 +469,8 @@ $70\times24\times24$ builds in 15.1–15.5 s, solves first in 45.8–51.6 s and 
 in 41.5–44.1 s (1,444 iterations, 29 ms each). On one A4000 (JAX 0.10.2) the
 warm solve takes 6.3 s at Ha 100 ($60\times32^2$), 21 s at Ha 400
 ($60\times48^2$), 91 s at Ha 800 ($60\times64^2$) and 183 s at Ha 1600
-($60\times96^2$). The iteration count, 774 to 4,846, is the cost; the coarse
-space of plan step 2b.4 is aimed at it.
+($60\times96^2$). The iteration count, 774 to 4,846, is the cost; plan step 2b.4's global
+damping rate cuts it 1.9–3.2× (below).
 
 ### The ANL fringe on the three-dimensional core (1.9d)
 
@@ -625,7 +625,10 @@ result = CoreFlow(x, nz=20, ny=20).solve(field, c_t=c_t, c_s=c_s)
 - At finite Ha, the core-flow model with the layers' conductance at the local
   field agrees with the 3-D core within 1 % at $c=0.1$, Ha $2\times10^4$, and
   within 5 % at $c=0.02$.
-- Restating rows 7 and 24 as that comparison is the plan owner's decision.
+- **Final (owner, 2026-10-04).** Row 24 is met against the layer-corrected
+  core-flow model (within 1 % at $c=0.1$, Ha $2\times10^4$, through
+  `lmhdx.coreflow.layer_conductances`). Row 7 is closed as not reachable on
+  the three-dimensional core: a physical model difference, not a waiver.
 
 ### The varying-field preconditioner (2b.4)
 
@@ -840,6 +843,14 @@ out of memory on the shared card.
 Nothing is adopted. 2b.4's exit gate (iterations within 3× of the uniform
 counts) is restated as **not met by any preconditioner measured**. Today's
 global rate stays.
+
+#### Status: done (owner, 2026-10-04)
+
+The owner restated 2b.4's exit to at least 1.9× fewer CG iterations. The
+global rate meets it on the ANL duct: 3.2×, 2.8×, 2.1× and 1.9× at Ha 100,
+400, 1600 and 3200 (table above). The Schur inner solve and the station
+field lines stay rejected. A coupled three-dimensional multigrid
+preconditioner is a separate feasibility study, not part of 2b.4.
 
 ## Derivative policy
 

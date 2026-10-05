@@ -149,8 +149,9 @@ python examples/fringe_duct_example.py
   upstream gradient is the fully developed one; the pressure drop across the
   fringe and its derivative with respect to the field strength are outputs.
 - Research stage: only the inertialess (Stokes-limit) flow is solved. On the ANL
-  case the excess drop falls as Ha^-0.35 from Ha 100 to 3,200 and extrapolates
-  6–11 % below the core-flow model's; the 1 % gate needs Ha ≥ 10⁴. The
+  case the excess drop agrees within 1 % with the core-flow model carrying the
+  layers' conductance (`coreflow.layer_conductances`, c 0.1, Ha 2×10⁴);
+  TM-228's uncorrected value is the Ha → ∞ limit, out of reach in 3-D. The
   [fringe tutorial](https://lmhdx.readthedocs.io/en/latest/tutorials/fringing.html)
   walks through it.
 
