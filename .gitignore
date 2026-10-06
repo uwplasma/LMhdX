@@ -21,8 +21,5 @@ docs/_static/generated/*.pdf
 .venv/
 uv.lock
 
-# Local session notes and cluster scripts (not part of the package)
-stage_*_plan.txt
-scripts/perlmutter/
-examples/scratch/pbli_hartmann_from_scratch.py
+# Local copies of copyrighted papers
 paper_references/
