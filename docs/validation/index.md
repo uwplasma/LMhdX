@@ -58,75 +58,59 @@ matmul precision; no ratio is quoted from them.
 ## Smolentsev et al. 2015 Table I on the staggered core (plan step 1.13)
 
 Flow rate $\tilde Q=\int_{-1}^{1}\int_{-1}^{1}\tilde U\,dy\,dz$ for unit
-$-dP/dx$ with half-width, density, viscosity and conductivity one, which is the
-normalisation of `lmx.duct_problem`; $\tilde Q$ is four times the mean velocity
-the steady tests compare. `wall_conductance` in `duct_problem` sets the two
-walls normal to the field, so A2 (Hartmann walls $c=0.01$, insulating side
-walls) is `duct_problem(..., wall_conductance=0.01)`. The reference is Table I's
-analytic column, which has four digits: its rounding is $6\times10^{-5}$ to
-$3.6\times10^{-4}$ relative, depending on the row.
+$-dP/dx$ with half-width, density, viscosity and conductivity one, the
+normalisation of `lmhdx.core3d.duct_problem`. A1 is Shercliff's insulating
+duct; A2 is Hunt's duct with Hartmann walls of conductance ratio $c=0.01$ and
+insulating side walls. The reference is Table I's analytic column, which ships
+with the package (`lmhdx/data/benchmarks/references/samper-table-i.toml`). It
+has four digits, so its rounding is $6.5\times10^{-5}$ to $3.6\times10^{-4}$
+relative, depending on the row.
 
-All runs are float64 at the default tolerance $10^{-9}$, on JAX 0.6.2 (the CI
-floor stack). Meshes are `Ny:layer_y:Nz:layer_z`, built with the fitted
-geometric `wall_resolving_faces`: `layer` cells inside $1/Ha$ along the field
-($y$) and inside $1/\sqrt{Ha}$ across it. Each series scales all four numbers
-by 1.5, so the three meshes are one mapping at three spacings. The order is the
-observed order of the three flow rates, and "Richardson" is the extrapolated
-flow rate relative to the analytic one.
+All runs are float64 at the default tolerance $10^{-9}$ on the floor stack
+(Python 3.10, JAX 0.6.2, SOLVAX 0.19.0). Meshes are `Ny:layer_y:Nz:layer_z`,
+built with the fitted geometric `wall_resolving_faces`: `layer` cells inside
+$1/Ha$ along the field ($y$) and inside $1/\sqrt{Ha}$ across it. Each series
+scales all four numbers by 1.5, so the three meshes are one mapping at three
+spacings. "Order" is the observed order of the three flow rates, and
+"Richardson" is the extrapolated flow rate relative to the analytic one.
 
-| Row | Ha | Meshes | Relative error, coarse / medium / fine | Order | Richardson | CG iterations | Verdict |
-|---|---|---|---|---|---|---|---|
-| A1 | 500 | 32:4:32:4 / 48:6:48:6 / 72:9:72:9 | +2.20 % / +0.98 % / +0.43 % | 2.00 | $-1.5\times10^{-5}$ | 49 / 62 / 66 | gated |
-| A2 | 500 | 32:4:32:4 / 48:6:48:6 / 72:9:72:9 | +0.77 % / +0.36 % / +0.18 % | 1.96 | $+2.2\times10^{-4}$ | 53 / 69 / 79 | gated |
-| A1 | 5,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +0.91 % / +0.41 % / +0.22 % | 2.44 | $+1.1\times10^{-3}$ | 124 / 180 / 307 | reported |
-| A2 | 5,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +0.74 % / +0.34 % / +0.16 % | 2.01 | $+2.0\times10^{-4}$ | 301 / 370 / 432 | reported |
-| A1 | 10,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +1.04 % / +0.47 % / +0.23 % | 2.16 | $+6.3\times10^{-4}$ | 132 / 210 / 426 | reported |
-| A2 | 10,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +1.03 % / +0.46 % / +0.20 % | 1.88 | $-3.5\times10^{-4}$ | 393 / 574 / 704 | reported |
-| A1 | 15,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +1.10 % / +0.49 % / −0.65 % | none | none | 147 / 277 / 522 | **not converging** |
-| A2 | 15,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +1.25 % / +0.56 % / +0.24 % | 1.90 | $-3.3\times10^{-4}$ | 511 / 784 / 1,006 | reported |
+| Row | Ha | Meshes | Relative error, coarse / medium / fine | Order | Richardson |
+|---|---|---|---|---|---|
+| A1 | 500 | 32:4:32:4 / 48:6:48:6 / 72:9:72:9 | +2.20 % / +0.98 % / +0.43 % | 2.00 | $-1.5\times10^{-5}$ |
+| A2 | 500 | 32:4:32:4 / 48:6:48:6 / 72:9:72:9 | +0.77 % / +0.36 % / +0.18 % | 1.96 | $+2.2\times10^{-4}$ |
+| A1 | 5,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +0.91 % / +0.41 % / +0.18 % | 2.00 | $+1.4\times10^{-5}$ |
+| A2 | 5,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +0.74 % / +0.34 % / +0.16 % | 2.01 | $+2.0\times10^{-4}$ |
+| A1 | 10,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +1.04 % / +0.47 % / +0.22 % | 2.00 | $+1.4\times10^{-4}$ |
+| A2 | 10,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +1.03 % / +0.46 % / +0.21 % | 2.02 | $+8.7\times10^{-5}$ |
+| A1 | 15,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +1.10 % / +0.49 % / +0.22 % | 2.00 | $-1.5\times10^{-5}$ |
+| A2 | 15,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +1.25 % / +0.55 % / +0.25 % | 2.02 | $+4.8\times10^{-5}$ |
 
-**Gated.** `tests/test_table_i.py` (channel shard) solves both Ha 500 rows on
-their three meshes and requires a monotone error, an observed order between 1.8
-and 2.2, and a Richardson value within $10^{-3}$ of Table I (validation row 27).
-Both measured Richardson values lie inside the table's own rounding. The error
-is in the Hartmann layer: for A1, refining only the field direction
-(96:12:48:6) gives +0.27 %, refining only the side direction (48:6:96:12)
-gives +0.95 %.
+**Gated, every row.** `tests/test_table_i.py` solves each row on its three
+meshes and requires a monotone error, an observed order between 1.8 and 2.2, and
+a Richardson value within validation row 27's tolerance of the analytic column:
+$10^{-3}$ up to Ha 5,000 and $5\times10^{-3}$ above. Every row meets
+$10^{-3}$, and five of the eight Richardson values lie inside the table's own
+rounding. A solve takes 7–10 s warm on a CPU. The Ha 500 rows run on pull
+requests (channel shard). The higher rows take 15–35 s each from a cold cache,
+so they are marked `slow` and run on every push to `main`.
 
-**Reported, not gated.** The Ha 5,000 and 10,000 rows fall monotonically at
-close to second order, but A1 at Ha 5,000 has not reached the asymptotic range
-(order 2.44), and its Richardson value is just outside row 27's $10^{-3}$. These
-rows cost 30–75 s per solve on a loaded laptop, too much for a pull-request
-shard. A2 at Ha 15,000 converges on this series, too.
+The error sits in the Hartmann layer. For A1 at Ha 500, refining only the field
+direction (96:12:48:6) gives +0.27 %, and refining only the side direction
+(48:6:96:12) gives +0.95 %. So the higher rows give the field direction
+twice the cells.
 
-**A1 at Ha 15,000 does not converge with refinement.** On the series above, the
-fine-mesh step moves the flow rate by 1.1 %, twice as far as the medium step
-did, and it moves it past the analytic value. Refining further along the field
-makes it worse: 128:16:32:4 gives +3.15 % and 128:16:64:8 gives +3.16 %, while
-64:8:32:4 gives +1.10 %. The evidence points to float64 conditioning of the
-fast-diagonal potential solve rather than to layer resolution:
-
-- On 128:16 the smallest cell is $6.3\times10^{-7}$ and the largest
-  along-field eigenvalue is $5.4\times10^{12}$.
-- The constant (Neumann null) mode's along-field eigenvalue comes out
-  $5.5\times10^{-6}$ instead of zero. On 64:8 it is $7\times10^{-11}$.
-- One direct solve leaves a relative residual of $5.3\times10^{-3}$. At Ha 500
-  on 48:6, the figure is $1.4\times10^{-7}$.
-- The core current is a $1/Ha$ cancellation between $u\times B$ and $\nabla\phi$,
-  so the potential error reaches the flow rate amplified.
-
-The pressure solve is protected by the double projection in `steady_residual`,
-but the potential solve has no such correction. Two float64 refinement sweeps of
-the direct solve leave the 64:8:32:4 results unchanged (A1 +1.1003 %, A2
-+1.2526 %), so the coarse-mesh error is discretisation. The same sweeps were not
-completed on the fine meshes. Why A2 converges at the same Hartmann number while
-A1 does not has not been established. At tolerance $10^{-11}$, the A1
-128:16:64:8 solve does not converge at all.
-
-The confirming run, two refinement sweeps on 128:16:64:8, was not finished.
-The fix is plan step 2b.3: refine the potential solve against the exact face
-stencil. Once it lands, re-measure A1 at Ha 10,000 and 15,000 and gate the
-remaining rows. The A1 Ha 15,000 row of validation row 27 stays open until then.
+**A1 at Ha 15,000 needs the singular mode held at zero.** The potential's
+fast-diagonal solve is singular along each Neumann axis, and the constant mode's
+eigenvalue there is zero only in exact arithmetic. Computed by `eigh`, it carries
+the round-off of the largest eigenvalue: on 144:18 at Ha 15,000 the largest is
+$7.3\times10^{12}$ and the null one comes out $7.7\times10^{-5}$. The core
+current is a $1/Ha$ cancellation between $u\times B$ and $\nabla\phi$, and it
+amplifies the resulting potential error into the flow rate. Since #183, `lmhdx.poisson` sets that eigenvalue to exactly zero.
+Restoring the computed one reproduces the earlier failure: A1 at Ha 15,000 reads
+−0.65 % on 144:18:72:9 (against +0.22 %) and +3.16 % on 128:16:64:8 (against
++0.27 %). A2 at Ha 15,000 moves only from +0.247 % to +0.242 % without the
+fix. Its conducting walls take the thin-wall factorization, and why that route
+is insensitive has not been established.
 
 ## Test gates
 
