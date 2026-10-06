@@ -53,3 +53,12 @@ status = "research-stage"
 runtime = "accelerator-optional"
 outputs = ["vorticity poster", "energy trace", "MP4 when FFmpeg is available", "diagnostics"]
 docs = "docs/tutorials/q2d.md"
+
+[[example]]
+id = "duct-design-law"
+path = "examples/duct_design_law.py"
+command = "python examples/duct_design_law.py"
+status = "research-stage"
+runtime = "portable"
+outputs = ["design-law table", "one blanket-duct optimum", "diagnostics"]
+docs = "docs/tutorials/duct_design_law.md"
