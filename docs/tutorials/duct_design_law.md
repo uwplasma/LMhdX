@@ -37,7 +37,7 @@ H    10: beta* 0.53471, Ha*    13.7, s* 1.9774, 8.9% below the square
 H    30: beta* 0.27147, Ha*    57.6, s* 2.0599, 26.3% below the square
 H   100: beta* 0.12337, Ha*   284.7, s* 2.0816, 46.1% below the square
 H   300: beta* 0.05958, Ha*  1229.0, s* 2.0888, 61.1% below the square
-Blanket duct: 6 stations at 0.465-0.497 T, area 2.40 cm^2...
+Blanket duct: 6 stations at 0.465-0.497 T, area 2.40 cm^2
 design: beta* 0.14851, a 20.10 mm, b 2.99 mm, W* 4.1495e-05 W, 41.7% below the square
 Wrote artifacts/examples/duct_design_law/duct_design_law_summary.json and artifacts/examples/duct_design_law/duct_design_law.png
 ```
