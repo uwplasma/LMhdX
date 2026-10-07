@@ -28,6 +28,18 @@ Core references used by the implemented models and validation contracts include:
 - S. Smolentsev, R. Moreau, L. Bühler, and C. Mistrangelo, “MHD thermofluid
   issues of liquid-metal blankets,” *Fusion Engineering and Design*, 2010,
   [doi:10.1016/j.fusengdes.2010.02.038](https://doi.org/10.1016/j.fusengdes.2010.02.038).
+- S. Smolentsev, “Physical background, computations and practical issues of
+  the magnetohydrodynamic pressure drop in a fusion liquid metal blanket,”
+  *Fluids* 6, 2021, 110,
+  [doi:10.3390/fluids6030110](https://doi.org/10.3390/fluids6030110) — the
+  thin-layer friction law of an insulated rectangular duct behind the duct
+  design law.
+- R. Nishio, M. Kondo, T. Tanaka, and N. Oono-Hori, “Experimental and analytical
+  investigations to reduce MHD pressure drop for liquid LiPb fusion blanket
+  systems,” *Nuclear Materials and Energy* 44, 2025, 101965,
+  [doi:10.1016/j.nme.2025.101965](https://doi.org/10.1016/j.nme.2025.101965) —
+  the fixed-area optimum aspect ratio of an insulated duct, before the duct
+  design law stated it.
 - I. Celik et al., “Procedure for estimation and reporting of uncertainty due
   to discretization in CFD applications,” *Journal of Fluids Engineering* 130,
   2008, [doi:10.1115/1.2960953](https://doi.org/10.1115/1.2960953) — the

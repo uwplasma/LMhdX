@@ -36,6 +36,7 @@ linkcheck_ignore = [
     r"https://doi\.org/10\.1137/S0036142996314044",
     r"https://doi\.org/10\.1073/pnas\.2101784118",
     r"https://doi\.org/10\.1080/01495728408961817",
+    r"https://doi\.org/10\.3390/fluids6030110",
 ]
 
 myst_enable_extensions = [

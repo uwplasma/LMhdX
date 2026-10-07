@@ -62,6 +62,7 @@ getting_started/first_run
 :caption: Tutorials
 
 tutorials/fully_developed
+tutorials/duct_design_law
 tutorials/fringing
 tutorials/walls_and_fields
 tutorials/differentiation
