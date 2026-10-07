@@ -56,6 +56,63 @@ float64 target on an A4000 is withdrawn. The two CPU reports in
 `benchmarks/results` are from the uncontrolled 2026-09-07 run and record no
 matmul precision; no ratio is quoted from them.
 
+## Smolentsev et al. 2015 Table I on the staggered core (plan step 1.13)
+
+Flow rate $\tilde Q=\int_{-1}^{1}\int_{-1}^{1}\tilde U\,dy\,dz$ for unit
+$-dP/dx$ with half-width, density, viscosity and conductivity one, the
+normalisation of `lmhdx.core3d.duct_problem`. A1 is Shercliff's insulating
+duct; A2 is Hunt's duct with Hartmann walls of conductance ratio $c=0.01$ and
+insulating side walls. The reference is Table I's analytic column, which ships
+with the package (`lmhdx/data/benchmarks/references/samper-table-i.toml`). It
+has four digits, so its rounding is $6.5\times10^{-5}$ to $3.6\times10^{-4}$
+relative, depending on the row.
+
+All runs are float64 at the default tolerance $10^{-9}$ on the floor stack
+(Python 3.10, JAX 0.6.2, SOLVAX 0.19.0). Meshes are `Ny:layer_y:Nz:layer_z`,
+built with the fitted geometric `wall_resolving_faces`: `layer` cells inside
+$1/Ha$ along the field ($y$) and inside $1/\sqrt{Ha}$ across it. Each series
+scales all four numbers by 1.5, so the three meshes are one mapping at three
+spacings. "Order" is the observed order of the three flow rates, and
+"Richardson" is the extrapolated flow rate relative to the analytic one.
+
+| Row | Ha | Meshes | Relative error, coarse / medium / fine | Order | Richardson |
+|---|---|---|---|---|---|
+| A1 | 500 | 32:4:32:4 / 48:6:48:6 / 72:9:72:9 | +2.20 % / +0.98 % / +0.43 % | 2.00 | $-1.5\times10^{-5}$ |
+| A2 | 500 | 32:4:32:4 / 48:6:48:6 / 72:9:72:9 | +0.77 % / +0.36 % / +0.18 % | 1.96 | $+2.2\times10^{-4}$ |
+| A1 | 5,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +0.91 % / +0.41 % / +0.18 % | 2.00 | $+1.4\times10^{-5}$ |
+| A2 | 5,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +0.74 % / +0.34 % / +0.16 % | 2.01 | $+2.0\times10^{-4}$ |
+| A1 | 10,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +1.04 % / +0.47 % / +0.22 % | 2.00 | $+1.4\times10^{-4}$ |
+| A2 | 10,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +1.03 % / +0.46 % / +0.21 % | 2.02 | $+8.7\times10^{-5}$ |
+| A1 | 15,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +1.10 % / +0.49 % / +0.22 % | 2.00 | $-1.5\times10^{-5}$ |
+| A2 | 15,000 | 64:8:32:4 / 96:12:48:6 / 144:18:72:9 | +1.25 % / +0.55 % / +0.25 % | 2.02 | $+4.8\times10^{-5}$ |
+
+**Gated, every row.** `tests/test_table_i.py` solves each row on its three
+meshes and requires a monotone error, an observed order between 1.8 and 2.2, and
+a Richardson value within validation row 27's tolerance of the analytic column:
+$10^{-3}$ up to Ha 5,000 and $5\times10^{-3}$ above. Every row meets
+$10^{-3}$, and five of the eight Richardson values lie inside the table's own
+rounding. A solve takes 7–10 s warm on a CPU. The Ha 500 rows run on pull
+requests (channel shard). The higher rows take 15–35 s each from a cold cache,
+so they are marked `slow` and run on every push to `main`.
+
+The error sits in the Hartmann layer. For A1 at Ha 500, refining only the field
+direction (96:12:48:6) gives +0.27 %, and refining only the side direction
+(48:6:96:12) gives +0.95 %. So the higher rows give the field direction
+twice the cells.
+
+**A1 at Ha 15,000 needs the singular mode held at zero.** The potential's
+fast-diagonal solve is singular along each Neumann axis, and the constant mode's
+eigenvalue there is zero only in exact arithmetic. Computed by `eigh`, it carries
+the round-off of the largest eigenvalue: on 144:18 at Ha 15,000 the largest is
+$7.3\times10^{12}$ and the null one comes out $7.7\times10^{-5}$. The core
+current is a $1/Ha$ cancellation between $u\times B$ and $\nabla\phi$, and it
+amplifies the resulting potential error into the flow rate. Since #183, `lmhdx.poisson` sets that eigenvalue to exactly zero.
+Restoring the computed one reproduces the earlier failure: A1 at Ha 15,000 reads
+−0.65 % on 144:18:72:9 (against +0.22 %) and +3.16 % on 128:16:64:8 (against
++0.27 %). A2 at Ha 15,000 moves only from +0.247 % to +0.242 % without the
+fix. Its conducting walls take the thin-wall factorization, and why that route
+is insensitive has not been established.
+
 ## Test gates
 
 The portable suite includes analytical, manufactured, regression, physics, and

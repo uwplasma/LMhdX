@@ -40,7 +40,7 @@ _TEST_SHARDS = {
         "tests/test_em.py",
         "tests/test_momentum_placement_oracle.py",
     ),
-    "channel": ("tests/test_core3d.py", "tests/test_pipe.py", "tests/test_axial.py"),
+    "channel": ("tests/test_core3d.py", "tests/test_pipe.py", "tests/test_axial.py", "tests/test_table_i.py"),
     "plane": (
         *(
             f"tests/test_core3d.py::{name}"
