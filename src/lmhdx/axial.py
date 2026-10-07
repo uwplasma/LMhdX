@@ -203,6 +203,7 @@ def fringe_duct(
     flow_rate: float = 4.0,
     solenoidal: bool = False,
     advection: str = "off",
+    growth: float = 1.1,
     **controls,
 ) -> ChannelProblem:
     """The ANL fringe (TM-228) in a square duct with an inlet and an outlet.
@@ -214,7 +215,9 @@ def fringe_duct(
     divergence free. The conductance applies to all four walls, and the default
     flow rate is a unit mean velocity; half-width, density, viscosity and
     conductivity being one, the Reynolds number is the mean velocity,
-    ``flow_rate / 4``, and ``N = Ha^2 / Re``.
+    ``flow_rate / 4``, and ``N = Ha^2 / Re``. ``growth`` is the buffer cells'
+    growth per cell (:func:`axial_faces`); with transport keep it at 1 so the
+    buffers stay at ``spacing`` (see :func:`solve_open_duct`).
     """
     base = duct_problem(
         hartmann=hartmann, cells=cells, wall_conductance=wall_conductance, cells_in_layer=cells_in_layer
@@ -225,6 +228,7 @@ def fringe_duct(
         half_length + downstream,
         (-half_length - min(half_length, upstream), half_length),
         spacing,
+        growth,
     )
     grid = Grid(faces, base.grid.y_faces, base.grid.z_faces)
     field = fringe_field(grid, half_length=half_length, strength=hartmann, solenoidal=solenoidal)
@@ -248,8 +252,9 @@ def solve_open_duct(
     max_iterations: int = 36_000,
     continuation: tuple[float, ...] = (1.0,),
     max_newton_steps: int = 12,
-    inner_tolerance: float = 1.0e-2,
+    inner_tolerance: float = 1.0e-1,
     inner_iterations: int = 4_000,
+    krylov_dimension: int = 120,
 ) -> OpenDuctSolution:
     """Solve an inflow-outflow duct; differentiable in ``field_scale``.
 
@@ -263,8 +268,15 @@ def solve_open_duct(
     ``continuation`` lists the fractions of the flow rate solved in turn, ending
     at 1; each Newton update is a :func:`solvax.gcrot` solve preconditioned by
     the Stokes-limit CG run to ``inner_tolerance`` (at most
-    ``inner_iterations``), and ``iterations`` then counts the outer Krylov
-    iterations of all Newton steps. The root is certified at ``tolerance``.
+    ``inner_iterations``), restarted every ``krylov_dimension`` outer
+    iterations, at most 3,600 per update. ``iterations`` then counts the outer
+    Krylov iterations of all Newton steps. The root is certified at ``tolerance``.
+
+    Central transport needs the axial cells to keep the cell Reynolds number
+    ``U dx / nu`` small: with :func:`fringe_duct`'s default buffer growth the
+    downstream cells reach ``8 * spacing`` (cell Reynolds number 66 at Re 33),
+    and at Ha 100 the Newton iteration stalls between Re 31 and 33; with
+    ``growth=1.0`` it converges (plan 1.9d).
     """
     axis = problem.open_axis
     if axis != 0:
@@ -305,6 +317,7 @@ def solve_open_duct(
             max_steps=max_newton_steps,
             inner_tolerance=inner_tolerance,
             inner_iterations=inner_iterations,
+            cycle=krylov_dimension,
         )
     terms = momentum_terms(
         velocity, problem, factorization, forcing=zero, field_scale=field_scale, inflow=1.0
@@ -362,6 +375,7 @@ def _newton_root(
     max_steps,
     inner_tolerance,
     inner_iterations,
+    cycle,
 ):
     """Newton from the Stokes-limit ``velocity`` along the flow-rate ``continuation``; see the module.
 
@@ -402,7 +416,9 @@ def _newton_root(
         return weights * preconditioner(r / weights)
 
     def krylov(matvec, target, rtol, precond=preconditioner):
-        result = solvax.gcrot(matvec, target, precond=precond, m=30, k=10, rtol=rtol, max_restarts=30)
+        result = solvax.gcrot(
+            matvec, target, precond=precond, m=cycle, k=10, rtol=rtol, max_restarts=max(1, 3_600 // cycle)
+        )
         return result.x, result.iterations, result.converged & jnp.isfinite(result.residual_norm)
 
     def newton(function, guess, fraction):
