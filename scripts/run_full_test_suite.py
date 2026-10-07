@@ -96,6 +96,7 @@ _CHANGE_TEST_NAMES = {
     "grid": "grid ops core3d timeloop steady pipe axial",
     "ops": "ops em core3d timeloop steady pipe axial",
     "poisson": "poisson core3d timeloop steady pipe axial",
+    "pipe": "pipe poisson axial em",
     "io": "io benchmarks physics example_runner config",
     "q2d": "physics q2d_identities example_runner",
 }

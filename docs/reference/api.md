@@ -77,6 +77,23 @@ restart, progress, logging, and timing hooks in their owning modules.
    :members:
 ```
 
+## Fast-diagonal Poisson and Helmholtz solvers
+
+```{eval-rst}
+.. automodule:: lmhdx.poisson
+   :members:
+   :exclude-members: PipeProblem, pipe_grid, pipe_problem, solve_pipe
+```
+
+## Fully developed pipe flow
+
+The pipe names remain importable from `lmhdx.poisson`, where they lived in 1.9.
+
+```{eval-rst}
+.. automodule:: lmhdx.pipe
+   :members:
+```
+
 ## Quasi-two-dimensional flow
 
 ```{eval-rst}

@@ -610,11 +610,11 @@ def fringe_pipe(
     ``field`` is a callable of the axial position (:func:`monotone_interpolant` of
     a table); the axial mesh has ``spacing`` over ``core`` and grows into the
     buffers (:func:`axial_faces`). The radial mesh resolves the ``1/Ha`` layer as
-    :func:`lmhdx.poisson.pipe_grid` does. The inlet profile is LMhdX's fully developed pipe
-    (:func:`lmhdx.poisson.solve_pipe`) at the inlet field, scaled to ``flow_rate`` (a
+    :func:`lmhdx.pipe.pipe_grid` does. The inlet profile is LMhdX's fully developed pipe
+    (:func:`lmhdx.pipe.solve_pipe`) at the inlet field, scaled to ``flow_rate`` (a
     unit mean velocity by default).
     """
-    from .poisson import PipeProblem, pipe_grid, solve_pipe
+    from .pipe import PipeProblem, pipe_grid, solve_pipe
 
     section = pipe_grid(radial, azimuthal, hartmann, cells_in_layer=cells_in_layer)
     grid = Grid(

@@ -6,7 +6,7 @@ import pytest
 
 from lmhdx.grid import CENTER, FACE, Field, Grid, uniform_faces
 from lmhdx.ops import divergence
-from lmhdx.poisson import (
+from lmhdx.pipe import (
     PipeProblem,
     _face_currents,
     _potential,
@@ -140,7 +140,7 @@ def test_the_conducting_pipe_converges_to_the_reference():
 def test_the_pipe_force_is_minus_the_adjoint_of_its_electromotive_force():
     """``<u, F(J)> = -<J, E(u)>`` for currents that vanish on the wall: the force does the work the currents dissipate."""
     from lmhdx.ops import cell_inner_product, face_inner_product
-    from lmhdx.poisson import _WALL, _WRAP, _axial_force, _face_emf
+    from lmhdx.pipe import _WALL, _WRAP, _axial_force, _face_emf
 
     problem = pipe_problem(hartmann=7.0, radial=10, azimuthal=12)
     grid = problem.grid
@@ -168,7 +168,7 @@ def test_the_current_into_a_conducting_pipe_wall_exerts_no_force():
     sheet potential, as in ``core3d._wall_power``. An insulated wall is closed already: bit for bit.
     """
     from lmhdx.ops import cell_inner_product, face_average_adjoint, face_inner_product
-    from lmhdx.poisson import _WALL, _WRAP, _angles, _axial_force, _face_emf
+    from lmhdx.pipe import _WALL, _WRAP, _angles, _axial_force, _face_emf
 
     values = np.random.default_rng(5).standard_normal((24, 32, 1))
     for conductance in (0.1, 0.0):
