@@ -236,7 +236,7 @@ class ChannelProblem:
     One axis may be an inflow-outflow axis (plan D26): a condition of kind
     ``dirichlet`` with ``upper_kind="neumann"``, whose ``lower`` is the inlet
     profile of the velocity normal to it. :mod:`lmhdx.axial` builds and solves
-    such a duct, in the Stokes limit only.
+    such a duct, in the Stokes limit or, with advection, by Newton's method.
 
     ``wall_conductance`` closes an axis with thin conducting walls, the same on
     both. ``wall_layers`` resolves walls in cells instead: per axis
