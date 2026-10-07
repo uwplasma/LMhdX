@@ -32,7 +32,7 @@ FORCING = 1.0
 WRITE_PARAVIEW = True
 WRITE_CSV = True
 WRITE_NPZ = True
-WRITE_PLOTS = False
+WRITE_PLOTS = True
 
 
 # Set up the case. ``solve`` runs it on the staggered core, one compiled
@@ -61,7 +61,9 @@ case = replace(
 )
 
 # Run, validate against the analytical profile, and save reusable fields.
+print(f"Solving the Hartmann duct at Ha = {HARTMANN_NUMBER:g} on {NY} x {NZ} cells...", flush=True)
 solution = solve(case)
+print(f"  {solution.status}: steady residual {solution.residual:.2e}", flush=True)
 comparison = hartmann_validation(solution, HARTMANN_NUMBER)
 generated = write_solution_outputs(solution, case, OUTPUT_DIR)
 plots = (
@@ -90,4 +92,7 @@ summary = {
 }
 summary_path = OUTPUT_DIR / "hartmann_summary.json"
 summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-print(json.dumps(summary, indent=2))
+print(
+    f"Analytical profile error (velocity / scale): L2 {comparison.l2_error:.3e}, Linf {comparison.linf_error:.3e}"
+)
+print(f"Wrote {summary_path} and {sum(len(paths) for paths in generated.values()) + len(plots)} output files")

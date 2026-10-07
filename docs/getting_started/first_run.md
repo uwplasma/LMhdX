@@ -23,8 +23,8 @@ The command line uses the same schema:
 lmhdx examples/hartmann_case.toml
 ```
 
-LMhdX writes compact NPZ and JSON by default. VTK and plots are controlled by the
-case output settings. A steady command exits nonzero if its convergence gates
+By default a case writes NPZ, JSON, CSV profiles and VTK, and no plots; the
+case's `[output]` settings switch each one. A steady command exits nonzero if its convergence gates
 are not met.
 
 For an editable complete workflow, run:

@@ -47,7 +47,9 @@ problem = Q2DProblem(
 )
 
 # Run the same public solve entry point used by other LMhdX models.
+print(f"Evolving Q2D vorticity on {SHAPE[0]} x {SHAPE[1]} for {STEPS} steps...", flush=True)
 result = solve(problem)
+print(f"  {result.status}; rendering the poster and movie...", flush=True)
 frames = np.asarray(result.vorticity_history)
 limit = float(np.max(np.abs(frames)))
 energies = []
@@ -131,4 +133,7 @@ summary = {
 }
 summary_path = OUTPUT_DIR / "q2d_vortex_decay.json"
 summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-print(json.dumps(summary, indent=2))
+print(
+    f"Kinetic energy (nondimensional) {energies[0]:.4g} -> {energies[-1]:.4g} over t = {float(result.frame_times[-1]):.3g}"
+)
+print(f"Wrote {summary_path}, {poster_path}" + ("" if movie_path is None else f", {movie_path}"))
