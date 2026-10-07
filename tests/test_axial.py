@@ -212,6 +212,9 @@ def test_invalid_open_axes_are_refused():
         BoundaryCondition(DIRICHLET, upper_kind="outflow")
     with pytest.raises(ValueError, match="lower <= core"):
         axial_faces(0.0, 1.0, (0.5, 2.0), 0.1)
+    # Transport needs buffers at the core spacing (1.9d): growth 1 keeps every axial cell at it.
+    assert np.allclose(np.diff(axial_faces(-4.0, 3.0, (-1.0, 1.0), 0.5, growth=1.0)), 0.5)
+    assert np.allclose(np.diff(_small_fringe(growth=1.0).grid.faces[0]), 0.5)
 
 
 def test_newton_solves_the_inertial_fringe_balances_it_and_differentiates_it():
