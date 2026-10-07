@@ -143,19 +143,11 @@ for square_hartmann in SQUARE_HARTMANN:
     beta = best_aspect(lambda b: pressure_drop(b, 4.0, [square_hartmann], [1.0], **settings)[0], centre)
     optimum = pressure_drop(beta, 4.0, [square_hartmann], [1.0], **settings)[0]
     square = pressure_drop(1.0, 4.0, [square_hartmann], [1.0], **{**settings, "centre": 1.0})[0]
-    ha_star = square_hartmann / np.sqrt(beta)
-    law.append(
-        {
-            "H": square_hartmann,
-            "beta_star": beta,
-            "Ha_star": ha_star,
-            "s_star": beta * np.sqrt(ha_star),
-            "reduction": 1.0 - optimum / square,
-        }
-    )
+    ha = square_hartmann / np.sqrt(beta)
+    s, cut = beta * np.sqrt(ha), 1.0 - optimum / square
+    law.append(dict(H=square_hartmann, beta_star=beta, Ha_star=ha, s_star=s, reduction=cut))
     print(
-        f"H {square_hartmann:5.0f}: beta* {beta:.5f}, Ha* {ha_star:7.1f}, "
-        f"s* {law[-1]['s_star']:.4f}, {100 * law[-1]['reduction']:.1f}% below the square",
+        f"H {square_hartmann:5.0f}: beta* {beta:.5f}, Ha* {ha:7.1f}, s* {s:.4f}, {100 * cut:.1f}% below the square",
         flush=True,
     )
 
@@ -166,8 +158,7 @@ fields = list(FIRST_WALL_FIELD * FIRST_WALL_RADIUS / radii)
 lengths = [BLANKET_DEPTH / STATIONS] * STATIONS
 area = FLOW_RATE / MIN_VELOCITY
 print(
-    f"Blanket duct: {STATIONS} stations at {min(fields):.3f}-{max(fields):.3f} T, area {1e4 * area:.2f} cm^2...",
-    flush=True,
+    f"Blanket duct: {STATIONS} stations at {min(fields):.3f}-{max(fields):.3f} T, area {1e4 * area:.2f} cm^2"
 )
 mean_field = float(np.mean(fields))
 centre = law_guess(mean_field * np.sqrt(area / 4.0 * CONDUCTIVITY / VISCOSITY))
@@ -199,9 +190,7 @@ print(
 )
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 summary = {"mesh": {"cells": CELLS, "cells_in_layer": CELLS_IN_LAYER}, "design_law": law, "design": design}
-(OUTPUT_DIR / "duct_design_law_summary.json").write_text(
-    json.dumps(summary, indent=2) + "\n", encoding="utf-8"
-)
+(OUTPUT_DIR / "duct_design_law_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
 figure, axis = plt.subplots(figsize=(5.0, 3.5), constrained_layout=True)
 axis.semilogx(SQUARE_HARTMANN, [row["s_star"] for row in law], "o-", label="solved optimum")
 axis.axhline(2.13, ls="--", color="gray", label="thin-layer law 2.13")
