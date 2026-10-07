@@ -57,8 +57,10 @@ from .core3d import (
     project,
     zero_velocity,
 )
-from .grid import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid, uniform_faces
+from .core3d import velocity_condition, velocity_offset
+from .grid import CENTER, DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid, uniform_faces
 from .ops import face_electromotive_force
+from .poisson import assemble_staggered_axis_operator, fast_diagonal_helmholtz, free_slice
 from .steady import (
     _certified,
     _face_weights,
@@ -67,6 +69,7 @@ from .steady import (
     _preconditioner,
     _projection_solves,
     _stokes_limit_root,
+    _varying_field_rate,
     momentum_terms,
     solve_steady_state,
     steady_residual,
@@ -88,6 +91,8 @@ __all__ = [
 ]
 
 _INSULATING = BoundaryCondition(NEUMANN)
+_DEBUG = False
+_BUDGET = 900
 
 
 class OpenDuctSolution(NamedTuple):
@@ -250,6 +255,8 @@ def solve_open_duct(
     max_newton_steps: int = 12,
     inner_tolerance: float = 1.0e-2,
     inner_iterations: int = 4_000,
+    preconditioner: str = "stokes",
+    krylov_dimension: int = 30,
 ) -> OpenDuctSolution:
     """Solve an inflow-outflow duct; differentiable in ``field_scale``.
 
@@ -305,6 +312,8 @@ def solve_open_duct(
             max_steps=max_newton_steps,
             inner_tolerance=inner_tolerance,
             inner_iterations=inner_iterations,
+            method=preconditioner,
+            cycle=krylov_dimension,
         )
     terms = momentum_terms(
         velocity, problem, factorization, forcing=zero, field_scale=field_scale, inflow=1.0
@@ -349,6 +358,94 @@ def _stokes_inverse(stokes, factorization, precond, field_scale, tolerance, max_
     return apply
 
 
+def _axial_advection(problem: ChannelProblem, component: int, upwind: bool) -> np.ndarray:
+    """The one-dimensional ``d/dx`` at one component's free axial entries; zero inlet, zero-gradient outlet."""
+    grid, condition = problem.grid, velocity_condition(problem.conditions, 0)
+    faces = np.asarray(grid.faces[0])
+    if velocity_offset(component)[0] == CENTER:
+        positions = np.asarray(grid.centers[0])
+    else:
+        positions = faces[free_slice(grid, 0, velocity_offset(component)[0], condition)]
+    size = positions.size
+    # Ghost entries: the inlet value is zero at the inlet face, the outlet copies the last entry.
+    extended = np.concatenate(([faces[0]], positions, [2.0 * positions[-1] - positions[-2]]))
+    matrix = np.zeros((size, size + 2))
+    for row in range(size):
+        lower, upper = (row, row + 1) if upwind else (row, row + 2)
+        width = extended[upper] - extended[lower]
+        matrix[row, upper], matrix[row, lower] = 1.0 / width, -1.0 / width
+    matrix[:, -2] += matrix[:, -1]
+    return matrix[:, 1:-1]
+
+
+class _OseenStep:
+    """One projection step with the transport frozen at the mean speed: ``P r = Proj H^-1 tau r``.
+
+    ``H = (1 + tau rate) - tau nu Lap + tau U d/dx`` for every component, ``U`` the
+    inlet's mean axial speed. The cross-section separates as in
+    :func:`lmhdx.steady._isotropic_viscous` (same rate, same eigenbases); along the
+    open axis each cross-sectional mode keeps a dense inverse, which carries the
+    transport the Stokes step cannot see. ``U`` negated gives the step of the
+    transposed operator (the transport is skew in the face-volume product).
+    """
+
+    def __init__(
+        self, problem: ChannelProblem, pseudo_step: float, speed: float, upwind: bool, factor=1.0, local=False
+    ):
+        rate = factor * _varying_field_rate(problem) if isinstance(problem.magnetic_field, ImposedField) else (
+            float(problem.conductivity) * problem.peak_field_squared / float(problem.density)
+        )
+        conditions = tuple(velocity_condition(problem.conditions, axis) for axis in range(3))
+        coefficient = pseudo_step * float(problem.viscosity)
+        self.solves, self.inverses = [], []
+        joule = None
+        if local and isinstance(problem.magnetic_field, ImposedField):
+            squared = sum(np.square(c) for c in problem.magnetic_field.components)
+            joule = factor * float(problem.conductivity) / float(problem.density) * squared.max(axis=(1, 2))
+        for component in range(3):
+            offset = velocity_offset(component)
+            across = fast_diagonal_helmholtz(problem.grid, offset, conditions, coefficient=coefficient)
+            along = assemble_staggered_axis_operator(problem.grid, 0, offset, conditions[0])
+            transport = _axial_advection(problem, component, upwind)
+            line = -coefficient * along + pseudo_step * speed * transport
+            shifts = 1.0 - coefficient * np.add.outer(*across.values[1:]).reshape(-1)
+            if joule is None:
+                line = line + pseudo_step * rate * np.eye(line.shape[0])
+            else:
+                local_rate = joule
+                if offset[0] != CENTER:
+                    padded = np.concatenate((joule[:1], joule, joule[-1:]))
+                    faces = 0.5 * (padded[:-1] + padded[1:])
+                    local_rate = faces[free_slice(problem.grid, 0, offset[0], conditions[0])]
+                line = line + pseudo_step * np.diag(local_rate)
+            eye = np.eye(line.shape[0])
+            self.inverses.append(np.linalg.inv(shifts[:, None, None] * eye + line[None]))
+            self.solves.append(across)
+        self.problem, self.pseudo_step = problem, pseudo_step
+
+    def __call__(self, direction, factorization):
+        scaled = []
+        for component, field in enumerate(direction):
+            across = self.solves[component]
+            data = self.pseudo_step * field.data[across.slices]
+            for at in (1, 2):
+                scale = across.scales[at].reshape([-1 if p == at else 1 for p in range(3)])
+                data = _modal_product(data * scale, across.vectors[at].T, at)
+            lines = jnp.moveaxis(data, 0, -1)
+            flat = lines.reshape(-1, lines.shape[-1])
+            flat = jnp.einsum("lij,lj->li", jnp.asarray(self.inverses[component]), flat, precision="highest")
+            data = jnp.moveaxis(flat.reshape(lines.shape), -1, 0)
+            for at in (1, 2):
+                scale = across.scales[at].reshape([-1 if p == at else 1 for p in range(3)])
+                data = _modal_product(data, across.vectors[at], at) / scale
+            scaled.append(field.replace_data(jnp.zeros_like(field.data).at[across.slices].set(data)))
+        return project(tuple(scaled), self.problem, factorization)[0]
+
+
+def _modal_product(data, matrix, axis):
+    return jnp.moveaxis(jnp.tensordot(jnp.asarray(matrix, dtype=data.dtype), data, axes=([1], [axis])), 0, axis)
+
+
 def _newton_root(
     problem,
     stokes,
@@ -362,6 +459,8 @@ def _newton_root(
     max_steps,
     inner_tolerance,
     inner_iterations,
+    method="stokes",
+    cycle=30,
 ):
     """Newton from the Stokes-limit ``velocity`` along the flow-rate ``continuation``; see the module.
 
@@ -391,18 +490,58 @@ def _newton_root(
 
         return residual
 
-    def preconditioner(r):
-        kept = inside(r)
-        return ravel_pytree(inverse(unravel(kept)))[0] + (r - kept)
-
     weights = ravel_pytree(_face_weights(problem))[0]
+    if method == "stokes":
 
-    def transposed_preconditioner(r):
-        # The preconditioner is self-adjoint in the face-volume inner product W, so W M W^-1 is its transpose.
-        return weights * preconditioner(r / weights)
+        def preconditioner(r):
+            kept = inside(r)
+            return ravel_pytree(inverse(unravel(kept)))[0] + (r - kept)
 
-    def krylov(matvec, target, rtol, precond=preconditioner):
-        result = solvax.gcrot(matvec, target, precond=precond, m=30, k=10, rtol=rtol, max_restarts=30)
+        def transposed_preconditioner(r):
+            # Self-adjoint in the face-volume inner product W, so W M W^-1 is its transpose.
+            return weights * preconditioner(r / weights)
+
+    else:
+        profile = np.asarray(problem.conditions[0].lower)
+        area = problem.grid.face_areas(0)[0]
+        speed = float(np.sum(profile * area) / np.sum(area))
+        upwind = method != "oseen-central"
+        step = float(problem.dt)
+        options = dict(factor=0.1, local=True) if method == "transport" else {}
+        forward = _OseenStep(problem, step, speed, upwind, **options)
+        backward = _OseenStep(problem, step, -speed, upwind, **options)
+
+        def oseen(apply):
+            def precondition(r):
+                kept = inside(r)
+                return -ravel_pytree(apply(unravel(kept), factorization))[0] + (r - kept)
+
+            return precondition
+
+        preconditioner = oseen(forward)
+        transposed = oseen(backward)
+        if method == "oseen-stokes":
+            oseen_only = preconditioner
+
+            def stokes_only(r):
+                kept = inside(r)
+                return ravel_pytree(inverse(unravel(kept)))[0] + (r - kept)
+
+        def transposed_preconditioner(r):
+            return weights * transposed(r / weights)
+
+    def krylov(matvec, target, rtol, precond=None):
+        if precond is None:
+            precond = preconditioner
+            if method == "oseen-stokes":
+
+                def precond(r):
+                    first = oseen_only(r)
+                    return first + stokes_only(r - matvec(first))
+
+        result = solvax.gcrot(
+            matvec, target, precond=precond, m=cycle, k=10, rtol=rtol, max_restarts=max(1, _BUDGET // cycle)
+        )
         return result.x, result.iterations, result.converged & jnp.isfinite(result.residual_norm)
 
     def newton(function, guess, fraction):
@@ -413,7 +552,22 @@ def _newton_root(
             w, steps, total, _ = carry
             value, linear = jax.linearize(function, w)
             step, count, _ = krylov(linear, -value, 1.0e-3)
-            return w + step, steps + 1, total + count, jnp.linalg.norm(function(w + step))
+            current = jnp.linalg.norm(value)
+
+            # Backtracking on the residual norm (Armijo, halving): a full step overshoots once inertia
+            # matters, and the undamped iteration then wanders instead of converging (Ha 100, Re 33).
+            def shorter(state):
+                length, _ = state
+                return length * 0.5, jnp.linalg.norm(function(w + 0.5 * length * step))
+
+            def too_long(state):
+                length, norm = state
+                return (length > 1.0 / 64.0) & ~(norm <= (1.0 - 1.0e-4 * length) * current)
+
+            length, norm = jax.lax.while_loop(too_long, shorter, (1.0, jnp.linalg.norm(function(w + step))))
+            if _DEBUG:
+                jax.debug.print("newton {s} its {c} norm {n} length {l}", s=steps, c=count, n=current, l=length)
+            return w + length * step, steps + 1, total + count, norm
 
         def going(carry):
             _, steps, _, norm = carry
