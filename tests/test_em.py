@@ -34,7 +34,7 @@ from lmhdx.ops import (
     thin_wall_flux,
     wall_insulated,
 )
-from lmhdx.poisson import pipe_grid
+from lmhdx.pipe import pipe_grid
 
 pytestmark = pytest.mark.unit
 

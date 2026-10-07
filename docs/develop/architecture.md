@@ -3,7 +3,7 @@
 LMhdX is organized by physical ownership:
 
 ```text
-ChannelProblem ──> staggered core (grid, ops, em, poisson) ──> steady / timeloop / axial
+ChannelProblem ──> staggered core (grid, ops, poisson, pipe) ──> steady / timeloop / axial
 CaseSpec ── fully developed ──> the core, steady or transient ──> Solution
 Q2DProblem ──> vorticity dynamics ──> SOLVAX periodic Poisson ──> Q2DResult
 ```
