@@ -81,3 +81,18 @@ def test_fringe_duct_example_conserves_and_checks_its_gradient(tmp_path: Path):
     assert summary["upstream_gradient_relative_error"] < 5e-3
     assert summary["fringe_pressure_drop"] > 0.0
     assert summary["derivative_relative_error"] < 1e-6
+
+
+def test_duct_design_law_example_finds_the_studys_optima(tmp_path: Path):
+    script = Path(__file__).resolve().parents[1] / "examples/duct_design_law.py"
+    subprocess.run([sys.executable, script], cwd=tmp_path, timeout=180, check=True)
+    summary = json.loads(next((tmp_path / "artifacts").rglob("duct_design_law_summary.json")).read_text())
+
+    # The Stage 2 study's optima on the same 48/6 cells (uwplasma/LMhdX#216).
+    law = {row["H"]: row for row in summary["design_law"]}
+    assert law[100.0]["beta_star"] == pytest.approx(0.12336, rel=1e-3)
+    assert law[300.0]["s_star"] == pytest.approx(2.0887, rel=1e-3)
+    assert [row["reduction"] for row in summary["design_law"]] == sorted(law[h]["reduction"] for h in law)
+    design = summary["design"]
+    assert design["beta_star"] == pytest.approx(0.14850, rel=1e-3)
+    assert design["power_slope_in_ln_area_W"] < 0.0 < design["reduction"]

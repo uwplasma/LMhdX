@@ -537,6 +537,7 @@ def test_tutorials_map_to_executable_examples_or_numerical_tests():
     tutorial_paths = sorted((root / "docs/tutorials").glob("*.md"))
     expected = {
         "differentiation.md",
+        "duct_design_law.md",
         "fringing.md",
         "fully_developed.md",
         "q2d.md",
@@ -792,6 +793,7 @@ def test_curated_examples_use_submodules_and_linear_scripts_are_editable() -> No
         root_imports = {alias.name for node in imports for alias in node.names}
         assert root_imports <= stable, f"{path} imports unsupported root APIs: {root_imports - stable}"
         linear_limits = {
+            "duct_design_law.py": 200,
             "fringe_duct_example.py": 160,
             "hartmann_example.py": 160,
             "hunt_example.py": 160,
@@ -811,7 +813,7 @@ def test_curated_examples_declare_user_facing_contracts(tmp_path: Path) -> None:
     inventory = build_inventory()["inventory"]
     curated = inventory["curated_examples"]
     assert {item["path"] for item in curated} == set(inventory["examples"])
-    assert len(curated) == 6
+    assert len(curated) == 7
     for item in curated:
         assert item["command"]
         assert item["outputs"]
