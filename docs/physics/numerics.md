@@ -141,7 +141,7 @@ stretched mesh: with it the steady operator was asymmetric by 1e-2 on a Ha 100
 layer mesh and the ohmic identity was off by up to 3e-3. The two interpolations
 coincide on uniform cells. On the layer meshes of the validation ladder the face
 average moves each insulating duct flow rate towards the spectral reference, by
-at most 0.3 % of it. The pipe solver of `lmhdx.poisson` uses the same pair, with the
+at most 0.3 % of it. The pipe solver of `lmhdx.pipe` uses the same pair, with the
 polar rotation of the field taken at the cell centres.
 
 A thin conducting wall of conductance ratio $c=\sigma_w t_w/(\sigma a)$ is a
@@ -684,7 +684,7 @@ equation and a Boussinesq force before any comparison, and its reference values
 are not packaged. The ALEX B1 pipe (Ha 6600, N 10700, $c=0.027$, a thin
 conducting wall, the measured field table and the digitized excess pressure
 gradient with an uncertainty of 0.002) is packaged with the benchmark data
-(`benchmarks/references/alex-b1-pipe.csv`). Its equations are LMhdX's: the
+(`lmhdx/data/benchmarks/references/alex-b1-pipe.csv`). Its equations are LMhdX's: the
 open pipe below solves them in the Stokes limit, which is where the
 interaction parameter is large ($N=10700$ under the magnet; the duct's
 inertial share at $N=1000$ is 0.4 %, see above). So row 6 is run on the ALEX pipe.
@@ -703,7 +703,7 @@ the polar fast-diagonal factorization (a sheet node per azimuthal mode, which
 also conducts axially). The Stokes operator is therefore symmetric and negative
 definite in the face-volume inner product by construction, and the solve is one
 preconditioned CG, as in the duct, with the fully developed pipe of
-`lmhdx.poisson.solve_pipe` as the lift and component Helmholtz solves (one
+`lmhdx.pipe.solve_pipe` as the lift and component Helmholtz solves (one
 radial eigendecomposition per azimuthal mode) as the preconditioner. The polar
 factorization now treats Neumann at both axial ends as singular, as it does a
 periodic axis.
