@@ -704,7 +704,9 @@ def solve_steady_state(
             # From rest the projected start is the start, so its residual is already known.
             rhs=initial if velocity is None else None,
         )
-        return _finish(root, residual, scale, tolerance, problem, factorization, field_scale, max_steps)
+        return _finish(
+            root, residual, scale, tolerance, problem, factorization, field_scale, max_steps, forcing
+        )
 
     def solver(function, guess):
         solution = solvax.newton_krylov(
@@ -721,7 +723,7 @@ def solve_steady_state(
 
     tangent_solve = functools.partial(_tangent_solve, precond=precond)
     root = solvax.root_solve(residual, start, solver, tangent_solve=tangent_solve)
-    return _finish(root, residual, scale, tolerance, problem, factorization, field_scale, max_steps)
+    return _finish(root, residual, scale, tolerance, problem, factorization, field_scale, max_steps, forcing)
 
 
 def solve_compiled(problem: ChannelProblem) -> SteadySolution:
@@ -854,7 +856,7 @@ def _shared(key, problem: ChannelProblem, build, arguments):
 
 
 def _finish(
-    root, residual, scale, tolerance, problem, factorization, field_scale, max_steps
+    root, residual, scale, tolerance, problem, factorization, field_scale, max_steps, forcing
 ) -> SteadySolution:
     """Certify the root on the residual both routes share, then report its fields."""
     final = _norm(residual(root))
@@ -862,7 +864,16 @@ def _finish(
         jnp.isfinite(final) & jnp.isfinite(scale) & (final <= 10.0 * tolerance * jnp.maximum(scale, 1.0))
     )
     root = _certified(root, accepted, "steady solve")
-    corrected, pressure = project(root, problem, factorization)
+    corrected, _ = project(root, problem, factorization)
+    # The root is divergence free, so projecting it returns no pressure. The physical pressure is the one
+    # the momentum terms need, taken with the residual's two passes, as the open duct reports it (#227).
+    once, first = project(
+        momentum_terms(corrected, problem, factorization, forcing=forcing, field_scale=field_scale),
+        problem,
+        factorization,
+    )
+    second = project(once, problem, factorization)[1]
+    pressure = first.replace_data(attribute(problem, "dt") * (first.data + second.data))
     # The currents and the scaled field come with the potential, so callers need no second potential solve.
     potential, currents, field = face_currents(corrected, problem, factorization, field_scale)
     return SteadySolution(corrected, pressure, potential, final, max_steps, scale, currents, field)

@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import lmhdx
 from lmhdx.axial import (
     axial_faces,
     charge_balance,
@@ -149,6 +150,10 @@ def test_the_fringe_duct_balances_mass_charge_and_flow_and_develops_upstream():
     upstream = (centres > -8.0) & (centres < -5.0)
     slope = np.polyfit(centres[upstream], np.asarray(means)[upstream], 1)[0]
     assert slope == pytest.approx(gradient, rel=5e-3)
+    # lmhdx.solve routes an open duct here rather than solving it with no inflow (#226).
+    np.testing.assert_array_equal(
+        np.asarray(lmhdx.solve(problem).pressure.data), np.asarray(solution.pressure.data)
+    )
 
 
 def test_doubled_buffers_change_neither_the_drop_nor_the_window_current():

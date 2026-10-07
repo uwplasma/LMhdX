@@ -26,6 +26,7 @@ from jax import config as jax_config
 from jax.scipy.interpolate import RegularGridInterpolator
 
 if TYPE_CHECKING:
+    from .axial import OpenDuctSolution
     from .core3d import ChannelProblem
     from .q2d import Q2DProblem, Q2DResult
     from .steady import SteadySolution
@@ -1262,7 +1263,7 @@ def make_hunt_case(
 
 def solve(
     model: "ChannelProblem | CaseSpec | Q2DProblem",
-) -> "SteadySolution | Solution | Q2DResult":
+) -> "SteadySolution | OpenDuctSolution | Solution | Q2DResult":
     """Solve a duct, a fully developed case, or a Q2D problem.
 
     A :class:`lmhdx.core3d.ChannelProblem` goes to the staggered core's steady
@@ -1270,13 +1271,17 @@ def solve(
     ``CaseSpec``, through :func:`lmhdx.fully_developed.solve_fully_developed`,
     which reports it on the case's cross-section; each is compiled once per
     problem. A transient ``CaseSpec`` runs implicit Euler steps on the core,
-    :func:`lmhdx.fully_developed.solve_fully_developed_transient`. A duct with an
-    inlet and an outlet is solved by :func:`lmhdx.axial.solve_open_duct`.
+    :func:`lmhdx.fully_developed.solve_fully_developed_transient`. A ``ChannelProblem``
+    with an inlet and an outlet goes to :func:`lmhdx.axial.solve_open_duct`.
     """
 
     from .core3d import ChannelProblem
 
     if isinstance(model, ChannelProblem):
+        if model.open_axis is not None:
+            from .axial import solve_open_duct
+
+            return solve_open_duct(model)
         from .steady import solve_compiled
 
         return solve_compiled(model)

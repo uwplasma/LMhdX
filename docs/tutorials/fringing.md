@@ -65,7 +65,10 @@ What is and is not established:
   upstream the gradient is the fully developed one (within 0.5 % in the tests).
 - Doubling the buffers moves the drop over TM-228's window `[-6, 2]` by
   3.5e-9 at Ha 100.
-- Only the inertialess (Stokes-limit) flow is solved: `advection="off"`.
+- With advection on (`advection="central"`), `solve_open_duct` adds inertia by
+  Newton's method from the Stokes-limit solution, with continuation in the flow
+  rate; [Numerics](../physics/numerics.md) gives the measured inertial share
+  ("Inertia on the open axis").
 - On the ANL case the excess drop over the locally fully developed drop agrees
   within 1 % with the inertialess core-flow model (`lmhdx.coreflow`, TM-228
   eqs. 4a–4c) once the model carries the layers' conductance

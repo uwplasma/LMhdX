@@ -11,7 +11,8 @@ import pytest
 
 from lmhdx.core3d import ChannelProblem, duct_problem, step, zero_velocity
 from lmhdx.grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces, wall_resolving_faces
-from lmhdx.steady import solve_steady_state, steady_residual
+from lmhdx.ops import face_gradient
+from lmhdx.steady import momentum_terms, solve_steady_state, steady_residual
 from validation.shercliff import flow_rate, hartmann_wall_current, quadrant_flow_rate
 
 pytestmark = pytest.mark.numerical
@@ -310,6 +311,11 @@ def test_a_varying_field_certifies_at_the_default_tolerance(hartmann, conductanc
     solution = solve_steady_state(problem, pseudo_step=1.0e3)
     scale = float(_norm(steady_residual(zero_velocity(problem), problem)))
     assert float(solution.residual_norm) <= 10.0 * 1.0e-9 * scale and _mean(problem, solution.velocity) > 0.0
+    # The reported pressure is what the residual removes from the axial momentum terms (#227); it was ~1e-16.
+    terms = momentum_terms(solution.velocity, problem, problem.factorization())[0].data
+    gradient = face_gradient(solution.pressure, 0, problem.pressure_conditions[0]).data / problem.density
+    residual = steady_residual(solution.velocity, problem)[0].data
+    np.testing.assert_allclose(terms - gradient, residual, rtol=0.0, atol=1.0e-12 * np.max(np.abs(terms)))
 
 
 @pytest.mark.slow
