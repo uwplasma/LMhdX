@@ -9,8 +9,9 @@ validation result.
 | Hartmann duct | analytical profile, charge closure, power balance, refinement | validated within documented mesh/tolerance gates |
 | Shercliff and Hunt ducts | packaged benchmark values, symmetry, wall/interface current, mesh trends | validated within documented mesh/tolerance gates |
 | High-$Ha$ fully developed flow | layer resolution, Richardson trend, integral balances | bounded accepted campaign cases |
-| Duct through a fringe, inlet and outlet (`lmhdx.axial`) | flow rate, mass and charge to round-off, upstream fully developed gradient, buffer doubling, adjoint against central differences, ANL fringe on three meshes | inertialess limit only; ANL excess within 1 % of the layer-corrected core-flow model at c 0.1, Ha 2×10⁴ (row 24, met); 1 % of TM-228's uncorrected 0.0178 at c 0.02 is not reachable on the 3-D core, a physical model difference (row 7, closed) |
+| Duct through a fringe, inlet and outlet (`lmhdx.axial`) | flow rate, mass and charge to round-off, upstream fully developed gradient, buffer doubling, adjoint against central differences, ANL fringe on three meshes | gated in the Stokes limit; with inertia (Newton) the share at N 1000 is 0.4–2.3 %, reported ([numerics](../physics/numerics.md)); ANL excess within 1 % of the layer-corrected core-flow model at c 0.1, Ha 2×10⁴ (row 24, met); 1 % of TM-228's uncorrected 0.0178 at c 0.02 is not reachable on the 3-D core, a physical model difference (row 7, closed) |
 | Locally fully developed station sum in a varying field (`validation.open_axis`) | 3-D open duct in a monotone 20 % ramp against the fully developed gradient integrated at the local field, at Ha 50 and 200, refined across and along the duct | square duct within 1 % up to γ√Ha ≈ 0.2, the design-law duct within 0.35 % up to 2; no collapse on γ√Ha across Ha ([duct design law](../tutorials/duct_design_law.md)) |
+| Pipe through a fringe, inlet and outlet (`lmhdx.axial.solve_open_pipe`) | operator symmetry, energy identity, mass and charge to round-off, adjoint, ALEX B1 on refined meshes | Stokes limit; ALEX B1 upstream gradient and integrated excess (−3.3 %) met, station-wise tolerance not met ([numerics](../physics/numerics.md)) |
 | Inertialess core-flow model (`lmhdx.coreflow`) | Walker's thin-wall limits at second order, symmetry, adjoint, ANL excess against TM-228 | ANL excess within 0.19 % of TM-228; ALEX B2 against experiment open (plan 4.3) |
 | Periodic Q2D | analytical decay, energy identity, spectral incompressibility, spatial refinement, CPU/GPU parity | verified for the documented SM82 model and numerical gates |
 
@@ -30,9 +31,9 @@ sources and executable test/workflow links.
 ## Quantitative evidence
 
 The CI-executed `examples/hartmann_example.py` case uses $Ha=20$ on a
-$24\times24$ cross-section. Its analytical errors are 0.02276 in $L_2$ and
-0.06204 in $L_\infty$, with charge-balance residual
-$4.24\times10^{-19}$ and final velocity update $9.48\times10^{-9}$. The
+$24\times24$ cross-section. Its analytical errors are 0.0064 in $L_2$ and
+0.0098 in $L_\infty$, with steady residual $4.2\times10^{-10}$ and maximum
+current divergence $3.9\times10^{-10}$. The
 documented profile-error limits are 0.05 and 0.10.
 
 The weekly FreeMHD workflow runs the frozen B2 inputs in the pinned FreeMHD

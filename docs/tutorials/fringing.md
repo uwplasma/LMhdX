@@ -33,8 +33,8 @@ print(station_flow_rates(solution.velocity))  # 4.0 at every station
 print(pressure_drop(solution.pressure, -3.0, 3.0))
 ```
 
-The solve is one preconditioned conjugate-gradient solve, certified on its
-residual; it raises if the residual is not reached. Check the balances it
+In the Stokes limit the solve is one preconditioned conjugate-gradient solve,
+certified on its residual; it raises if the residual is not reached. Check the balances it
 guarantees before reading a pressure:
 
 ```python
@@ -65,13 +65,15 @@ What is and is not established:
   upstream the gradient is the fully developed one (within 0.5 % in the tests).
 - Doubling the buffers moves the drop over TM-228's window `[-6, 2]` by
   3.5e-9 at Ha 100.
-- Only the inertialess (Stokes-limit) flow is solved: `advection="off"`.
+- With `advection="central"` or `"limited"`, `solve_open_duct` runs Newton from
+  the Stokes-limit solution, with continuation in the flow rate.
 - On the ANL case the excess drop over the locally fully developed drop agrees
   within 1 % with the inertialess core-flow model (`lmhdx.coreflow`, TM-228
   eqs. 4a–4c) once the model carries the layers' conductance
   (`coreflow.layer_conductances`; c 0.1, Ha 2×10⁴). TM-228's uncorrected
   value is the Ha → ∞ limit, which no 3-D solve reaches.
-- There is no straight pipe with an open axis yet, and no thick or layered wall.
+- A circular pipe with an open axis (`fringe_pipe`, `solve_open_pipe`) is solved
+  in the Stokes limit only. There is no thick or layered wall.
 
 Run `python examples/fringe_duct_example.py` for the case above with its
 conservation checks and a central-difference check of the derivative. The

@@ -148,7 +148,12 @@ python examples/fringe_duct_example.py
 - The flow rate through every station, mass and charge hold to round-off; the
   upstream gradient is the fully developed one; the pressure drop across the
   fringe and its derivative with respect to the field strength are outputs.
-- Research stage: only the inertialess (Stokes-limit) flow is solved. On the ANL
+- With `advection="central"` or `"limited"`, `solve_open_duct` continues the
+  Stokes solution by Newton–Krylov; at N = 1000 the inertial share of the
+  excess drop is 0.4 – 2.3 % (reported, not gated). `fringe_pipe` and
+  `solve_open_pipe` give a circular pipe an inlet and an outlet (Stokes limit
+  only), with the ALEX B1 comparison in the numerics notes.
+- Research stage: the gated checks are the inertialess flow. On the ANL
   case the excess drop agrees within 1 % with the core-flow model carrying the
   layers' conductance (`coreflow.layer_conductances`, c 0.1, Ha 2×10⁴);
   TM-228's uncorrected value is the Ha → ∞ limit, out of reach in 3-D. The
@@ -249,11 +254,14 @@ PCIe. Correct, not yet faster — the numbers are in
   spectral solve and against analytical profiles; the pipe against a second,
   independent spectral solve over Ha 0 to 100; implicit adjoints against finite differences;
   the steady mechanical power balance within a 1e-10 relative test gate (measured
-  3.6e-14 insulating, 6.3e-14 at wall conductance 0.027); Q2D decay identities.
+  3.6e-14 insulating, 6.3e-14 at wall conductance 0.027); all eight rows of
+  Smolentsev et al. (2015) Table I (Ha 500 to 15,000), each gated on three meshes
+  for second order and a Richardson value within 1e-3 to 5e-3; Q2D decay identities.
 - **Research stage:** three-dimensional convective transport (`advection="central"`
   or `"limited"`, from `lmhdx.ops`) is tested for conservation, order and
-  boundedness but not validated against a reference flow, the fringe is solved
-  in the inertialess limit only, the ALEX B1/B2 benchmarks are open, and
+  boundedness but not validated against a reference flow, the fringe is gated
+  in the inertialess limit only, the open pipe misses its station-wise
+  ALEX B1 tolerance, the ALEX B1/B2 benchmarks are open, and
   multi-device execution is not yet established. The
   [validation matrix](https://lmhdx.readthedocs.io/en/latest/validation/index.html)
   and the [plan](plan.md) state each gate.
@@ -276,13 +284,15 @@ states each gate and what it does not cover.
 | Command | Physics |
 |---|---|
 | `lmhdx examples/hartmann_case.toml` | Hartmann duct from a TOML file, terminal diagnostics |
-| `python examples/hartmann_example.py` | analytical error, conservation, mesh convergence |
+| `python examples/hartmann_example.py` | analytical error, conservation, ParaView/CSV/NPZ output |
 | `python examples/hunt_example.py` | conducting walls, prescribed throughput and hydraulic power |
 | `python examples/li_aln_wall_stack_example.py` | explicit wall material layers and interface currents |
 | `python examples/fringe_duct_example.py` | 3-D duct leaving a magnet, drop and its field derivative |
 | `python examples/q2d_turbulence_demo.py` | Q2D vorticity evolution, energy decay, movie |
+| `python examples/duct_design_law.py` | optimum aspect ratio of an insulated duct, one blanket design |
 
-Each example is one editable file that writes to `artifacts/examples/`;
+Each example is one flat file: imports, input constants, a solve that prints
+its progress, then results with units, plots and a JSON summary in `artifacts/examples/`;
 parameters and evidence status are in [`examples/catalog.toml`](examples/catalog.toml).
 `python scripts/make_showcase_figures.py` regenerates every figure above.
 
