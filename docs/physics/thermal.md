@@ -71,8 +71,14 @@ Heat leaves by the flow.
 `thermal_boundary` builds the condition from physical data. A positive
 `heat_flux` leaves the fluid at both ends. It is stored as the derivative along
 the axis that `lmhdx.grid.pad` applies to a Neumann condition, $q/k$ at the
-lower end and $-q/k$ at the upper. A condition built for one $k$ therefore does
-not hold the same flux under another, and must be rebuilt when $k$ changes.
+lower end and $-q/k$ at the upper.
+
+```{warning}
+A heat-flux condition is tied to the conductivity it was built with. After
+changing `thermal_conductivity`, rebuild the conditions with `thermal_boundary`
+and the new $k$, and rebuild the prepared step. Replacing $k$ alone keeps the
+old derivative, and so a different heat flux.
+```
 
 ## Discretization
 
