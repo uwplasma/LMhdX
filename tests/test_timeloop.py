@@ -329,7 +329,9 @@ def _thermal_of(problem: ChannelProblem):
 
     insulated = thermal_boundary("heat_flux", conductivity=1.0)
     conditions = tuple(PERIODIC_AXIS if c.is_periodic else insulated for c in problem.conditions)
-    return ThermalProblem(problem, conditions, specific_heat=1.0, thermal_conductivity=1.0)
+    return ThermalProblem(
+        problem, conditions, specific_heat=1.0, thermal_conductivity=1.0, reference_temperature=0.0
+    )
 
 
 def _layered_duct() -> ChannelProblem:

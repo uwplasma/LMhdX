@@ -45,6 +45,7 @@ from lmhdx.ops import (
 )
 from lmhdx.thermal import (
     ThermalProblem,
+    _buoyancy,
     _conduct,
     _joule_heating,
     _outgoing_rate,
@@ -736,7 +737,9 @@ def _thermal(grid: Grid, conditions, *, dt: float = 1.0e-2, k: float = 2.0) -> T
     flow = ChannelProblem(
         grid, tuple(WRAP if c.is_periodic else WALL for c in conditions), density=1.5, dt=dt
     )
-    return ThermalProblem(flow, conditions, specific_heat=3.0, thermal_conductivity=k)
+    return ThermalProblem(
+        flow, conditions, specific_heat=3.0, thermal_conductivity=k, reference_temperature=0.0
+    )
 
 
 def _advance_heat(problem: ThermalProblem, temperature: Field, heating: Field, steps: int = 1) -> Field:
@@ -792,7 +795,7 @@ def test_thermal_boundary_turns_outward_heat_flux_into_the_axis_derivative():
 def test_a_thermal_problem_checks_its_inputs():
     grid = Grid(uniform_faces(2, 0.0, 1.0), uniform_faces(3, -1.0, 1.0), uniform_faces(4, -1.0, 1.0))
     walls = (WRAP, thermal_boundary("temperature", 1.0, 2.0), thermal_boundary("heat_flux", conductivity=1.0))
-    problem = ThermalProblem(ChannelProblem(grid, (WRAP, WALL, WALL)), walls, 2.0, 0.5)
+    problem = ThermalProblem(ChannelProblem(grid, (WRAP, WALL, WALL)), walls, 2.0, 0.5, 300.0)
     assert problem.heat_capacity == 2.0 and problem.diffusivity == 0.25
     tangential = thermal_boundary("temperature", np.ones((2, 3)), np.zeros((2, 3)))
     assert dataclasses.replace(problem, thermal_conditions=(*walls[:2], tangential)).flow is problem.flow
@@ -802,6 +805,10 @@ def test_a_thermal_problem_checks_its_inputs():
         dict(thermal_conditions=walls[:2]),
         dict(specific_heat=0.0),
         dict(thermal_conductivity=np.nan),
+        dict(reference_temperature=np.nan),
+        dict(expansion_coefficient=-1.0e-4),
+        dict(gravity=(0.0, -9.8)),
+        dict(gravity=(0.0, 0.0, np.inf)),
         dict(flow=dataclasses.replace(problem.flow, dt=np.inf)),
         dict(flow=ChannelProblem(_polar(4, 6), (WALL, WRAP, WRAP))),
         dict(flow=ChannelProblem(grid, (BoundaryCondition(DIRICHLET, upper_kind=NEUMANN), WALL, WALL))),
@@ -1073,3 +1080,38 @@ def test_joule_heat_squares_each_face_current_before_sharing_it():
         assert not np.any(np.asarray(_joule_heating(noise, off).data))
     with pytest.raises(TypeError):
         dataclasses.replace(base, joule_heating=1)
+
+
+# Buoyancy (plan step 5.1e, ADR 0008 D32): -rho_0 beta (T - T_r) g on the velocity faces.
+
+
+def test_the_buoyancy_force_pushes_a_hot_cell_against_gravity():
+    """A hot cell under ``g = -9.8 z`` pushes up on its two z faces by the face-average weight; nothing else moves."""
+    base = _thermal(STRETCHED, (WRAP, INSULATED, INSULATED))
+    problem = dataclasses.replace(
+        base, expansion_coefficient=2.0e-4, gravity=(0.0, 0.0, -9.8), reference_temperature=1.0
+    )
+    hot = np.ones(STRETCHED.shape)
+    hot[3, 4, 2] = 6.0
+    forces = _buoyancy(Field(jnp.asarray(hot), CELL, STRETCHED), problem)
+    expected = np.zeros(STRETCHED.face_shape(2))
+    expected[3, 4, [2, 3]] = 0.5 * 1.5 * 2.0e-4 * 5.0 * 9.8  # uniform z cells share the force equally
+    assert np.allclose(np.asarray(forces[2].data), expected, rtol=1e-14, atol=1e-18)
+    assert not np.any(np.asarray(forces[0].data)) and not np.any(np.asarray(forces[1].data))
+    assert all(force.offset == velocity_offset(axis) for axis, force in enumerate(forces))
+    sideways = dataclasses.replace(problem, gravity=(1.0, -2.0, 3.0))
+    tilted = _buoyancy(Field(jnp.asarray(hot), CELL, STRETCHED), sideways)
+    upward = np.asarray(forces[2].data) / -9.8
+    assert np.allclose(np.asarray(tilted[2].data), 3.0 * upward, rtol=1e-14, atol=1e-18)
+    # Warm everywhere, so the cells beside the walls push too; the walls still take nothing.
+    warm = _buoyancy(Field(jnp.asarray(hot + 1.0), CELL, STRETCHED), sideways)
+    for axis in (1, 2):
+        faces = np.moveaxis(np.asarray(warm[axis].data), axis, 0)
+        assert not np.any(faces[[0, -1]]) and np.all(faces[1:-1])
+    for passive in (
+        dataclasses.replace(problem, expansion_coefficient=0.0),
+        dataclasses.replace(problem, gravity=(0.0, 0.0, 0.0)),
+    ):
+        assert _buoyancy(Field(jnp.asarray(hot), CELL, STRETCHED), passive) is None
+    reference = _buoyancy(Field(jnp.ones(STRETCHED.shape), CELL, STRETCHED), problem)
+    assert not any(np.any(np.asarray(force.data)) for force in reference)
