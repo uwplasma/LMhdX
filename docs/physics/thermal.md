@@ -274,9 +274,33 @@ uniform slug:
 | square, slug flow | 7.11354 | −1.5 % / −0.38 % / −0.094 % | 1.98, 1.99 |
 
 The comparison with the tables of Shah & London (1978) waits for the book.
+The aspect-0.5 duct is gated at 64 cells; the square ducts carry the
+refinement study.
+
 A transverse field flattens the core. On 32 cells with Joule heat off, the H1
 Nusselt number of the square duct rises from 3.62 at Ha 0 to 4.56 at Ha 10 and
 5.35 at Ha 30, toward the slug value of 7.09.
+
+**An MHD reference.** Hartmann flow between plates at $y=\pm a$, each taking
+in a uniform heat flux with no source, has
+$Nu=4/\int_0^1F_H^2\,ds$ with $D_h=4a$. Here $F_H$ is the integral of the
+mean-normalized Hartmann velocity $f_H=(1-\cosh(Hs)/\cosh H)/(1-\tanh H/H)$.
+The reference is computed by quadrature, with no discrete operator. It runs
+from $140/17$ at Ha 0 to 12 as Ha grows.
+
+The test gives the solver the analytical velocity across one cell with
+insulated ends, and measures the plates' own $Nu$:
+
+| Flow | Exact | 32 / 64 / 128 cells | Order |
+|:--|--:|:--|:--|
+| Poiseuille, Ha 0 | 8.23529 | −2.6e‑7 / −1.6e‑8 / −1.0e‑9 | 4.0 |
+| Ha 10 | 10.25858 | −1.2e‑5 / −7.6e‑7 / −4.7e‑8 | 4.0 |
+| slug | 12 | −1.9e‑3 / −4.9e‑4 / −1.2e‑4 | 2.0 |
+
+The wall value's leading error is $-h^2\theta''_w/6$, and
+$k\theta''=\rho_0c_p\gamma u$, so no slip removes it. The public four-wall
+`nusselt` of that fixture averages in the insulated ends, and is a different
+number.
 
 Not covered:
 - the uniform-wall-temperature condition, an eigenvalue problem;
