@@ -82,6 +82,7 @@ from .ops import (
     wall_insulated,
 )
 from .poisson import FastDiagonalHelmholtz, fast_diagonal_helmholtz, fast_diagonal_poisson
+from .steady import with_inflow
 
 __all__ = [
     "DevelopedHeat",
@@ -147,8 +148,11 @@ class ThermalProblem:
     over, and ``flow.density`` is the ``rho_0`` of the heat capacity.
     ``thermal_conditions`` holds one :class:`lmhdx.grid.BoundaryCondition` per
     axis, best built with :func:`thermal_boundary`; an axis is periodic exactly
-    where the flow's is. The flow must be on a Cartesian grid without an
-    inflow-outflow axis. ``joule_heating`` deposits the fluid's Joule heat.
+    where the flow's is. The flow must be on a Cartesian grid. Along an
+    inflow-outflow axis the condition is the inlet temperature, a number or a
+    profile, with no conductive flux at the outlet:
+    ``thermal_boundary("temperature", T_in, upper_kind="heat_flux", conductivity=k)``.
+    ``joule_heating`` deposits the fluid's Joule heat.
 
     ``reference_temperature`` is the ``T_r`` of the Boussinesq density
     ``rho_0 [1 - beta (T - T_r)]`` and of the reported sensible heat.
@@ -171,8 +175,8 @@ class ThermalProblem:
     def __post_init__(self) -> None:
         if not isinstance(self.flow, ChannelProblem):
             raise TypeError("flow must be a lmhdx.core3d.ChannelProblem")
-        if self.flow.grid.is_polar or self.flow.open_axis is not None:
-            raise ValueError("heat transport needs a Cartesian flow without an inflow-outflow axis")
+        if self.flow.grid.is_polar:
+            raise ValueError("heat transport needs a Cartesian flow")
         for name in ("specific_heat", "thermal_conductivity"):
             if not (np.isfinite(getattr(self, name)) and float(getattr(self, name)) > 0.0):
                 raise ValueError(f"{name} must be positive and finite")
@@ -198,6 +202,10 @@ class ThermalProblem:
                 raise TypeError(f"axis {axis} needs a lmhdx.grid.BoundaryCondition")
             if condition.is_periodic != flow.is_periodic:
                 raise ValueError(f"axis {axis} must be periodic for heat exactly where it is for the flow")
+            if flow.is_mixed and (condition.kinds != (DIRICHLET, NEUMANN) or np.any(condition.upper)):
+                raise ValueError(
+                    f"axis {axis} takes an inlet temperature and no conductive flux at the outlet"
+                )
             tangential = shape[:axis] + shape[axis + 1 :]
             for value in (condition.lower, condition.upper):
                 if np.ndim(value) and np.shape(value) != tangential:
@@ -260,15 +268,29 @@ def _upwind_fluxes(
 
     ``T_up`` is the temperature of the cell the face velocity comes from. The
     flow's scalar conditions pad periodic axes by wrapping and walls by copying;
-    the copy is never used, since a wall face carries no advective flux.
+    the copy is never used, since a wall face carries no advective flux. The
+    inlet face brings in the inlet temperature, or takes out the first cell's
+    against a backflow; the outlet face takes out the last cell's, and a backflow
+    there brings in that same temperature.
     """
-    scalar = problem.flow.scalar_conditions
+    scalar, opening = problem.flow.scalar_conditions, problem.flow.open_axis
     fluxes = []
     for axis, carrier in enumerate(velocity):
         padded = pad(temperature.data, axis, scalar[axis], grid=temperature.grid)
         lower, upper = (_sliced(padded, axis, start) for start in (0, 1))
-        upstream = jnp.where(carrier.data >= 0.0, lower, upper)
-        fluxes.append(wall_insulated(carrier.replace_data(carrier.data * upstream), axis, scalar[axis]))
+        flux = carrier.data * jnp.where(carrier.data >= 0.0, lower, upper)
+        if axis != opening:
+            fluxes.append(wall_insulated(carrier.replace_data(flux), axis, scalar[axis]))
+            continue
+        ends = [(slice(None),) * axis + (end,) for end in (0, -1)]
+        inlet = jnp.asarray(problem.thermal_conditions[axis].lower, dtype=flux.dtype)
+        entering = carrier.data[ends[0]] * jnp.where(
+            carrier.data[ends[0]] >= 0.0, inlet, temperature.data[ends[0]]
+        )
+        flux = (
+            flux.at[ends[0]].set(entering).at[ends[1]].set(carrier.data[ends[1]] * temperature.data[ends[1]])
+        )
+        fluxes.append(carrier.replace_data(flux))
     return tuple(fluxes)
 
 
@@ -348,8 +370,10 @@ class ThermalState(NamedTuple):
 class ThermalDiagnostics(NamedTuple):
     """The scalars of one step, in the problem's units.
 
-    ``heat_balance_residual`` is ``storage_rate + conductive_heat_out -
-    joule_power - external_power``, a power; ``heat_solve_residual`` is the
+    ``heat_balance_residual`` is ``storage_rate + conductive_heat_out +
+    advective_heat_out - joule_power - external_power``, a power, where
+    ``advective_heat_out`` is the enthalpy the flow carries out through an outlet
+    less what it brings in through an inlet (zero in a closed duct); ``heat_solve_residual`` is the
     largest local residual of the temperature equation, a temperature per time;
     ``advective_cfl`` is ``dt`` times the largest outgoing volume-flux rate of
     the old velocity; ``boussinesq_measure`` is the largest ``beta |T - T_r|`` of
@@ -365,6 +389,7 @@ class ThermalDiagnostics(NamedTuple):
     joule_power: jnp.ndarray
     external_power: jnp.ndarray
     conductive_heat_out: jnp.ndarray
+    advective_heat_out: jnp.ndarray
     storage_rate: jnp.ndarray
     heat_balance_residual: jnp.ndarray
     heat_solve_residual: jnp.ndarray
@@ -419,6 +444,8 @@ def validate_thermal_inputs(
     if time.shape or time.dtype != dtype or not np.isfinite(float(time)):
         raise ValueError(f"the time must be a finite {dtype} scalar")
     constrained = enforce_face_constraints(state.velocity, flow)
+    if flow.open_axis is not None:
+        constrained = with_inflow(constrained, flow)
     if not all(np.array_equal(a.data, b.data) for a, b in zip(constrained, state.velocity)):
         raise ValueError("the velocity does not meet the wall and periodic face constraints")
     if float(jnp.max(jnp.abs(divergence(state.velocity).data))) > divergence_tolerance:
@@ -426,7 +453,7 @@ def validate_thermal_inputs(
 
 
 def build_thermal_step(
-    problem: ThermalProblem, *, dtype: jnp.dtype | type | str
+    problem: ThermalProblem, *, dtype: jnp.dtype | type | str, hold_flow: bool = False
 ) -> Callable[[ThermalState, Field], tuple[ThermalState, ThermalDiagnostics]]:
     """Factorize on the host and return the pure step ``(state, heat_source) -> (state, diagnostics)``.
 
@@ -441,6 +468,11 @@ def build_thermal_step(
     the old temperature, the momentum takes :func:`lmhdx.core3d.step`'s predictor
     and projection with the flow's implicit viscous factorizations, and the
     temperature takes upwind transport by the old velocity, then implicit conduction.
+
+    ``hold_flow`` keeps the state's velocity, a steady flow the heat is carried by,
+    without buoyancy. An inflow-outflow duct needs it, since the step does not
+    advance such a flow: give it the physical velocity of
+    :func:`lmhdx.axial.solve_open_duct`.
     """
     compute = jnp.result_type(float)
     if jnp.dtype(dtype) != compute:
@@ -448,6 +480,12 @@ def build_thermal_step(
             f"dtype {jnp.dtype(dtype)} is not the core's compute dtype {compute}; set x64 before setup"
         )
     flow, grid = problem.flow, problem.flow.grid
+    if flow.open_axis is not None and not hold_flow:
+        raise ValueError(
+            "the flow of an inflow-outflow duct is held: pass hold_flow=True and its steady velocity"
+        )
+    if hold_flow and float(problem.expansion_coefficient) and any(problem.gravity):
+        raise ValueError("a held flow takes no buoyancy")
     pressure, viscous = flow.factorization(), flow.viscous_factorizations()
     if flow.conducting_walls:
         flow.potential_factorization()  # built once here, so tracing only looks it up
@@ -462,11 +500,18 @@ def build_thermal_step(
     def thermal_step(state: ThermalState, heat_source: Field) -> tuple[ThermalState, ThermalDiagnostics]:
         velocity, temperature = state.velocity, state.temperature
         _, currents, field = face_currents(velocity, flow, pressure)
-        body = face_lorentz_force(_lorentz_from_currents(currents, field, flow), flow)
         joule = _joule_heating(currents, problem).data
-        buoyancy = _buoyancy(temperature, problem)
-        moved, _ = _advance_momentum(velocity, body, flow, pressure, viscous, extra_force=buoyancy)
-        transport = divergence(_upwind_fluxes(temperature, velocity, problem)).data if upwind else 0.0
+        if hold_flow:
+            moved = velocity
+        else:
+            body = face_lorentz_force(_lorentz_from_currents(currents, field, flow), flow)
+            buoyancy = _buoyancy(temperature, problem)
+            moved, _ = _advance_momentum(velocity, body, flow, pressure, viscous, extra_force=buoyancy)
+        fluxes = _upwind_fluxes(temperature, velocity, problem) if upwind else None
+        transport = divergence(fluxes).data if upwind else 0.0
+        carried = (
+            _carried_out(fluxes, problem) if upwind and flow.open_axis is not None else jnp.zeros((), compute)
+        )
         sources = (joule + heat_source.data) / capacity
         rhs = temperature.data + dt * (sources - transport + alpha * lift.data)
         heated = diffusion.solve(temperature.replace_data(rhs))
@@ -486,8 +531,9 @@ def build_thermal_step(
             joule_power,
             external,
             out,
+            carried,
             storage,
-            storage + out - joule_power - external,
+            storage + out + carried - joule_power - external,
             jnp.max(jnp.abs(change / dt + transport - conducted - sources)),
             dt * jnp.max(_outgoing_rate(velocity)) if upwind else jnp.zeros((), compute),
             beta * excess,
@@ -525,6 +571,15 @@ def advance_thermal(
 
     body = jax.checkpoint(single) if checkpoint else single
     return jax.lax.scan(body, state, xs=None, length=steps)
+
+
+def _carried_out(fluxes: tuple[Field, Field, Field], problem: ThermalProblem) -> jnp.ndarray:
+    """Return the enthalpy the flow carries out through the outlet less what it brings in at the inlet."""
+    axis = problem.flow.open_axis
+    flux, areas = fluxes[axis].data, problem.flow.grid.face_areas(axis)
+    ends = [(slice(None),) * axis + (end,) for end in (0, -1)]
+    leaving, entering = (jnp.sum(flux[end] * jnp.asarray(areas[end], dtype=flux.dtype)) for end in ends[::-1])
+    return problem.heat_capacity * (leaving - entering)
 
 
 def _heat_out(temperature: Field, problem: ThermalProblem) -> jnp.ndarray:

@@ -18,7 +18,7 @@ from lmhdx.core3d import (
     trajectory_diagnostics,
     zero_velocity,
 )
-from lmhdx.grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces
+from lmhdx.grid import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces
 from lmhdx.ops import divergence
 
 pytestmark = pytest.mark.unit
@@ -450,7 +450,8 @@ def test_the_heat_ledger_closes_at_its_rounding_floor(case):
     floor = 64 * np.finfo(float).eps * thermal.heat_capacity * 4.0 * 310.0 / flow.dt
     for _ in range(3):
         state, record = thermal_step(state, source)
-        power = max(abs(float(value)) for value in record[5:9])
+        terms = (record.joule_power, record.external_power, record.conductive_heat_out, record.storage_rate)
+        power = max(abs(float(value)) for value in terms)
         assert abs(float(record.heat_balance_residual)) <= max(1e-10 * power, floor)
         assert float(record.heat_solve_residual) <= 1e-12 * 310.0 / flow.dt and bool(record.finite)
     if case == "fluxes":
@@ -473,7 +474,7 @@ def test_the_thermal_step_keeps_its_structure_and_compute_dtype():
     state = initial_thermal_state(thermal, 300.0)
     leaves, tree = jax.tree_util.tree_flatten(state)
     new, record = jax.jit(thermal_step)(state, _cells(thermal, 1.0))
-    assert len(leaves) == 5 and jax.tree_util.tree_structure(new) == tree and len(record) == 14
+    assert len(leaves) == 5 and jax.tree_util.tree_structure(new) == tree and len(record) == 15
     assert all(leaf.dtype == jnp.float64 for leaf in jax.tree_util.tree_leaves((new, record[:-1])))
     assert jax.tree_util.tree_structure(jax.eval_shape(thermal_step, state, _cells(thermal, 1.0))[0]) == tree
     with pytest.raises(ValueError, match="compute dtype"):
@@ -651,3 +652,83 @@ def test_the_thermal_page_workflow_runs_as_written():
     exec(compile(code, str(page), "exec"), namespace)
     assert namespace["history"].temperature_max.shape == (200,)
     assert float(namespace["problem"].expansion_coefficient) > 0.0  # both variants ran
+
+
+# Heat carried into and out of an open duct (plan step 5.3).
+
+
+def _plug_duct(cells: int, inlet: float = 0.0, conductivity: float = 0.2):
+    """A duct open along x on [0, 1], one periodic cell across, and the held unit plug flow it carries."""
+    from lmhdx.thermal import ThermalProblem, thermal_boundary
+
+    grid = Grid(uniform_faces(cells, 0.0, 1.0), uniform_faces(1, 0.0, 1.0), uniform_faces(1, 0.0, 1.0))
+    opening = BoundaryCondition(DIRICHLET, lower=np.ones((1, 1)), upper_kind=NEUMANN)
+    flow = ChannelProblem(
+        grid, (opening, PERIODIC_AXIS, PERIODIC_AXIS), forcing=(0.0, 0.0, 0.0), dt=0.5 / cells
+    )
+    ends = thermal_boundary("temperature", inlet, upper_kind="heat_flux", conductivity=conductivity)
+    thermal = ThermalProblem(flow, (ends, PERIODIC_AXIS, PERIODIC_AXIS), 1.0, conductivity, 0.0)
+    rest = zero_velocity(flow)
+    return thermal, (rest[0].replace_data(jnp.ones_like(rest[0].data)), *rest[1:])
+
+
+def test_an_open_duct_carries_its_heat_out_at_first_order():
+    """Plug flow from an inlet at 0 with a source ``q``: the exact steady profile, at first order in ``h``.
+
+    ``C u T' = k T'' + q`` with ``T(0) = 0`` and ``T'(1) = 0`` gives
+    ``T = (q / C u) [x - (exp(lambda (x - 1)) - exp(-lambda)) / lambda]``, ``lambda = C u / k = 5``.
+    """
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
+
+    errors = []
+    for cells in (16, 32, 64):
+        thermal, plug = _plug_duct(cells)
+        thermal_step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+        start = initial_thermal_state(thermal, 0.0, plug)
+        state, history = advance_thermal(thermal_step, start, _cells(thermal, 2.0), 20 * cells)  # to t = 10
+        x = np.asarray(thermal.flow.grid.centers[0])
+        exact = 2.0 * (x - (np.exp(5.0 * (x - 1.0)) - np.exp(-5.0)) / 5.0)
+        errors.append(float(np.max(np.abs(np.asarray(state.temperature.data)[:, 0, 0] - exact))))
+        assert float(jnp.max(jnp.abs(history.heat_balance_residual))) <= 1e-10 * 2.0
+        assert abs(float(history.storage_rate[-1])) <= 1e-3 * 2.0 < float(history.advective_heat_out[-1])
+    orders = np.log2(np.divide(errors[:-1], errors[1:]))
+    assert np.all((orders > 0.8) & (orders < 1.2)), (errors, orders)
+
+
+def test_an_inflow_at_the_duct_temperature_leaves_it_unchanged():
+    """No source and an inlet at the duct's own 300: nothing changes, and what flows in flows out."""
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
+
+    thermal, plug = _plug_duct(16, inlet=300.0)
+    thermal_step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+    start = initial_thermal_state(thermal, 300.0, plug)
+    state, history = advance_thermal(thermal_step, start, _cells(thermal, 0.0), 40)
+    assert float(jnp.max(jnp.abs(state.temperature.data - 300.0))) <= 1e-12 * 300.0
+    assert float(jnp.max(jnp.abs(history.advective_heat_out))) <= 1e-12 * 300.0
+    assert float(jnp.max(jnp.abs(history.heat_balance_residual))) <= 1e-10 * 300.0
+
+
+def test_an_open_duct_holds_its_flow_and_takes_an_inlet_temperature():
+    import dataclasses
+
+    from lmhdx.thermal import (
+        build_thermal_step,
+        initial_thermal_state,
+        thermal_boundary,
+        validate_thermal_inputs,
+    )
+
+    thermal, plug = _plug_duct(8)
+    with pytest.raises(ValueError, match="hold_flow"):
+        build_thermal_step(thermal, dtype=jnp.float64)
+    buoyant = dataclasses.replace(thermal, expansion_coefficient=1.0e-3, gravity=(0.0, 0.0, -1.0))
+    with pytest.raises(ValueError, match="buoyancy"):
+        build_thermal_step(buoyant, dtype=jnp.float64, hold_flow=True)
+    for ends in (
+        thermal_boundary("heat_flux", conductivity=0.2),
+        thermal_boundary("temperature", 0.0, 1.0, upper_kind="heat_flux", conductivity=0.2),
+    ):
+        with pytest.raises(ValueError, match="inlet temperature"):
+            dataclasses.replace(thermal, thermal_conditions=(ends, *thermal.thermal_conditions[1:]))
+    state = initial_thermal_state(thermal, 0.0, plug)
+    validate_thermal_inputs(thermal, state, _cells(thermal, 0.0), divergence_tolerance=1e-12)

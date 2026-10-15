@@ -63,6 +63,11 @@ prescribes a wall temperature or an outward conductive heat flux, and the two
 ends may differ. Thermal, mechanical and electrical conditions are independent:
 an electrically insulating wall need not be adiabatic.
 
+An inflow-outflow axis carries an inlet temperature, a number or a profile,
+and no conductive flux at its outlet:
+`thermal_boundary("temperature", T_in, upper_kind="heat_flux", conductivity=k)`.
+Heat leaves by the flow.
+
 `thermal_boundary` builds the condition from physical data. A positive
 `heat_flux` leaves the fluid at both ends. It is stored as the derivative along
 the axis that `lmhdx.grid.pad` applies to a Neumann condition, $q/k$ at the
@@ -84,6 +89,8 @@ temperature is kept rather than removed as a gauge.
 - Each face carries $u_f T_\mathrm{up}$.
 - A wall face carries no advective heat.
 - A periodic axis reads its wrap face from its last and first cells.
+- An inlet face brings in the inlet temperature. An outlet face takes out the
+  last cell's, and a backflow there brings in that same temperature.
 
 On a divergence-free flow it makes no new extremum while $\Delta t$ times every
 cell's outgoing volume-flux rate stays below one; 0.8 is the documented
@@ -125,11 +132,13 @@ Each step returns a `ThermalDiagnostics` of scalars. The heat ledger is
 
 $$
 \underbrace{\frac{\rho_0 c_p}{\Delta t}\sum_P V_P\,(T^{n+1}_P-T^n_P)}_{\texttt{storage\_rate}}
-+\texttt{conductive\_heat\_out}-\texttt{joule\_power}-\texttt{external\_power}
++\texttt{conductive\_heat\_out}+\texttt{advective\_heat\_out}-\texttt{joule\_power}-\texttt{external\_power}
 =\texttt{heat\_balance\_residual},
 $$
 
 computed from local increments and the same wall gradients the conduction uses.
+`advective_heat_out` is the enthalpy the flow carries out through an outlet,
+less what it brings in at an inlet. It is zero in a closed duct.
 It closes to its rounding floor, which is about $\varepsilon\,\rho_0 c_p\sum V\,|T|/\Delta t$
 for temperatures stored in kelvin. The other diagnostics are:
 - `heat_solve_residual`: the largest local residual of the temperature equation;
@@ -144,8 +153,12 @@ failing value is not repaired by clipping.
 ## Supported envelope
 
 **Geometry**
-- Cartesian grids, with periodic axes and closed no-slip walls. Polar grids and
-  inflow-outflow axes are refused when the problem is built.
+- Cartesian grids, with periodic axes and closed no-slip walls. Polar grids are
+  refused when the problem is built.
+- An inflow-outflow duct carries its heat on a held flow:
+  - pass the steady velocity of `axial.solve_open_duct` in the state;
+  - build the step with `hold_flow=True`;
+  - a held flow takes no buoyancy.
 - With momentum transport on (`ChannelProblem.advection` other than `"off"`), a
   periodic axis needs at least two cells.
 - Insulating, thin conducting and resolved electrical walls all work, with
@@ -165,7 +178,7 @@ one state per step.
 
 **Not included**
 - Conjugate wall conduction.
-- Open ducts and downstream heat removal.
+- A flow that evolves in an open duct with the heat. There the flow is held.
 - Higher-order transport.
 - Variable properties.
 - A steady solve of the coupled equations. The developed duct below is the one steady thermal solve, for a given flow.
@@ -227,6 +240,28 @@ Nusselt number of the square duct rises from 3.62 at Ha 0 to 4.56 at Ha 10 and
 Not covered:
 - the uniform-wall-temperature condition, an eigenvalue problem;
 - the pipe.
+
+## An open duct
+
+The heated Hunt duct of step 5.3 carries its heat from the inlet to the
+outlet. The setup:
+- Ha 20, with thin conducting Hartmann walls (c = 0.05) and insulating side
+  walls;
+- a duct 8 half-widths long with a fully developed inlet at a flow rate of 4;
+- the inlet at temperature 0;
+- one side wall taking in a unit heat flux;
+- the Joule heat of the current.
+
+Over 400 steps the heat balance closes to $2.5\times10^{-14}$ of its largest
+term at every step, against the plan's $10^{-6}$. The duct then reaches its
+steady state:
+- the storage falls to $3\times10^{-11}$;
+- the enthalpy leaving, 124.6, is the Joule heat, 110.3, plus the net wall heat,
+  14.3. That is the 16 entering through the heated wall, less what conducts
+  back out through the inlet.
+
+A plug flow carrying a uniform source converges to its exact steady profile at
+first order, 0.81 and then 0.91.
 
 ## A worked example
 
