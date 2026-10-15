@@ -121,8 +121,10 @@ def test_a_longer_trajectory_costs_no_extra_live_state():
     assert abs(len(str(long)) - len(str(short))) < 0.05 * len(str(short))
     # Only scalar diagnostics are stacked per step; the fields ride in the carry. Stacking the
     # pressure and potential held 3.1 GiB over 100 steps at 128^3 to return the last pair.
+    # Read the stacked outputs off their shapes: JAX 0.11 replaced the scan's num_carry parameter.
     scan = next(equation for equation in long.eqns if equation.primitive.name == "scan")
-    assert all(var.aval.shape == (64,) for var in scan.outvars[scan.params["num_carry"] :])
+    stacked = [var.aval.shape for var in scan.outvars if var.aval.shape[:1] == (64,)]
+    assert stacked and all(shape == (64,) for shape in stacked)
 
 
 def test_diagnostics_match_a_direct_evaluation():
