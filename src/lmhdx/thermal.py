@@ -43,6 +43,12 @@ the same average as the Lorentz force and is zeroed on wall faces. Without
 ``beta`` or ``g`` there is no force term at all, so the flow is the isothermal
 one. The fractional step does not hold every hydrostatic state exactly; the
 claim is convergence in the time step.
+
+*The developed duct.* Along a duct periodic in its flow direction, a uniform
+axial heat input makes ``T = gamma x + theta``, and :func:`developed_heat`
+solves ``theta`` once on the cross-section (ADR 0008, D33): the bulk, mean and
+peak wall temperatures and the Nusselt number of a station, at fixed flow and
+heat load, with derivatives.
 """
 
 from __future__ import annotations
@@ -75,14 +81,16 @@ from .ops import (
     laplacian,
     wall_insulated,
 )
-from .poisson import FastDiagonalHelmholtz, fast_diagonal_helmholtz
+from .poisson import FastDiagonalHelmholtz, fast_diagonal_helmholtz, fast_diagonal_poisson
 
 __all__ = [
+    "DevelopedHeat",
     "ThermalDiagnostics",
     "ThermalProblem",
     "ThermalState",
     "advance_thermal",
     "build_thermal_step",
+    "developed_heat",
     "initial_thermal_state",
     "thermal_boundary",
     "validate_thermal_inputs",
@@ -532,3 +540,106 @@ def _heat_out(temperature: Field, problem: ThermalProblem) -> jnp.ndarray:
             area = jnp.asarray(areas[slab], dtype=temperature.dtype)
             out = out + sign * conductivity * jnp.sum(gradient[slab] * area)
     return out
+
+
+class DevelopedHeat(NamedTuple):
+    """The thermally fully developed duct of :func:`developed_heat`, at its station ``x = 0``.
+
+    ``temperature`` is ``theta`` on the cells. The wall values are taken on the
+    wall faces of the cross-section, means weighted by face area: the wall
+    temperature and the heat flux into the fluid. ``nusselt`` is
+    ``q_w D_h / (k (T_w - T_b))``, with the hydraulic diameter ``D_h = 4 A / P``.
+    ``heat_balance_residual`` is ``rho c_p gamma Q`` less the heat entering per
+    unit length, a power per length.
+    """
+
+    temperature: Field
+    axial_gradient: jnp.ndarray
+    flow_rate: jnp.ndarray
+    bulk_temperature: jnp.ndarray
+    wall_temperature: jnp.ndarray
+    peak_wall_temperature: jnp.ndarray
+    wall_heat_flux: jnp.ndarray
+    hydraulic_diameter: float
+    nusselt: jnp.ndarray
+    heat_balance_residual: jnp.ndarray
+
+
+def developed_heat(
+    problem: ThermalProblem,
+    velocity: tuple[Field, Field, Field],
+    heat_source: Field,
+    *,
+    axial_gradient: float | jnp.ndarray | None = None,
+) -> DevelopedHeat:
+    """Solve the thermally fully developed temperature of a duct carrying ``velocity``.
+
+    The duct is periodic along exactly one axis, the flow's, and the velocity
+    and heat sources are uniform along it. Then ``T = gamma x + theta`` with
+    ``k L(theta) = rho c_p u gamma - q - q_J``, one linear solve on the cells;
+    the bulk temperature is weighted by the axial flow. With heat-flux walls only,
+    ``gamma`` follows from the heat balance ``rho c_p gamma Q`` = heat in per unit
+    length, and ``theta`` has zero mean. A prescribed-temperature wall takes in
+    heat the solve decides, so ``axial_gradient`` must then be given, and that
+    wall temperature rises along the duct at ``gamma`` too. A uniform axial heat
+    input with a peripherally uniform wall temperature is the H1 condition; a
+    uniform wall heat flux is H2. The flow rate must be positive. Differentiable
+    in the velocity, the heat source and ``axial_gradient``.
+    """
+    flow, grid, conditions = problem.flow, problem.flow.grid, problem.thermal_conditions
+    periodic = [axis for axis, condition in enumerate(conditions) if condition.is_periodic]
+    if len(periodic) != 1:
+        raise ValueError("a developed duct is periodic along exactly one axis, the flow's")
+    if any(DIRICHLET in condition.kinds for condition in conditions) == (axial_gradient is None):
+        raise ValueError("give axial_gradient exactly when a wall prescribes its temperature")
+    axial, capacity, k = periodic[0], problem.heat_capacity, float(problem.thermal_conductivity)
+    length = float(np.sum(grid.widths[axial]))
+
+    def per_length(data):
+        return cell_inner_product(Field(data, _CELL, grid), Field(jnp.ones_like(data), _CELL, grid)) / length
+
+    carrier = velocity[axial].data
+    speed = 0.5 * (_sliced(carrier, axial, 0) + _sliced(carrier, axial, 1))
+    sources = _joule_heating(face_currents(velocity, flow)[1], problem).data + heat_source.data
+    lift, flow_rate = problem.boundary_lift().data, per_length(speed)
+    if axial_gradient is None:  # heat-flux walls: k sum(V b) is the heat they let in
+        gradient = (per_length(sources) + k * per_length(lift)) / (capacity * flow_rate)
+    else:
+        gradient = jnp.asarray(axial_gradient, dtype=speed.dtype)
+    homogeneous = tuple(condition.homogeneous() for condition in conditions)
+    factorization = fast_diagonal_poisson(grid, homogeneous, precision=flow.precision)
+    theta = factorization.solve(Field((capacity * speed * gradient - sources) / k - lift, _CELL, grid))
+    temperatures, fluxes, areas = [], [], []
+    for axis, condition in enumerate(conditions):
+        if axis == axial:
+            continue
+        padded, normal = (
+            pad(theta.data, axis, condition, grid=grid),
+            face_gradient(theta, axis, condition).data,
+        )
+        for end, inward in ((0, -1.0), (-1, 1.0)):
+            pair = (0, 1) if end == 0 else (-1, -2)
+            slab = (slice(None),) * axis
+            temperatures.append(0.5 * (padded[slab + (pair[0],)] + padded[slab + (pair[1],)]))
+            fluxes.append(inward * k * normal[slab + (end,)])
+            areas.append(jnp.asarray(grid.face_areas(axis)[slab + (end,)], dtype=speed.dtype))
+    perimeter = sum(jnp.sum(area) for area in areas)
+    wall = sum(jnp.sum(area * value) for area, value in zip(areas, temperatures)) / perimeter
+    flux = sum(jnp.sum(area * value) for area, value in zip(areas, fluxes)) / perimeter
+    bulk = per_length(speed * theta.data) / flow_rate
+    diameter = (
+        4.0 * float(np.sum(grid.cell_volumes())) / float(sum(np.sum(np.asarray(area)) for area in areas))
+    )
+    entering = per_length(sources) + flux * perimeter / length
+    return DevelopedHeat(
+        theta,
+        gradient,
+        flow_rate,
+        bulk,
+        wall,
+        jnp.max(jnp.stack([jnp.max(value) for value in temperatures])),
+        flux,
+        diameter,
+        flux * diameter / (k * (wall - bulk)),
+        capacity * gradient * flow_rate - entering,
+    )
