@@ -158,7 +158,8 @@ class ThermalProblem:
     ``rho_0 [1 - beta (T - T_r)]`` and of the reported sensible heat.
     ``expansion_coefficient`` is ``beta``, zero for passive transport, and
     ``gravity`` the gravitational acceleration, pointing down, along the grid's
-    three axes. ``advection`` is ``"upwind"``, or ``"off"`` for conduction alone,
+    three axes; while ``beta > 0`` it has no component along a periodic axis,
+    where no periodic pressure balances its mean (ADR 0008, D32). ``advection`` is ``"upwind"``, or ``"off"`` for conduction alone,
     whatever the flow's own momentum transport.
 
     ``outlet_backflow`` says what enters where the flow returns through the
@@ -226,6 +227,10 @@ class ThermalProblem:
             for value in (condition.lower, condition.upper):
                 if np.ndim(value) and np.shape(value) != tangential:
                     raise ValueError(f"axis {axis} boundary data must have shape {tangential}")
+        if float(self.expansion_coefficient) and any(
+            component and flow.is_periodic for component, flow in zip(self.gravity, self.flow.conditions)
+        ):
+            raise ValueError("gravity along a periodic axis is refused while expansion_coefficient > 0")
 
     @property
     def heat_capacity(self) -> float:
@@ -457,17 +462,26 @@ def validate_thermal_inputs(
     *,
     divergence_tolerance: float,
     backflow_temperature: float | np.ndarray | None = None,
+    advective_cfl_limit: float = 0.8,
 ) -> None:
     """Check a state and heat source on the host before a run, raising ``ValueError`` on the first fault.
 
     Grids, offsets and shapes; the core's compute dtype; finite values; the wall
     and periodic face constraints; a velocity divergence within
-    ``divergence_tolerance``, in inverse time; and, at an outlet, no returning
+    ``divergence_tolerance``, in inverse time; with upwind transport, a Courant
+    number ``dt max(sum_f max(u_f . n_f, 0) A_f / V)`` within ``advective_cfl_limit``;
+    and, at an outlet, no returning
     face under ``outlet_backflow="error"``, or a finite ``backflow_temperature`` of
     the outlet's shape under ``"reservoir_flux"``. Nothing is changed or returned.
+
+    A held flow keeps its Courant number for the whole run. An evolving flow is
+    checked at its start only: its run is accepted on the ``advective_cfl`` it
+    reports each step.
     """
     if not (np.isfinite(divergence_tolerance) and divergence_tolerance >= 0.0):
         raise ValueError("divergence_tolerance must be nonnegative and finite")
+    if not (np.isfinite(advective_cfl_limit) and advective_cfl_limit > 0.0):
+        raise ValueError("advective_cfl_limit must be positive and finite")
     flow, dtype = problem.flow, jnp.result_type(float)
     if len(state.velocity) != 3:
         raise ValueError("the velocity needs three components")
@@ -492,6 +506,12 @@ def validate_thermal_inputs(
         raise ValueError("the velocity does not meet the wall and periodic face constraints")
     if float(jnp.max(jnp.abs(divergence(state.velocity).data))) > divergence_tolerance:
         raise ValueError("the velocity divergence exceeds divergence_tolerance")
+    if problem.advection == "upwind":
+        courant = float(flow.dt) * float(jnp.max(_outgoing_rate(state.velocity)))
+        if courant > advective_cfl_limit:
+            raise ValueError(
+                f"the Courant number {courant:.4g} exceeds advective_cfl_limit {advective_cfl_limit}"
+            )
     if problem.outlet_backflow == "reservoir_flux":
         if not np.all(np.isfinite(np.asarray(_reservoir(problem, backflow_temperature, dtype)))):
             raise ValueError("backflow_temperature must be finite")
@@ -642,6 +662,8 @@ def _reservoir(problem: ThermalProblem, value, dtype) -> jnp.ndarray | None:
         return None
     if value is None:
         raise ValueError("outlet_backflow='reservoir_flux' needs backflow_temperature")
+    if jnp.iscomplexobj(value):
+        raise ValueError("backflow_temperature must be real")
     axis, shape = problem.flow.open_axis, problem.flow.grid.shape
     face = shape[:axis] + shape[axis + 1 :]
     data = jnp.asarray(value, dtype=dtype)

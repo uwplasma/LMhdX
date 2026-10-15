@@ -413,14 +413,15 @@ def _cells(thermal, values):
     return Field(jnp.broadcast_to(jnp.asarray(values, dtype=jnp.float64), grid.shape), (CENTER,) * 3, grid)
 
 
-def test_a_passive_thermal_step_moves_the_flow_exactly_as_step_does(monkeypatch):
-    """With one potential solve: the Lorentz force and the Joule heat share it."""
+@pytest.mark.parametrize("gravity", [(0.0, 0.0, 0.0), (1.0, 0.0, -1.0)])
+def test_a_passive_thermal_step_moves_the_flow_exactly_as_step_does(monkeypatch, gravity):
+    """With one potential solve: the Lorentz force and the Joule heat share it. A stored ``g`` with ``beta = 0`` is passive."""
     from lmhdx.thermal import build_thermal_step, initial_thermal_state
 
     flow = _uniform_duct(8, conductance=0.05)
     viscous = flow.viscous_factorizations()
     velocity = advance(flow, 3, viscous=viscous).velocity
-    thermal = _heated(flow)
+    thermal = _heated(flow, gravity=gravity)
     state = initial_thermal_state(thermal, 300.0, velocity)
     solves, solve = [], core3d._solve_potential
     monkeypatch.setattr(core3d, "_solve_potential", lambda *args: solves.append(1) or solve(*args))
@@ -723,7 +724,9 @@ def test_an_open_duct_holds_its_flow_and_takes_an_inlet_temperature():
     thermal, plug = _plug_duct(8)
     with pytest.raises(ValueError, match="hold_flow"):
         build_thermal_step(thermal, dtype=jnp.float64)
-    buoyant = dataclasses.replace(thermal, expansion_coefficient=1.0e-3, gravity=(0.0, 0.0, -1.0))
+    buoyant = dataclasses.replace(
+        thermal, expansion_coefficient=1.0e-3, gravity=(-1.0, 0.0, 0.0)
+    )  # along the open x
     with pytest.raises(ValueError, match="buoyancy"):
         build_thermal_step(buoyant, dtype=jnp.float64, hold_flow=True)
     for ends in (
@@ -905,6 +908,7 @@ def test_an_outlet_needs_its_returning_temperature_and_refuses_an_unknown_one():
         (thermal, None),
         (thermal, np.full((1, 6), 280.0)),
         (thermal, np.inf),
+        (thermal, 280.0 + 1.0j),
         (unchecked, None),  # positive net flow, but a band returns through the outlet
         (unchecked, 280.0),
     ):
@@ -931,3 +935,157 @@ def test_an_outlet_needs_its_returning_temperature_and_refuses_an_unknown_one():
             dataclasses.replace(closed, **change)
     with pytest.raises(ValueError, match="inflow-outflow"):
         dataclasses.replace(_heated(_uniform_duct(4)), outlet_backflow="reservoir_flux")
+
+
+# Host checks and compiled contracts (review corrections, part 3).
+
+
+def test_a_run_past_its_courant_limit_is_refused_before_it_starts():
+    """``dt max(sum_f max(u_f . n_f, 0) A_f / V)``, the transport's own rate: refused above the limit, 0.8 by default.
+
+    A held plug flow at Courant 0.5 passes and fails a 0.4 limit; at Courant 2 it is refused unless the heat only
+    conducts. A closed duct's evolving flow is checked at its start: 300 across one unit cell at ``dt = 2e-3`` is 0.6.
+    """
+    import contextlib
+    import dataclasses
+
+    from lmhdx.thermal import initial_thermal_state, validate_thermal_inputs
+
+    thermal, plug = _plug_duct(8)
+    state, heat = initial_thermal_state(thermal, 0.0, plug), _cells(thermal, 0.0)
+    validate_thermal_inputs(thermal, state, heat, divergence_tolerance=1e-12, advective_cfl_limit=0.5)
+    with pytest.raises(ValueError, match="Courant number 0.5 exceeds"):
+        validate_thermal_inputs(thermal, state, heat, divergence_tolerance=1e-12, advective_cfl_limit=0.4)
+    for limit in (0.0, -1.0, np.inf, np.nan):
+        with pytest.raises(ValueError, match="advective_cfl_limit"):
+            validate_thermal_inputs(
+                thermal, state, heat, divergence_tolerance=1e-12, advective_cfl_limit=limit
+            )
+    fast = dataclasses.replace(thermal, flow=dataclasses.replace(thermal.flow, dt=2.0 / 8))
+    with pytest.raises(ValueError, match="Courant number 2 exceeds"):
+        validate_thermal_inputs(fast, state, heat, divergence_tolerance=1e-12)
+    validate_thermal_inputs(
+        dataclasses.replace(fast, advection="off"), state, heat, divergence_tolerance=1e-12
+    )
+    closed = _heated(_uniform_duct(6))
+    rest = initial_thermal_state(closed, 300.0)
+    for speed in (300.0, 500.0):
+        along = rest.velocity[0].replace_data(jnp.full_like(rest.velocity[0].data, speed))
+        moving = rest._replace(velocity=(along, *rest.velocity[1:]))
+        refused = pytest.raises(ValueError, match="Courant number 1 exceeds")
+        with refused if speed > 400.0 else contextlib.nullcontext():
+            validate_thermal_inputs(closed, moving, _cells(closed, 0.0), divergence_tolerance=1e-12)
+    plug_reservoir = dataclasses.replace(thermal, outlet_backflow="reservoir_flux")
+    with pytest.raises(ValueError, match="needs backflow_temperature"):  # even with no face returning
+        validate_thermal_inputs(plug_reservoir, state, heat, divergence_tolerance=1e-12)
+
+
+def _primitives(jaxpr) -> set[str]:
+    """Every primitive of a jaxpr and of the jaxprs inside it."""
+    from jax.extend.core import ClosedJaxpr, Jaxpr
+
+    names = set()
+    for equation in jaxpr.eqns:
+        names.add(equation.primitive.name)
+        for value in equation.params.values():
+            for inner in value if isinstance(value, (tuple, list)) else (value,):
+                if isinstance(inner, ClosedJaxpr):
+                    names |= _primitives(inner.jaxpr)
+                elif isinstance(inner, Jaxpr):
+                    names |= _primitives(inner)
+    return names
+
+
+def test_a_reservoir_run_compiles_whole_and_takes_new_values_without_retracing():
+    """The reservoir is a numerical input like the heat source: one trace for new values, a loop-invariant scan input.
+
+    The jitted step and scan match the eager steps to 1e-12 relative, keep the state's leaves, grids and offsets, stack
+    only scalars, and hold no host callback; the scan's text grows by under 1% from 4 to 128 steps.
+    """
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
+
+    thermal, velocity = _returning_duct()
+    thermal_step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+    state, heat = initial_thermal_state(thermal, 300.0, velocity), _cells(thermal, 1.0)
+    eager, tree = state, jax.tree_util.tree_structure(state)
+    for _ in range(4):
+        eager, record = thermal_step(eager, heat, backflow_temperature=280.0)
+    one, _ = jax.jit(thermal_step)(state, heat, backflow_temperature=jnp.asarray(280.0))
+    assert jax.tree_util.tree_structure(one) == tree and len(record) == 19
+    traces = []
+
+    def run(start, source, reservoir):
+        traces.append(1)
+        return advance_thermal(thermal_step, start, source, 4, backflow_temperature=reservoir)
+
+    compiled = jax.jit(run)
+    final, history = compiled(state, heat, jnp.asarray(280.0))
+    warmer = compiled(state, heat, jnp.asarray(290.0))[0]
+    assert len(traces) == 1 and float(jnp.min(warmer.temperature.data - final.temperature.data)) >= -1e-10
+    assert not np.allclose(warmer.temperature.data, final.temperature.data)
+    profile = compiled(state, heat, jnp.full((6, 1), 280.0))[0]  # a new shape is a new trace, the same run
+    assert len(traces) == 2 and np.array_equal(profile.temperature.data, final.temperature.data)
+    assert jax.tree_util.tree_structure(final) == tree and all(np.shape(value) == (4,) for value in history)
+    for scanned, stepped in zip(jax.tree_util.tree_leaves(final), jax.tree_util.tree_leaves(eager)):
+        assert scanned.dtype == stepped.dtype == jnp.float64
+        assert float(jnp.max(jnp.abs(scanned - stepped))) <= 1e-12 * float(jnp.max(jnp.abs(stepped)))
+
+    def traced(steps):
+        return jax.make_jaxpr(
+            lambda start, reservoir: advance_thermal(
+                thermal_step, start, heat, steps, backflow_temperature=reservoir
+            )
+        )(state, jnp.asarray(280.0))
+
+    short, long = traced(4), traced(128)
+    assert abs(len(str(long)) - len(str(short))) < 0.01 * len(str(short))
+    scan = next(equation for equation in long.eqns if equation.primitive.name == "scan")
+    assert len(scan.invars) == scan.params["num_consts"] + scan.params["num_carry"]  # nothing indexed by step
+    assert all(var.aval.shape == (128,) for var in scan.outvars[scan.params["num_carry"] :])
+    assert not any("callback" in name for name in _primitives(long.jaxpr))
+
+
+def test_the_reservoir_derivative_lives_on_the_returning_faces_only():
+    """``d(u T_face)/d T_res`` is ``u`` on a returning face and zero on a leaving one, exactly; a run's derivative in a
+    reservoir amplitude matches central differences to 1e-5 (best of three sizes), checkpointed or not.
+
+    The held flow does not depend on the reservoir, so no face changes sign under the perturbation. Across a face
+    whose velocity changes sign, upwinding is only piecewise differentiable, and nothing is smoothed to hide it.
+    """
+    from lmhdx.thermal import _upwind_fluxes, advance_thermal, build_thermal_step, initial_thermal_state
+
+    thermal, velocity = _returning_duct()
+    state = initial_thermal_state(thermal, 300.0 + 2.0 * _pattern(thermal, 22), velocity)
+
+    def outlet(reservoir):
+        return _upwind_fluxes(state.temperature, velocity, thermal, reservoir)[0].data[-1]
+
+    jacobian = np.asarray(jax.jacfwd(outlet)(jnp.full((6, 1), 280.0))).reshape(6, 6)
+    normal = np.asarray(velocity[0].data[-1, :, 0])
+    assert np.any(normal < 0.0) and np.any(normal > 0.0)
+    assert np.array_equal(jacobian, np.diag(np.where(normal < 0.0, normal, 0.0)))
+    thermal_step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+    profile = jnp.asarray(np.linspace(-1.0, 1.0, 6)[:, None])
+
+    def objective(amplitude, checkpoint=True):
+        reservoir = 280.0 + amplitude * (1.0 + profile)
+        final, _ = advance_thermal(
+            thermal_step,
+            state,
+            _cells(thermal, 0.0),
+            6,
+            checkpoint=checkpoint,
+            backflow_temperature=reservoir,
+        )
+        return jnp.mean(final.temperature.data)
+
+    saved, plain = (jax.value_and_grad(lambda a, c=c: objective(a, c))(0.5) for c in (True, False))
+    assert float(saved[0]) == pytest.approx(float(plain[0]), rel=1e-13)
+    assert float(saved[1]) == pytest.approx(float(plain[1]), rel=1e-12)
+    compiled = jax.jit(objective)
+    gradient = float(jax.jit(jax.grad(objective))(0.5))
+    errors = [
+        abs(gradient - float(compiled(0.5 + size) - compiled(0.5 - size)) / (2.0 * size)) / abs(gradient)
+        for size in (1.0e-1, 1.0e-2, 1.0e-3)
+    ]
+    assert gradient > 0.0 and min(errors) < 1e-5, (gradient, errors)  # a warmer reservoir warms the duct

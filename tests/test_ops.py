@@ -1102,7 +1102,7 @@ def test_the_buoyancy_force_pushes_a_hot_cell_against_gravity():
     assert np.allclose(np.asarray(forces[2].data), expected, rtol=1e-14, atol=1e-18)
     assert not np.any(np.asarray(forces[0].data)) and not np.any(np.asarray(forces[1].data))
     assert all(force.offset == velocity_offset(axis) for axis, force in enumerate(forces))
-    sideways = dataclasses.replace(problem, gravity=(1.0, -2.0, 3.0))
+    sideways = dataclasses.replace(problem, gravity=(0.0, -2.0, 3.0))
     tilted = _buoyancy(Field(jnp.asarray(hot), CELL, STRETCHED), sideways)
     upward = np.asarray(forces[2].data) / -9.8
     assert np.allclose(np.asarray(tilted[2].data), 3.0 * upward, rtol=1e-14, atol=1e-18)
@@ -1113,8 +1113,12 @@ def test_the_buoyancy_force_pushes_a_hot_cell_against_gravity():
         assert not np.any(faces[[0, -1]]) and np.all(faces[1:-1])
     for passive in (
         dataclasses.replace(problem, expansion_coefficient=0.0),
+        dataclasses.replace(problem, expansion_coefficient=0.0, gravity=(1.0, -2.0, 3.0)),
         dataclasses.replace(problem, gravity=(0.0, 0.0, 0.0)),
     ):
         assert _buoyancy(Field(jnp.asarray(hot), CELL, STRETCHED), passive) is None
+    # Along the periodic x no pressure balances the mean push (ADR 0008, D32): refused while beta > 0.
+    with pytest.raises(ValueError, match="periodic axis"):
+        dataclasses.replace(problem, gravity=(1.0, -2.0, 3.0))
     reference = _buoyancy(Field(jnp.ones(STRETCHED.shape), CELL, STRETCHED), problem)
     assert not any(np.any(np.asarray(force.data)) for force in reference)
