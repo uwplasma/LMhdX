@@ -542,9 +542,14 @@ def build_thermal_step(
     temperature takes upwind transport by the old velocity, then implicit conduction.
 
     ``hold_flow`` keeps the state's velocity, a steady flow the heat is carried by,
-    without buoyancy. An inflow-outflow duct needs it, since the step does not
-    advance such a flow: give it the physical velocity of
-    :func:`lmhdx.axial.solve_open_duct`.
+    without buoyancy, and prepares no viscous inverses. An inflow-outflow duct
+    needs it, since the step does not advance such a flow: give it the physical
+    velocity of :func:`lmhdx.axial.solve_open_duct`.
+
+    The diagnostics apply the temperature's Laplacian and wall gradients to the
+    new temperature once more, for ``heat_solve_residual`` and
+    ``conductive_heat_out``: about one cell-centred Laplacian per step beyond
+    the update, and no further electric solve.
     """
     compute = jnp.result_type(float)
     if jnp.dtype(dtype) != compute:
@@ -558,7 +563,8 @@ def build_thermal_step(
         )
     if hold_flow and float(problem.expansion_coefficient) and any(problem.gravity):
         raise ValueError("a held flow takes no buoyancy")
-    pressure, viscous = flow.factorization(), flow.viscous_factorizations()
+    pressure = flow.factorization()
+    viscous = None if hold_flow else flow.viscous_factorizations()
     if flow.conducting_walls:
         flow.potential_factorization()  # built once here, so tracing only looks it up
     diffusion, lift = problem.diffusion_factorization(), problem.boundary_lift()
@@ -753,7 +759,8 @@ def developed_heat(
     wall temperature rises along the duct at ``gamma`` too. A uniform axial heat
     input with a peripherally uniform wall temperature is the H1 condition; a
     uniform wall heat flux is H2. The flow rate must be positive. Differentiable
-    in the velocity, the heat source and ``axial_gradient``.
+    in the velocity, the heat source and ``axial_gradient``, and compiled whole
+    by :func:`jax.jit`. Without Joule heat no current is formed.
     """
     flow, grid, conditions = problem.flow, problem.flow.grid, problem.thermal_conditions
     periodic = [axis for axis, condition in enumerate(conditions) if condition.is_periodic]
@@ -769,7 +776,9 @@ def developed_heat(
 
     carrier = velocity[axial].data
     speed = 0.5 * (_sliced(carrier, axial, 0) + _sliced(carrier, axial, 1))
-    sources = _joule_heating(face_currents(velocity, flow)[1], problem).data + heat_source.data
+    sources = heat_source.data
+    if problem.joule_heating:  # otherwise no current is needed
+        sources = _joule_heating(face_currents(velocity, flow)[1], problem).data + sources
     lift, flow_rate = problem.boundary_lift().data, per_length(speed)
     if axial_gradient is None:  # heat-flux walls: k sum(V b) is the heat they let in
         gradient = (per_length(sources) + k * per_length(lift)) / (capacity * flow_rate)
@@ -778,7 +787,7 @@ def developed_heat(
     homogeneous = tuple(condition.homogeneous() for condition in conditions)
     factorization = fast_diagonal_poisson(grid, homogeneous, precision=flow.precision)
     theta = factorization.solve(Field((capacity * speed * gradient - sources) / k - lift, _CELL, grid))
-    temperatures, fluxes, areas = [], [], []
+    temperatures, fluxes, areas, wetted = [], [], [], 0.0
     for axis, condition in enumerate(conditions):
         if axis == axial:
             continue
@@ -791,14 +800,14 @@ def developed_heat(
             slab = (slice(None),) * axis
             temperatures.append(0.5 * (padded[slab + (pair[0],)] + padded[slab + (pair[1],)]))
             fluxes.append(inward * k * normal[slab + (end,)])
-            areas.append(jnp.asarray(grid.face_areas(axis)[slab + (end,)], dtype=speed.dtype))
+            faces = grid.face_areas(axis)[slab + (end,)]  # host geometry, never traced
+            areas.append(jnp.asarray(faces, dtype=speed.dtype))
+            wetted += float(np.sum(faces))
     perimeter = sum(jnp.sum(area) for area in areas)
     wall = sum(jnp.sum(area * value) for area, value in zip(areas, temperatures)) / perimeter
     flux = sum(jnp.sum(area * value) for area, value in zip(areas, fluxes)) / perimeter
     bulk = per_length(speed * theta.data) / flow_rate
-    diameter = (
-        4.0 * float(np.sum(grid.cell_volumes())) / float(sum(np.sum(np.asarray(area)) for area in areas))
-    )
+    diameter = 4.0 * float(np.sum(grid.cell_volumes())) / wetted
     entering = per_length(sources) + flux * perimeter / length
     return DevelopedHeat(
         theta,

@@ -1089,3 +1089,74 @@ def test_the_reservoir_derivative_lives_on_the_returning_faces_only():
         for size in (1.0e-1, 1.0e-2, 1.0e-3)
     ]
     assert gradient > 0.0 and min(errors) < 1e-5, (gradient, errors)  # a warmer reservoir warms the duct
+
+
+# Review corrections, part 4: conductivity, electrical walls and preparation.
+
+
+def test_a_heat_flux_wall_keeps_its_flux_only_when_rebuilt_with_a_new_conductivity():
+    """A heat-flux condition stores ``q / k``: rebuilt at each ``k`` it lets out 2 and 5 over area 2, 14, both times;
+    kept from ``k = 0.5`` under ``k = 2`` it lets out four times as much (#232)."""
+    import dataclasses
+
+    from lmhdx.thermal import build_thermal_step, initial_thermal_state, thermal_boundary
+
+    flow, insulated = _uniform_duct(8, hartmann=0.0), thermal_boundary("heat_flux", conductivity=0.5)
+    outs = []
+    for k, built_with in ((0.5, 0.5), (2.0, 2.0), (2.0, 0.5)):
+        walls = (PERIODIC_AXIS, thermal_boundary("heat_flux", 2.0, 5.0, conductivity=built_with), insulated)
+        thermal = dataclasses.replace(_heated(flow, walls), thermal_conductivity=k)
+        record = build_thermal_step(thermal, dtype=jnp.float64)(
+            initial_thermal_state(thermal, 300.0), _cells(thermal, 0.0)
+        )[1]
+        outs.append(float(record.conductive_heat_out))
+    assert outs == pytest.approx([14.0, 14.0, 56.0], rel=1e-12)
+
+
+def test_resolved_electrical_walls_leave_the_temperature_on_the_fluid_cells():
+    """``wall_layers`` widen only the electric solve (#235): the temperature keeps the fluid's cells and volume, 4,
+    and the step deposits the fluid's budget Joule power to 1e-11 while the walls dissipate their own."""
+    import dataclasses
+
+    from lmhdx.core3d import project, velocity_offset
+    from lmhdx.grid import Field
+    from lmhdx.thermal import build_thermal_step, initial_thermal_state
+
+    layered = _layered_duct()
+    for problem in (layered, dataclasses.replace(layered, wall_layers=(None, None, None))):
+        thermal = _thermal_of(problem)
+        thermal_step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+        rest, record = thermal_step(initial_thermal_state(thermal, 1.0), _cells(thermal, 0.0))
+        assert rest.temperature.grid == problem.grid and rest.temperature.shape == (1, 12, 12)
+        assert float(record.sensible_energy) == pytest.approx(4.0, rel=1e-13)
+    keys = jax.random.split(jax.random.PRNGKey(5), 3)
+    noise = tuple(
+        Field(
+            jax.random.normal(keys[a], layered.grid.offset_shape(velocity_offset(a))),
+            velocity_offset(a),
+            layered.grid,
+        )
+        for a in range(3)
+    )
+    velocity, thermal = project(noise, layered)[0], _thermal_of(layered)
+    record = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)(
+        initial_thermal_state(thermal, 1.0, velocity), _cells(thermal, 0.0)
+    )[1]
+    budget = energy_budget(velocity, layered)
+    assert float(budget.wall) > 0.0
+    assert abs(float(record.joule_power) - float(budget.joule)) <= 1e-11 * float(budget.joule)
+
+
+def test_a_held_flow_prepares_no_viscous_inverse(monkeypatch):
+    from lmhdx.thermal import build_thermal_step
+
+    built, prepare = [], ChannelProblem.viscous_factorizations
+    monkeypatch.setattr(
+        ChannelProblem, "viscous_factorizations", lambda self: built.append(1) or prepare(self)
+    )
+    closed = _heated(_uniform_duct(6))
+    for thermal in (_plug_duct(8)[0], closed):
+        build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+    assert not built
+    build_thermal_step(closed, dtype=jnp.float64)
+    assert built == [1]

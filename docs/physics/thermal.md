@@ -196,7 +196,10 @@ failing value is not repaired by clipping.
 - With momentum transport on (`ChannelProblem.advection` other than `"off"`), a
   periodic axis needs at least two cells.
 - Insulating, thin conducting and resolved electrical walls all work, with
-  their electrical dissipation kept outside the fluid.
+  their electrical dissipation kept outside the fluid. Resolved `wall_layers`
+  widen only the electric solve: the temperature lives on the fluid cells
+  alone, with the fluid's conductivity, and its conditions apply at the fluid's
+  wall faces.
 
 **Precision.** The `dtype` given to `build_thermal_step` must be the core's
 compute dtype: float64 after `lmhdx.enable_x64()`, else float32. Set it before
