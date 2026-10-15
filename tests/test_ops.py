@@ -1,5 +1,7 @@
 """Boundary padding and the compatible gradient, divergence and Laplacian."""
 
+import dataclasses
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -34,6 +36,7 @@ from lmhdx.ops import (
     momentum_advection,
     staggered_laplacian,
 )
+from lmhdx.thermal import ThermalProblem, _conduct, thermal_boundary
 
 pytestmark = pytest.mark.unit
 
@@ -708,3 +711,197 @@ def test_the_staggered_laplacian_validates_its_inputs():
         staggered_laplacian(field, (WALL, WALL))
     with pytest.raises(ValueError, match="does not match its offset"):
         staggered_laplacian(Field(jnp.zeros((2, 2, 2)), AXIAL, grid), (WALL, WALL, WALL))
+
+
+# Heat conduction (plan step 5.1b, ADR 0008): thermal conditions, the boundary lift and the implicit inverse.
+
+CELL = (CENTER, CENTER, CENTER)
+
+
+def _thermal(grid: Grid, conditions, *, dt: float = 1.0e-2, k: float = 2.0) -> ThermalProblem:
+    flow = ChannelProblem(
+        grid, tuple(WRAP if c.is_periodic else WALL for c in conditions), density=1.5, dt=dt
+    )
+    return ThermalProblem(flow, conditions, specific_heat=3.0, thermal_conductivity=k)
+
+
+def _advance_heat(problem: ThermalProblem, temperature: Field, heating: Field, steps: int = 1) -> Field:
+    factorization, lift = problem.diffusion_factorization(), problem.boundary_lift()
+    for _ in range(steps):
+        temperature = _conduct(temperature, heating, problem, factorization, lift)
+    return temperature
+
+
+def _mixed_walls(rng) -> tuple[BoundaryCondition, BoundaryCondition, BoundaryCondition]:
+    """Mixed kinds, scalar and array data on two wall-bounded axes of STRETCHED, so the corners take both."""
+    return (
+        thermal_boundary(
+            "temperature", rng.standard_normal((8, 5)), 0.3, upper_kind="heat_flux", conductivity=2.0
+        ),
+        thermal_boundary(
+            "heat_flux", rng.standard_normal((6, 5)), rng.standard_normal((6, 5)), conductivity=2.0
+        ),
+        WRAP,
+    )
+
+
+def test_neumann_data_is_the_derivative_along_the_axis_at_both_ends():
+    """The ghost arithmetic thermal_boundary relies on: ``first - d h`` below and ``last + d h`` above."""
+    data = jnp.asarray(np.random.default_rng(1).standard_normal(STRETCHED.shape))
+    padded = np.asarray(pad(data, 1, BoundaryCondition(NEUMANN, 0.7, -1.3), grid=STRETCHED))
+    widths = np.asarray(STRETCHED.widths[1])
+    assert np.allclose(padded[:, 0], data[:, 0] - 0.7 * widths[0], rtol=0.0, atol=1e-14)
+    assert np.allclose(padded[:, -1], data[:, -1] - 1.3 * widths[-1], rtol=0.0, atol=1e-14)
+
+
+def test_thermal_boundary_turns_outward_heat_flux_into_the_axis_derivative():
+    assert thermal_boundary("heat_flux", 2.0, 3.0, conductivity=4.0) == BoundaryCondition(NEUMANN, 0.5, -0.75)
+    mixed = thermal_boundary("temperature", 300.0, 5.0, upper_kind="heat_flux", conductivity=2.0)
+    assert mixed.kinds == (DIRICHLET, NEUMANN) and (mixed.lower, mixed.upper) == (300.0, -2.5)
+    same = thermal_boundary("temperature", 1.0, 2.0, upper_kind="temperature")
+    assert same == BoundaryCondition(DIRICHLET, 1.0, 2.0) and thermal_boundary("periodic") == WRAP
+    profile = np.array([[1.0, 2.0], [3.0, 4.0]])
+    condition = thermal_boundary("heat_flux", profile, conductivity=2.0)
+    profile[0, 0] = 99.0
+    assert np.array_equal(condition.lower, [[0.5, 1.0], [1.5, 2.0]])
+    for bad in (
+        dict(kind="adiabatic"),
+        dict(kind="heat_flux"),
+        dict(kind="heat_flux", conductivity=0.0),
+        dict(kind="temperature", lower=np.inf),
+        dict(kind="periodic", lower=1.0),
+    ):
+        with pytest.raises(ValueError):
+            thermal_boundary(**bad)
+
+
+def test_a_thermal_problem_checks_its_inputs():
+    grid = Grid(uniform_faces(2, 0.0, 1.0), uniform_faces(3, -1.0, 1.0), uniform_faces(4, -1.0, 1.0))
+    walls = (WRAP, thermal_boundary("temperature", 1.0, 2.0), thermal_boundary("heat_flux", conductivity=1.0))
+    problem = ThermalProblem(ChannelProblem(grid, (WRAP, WALL, WALL)), walls, 2.0, 0.5)
+    assert problem.heat_capacity == 2.0 and problem.diffusivity == 0.25
+    tangential = thermal_boundary("temperature", np.ones((2, 3)), np.zeros((2, 3)))
+    assert dataclasses.replace(problem, thermal_conditions=(*walls[:2], tangential)).flow is problem.flow
+    for change in (
+        dict(thermal_conditions=(WALL, *walls[1:])),
+        dict(thermal_conditions=(*walls[:2], thermal_boundary("temperature", np.ones((3, 2))))),
+        dict(thermal_conditions=walls[:2]),
+        dict(specific_heat=0.0),
+        dict(thermal_conductivity=np.nan),
+        dict(flow=dataclasses.replace(problem.flow, dt=np.inf)),
+        dict(flow=ChannelProblem(_polar(4, 6), (WALL, WRAP, WRAP))),
+        dict(flow=ChannelProblem(grid, (BoundaryCondition(DIRICHLET, upper_kind=NEUMANN), WALL, WALL))),
+    ):
+        with pytest.raises(ValueError):
+            dataclasses.replace(problem, **change)
+    for change in (dict(flow=None), dict(thermal_conditions=(WRAP, walls[1], "insulated"))):
+        with pytest.raises(TypeError):
+            dataclasses.replace(problem, **change)
+
+
+def test_the_boundary_lift_makes_the_laplacian_affine():
+    """``L(T) = L_0(T) + L(0)`` for any temperature, to rounding (1e-12 of ``L(T)``)."""
+    rng = np.random.default_rng(3)
+    conditions = _mixed_walls(rng)
+    temperature = Field(jnp.asarray(rng.standard_normal(STRETCHED.shape)), CELL, STRETCHED)
+    full = laplacian(temperature, conditions).data
+    homogeneous = laplacian(temperature, tuple(c.homogeneous() for c in conditions)).data
+    lift = _thermal(STRETCHED, conditions).boundary_lift().data
+    assert float(jnp.max(jnp.abs(full - homogeneous - lift))) <= 1e-12 * float(jnp.max(jnp.abs(full)))
+
+
+def test_the_diffusion_inverse_solves_the_production_laplacian():
+    """Its residual under ``ops.laplacian`` is within 1e-10 of the right-hand side, not just its own operator's."""
+    rng = np.random.default_rng(4)
+    conditions = tuple(c.homogeneous() for c in _mixed_walls(rng))
+    problem = _thermal(STRETCHED, conditions, dt=0.05)
+    rhs = Field(jnp.asarray(rng.standard_normal(STRETCHED.shape)), CELL, STRETCHED)
+    solution = problem.diffusion_factorization().solve(rhs)
+    operator = laplacian(solution, conditions).data
+    residual = solution.data - problem.flow.dt * problem.diffusivity * operator - rhs.data
+    assert float(jnp.max(jnp.abs(residual))) <= 1e-10 * float(jnp.max(jnp.abs(rhs.data)))
+    staggered = staggered_laplacian(solution, conditions).data
+    assert float(jnp.max(jnp.abs(staggered - operator))) <= 1e-13 * float(jnp.max(jnp.abs(operator)))
+
+
+def test_insulated_conduction_keeps_stored_heat_and_heats_uniformly():
+    """A uniform heat rate raises every cell by ``dt q / (rho c_p)`` a step; no heat leaves or is removed."""
+    insulated = thermal_boundary("heat_flux", conductivity=2.0)
+    problem = _thermal(STRETCHED, (insulated, insulated, WRAP))
+    start = Field(jnp.full(STRETCHED.shape, 300.0), CELL, STRETCHED)
+    heated = _advance_heat(problem, start, start.replace_data(jnp.full(STRETCHED.shape, 4.0)), steps=3)
+    rise = 3 * problem.flow.dt * 4.0 / problem.heat_capacity
+    # Cells hold about 300, so rounding is relative to the temperature, not to the rise.
+    assert float(jnp.max(jnp.abs(heated.data - (300.0 + rise)))) <= 1e-13 * 300.0
+    noise = start.replace_data(jnp.asarray(np.random.default_rng(5).standard_normal(STRETCHED.shape)))
+    spread = _advance_heat(problem, noise, noise.replace_data(jnp.zeros(STRETCHED.shape)), steps=3)
+    before, after = (
+        float(cell_inner_product(field, noise.replace_data(jnp.ones(STRETCHED.shape))))
+        for field in (noise, spread)
+    )
+    assert abs(after - before) <= 1e-13 * float(np.sum(STRETCHED.cell_volumes()))
+
+
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+def test_outward_heat_flux_cools_through_both_ends(sign):
+    """A positive outward flux takes ``q A dt`` out through each end and cools beside both; negative heats."""
+    lower, upper = 2.0 * sign, 5.0 * sign
+    conditions = (
+        thermal_boundary("heat_flux", conductivity=2.0),
+        thermal_boundary("heat_flux", lower, upper, conductivity=2.0),
+        WRAP,
+    )
+    problem = _thermal(STRETCHED, conditions)
+    zero = Field(jnp.zeros(STRETCHED.shape), CELL, STRETCHED)
+    after = np.asarray(_advance_heat(problem, zero, zero).data)
+    stored = problem.heat_capacity * float(np.sum(STRETCHED.cell_volumes() * after))
+    area = float(np.sum(STRETCHED.face_areas(1)[:, 0, :]))
+    assert stored == pytest.approx(-problem.flow.dt * (lower + upper) * area, rel=1e-12)
+    profile = sign * after.mean(axis=(0, 2))
+    middle = len(profile) // 2
+    assert profile[0] < profile[middle] and profile[-1] < profile[middle]
+
+
+def test_a_periodic_mode_decays_at_its_discrete_rate():
+    """``cos(2 pi m x / L)`` is an eigenvector: one step divides it by ``1 + dt alpha (4/h^2) sin^2(pi m h / L)``."""
+    cells, length, mode = 16, 2.0, 3
+    grid = Grid(uniform_faces(cells, 0.0, length), uniform_faces(1, -1.0, 1.0), uniform_faces(1, -1.0, 1.0))
+    insulated = thermal_boundary("heat_flux", conductivity=2.0)
+    problem = _thermal(grid, (WRAP, insulated, insulated))
+    wave = _cells(grid, lambda x, y, z: np.cos(2.0 * np.pi * mode * x / length) + 0.0 * (y + z))
+    after = _advance_heat(problem, wave, wave.replace_data(jnp.zeros(grid.shape)))
+    width = length / cells
+    rate = (
+        problem.flow.dt * problem.diffusivity * (4.0 / width**2) * np.sin(np.pi * mode * width / length) ** 2
+    )
+    assert float(jnp.max(jnp.abs(after.data - wave.data / (1.0 + rate)))) <= 1e-13
+
+
+@pytest.mark.parametrize("stretch", [None, 1.3], ids=["uniform", "tanh"])
+def test_a_heated_slab_converges_at_second_order(stretch):
+    """``k T'' + q = 0`` between two wall temperatures: the parabola, at second order.
+
+    The wall heat flux is exact to rounding on any face distribution. The cell
+    balances fix every difference of neighbouring face fluxes, and the flux times
+    the centre-to-centre distance sums to the wall-temperature difference: off the
+    midpoints the interior terms telescope to ``-(h_N^2 - h_1^2)/8`` and the two
+    half-cell wall terms return exactly that, so a uniform source is carried
+    exactly, wall fluxes included.
+    """
+    k, q, low, high = 2.0, 3.0, 1.0, 2.0
+    errors = []
+    for cells in (8, 16, 32):
+        faces = uniform_faces(cells, -1.0, 1.0) if stretch is None else tanh_faces(cells, -1.0, 1.0, stretch)
+        grid = Grid(uniform_faces(1, 0.0, 1.0), faces, uniform_faces(1, 0.0, 1.0))
+        insulated = thermal_boundary("heat_flux", conductivity=k)
+        problem = _thermal(grid, (WRAP, thermal_boundary("temperature", low, high), insulated), dt=1.0e3, k=k)
+        zero = Field(jnp.zeros(grid.shape), CELL, grid)
+        # dt alpha lambda_min ~ 1e3, so six implicit steps reach the steady state to rounding.
+        steady = np.asarray(_advance_heat(problem, zero, zero.replace_data(jnp.full(grid.shape, q)), 6).data)
+        y = np.asarray(grid.centers[1])
+        exact = low + (high - low) * (y + 1.0) / 2.0 + q / (2.0 * k) * (y + 1.0) * (1.0 - y)
+        flux = k * (steady[0, 0, 0] - low) / (0.5 * grid.widths[1][0])
+        wall = k * (high - low) / 2.0 + q
+        assert abs(flux - wall) <= 1e-11 * wall
+        errors.append(np.max(np.abs(steady[0, :, 0] - exact)))
+    assert np.log2(errors[1] / errors[2]) > 1.8, errors
