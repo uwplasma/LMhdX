@@ -1184,6 +1184,7 @@ def test_the_developed_duct_compiles_whole_and_forms_no_current_without_joule_he
         heat = Field(jnp.full(grid.shape, source), (CENTER,) * 3, grid)
         jitted, eager = compiled(flow, heat), developed_heat(thermal, flow, heat)
         for value, expected in zip(jax.tree_util.tree_leaves(jitted), jax.tree_util.tree_leaves(eager)):
+            value, expected = (jnp.asarray(leaf, jnp.float64) for leaf in (value, expected))  # one is a flag
             assert float(jnp.max(jnp.abs(value - expected))) <= 1e-12 * max(
                 1.0, float(jnp.max(jnp.abs(expected)))
             )
@@ -1334,6 +1335,14 @@ def test_developed_inputs_are_checked_against_the_reduction():
     long = ChannelProblem(Grid(uniform_faces(2, 0.0, 1.0), *grid.faces[1:]), thermal.flow.conditions)
     with pytest.raises(ValueError, match="one cell"):
         developed_heat(ThermalProblem(long, thermal.thermal_conditions, 1.0, 1.0, 0.0), velocity, heat)
+    changing = (
+        velocity[0].replace_data(velocity[0].data.at[1].multiply(1.5)),
+        *velocity[1:],
+    )  # not axially uniform
+    with pytest.raises(ValueError, match="along the axis"):
+        check(thermal, changing, heat)
+    with pytest.raises(ValueError, match="axial_gradient must be finite"):
+        check(_developed_duct(8), velocity, heat, axial_gradient=np.nan)
     stopped = developed_heat(thermal, still, heat)
     assert np.isnan(float(stopped.axial_gradient)) and np.isnan(float(stopped.nusselt))
 
@@ -1343,6 +1352,20 @@ def _insulated(thermal):
 
     insulated = thermal_boundary("heat_flux", conductivity=1.0)
     return dataclasses.replace(thermal, thermal_conditions=(_WRAP, insulated, insulated))
+
+
+def test_a_fine_section_does_not_resolve_its_own_rounding():
+    """Heat crossing a 200-cell section leaves a wall-to-bulk difference of rounding, about 1e-13: still NaN, since
+    the threshold grows with the solve's conditioning, ``(L/h)^2``; a fixed ``64 eps`` called it resolved."""
+    from lmhdx.thermal import thermal_boundary
+
+    thermal = _insulated(_developed_duct(200, walls="heat_flux", joule_heating=False))  # no field: no current
+    crossing = thermal_boundary("heat_flux", -1.0, 1.0, conductivity=1.0)
+    across = dataclasses.replace(thermal, thermal_conditions=(_WRAP, crossing, thermal.thermal_conditions[2]))
+    result = _developed(across, _uniform_flow(across))
+    assert float(result.wall_temperature) != float(result.bulk_temperature) and np.isnan(
+        float(result.nusselt)
+    )
 
 
 def test_the_nusselt_number_is_defined_only_where_its_temperature_difference_is_resolved():
@@ -1411,6 +1434,8 @@ def test_the_anchored_peaks_are_physical_temperatures_whatever_the_gauge():
         dataclasses.replace(thermal, thermal_conditions=(_WRAP, out, out)), _uniform_flow(thermal)
     )
     assert float(cooled.axial_gradient) < 0.0
+    h1 = _developed(_developed_duct(16), solve_steady_state(thermal.flow).velocity, axial_gradient=1.0)
+    assert not h1.flux_walls and all(np.isnan(float(peak)) for peak in h1.anchored_peaks(300.0, 10.0))
     assert [float(v) for v in cooled.anchored_peaks(300.0, 10.0)] == [
         float(v) for v in cooled.anchored_peaks(300.0, 0.0)
     ]

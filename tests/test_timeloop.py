@@ -909,6 +909,7 @@ def test_an_outlet_needs_its_returning_temperature_and_refuses_an_unknown_one():
         (thermal, np.full((1, 6), 280.0)),
         (thermal, np.inf),
         (thermal, 280.0 + 1.0j),
+        (thermal, np.full((6, 1), 280.0 + 1.0j)),
         (unchecked, None),  # positive net flow, but a band returns through the outlet
         (unchecked, 280.0),
     ):
@@ -1160,3 +1161,25 @@ def test_a_held_flow_prepares_no_viscous_inverse(monkeypatch):
     assert not built
     build_thermal_step(closed, dtype=jnp.float64)
     assert built == [1]
+
+
+def test_every_outlet_diagnostic_counts_in_finite_and_conduction_alone_needs_no_reservoir():
+    """A NaN reservoir while every face leaves keeps the temperature finite but not ``outlet_backflow_enthalpy_in``,
+    so ``finite`` is false; a returning band in a duct that only conducts carries no heat and is accepted."""
+    import dataclasses
+
+    from lmhdx.thermal import build_thermal_step, initial_thermal_state, validate_thermal_inputs
+
+    thermal, plug = _plug_duct(8)
+    reservoir = dataclasses.replace(thermal, outlet_backflow="reservoir_flux")
+    state = initial_thermal_state(reservoir, 0.0, plug)
+    new, record = build_thermal_step(reservoir, dtype=jnp.float64, hold_flow=True)(
+        state, _cells(reservoir, 1.0), backflow_temperature=np.nan
+    )
+    assert bool(jnp.all(jnp.isfinite(new.temperature.data))) and not bool(record.finite)
+    returning, velocity = _returning_duct()
+    conducting = dataclasses.replace(returning, outlet_backflow="error", advection="off")
+    start, heat = initial_thermal_state(conducting, 300.0, velocity), _cells(conducting, 0.0)
+    validate_thermal_inputs(conducting, start, heat, divergence_tolerance=1e-10)
+    record = build_thermal_step(conducting, dtype=jnp.float64, hold_flow=True)(start, heat)[1]
+    assert bool(record.backflow_boundary_valid) and float(record.outlet_backflow_rate) > 0.0

@@ -79,35 +79,41 @@ the two modules that every core change touches.
 
 ## Amendments after review (2026-10-15)
 
-From the review of #230–#241. Each adds to its decision; none withdraws one.
+From the review of #230–#241. Each adds to its decision, and says so where it narrows the text above.
 
 **D31, the open duct.** An inflow-outflow axis carries heat on a held flow
 (step 5.3): the state keeps the steady velocity of `axial.solve_open_duct`, the
-step is built with `hold_flow=True`, and a held flow takes no buoyancy. The
-inlet prescribes its temperature. The outlet takes no conductive flux, and a
-face where the flow leaves carries out `u T_P`. Where the flow returns
-(`u < 0`), the incoming enthalpy is boundary data, not a value inferred from the
-adjacent cell. By default (`outlet_backflow="error"`) a run with a returning
-outlet face is refused. With `outlet_backflow="reservoir_flux"` the face brings
-in `C u T_res`, a prescribed total (Danckwerts) flux, with the reservoir
-temperature given to each step as numerical input. The base outlet operator
-stays homogeneous Neumann, so the conduction inverse is unchanged. An evolving
-momentum solution in an open duct, buoyant or not, is outside this decision.
+step is built with `hold_flow=True`, and a held flow takes no buoyancy. This
+narrows the refusal of inflow-outflow problems above to an evolving flow, which
+`build_thermal_step` refuses. The inlet prescribes its temperature. The outlet
+takes no conductive flux. With `C = rho_0 c_p` and `u_n` the velocity along the
+outlet's outward normal, a face where the flow leaves carries out `C u_n T_P`.
+Where the flow returns (`u_n < 0`), the incoming enthalpy is boundary data, not
+a value inferred from the adjacent cell. By default
+(`outlet_backflow="error"`) `validate_thermal_inputs` refuses a returning outlet
+face, and a step run without it reports `backflow_boundary_valid` false. With
+`outlet_backflow="reservoir_flux"` the face brings in `C u_n T_res`, a
+prescribed total (Danckwerts) flux, with the reservoir temperature given to each
+step as numerical input. The base outlet operator stays homogeneous Neumann, so
+the conduction inverse is unchanged.
 
 **D32, gravity along a periodic axis.** Along a periodic axis the mean of
 `-rho_0 beta (T - T_r) g` is a uniform force that no periodic pressure can
-balance, and in a heated periodic duct `T - T_r` keeps growing. A component of
+balance, and with net heat in and no cooled wall `T - T_r` keeps growing. A component of
 `g` along a periodic axis is therefore refused while `beta > 0`; the mean
 temperature is never subtracted. With `beta = 0` the configuration is exactly
 passive, whatever `g` is.
 
 **D33, an MHD gate and what Nu means.** The developed duct is also gated
-against Hartmann flow between plates heated by equal uniform fluxes, with no
-internal source: `Nu = 4 / integral_0^1 F_H(s)^2 ds` with `D_h = 4a`, which runs
-from 140/17 at `Ha = 0` to 12 as `Ha` grows. The gate is checked at finite
-Hartmann numbers as well as the limits, with the analytical velocity as input.
-`DevelopedHeat.nusselt` is `q_w D_h / (k (T_w - T_b))`, with means over all
-transverse wall area. With an internal source (Joule or external heat) it is an
+against Hartmann flow between plates at `y = ±a` heated by equal uniform fluxes,
+with no internal source, Joule heat included. With `s = y/a`, `Ha` on `a`, and
+`F_H(s)` the integral from 0 of the mean-normalized Hartmann velocity
+`(1 - cosh(Ha s)/cosh Ha)/(1 - tanh(Ha)/Ha)`, the plates' own Nusselt number is
+`Nu = 4 / integral_0^1 F_H(s)^2 ds` with `D_h = 4a`. It runs from 140/17 at
+`Ha = 0` to 12 as `Ha` grows. The gate takes the cell means of the analytical
+velocity as input and holds within 0.5 % at `Ha` 0 and 10 and in slug flow.
+`DevelopedHeat.nusselt` is `q_w D_h / (k (T_w - T_b))` with `D_h = 4A/P` and
+means over all transverse wall area; it is not the plates' number. With an internal source (Joule or external heat) it is an
 apparent, source-dependent number, not a forced-convection coefficient. Where
 its wall-to-bulk difference is unresolved it is undefined (NaN), while the
 temperatures and the heat balance stay valid.
