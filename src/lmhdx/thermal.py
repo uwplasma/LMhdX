@@ -47,18 +47,42 @@ claim is convergence in the time step.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .core3d import ChannelProblem
+from .core3d import (
+    ChannelProblem,
+    _advance_momentum,
+    _lorentz_from_currents,
+    face_currents,
+    face_lorentz_force,
+    zero_velocity,
+)
 from .grid import CENTER, DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, pad
-from .ops import face_average, face_average_adjoint, laplacian, wall_insulated
+from .ops import (
+    cell_inner_product,
+    divergence,
+    face_average,
+    face_average_adjoint,
+    face_gradient,
+    laplacian,
+    wall_insulated,
+)
 from .poisson import FastDiagonalHelmholtz, fast_diagonal_helmholtz
 
-__all__ = ["ThermalProblem", "thermal_boundary"]
+__all__ = [
+    "ThermalDiagnostics",
+    "ThermalProblem",
+    "ThermalState",
+    "build_thermal_step",
+    "initial_thermal_state",
+    "thermal_boundary",
+]
 
 _KINDS = {"temperature": DIRICHLET, "heat_flux": NEUMANN, "periodic": PERIODIC}
 _CELL = (CENTER, CENTER, CENTER)
@@ -118,7 +142,8 @@ class ThermalProblem:
     ``rho_0 [1 - beta (T - T_r)]`` and of the reported sensible heat.
     ``expansion_coefficient`` is ``beta``, zero for passive transport, and
     ``gravity`` the gravitational acceleration, pointing down, along the grid's
-    three axes.
+    three axes. ``advection`` is ``"upwind"``, or ``"off"`` for conduction alone,
+    whatever the flow's own momentum transport.
     """
 
     flow: ChannelProblem
@@ -129,6 +154,7 @@ class ThermalProblem:
     joule_heating: bool = True
     expansion_coefficient: float = 0.0
     gravity: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    advection: str = "upwind"
 
     def __post_init__(self) -> None:
         if not isinstance(self.flow, ChannelProblem):
@@ -148,6 +174,8 @@ class ThermalProblem:
         if len(self.gravity) != 3 or not np.all(np.isfinite(np.asarray(self.gravity, dtype=float))):
             raise ValueError("gravity must be three finite components")
         object.__setattr__(self, "gravity", tuple(float(component) for component in self.gravity))
+        if self.advection not in ("upwind", "off"):
+            raise ValueError(f"advection must be 'upwind' or 'off', got {self.advection!r}")
         if not isinstance(self.joule_heating, bool):
             raise TypeError("joule_heating must be True or False")
         if len(self.thermal_conditions) != 3:
@@ -292,3 +320,150 @@ def _buoyancy(temperature: Field, problem: ThermalProblem) -> tuple[Field, Field
         for axis, g in enumerate(gravity)
     )
     return tuple(wall_insulated(face, axis, scalar[axis]) for axis, face in enumerate(faces))
+
+
+class ThermalState(NamedTuple):
+    """What a thermal step advances: the staggered velocity, the cell temperature and the time.
+
+    Its five leaves are arrays; grids and offsets are static.
+    """
+
+    velocity: tuple[Field, Field, Field]
+    temperature: Field
+    time: jnp.ndarray
+
+
+class ThermalDiagnostics(NamedTuple):
+    """The scalars of one step, in the problem's units.
+
+    ``heat_balance_residual`` is ``storage_rate + conductive_heat_out -
+    joule_power - external_power``, a power; ``heat_solve_residual`` is the
+    largest local residual of the temperature equation, a temperature per time;
+    ``advective_cfl`` is ``dt`` times the largest outgoing volume-flux rate of
+    the old velocity; ``boussinesq_measure`` is the largest ``beta |T - T_r|`` of
+    the old and new temperatures. ``finite`` says every value is a number, not
+    that the step is accepted.
+    """
+
+    mass_residual: jnp.ndarray
+    charge_residual: jnp.ndarray
+    temperature_min: jnp.ndarray
+    temperature_max: jnp.ndarray
+    sensible_energy: jnp.ndarray
+    joule_power: jnp.ndarray
+    external_power: jnp.ndarray
+    conductive_heat_out: jnp.ndarray
+    storage_rate: jnp.ndarray
+    heat_balance_residual: jnp.ndarray
+    heat_solve_residual: jnp.ndarray
+    advective_cfl: jnp.ndarray
+    boussinesq_measure: jnp.ndarray
+    finite: jnp.ndarray
+
+
+def initial_thermal_state(
+    problem: ThermalProblem,
+    temperature: float | np.ndarray,
+    velocity: tuple[Field, Field, Field] | None = None,
+    time: float = 0.0,
+) -> ThermalState:
+    """Return a state from an explicit temperature, a number or an array over the cells.
+
+    The velocity is the flow at rest unless given; a given one must already meet
+    the face constraints and be divergence free.
+    """
+    grid, dtype = problem.flow.grid, jnp.result_type(float)
+    data = jnp.broadcast_to(jnp.asarray(temperature, dtype=dtype), grid.shape)
+    velocity = zero_velocity(problem.flow) if velocity is None else tuple(velocity)
+    return ThermalState(velocity, Field(data, _CELL, grid), jnp.asarray(time, dtype=dtype))
+
+
+def build_thermal_step(
+    problem: ThermalProblem, *, dtype: jnp.dtype | type | str
+) -> Callable[[ThermalState, Field], tuple[ThermalState, ThermalDiagnostics]]:
+    """Factorize on the host and return the pure step ``(state, heat_source) -> (state, diagnostics)``.
+
+    ``dtype`` must be the core's compute dtype, ``jnp.result_type(float)``:
+    float64 with x64 enabled before setup, else float32. The step is bound to
+    this problem's time step, properties, boundary data and precision; rebuild it
+    when any of them changes. ``heat_source`` is the external heat per unit volume
+    and time on the cells.
+
+    Everything is taken from the old state, a first-order partitioned step: one
+    electric solve gives the Lorentz force and the Joule heat, buoyancy comes from
+    the old temperature, the momentum takes :func:`lmhdx.core3d.step`'s predictor
+    and projection with the flow's implicit viscous factorizations, and the
+    temperature takes upwind transport by the old velocity, then implicit conduction.
+    """
+    compute = jnp.result_type(float)
+    if jnp.dtype(dtype) != compute:
+        raise ValueError(
+            f"dtype {jnp.dtype(dtype)} is not the core's compute dtype {compute}; set x64 before setup"
+        )
+    flow, grid = problem.flow, problem.flow.grid
+    pressure, viscous = flow.factorization(), flow.viscous_factorizations()
+    if flow.conducting_walls:
+        flow.potential_factorization()  # built once here, so tracing only looks it up
+    diffusion, lift = problem.diffusion_factorization(), problem.boundary_lift()
+    dt, alpha, capacity = float(flow.dt), problem.diffusivity, problem.heat_capacity
+    reference, beta = float(problem.reference_temperature), float(problem.expansion_coefficient)
+    upwind = problem.advection == "upwind"
+
+    def total(data):
+        return cell_inner_product(Field(data, _CELL, grid), Field(jnp.ones_like(data), _CELL, grid))
+
+    def thermal_step(state: ThermalState, heat_source: Field) -> tuple[ThermalState, ThermalDiagnostics]:
+        velocity, temperature = state.velocity, state.temperature
+        _, currents, field = face_currents(velocity, flow, pressure)
+        body = face_lorentz_force(_lorentz_from_currents(currents, field, flow), flow)
+        joule = _joule_heating(currents, problem).data
+        buoyancy = _buoyancy(temperature, problem)
+        moved, _ = _advance_momentum(velocity, body, flow, pressure, viscous, extra_force=buoyancy)
+        transport = divergence(_upwind_fluxes(temperature, velocity, problem)).data if upwind else 0.0
+        sources = (joule + heat_source.data) / capacity
+        rhs = temperature.data + dt * (sources - transport + alpha * lift.data)
+        heated = diffusion.solve(temperature.replace_data(rhs))
+        change = heated.data - temperature.data
+        conducted = alpha * laplacian(heated, problem.thermal_conditions).data
+        storage, out = capacity * total(change) / dt, _heat_out(heated, problem)
+        joule_power, external = total(joule), total(heat_source.data)
+        excess = jnp.maximum(
+            jnp.max(jnp.abs(temperature.data - reference)), jnp.max(jnp.abs(heated.data - reference))
+        )
+        values = (
+            jnp.max(jnp.abs(divergence(moved).data)),
+            jnp.max(jnp.abs(divergence(currents).data)),
+            jnp.min(heated.data),
+            jnp.max(heated.data),
+            capacity * total(heated.data - reference),
+            joule_power,
+            external,
+            out,
+            storage,
+            storage + out - joule_power - external,
+            jnp.max(jnp.abs(change / dt + transport - conducted - sources)),
+            dt * jnp.max(_outgoing_rate(velocity)) if upwind else jnp.zeros((), compute),
+            beta * excess,
+        )
+        new = ThermalState(moved, heated, state.time + dt)
+        finite = jnp.all(
+            jnp.stack([jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree_util.tree_leaves((new, values))])
+        )
+        return new, ThermalDiagnostics(*values, finite)
+
+    return thermal_step
+
+
+def _heat_out(temperature: Field, problem: ThermalProblem) -> jnp.ndarray:
+    """Return the conductive heat leaving through the walls, from the wall gradients the conduction uses."""
+    grid, conductivity = temperature.grid, float(problem.thermal_conductivity)
+    out = jnp.zeros((), temperature.dtype)
+    for axis, condition in enumerate(problem.thermal_conditions):
+        if condition.is_periodic:
+            continue
+        gradient, areas = face_gradient(temperature, axis, condition).data, grid.face_areas(axis)
+        for end, sign in ((0, 1.0), (-1, -1.0)):
+            slab = (slice(None),) * axis + (end,)
+            area = jnp.asarray(areas[slab], dtype=temperature.dtype)
+            out = out + sign * conductivity * jnp.sum(gradient[slab] * area)
+    return out
