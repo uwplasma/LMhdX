@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import lmhdx
-from lmhdx.core3d import ChannelProblem, duct_problem
+from lmhdx.core3d import ChannelProblem, duct_problem, zero_velocity
 from lmhdx.fully_developed import (
     DuctResponse,
     channel_cross_section_weights,
@@ -24,7 +24,7 @@ from lmhdx.fully_developed import (
     pressure_drop,
     volumetric_flow_rate,
 )
-from lmhdx.grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces
+from lmhdx.grid import CENTER, DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid, uniform_faces
 from lmhdx.steady import solve_steady_state
 from validation.shercliff import flow_rate
 
@@ -272,3 +272,85 @@ def test_channel_fixed_flow_power_matches_finite_differences_in_the_field_scale(
     assert gradient == pytest.approx(difference, rel=1e-5)
     # Stronger field, more drag, more power.
     assert gradient > 0.0
+
+
+# Crediting a heat load (thermal review corrections, part 6a): load-on less load-off on a held flow.
+
+
+def _held_plug(speed: float, conductivity: float, field: float = 0.0, cells: int = 32):
+    """A held plug flow along x on [0, 1], ``C = 1``, from an inlet at 0 with no conduction out of the outlet.
+
+    A uniform unit load then delivers the steady fraction ``1 - (1 - exp(-lambda)) / lambda`` of itself through
+    the outlet, ``lambda = C u / k``, and conducts the rest back out of the inlet. The two transverse axes are
+    periodic, so a field along y drives the uniform current ``sigma u B`` and the Joule heat ``sigma u^2 B^2``.
+    """
+    from lmhdx.thermal import ThermalProblem, build_thermal_step, initial_thermal_state, thermal_boundary
+
+    grid = Grid(uniform_faces(cells, 0.0, 1.0), uniform_faces(1, 0.0, 1.0), uniform_faces(1, 0.0, 1.0))
+    wrap = BoundaryCondition(PERIODIC)
+    opening = BoundaryCondition(DIRICHLET, lower=speed * np.ones((1, 1)), upper_kind=NEUMANN)
+    flow = ChannelProblem(
+        grid, (opening, wrap, wrap), magnetic_field=(0.0, field, 0.0), dt=0.5 / (cells * speed)
+    )
+    ends = thermal_boundary("temperature", 0.0, upper_kind="heat_flux", conductivity=conductivity)
+    thermal = ThermalProblem(flow, (ends, wrap, wrap), 1.0, conductivity, 0.0)
+    rest = zero_velocity(flow)
+    state = initial_thermal_state(
+        thermal, 0.0, (rest[0].replace_data(jnp.full_like(rest[0].data, speed)), *rest[1:])
+    )
+    return build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True), state
+
+
+def _uniform(state, value: float) -> Field:
+    grid = state.temperature.grid
+    return Field(jnp.full(grid.shape, value), (CENTER,) * 3, grid)
+
+
+def _credit(speed: float, conductivity: float, field: float = 0.0):
+    """The unit load's attribution and the load-on run's last diagnostics, at steady state (60 residence times)."""
+    from lmhdx.thermal import advance_thermal, load_attribution
+
+    thermal_step, state = _held_plug(speed, conductivity, field)
+    attribution = load_attribution(thermal_step, state, _uniform(state, 0.0), _uniform(state, 1.0), 1920)
+    record = advance_thermal(thermal_step, state, _uniform(state, 1.0), 1920)[1]
+    return attribution, jax.tree_util.tree_map(lambda history: float(history[-1]), record)
+
+
+def _leaving(lam: float) -> float:
+    return 1.0 - (1.0 - np.exp(-lam)) / lam
+
+
+def test_a_load_is_credited_by_difference_and_its_heat_balances():
+    """O01: at ``lambda = 5`` what the load sends out of the outlet and back out of the inlet is the load, to 1e-12,
+    with nothing left in storage; the delivered fraction is within 0.03 of the exact steady 0.801 on 32 cells."""
+    attribution, _ = _credit(1.0, 0.2)
+    imposed, delivered, conducted, stored, residual = (float(value) for value in attribution)
+    assert imposed == pytest.approx(1.0, rel=1e-12) and abs(stored) <= 1e-9
+    assert abs(residual) <= 1e-12 and delivered + conducted == pytest.approx(1.0, rel=1e-12)
+    assert conducted > 0.0 and abs(delivered - _leaving(5.0)) < 0.03
+
+
+def test_more_flow_credits_neither_joule_heat_nor_gross_outlet_enthalpy():
+    """O02: a field adds the Joule heat ``sigma u^2 B^2``, 9 and then 36 at twice the flow, and the gross outlet
+    enthalpy grows with it to many times the load; the load's own credit stays below the load, rising only as less
+    of it leaks back out of the inlet."""
+    (slow, slow_run), (fast, fast_run) = (_credit(speed, 0.2, field=3.0) for speed in (1.0, 2.0))
+    assert (slow_run.joule_power, fast_run.joule_power) == pytest.approx((9.0, 36.0), rel=1e-12)
+    assert (
+        slow_run.advective_heat_out > 5.0 and fast_run.advective_heat_out > 4.0 * slow_run.advective_heat_out
+    )
+    for credit in (slow, fast):
+        assert float(credit.imposed) == pytest.approx(1.0, rel=1e-12) and 0.0 < float(credit.delivered) < 1.0
+    assert float(slow.delivered) < float(fast.delivered) < _leaving(10.0)
+    assert float(fast.delivered) == pytest.approx(float(_credit(2.0, 0.2)[0].delivered), rel=1e-12)
+
+
+def test_heat_leaking_out_of_the_inlet_does_not_count_as_delivered_duty():
+    """A conductive fluid (``lambda = 0.5``) keeps its peak under a limit of 0.5, which the ``lambda = 20`` duct
+    exceeds, only by sending most of the load back out of the thermostatted inlet: it fails a 90 % delivery
+    requirement, so it is not a feasible cooling design."""
+    accepted = []
+    for conductivity in (2.0, 0.05):  # lambda 0.5 and 20
+        credit, run = _credit(1.0, conductivity)
+        accepted.append((run.temperature_max <= 0.5, float(credit.delivered) >= 0.9 * float(credit.imposed)))
+    assert accepted == [(True, False), (False, True)]

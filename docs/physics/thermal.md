@@ -352,6 +352,30 @@ steady state:
 A plug flow carrying a uniform source converges to its exact steady profile at
 first order, 0.81 and then 0.91.
 
+**Crediting a load.** A design that must remove a given duty is judged on what
+the duty itself does, not on the gross outlet enthalpy. Joule heat and a
+recirculating hot flow also raise the gross figure.
+`load_attribution(step, state, background, load, steps)` runs the held flow
+twice, with and without the load, from the same start and with the same
+velocity, Joule heat, inlet, reservoir and walls. The difference is the load's
+own response, since the temperature is affine in the heat source at constant
+properties. It reports the load's power and what the load adds:
+- to the enthalpy leaving through the outlet;
+- to the conduction out, which is what leaks through the inlet and any
+  prescribed-temperature wall (a prescribed wall flux cancels);
+- to the storage.
+
+A buoyant flow, which the load moves, is not affine in it.
+
+In a plug flow with $\lambda=\rho_0c_pu/k$, a uniform load leaves through the
+outlet in the steady fraction $1-(1-e^{-\lambda})/\lambda$. The rest conducts
+back out of the thermostatted inlet. On 32 cells the credited fraction is
+0.788 at $\lambda=5$, against 0.801 exactly; the gap is first-order upwind
+diffusion. A conductive fluid ($\lambda=0.5$) stays coolest only by returning
+79 % of its load through the inlet. A field's Joule heat multiplies the gross
+outlet enthalpy, from 7.9 to 32.8 as the flow doubles, but adds nothing to the
+load's credit.
+
 ## A worked example
 
 A nondimensional Hartmann duct runs two cases. The first is driven along its

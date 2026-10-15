@@ -86,6 +86,7 @@ from .steady import with_inflow
 
 __all__ = [
     "DevelopedHeat",
+    "LoadAttribution",
     "ThermalDiagnostics",
     "ThermalProblem",
     "ThermalState",
@@ -93,6 +94,7 @@ __all__ = [
     "build_thermal_step",
     "developed_heat",
     "initial_thermal_state",
+    "load_attribution",
     "thermal_boundary",
     "validate_developed_inputs",
     "validate_thermal_inputs",
@@ -663,6 +665,54 @@ def advance_thermal(
 
     body = jax.checkpoint(single) if checkpoint else single
     return jax.lax.scan(body, state, xs=None, length=steps)
+
+
+class LoadAttribution(NamedTuple):
+    """Where a load's heat goes, by difference at the last step of :func:`load_attribution`; each a power.
+
+    ``imposed`` is the load's power. ``delivered`` is what it adds to the enthalpy
+    leaving through the outlet, net of the inlet. ``conducted`` is what it adds to
+    the conduction out: a prescribed wall flux cancels, so this is what leaks
+    through the inlet and any prescribed-temperature wall. ``stored`` is what it
+    still adds to storage, zero once steady, and ``residual`` is
+    ``imposed - delivered - conducted - stored``.
+    """
+
+    imposed: jnp.ndarray
+    delivered: jnp.ndarray
+    conducted: jnp.ndarray
+    stored: jnp.ndarray
+    residual: jnp.ndarray
+
+
+def load_attribution(
+    thermal_step: Callable[[ThermalState, Field], tuple[ThermalState, ThermalDiagnostics]],
+    state: ThermalState,
+    background: Field,
+    load: Field,
+    steps: int,
+    *,
+    backflow_temperature: float | jnp.ndarray | None = None,
+) -> LoadAttribution:
+    """Run ``steps`` steps with ``background + load`` and with ``background`` alone, and attribute the load.
+
+    Both runs share the start, the held velocity and so its Joule heat, the
+    inlet and reservoir temperatures and the walls, so their difference is the
+    load's own response: neither Joule heat nor ``background`` is credited to
+    it. That holds for a step built with ``hold_flow=True`` and constant
+    properties, where the temperature is affine in the heat source; a flow the
+    load moves, by buoyancy, is not.
+    """
+    options = {"backflow_temperature": backflow_temperature}
+    on = advance_thermal(
+        thermal_step, state, background.replace_data(background.data + load.data), steps, **options
+    )[1]
+    off = advance_thermal(thermal_step, state, background, steps, **options)[1]
+    imposed, delivered, conducted, stored = (
+        getattr(on, name)[-1] - getattr(off, name)[-1]
+        for name in ("external_power", "advective_heat_out", "conductive_heat_out", "storage_rate")
+    )
+    return LoadAttribution(imposed, delivered, conducted, stored, imposed - delivered - conducted - stored)
 
 
 def _reservoir(problem: ThermalProblem, value, dtype) -> jnp.ndarray | None:
