@@ -354,3 +354,56 @@ def test_heat_leaking_out_of_the_inlet_does_not_count_as_delivered_duty():
         credit, run = _credit(1.0, conductivity)
         accepted.append((run.temperature_max <= 0.5, float(credit.delivered) >= 0.9 * float(credit.imposed)))
     assert accepted == [(True, False), (False, True)]
+
+
+# A thermal duct design (thermal review corrections, part 6b): the tutorial's PbLi workflow, run from the page.
+
+
+def test_the_thermal_duct_design_runs_as_written_and_keeps_its_contracts():
+    """The square reference reproduces the spectral flow to 2 % on the screening mesh and its own heat balance; a feasible design meets
+    every limit and a rejected one says why; the cost is ``Q dp`` and the candidate the cheapest feasible design
+    evaluated, at its active wall limit; invalid designs are rejected, not ranked; and the checks hold."""
+    from lmhdx.core3d import energy_budget
+
+    page = Path(__file__).resolve().parents[1] / "docs/tutorials/duct_design_law.md"
+    section = page.read_text().split("## A thermal design", 1)[1]
+    code = section.split("```python\n", 1)[1].split("```", 1)[0]
+    run = {"__name__": "thermal_design"}
+    exec(compile(code, str(page), "exec"), run)
+    square, candidate, limit = run["square"], run["candidate"], run["T_MAX"]
+    a, square_duct = np.sqrt(run["AREA"] / 4.0), run["ducts"][-1]
+    hartmann, speed = square_duct["hartmann"], square["flow_rate"] / run["AREA"]
+    spectral = run["LENGTH"] * run["MU"] * speed / (a**2 * flow_rate(hartmann, 40))
+    assert abs(square["pressure_drop"] / spectral - 1.0) < 0.02  # -1.48 % on 32/4, second order toward 0
+    joule = float(energy_budget(square["velocity"], square_duct["thermal"].flow).joule)
+    assert square["joule"] == pytest.approx(joule, rel=1e-9) and 0.0 < joule < square["hydraulic_power"]
+    records = (
+        [record for row in run["sweep"] for record in row] + run["edges"] + list(run["evaluated"].values())
+    )
+    for record in records:
+        assert record["hydraulic_power"] == pytest.approx(
+            record["flow_rate"] * record["pressure_drop"], rel=1e-14
+        )
+        if record["rejected"]:
+            assert all(isinstance(reason, str) and reason for reason in record["rejected"])
+        else:
+            assert (
+                max(record["wall_peak"], record["fluid_peak"]) <= limit
+                and record["re_over_ha"] <= run["LAMINAR"]
+            )
+    feasible = [record for record in records if not record["rejected"]]
+    assert candidate["hydraulic_power"] == min(record["hydraulic_power"] for record in feasible)
+    assert (
+        limit - 0.1 < candidate["wall_peak"] <= limit
+        and candidate["hydraulic_power"] < square["hydraulic_power"]
+    )
+    column = [row[-2] for row in run["sweep"]]  # one flow: pressure and power rank the shapes alike
+    assert np.array_equal(
+        np.argsort([r["pressure_drop"] for r in column]), np.argsort([r["hydraulic_power"] for r in column])
+    )
+    for stopped in (0.0, np.nan):
+        assert run["trial"](square_duct, stopped)["rejected"][0].startswith("invalid")
+    assert abs(run["refined"]["hydraulic_power"] / candidate["hydraulic_power"] - 1.0) < 0.02
+    assert run["delivered"] >= 0.99 and run["open_peak"] <= limit
+    duties = dict(run["capacity"])
+    assert duties[1.0] == pytest.approx(run["DUTY"], rel=2e-3) and max(duties.values()) > 1.5 * run["DUTY"]
