@@ -72,8 +72,11 @@ What is and is not established:
 - On the ANL case the excess drop over the locally fully developed drop agrees
   within 1 % with the inertialess core-flow model (`lmhdx.coreflow`, TM-228
   eqs. 4a–4c) once the model carries the layers' conductance
-  (`coreflow.layer_conductances`; c 0.1, Ha 2×10⁴). TM-228's uncorrected
-  value is the Ha → ∞ limit, which no 3-D solve reaches.
+  (`coreflow.layer_conductances`; c 0.1, Ha 2×10⁴), and within 4–5 % at
+  c 0.02. Both models are LMhdX's: internal consistency, not validation.
+  TM-228's uncorrected 0.0178 is the inertialess thin-layer Ha → ∞ asymptote,
+  which no 3-D solve reaches; LMhdX's Ha → ∞ fits give 0.0183–0.0211, 3–18 %
+  above it, a fit band rather than a 1 % check.
 - There is no straight pipe with an open axis yet, and no thick or layered wall.
 
 Run `python examples/fringe_duct_example.py` for the case above with its

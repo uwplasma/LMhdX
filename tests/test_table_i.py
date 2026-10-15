@@ -8,16 +8,11 @@ Shercliff's insulating duct and A2 is Hunt's duct with conducting Hartmann walls
 the analytic column the package ships (validation row 27).
 """
 
-import math
 from importlib.resources import files
 
-import numpy as np
 import pytest
 
-from lmhdx import enable_x64
-from lmhdx.core3d import ChannelProblem
-from lmhdx.grid import PERIODIC, BoundaryCondition, Grid, uniform_faces, wall_resolving_faces
-from lmhdx.steady import solve_steady_state
+from validation.gci import TABLE_I_MESHES, TABLE_I_RATIO, grid_convergence, table_i_flow_rate
 
 try:
     import tomllib
@@ -34,44 +29,22 @@ ROWS = {
     for case in _TABLE["cases"]
 }
 
-# Cells and cells inside the layer, along the field (Hartmann layer 1/Ha) then across
-# it (side layer 1/sqrt(Ha)), each series scaled by 1.5: one fitted mapping at three
-# spacings. Above Ha 500 the Hartmann direction gets twice the cells.
-RATIO = 1.5
-MESHES = {
-    500: ((32, 4, 32, 4), (48, 6, 48, 6), (72, 9, 72, 9)),
-    "high": ((64, 8, 32, 4), (96, 12, 48, 6), (144, 18, 72, 9)),
-}
 
+def test_the_grid_convergence_index_reproduces_celik_2008_table_1():
+    """Celik et al. 2008, Table 1, phi_p (N 18,000 / 8,000 / 4,500 on a 2-D mesh, so r 1.5 and 4/3).
 
-def _flow_rate(case: dict, cells: int, layer: int, cells_across: int, layer_across: int) -> float:
-    hartmann = float(case["hartmann_number"])
-    enable_x64()
-    wall = BoundaryCondition("neumann")
-    problem = ChannelProblem(
-        grid=Grid(
-            uniform_faces(1, 0.0, 1.0),
-            wall_resolving_faces(
-                cells, -1.0, 1.0, layer_thickness=1.0 / hartmann, cells_in_layer=layer, max_ratio=None
-            ),
-            wall_resolving_faces(
-                cells_across,
-                -1.0,
-                1.0,
-                layer_thickness=hartmann**-0.5,
-                cells_in_layer=layer_across,
-                max_ratio=None,
-            ),
-        ),
-        conditions=(BoundaryCondition(PERIODIC), wall, wall),
-        conductivity=1.0,
-        magnetic_field=(0.0, hartmann, 0.0),
-        forcing=(1.0, 0.0, 0.0),
-        dt=1.0,
-        wall_conductance=(0.0, case["hartmann_wall_conductance"], 0.0),
-    )
-    velocity = np.asarray(solve_steady_state(problem).velocity[0].data)[0]
-    return float((velocity * np.asarray(problem.grid.cell_volumes())[0]).sum())
+    The paper gives p 1.53, phi_ext 6.1685, e_a 1.5 %, e_ext 1.7 % and GCI_fine 2.2 %.
+    """
+    result = grid_convergence(5.863, 5.972, 6.063, 1.5, 4.0 / 3.0)
+    assert result.monotone
+    assert round(result.order, 2) == 1.53
+    assert round(result.extrapolated, 4) == 6.1685
+    assert (round(100 * result.relative_change, 1), round(100 * result.extrapolated_error, 1)) == (1.5, 1.7)
+    assert round(100 * result.gci_fine, 1) == 2.2
+    # Equal ratios solve in closed form.
+    exact = grid_convergence(1.0 + 4.0, 1.0 + 1.0, 1.0 + 0.25, 2.0)
+    assert exact.order == pytest.approx(2.0, abs=1e-12)
+    assert exact.extrapolated == pytest.approx(1.0, abs=1e-12)
 
 
 # Ha 500 runs on pull requests. The higher rows take 15-35 s each from a cold cache,
@@ -95,11 +68,15 @@ def test_table_i_converges_at_second_order_to_the_analytic_flow_rate(row, hartma
     """
     case = ROWS[(row, hartmann)]
     reference = case["analytical_flow_rate"]
-    coarse, medium, fine = (_flow_rate(case, *mesh) for mesh in MESHES.get(hartmann, MESHES["high"]))
-    errors = [(rate - reference) / reference for rate in (coarse, medium, fine)]
+    rates = [
+        table_i_flow_rate(hartmann, case["hartmann_wall_conductance"], *mesh)
+        for mesh in TABLE_I_MESHES.get(hartmann, TABLE_I_MESHES["high"])
+    ]
+    errors = [(rate - reference) / reference for rate in rates]
     # The discretisation overestimates the flow rate and approaches it monotonically.
     assert errors[0] > errors[1] > errors[2] > 0.0
-    order = math.log((coarse - medium) / (medium - fine)) / math.log(RATIO)
-    assert 1.8 < order < 2.2
-    extrapolated = fine + (fine - medium) / (RATIO**order - 1.0)
-    assert abs(extrapolated - reference) / reference < (1.0e-3 if hartmann <= 5000 else 5.0e-3)
+    convergence = grid_convergence(*rates, TABLE_I_RATIO)
+    assert 1.8 < convergence.order < 2.2
+    assert abs(convergence.extrapolated - reference) / reference < (1.0e-3 if hartmann <= 5000 else 5.0e-3)
+    # The analytic value lies inside the fine mesh's uncertainty band (Celik 2008, safety factor 1.25).
+    assert abs(rates[2] - reference) / reference < convergence.gci_fine

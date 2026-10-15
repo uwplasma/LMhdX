@@ -150,8 +150,11 @@ python examples/fringe_duct_example.py
   fringe and its derivative with respect to the field strength are outputs.
 - Research stage: only the inertialess (Stokes-limit) flow is solved. On the ANL
   case the excess drop agrees within 1 % with the core-flow model carrying the
-  layers' conductance (`coreflow.layer_conductances`, c 0.1, Ha 2×10⁴);
-  TM-228's uncorrected value is the Ha → ∞ limit, out of reach in 3-D. The
+  layers' conductance (`coreflow.layer_conductances`, c 0.1, Ha 2×10⁴), and
+  4–5 % at c 0.02. Both models are LMhdX's, so this is internal consistency,
+  not validation. TM-228's uncorrected 0.0178 is an inertialess thin-layer
+  Ha → ∞ asymptote, out of reach in 3-D; LMhdX's Ha → ∞ fits give
+  0.0183–0.0211 (3–18 % above it), a fit band rather than a 1 % check. The
   [fringe tutorial](https://lmhdx.readthedocs.io/en/latest/tutorials/fringing.html)
   walks through it.
 
