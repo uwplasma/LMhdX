@@ -404,7 +404,8 @@ class ThermalDiagnostics(NamedTuple):
     ``heat_balance_residual`` is ``storage_rate + conductive_heat_out +
     advective_heat_out - joule_power - external_power``, a power, where
     ``advective_heat_out`` is the enthalpy the flow carries out through an outlet
-    less what it brings in through an inlet (zero in a closed duct); ``heat_solve_residual`` is the
+    less what it brings in through the inlet and through returning outlet faces
+    (zero in a closed duct); ``heat_solve_residual`` is the
     largest local residual of the temperature equation, a temperature per time;
     ``advective_cfl`` is ``dt`` times the largest outgoing volume-flux rate of
     the old velocity; ``boussinesq_measure`` is the largest ``beta |T - T_r|`` of
@@ -473,13 +474,14 @@ def validate_thermal_inputs(
     and periodic face constraints; a velocity divergence within
     ``divergence_tolerance``, in inverse time; with upwind transport, a Courant
     number ``dt max(sum_f max(u_f . n_f, 0) A_f / V)`` within ``advective_cfl_limit``;
-    and, at an outlet, no returning
-    face under ``outlet_backflow="error"``, or a finite ``backflow_temperature`` of
-    the outlet's shape under ``"reservoir_flux"``. Nothing is changed or returned.
+    and, at an outlet with upwind transport, no returning face under
+    ``outlet_backflow="error"``, or a finite, real ``backflow_temperature`` of the
+    outlet's shape under ``"reservoir_flux"``. Nothing is changed or returned.
 
     A held flow keeps its Courant number for the whole run. An evolving flow is
-    checked at its start only: its run is accepted on the ``advective_cfl`` it
-    reports each step.
+    checked at its start only, which a start from rest passes trivially; nothing
+    in the run checks it again, so compare the ``advective_cfl`` it reports each
+    step with the limit.
     """
     if not (np.isfinite(divergence_tolerance) and divergence_tolerance >= 0.0):
         raise ValueError("divergence_tolerance must be nonnegative and finite")
@@ -509,8 +511,10 @@ def validate_thermal_inputs(
     else:
         _reservoir(problem, backflow_temperature, dtype)
         axis = flow.open_axis
-        if axis is not None and np.any(
-            np.asarray(state.velocity[axis].data[(slice(None),) * axis + (-1,)]) < 0.0
+        if (
+            axis is not None
+            and problem.advection == "upwind"
+            and np.any(np.asarray(state.velocity[axis].data[(slice(None),) * axis + (-1,)]) < 0.0)
         ):
             raise ValueError("the flow returns through the outlet: use outlet_backflow='reservoir_flux'")
 
@@ -553,10 +557,11 @@ def build_thermal_step(
     needs it, since the step does not advance such a flow: give it the physical
     velocity of :func:`lmhdx.axial.solve_open_duct`.
 
-    The diagnostics apply the temperature's Laplacian and wall gradients to the
-    new temperature once more, for ``heat_solve_residual`` and
-    ``conductive_heat_out``: about one cell-centred Laplacian per step beyond
-    the update, and no further electric solve.
+    Beyond the update, the diagnostics apply the temperature's Laplacian and wall
+    gradients to the new temperature, for ``heat_solve_residual`` and
+    ``conductive_heat_out``, and a divergence each to the new velocity and the
+    currents, for ``mass_residual`` and ``charge_residual``, besides their
+    reductions: no further solve.
     """
     compute = jnp.result_type(float)
     if jnp.dtype(dtype) != compute:
@@ -627,12 +632,10 @@ def build_thermal_step(
             beta * excess,
         )
         new = ThermalState(moved, heated, state.time + dt)
-        finite = jnp.all(
-            jnp.stack([jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree_util.tree_leaves((new, values))])
-        )
-        return new, ThermalDiagnostics(
-            *values, finite, *_outlet_exchange(velocity, reservoir, problem, compute)
-        )
+        exchange = _outlet_exchange(velocity, reservoir, problem, compute)
+        leaves = jax.tree_util.tree_leaves((new, values, exchange[:3]))
+        finite = jnp.all(jnp.stack([jnp.all(jnp.isfinite(leaf)) for leaf in leaves]))
+        return new, ThermalDiagnostics(*values, finite, *exchange)
 
     return thermal_step
 
@@ -673,9 +676,11 @@ class LoadAttribution(NamedTuple):
     ``imposed`` is the load's power. ``delivered`` is what it adds to the enthalpy
     leaving through the outlet, net of the inlet. ``conducted`` is what it adds to
     the conduction out: a prescribed wall flux cancels, so this is what leaks
-    through the inlet and any prescribed-temperature wall. ``stored`` is what it
-    still adds to storage, zero once steady, and ``residual`` is
-    ``imposed - delivered - conducted - stored``.
+    through the inlet and any prescribed-temperature wall, together. ``stored`` is
+    what it still adds to storage, zero once steady, and ``residual`` is
+    ``imposed - delivered - conducted - stored``: the two ledgers' residuals
+    differenced, with the opposite sign, zero to their rounding. ``loaded`` is the
+    load-on run's last diagnostics.
     """
 
     imposed: jnp.ndarray
@@ -683,6 +688,7 @@ class LoadAttribution(NamedTuple):
     conducted: jnp.ndarray
     stored: jnp.ndarray
     residual: jnp.ndarray
+    loaded: ThermalDiagnostics
 
 
 def load_attribution(
@@ -701,7 +707,13 @@ def load_attribution(
     load's own response: neither Joule heat nor ``background`` is credited to
     it. That holds for a step built with ``hold_flow=True`` and constant
     properties, where the temperature is affine in the heat source; a flow the
-    load moves, by buoyancy, is not.
+    load moves, by buoyancy, is not, and nothing here detects one.
+
+    The load is a heat source on the cells. A heat flux ``q`` through a wall is
+    part of the step's boundary data, so it is in both runs and cancels; to
+    credit it, pass it as the source ``q A / V`` in the cells along that wall,
+    with that wall's flux set to zero. The cell temperatures are then the same:
+    a face flux enters its cell's equation exactly as that source.
     """
     options = {"backflow_temperature": backflow_temperature}
     on = advance_thermal(
@@ -712,7 +724,9 @@ def load_attribution(
         getattr(on, name)[-1] - getattr(off, name)[-1]
         for name in ("external_power", "advective_heat_out", "conductive_heat_out", "storage_rate")
     )
-    return LoadAttribution(imposed, delivered, conducted, stored, imposed - delivered - conducted - stored)
+    last = jax.tree_util.tree_map(lambda history: history[-1], on)
+    residual = imposed - delivered - conducted - stored
+    return LoadAttribution(imposed, delivered, conducted, stored, residual, last)
 
 
 def _reservoir(problem: ThermalProblem, value, dtype) -> jnp.ndarray | None:
@@ -744,12 +758,13 @@ def _outlet_exchange(velocity, reservoir, problem: ThermalProblem, dtype) -> tup
     area = jnp.asarray(problem.flow.grid.face_areas(axis)[end], dtype=normal.dtype)
     back = jnp.maximum(-normal, 0.0) * area
     brought = jnp.zeros((), dtype) if reservoir is None else problem.heat_capacity * jnp.sum(back * reservoir)
-    valid = jnp.asarray(True) if reservoir is not None else jnp.all(back == 0.0)
+    carried = reservoir is None and problem.advection == "upwind"  # else nothing crosses with the flow
+    valid = jnp.all(back == 0.0) if carried else jnp.asarray(True)
     return jnp.sum(back), jnp.sum(jnp.maximum(normal, 0.0) * area), brought, valid
 
 
 def _carried_out(fluxes: tuple[Field, Field, Field], problem: ThermalProblem) -> jnp.ndarray:
-    """Return the enthalpy the flow carries out through the outlet less what it brings in at the inlet."""
+    """Return the enthalpy carried out through the outlet less what enters at the inlet and returning faces."""
     axis = problem.flow.open_axis
     flux, areas = fluxes[axis].data, problem.flow.grid.face_areas(axis)
     ends = [(slice(None),) * axis + (end,) for end in (0, -1)]
@@ -781,7 +796,9 @@ class DevelopedHeat(NamedTuple):
     the fluid. ``nusselt`` is ``q_w D_h / (k (T_w - T_b))``, with the hydraulic
     diameter ``D_h = 4 A / P``. With an internal source it is an apparent number
     for that source, not a coefficient of the duct alone. It is NaN, undefined,
-    where ``|T_w - T_b|`` is within ``64 eps`` of the largest temperature scale:
+    where ``|T_w - T_b|`` is within ``64 eps (L/h)^2`` of the largest temperature
+    scale, with ``L/h`` the section's largest extent over its smallest cell, the
+    conditioning of the solve; the scales are
     ``|T_w|``, ``|T_b|``, ``max |theta|``, and each heat input's own,
     ``D_h^2 max |rho c_p u gamma| / k``, ``D_h^2 max |q + q_J| / k`` and
     ``D_h max |q_w| / k``, so a difference cancelled to rounding is undefined;
@@ -789,8 +806,9 @@ class DevelopedHeat(NamedTuple):
     ``heat_balance_residual`` is ``rho c_p gamma Q`` less the heat entering per
     unit length, a power per length.
 
-    With heat-flux walls only, ``theta`` has an arbitrary constant, its zero
-    mean, and :meth:`anchored_peaks` gives the physical temperatures.
+    With heat-flux walls only, ``flux_walls``, ``theta`` has an arbitrary
+    constant, its zero mean, and :meth:`anchored_peaks` gives the physical
+    temperatures.
     """
 
     temperature: Field
@@ -803,22 +821,24 @@ class DevelopedHeat(NamedTuple):
     hydraulic_diameter: float
     nusselt: jnp.ndarray
     heat_balance_residual: jnp.ndarray
+    flux_walls: bool
 
     def anchored_peaks(
         self, inlet_bulk_temperature: float | jnp.ndarray, length: float
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Return the hottest wall and fluid temperatures over ``0 <= x <= length``, for heat-flux walls.
+        """Return the hottest wall face and hottest cell over ``0 <= x <= length``, for heat-flux walls.
 
         The bulk temperature is ``inlet_bulk_temperature`` at ``x = 0``, so the
         temperature is ``T_in + gamma x + theta - theta_b``, the same for any
         constant added to ``theta``. It is linear in ``x``: each peak is at the end
         ``gamma`` rises toward. A prescribed wall temperature fixes the reference
-        itself; use its station values. The profile is taken as developed from
-        ``x = 0``, with no entrance region.
+        itself, so there both are NaN: use its station values. The profile is taken
+        as developed from ``x = 0``, with no entrance region.
         """
         anchor = (
             inlet_bulk_temperature + jnp.maximum(self.axial_gradient * length, 0.0) - self.bulk_temperature
         )
+        anchor = jnp.where(self.flux_walls, anchor, jnp.nan)
         return anchor + self.peak_wall_temperature, anchor + jnp.max(self.temperature.data)
 
 
@@ -842,9 +862,10 @@ def developed_heat(
     input with a peripherally uniform wall temperature is the H1 condition; a
     uniform wall heat flux is H2. The flow rate must be positive, which
     :func:`validate_developed_inputs` checks with the rest of the reduction;
-    otherwise the result is NaN. Differentiable
+    otherwise the bulk temperature and Nu are NaN, as are ``gamma`` and the
+    temperatures of heat-flux walls. Differentiable
     in the velocity, the heat source and ``axial_gradient``, and compiled whole
-    by :func:`jax.jit`. Without Joule heat no current is formed.
+    by :func:`jax.jit`. With ``joule_heating`` off no current is formed.
     """
     flow, grid, conditions = problem.flow, problem.flow.grid, problem.thermal_conditions
     axial, capacity, k = (
@@ -890,7 +911,7 @@ def developed_heat(
             faces = grid.face_areas(axis)[slab + (end,)]  # host geometry, never traced
             areas.append(jnp.asarray(faces, dtype=speed.dtype))
             wetted += float(np.sum(faces))
-    perimeter = sum(jnp.sum(area) for area in areas)
+    perimeter = wetted
     wall = sum(jnp.sum(area * value) for area, value in zip(areas, temperatures)) / perimeter
     flux = sum(jnp.sum(area * value) for area, value in zip(areas, fluxes)) / perimeter
     bulk = jnp.where(flowing, per_length(speed * theta.data) / rate, jnp.nan)
@@ -898,7 +919,12 @@ def developed_heat(
     difference, scales = wall - bulk, [jnp.abs(wall), jnp.abs(bulk), jnp.max(jnp.abs(theta.data))]
     scales += [diameter**2 * jnp.max(jnp.abs(term)) / k for term in (capacity * speed * gradient, sources)]
     scales += [diameter * jnp.max(jnp.abs(value)) / k for value in fluxes]
-    resolved = jnp.abs(difference) > 64.0 * jnp.finfo(difference.dtype).eps * jnp.max(jnp.stack(scales))
+    # Rounding in the solve grows with its conditioning, (extent / smallest cell)^2 across the section.
+    conditioning = max(
+        (np.sum(grid.widths[axis]) / np.min(grid.widths[axis])) ** 2 for axis in range(3) if axis != axial
+    )
+    floor = 64.0 * jnp.finfo(difference.dtype).eps * conditioning
+    resolved = jnp.abs(difference) > floor * jnp.max(jnp.stack(scales))
     entering = per_length(sources) + flux * perimeter / length
     return DevelopedHeat(
         theta,
@@ -911,6 +937,7 @@ def developed_heat(
         diameter,
         jnp.where(resolved, flux * diameter / (k * jnp.where(resolved, difference, 1.0)), jnp.nan),
         capacity * gradient * flow_rate - entering,
+        not any(DIRICHLET in condition.kinds for condition in conditions),
     )
 
 
@@ -938,13 +965,13 @@ def validate_developed_inputs(
 ) -> None:
     """Check a velocity and heat source for :func:`developed_heat` on the host, raising ``ValueError`` on the first fault.
 
-    The duct is periodic along one axis, one cell long, with ``axial_gradient``
-    given exactly when a wall prescribes its temperature; the fields are finite,
-    of the compute dtype, at their offsets on the problem's grid. The flow is the
-    reduction's single throughflow: a flow rate ``sum A u`` above
-    ``flow_rate_tolerance``, a volume rate, and no transverse velocity or
-    reversed axial velocity beyond ``velocity_tolerance``, a speed. Nothing is
-    changed or returned.
+    The duct is periodic along one axis, one cell long, with a finite
+    ``axial_gradient`` given exactly when a wall prescribes its temperature; the
+    fields are finite, of the compute dtype, at their offsets on the problem's
+    grid. The flow is the reduction's single throughflow: a flow rate ``sum A u``
+    above ``flow_rate_tolerance``, a volume rate; the same on both axial faces,
+    and no transverse velocity or reversed axial velocity, beyond
+    ``velocity_tolerance``, a speed. Nothing is changed or returned.
     """
     for name, value in (
         ("flow_rate_tolerance", flow_rate_tolerance),
@@ -953,11 +980,16 @@ def validate_developed_inputs(
         if not (np.isfinite(value) and value >= 0.0):
             raise ValueError(f"{name} must be nonnegative and finite")
     axial, grid = _developed_axis(problem, axial_gradient), problem.flow.grid
+    if axial_gradient is not None and not np.all(np.isfinite(np.asarray(axial_gradient))):
+        raise ValueError("axial_gradient must be finite")
     _check_fields(problem.flow, velocity, [(heat_source, "heat source")])
     across = max(float(jnp.max(jnp.abs(velocity[axis].data))) for axis in range(3) if axis != axial)
     if across > velocity_tolerance:
         raise ValueError(f"a transverse velocity of {across:.4g} exceeds velocity_tolerance")
     along = np.asarray(velocity[axial].data)
+    ends = [along[(slice(None),) * axial + (end,)] for end in (0, -1)]
+    if float(np.max(np.abs(ends[1] - ends[0]))) > velocity_tolerance:
+        raise ValueError("the axial velocity changes along the axis beyond velocity_tolerance")
     if float(np.min(along)) < -velocity_tolerance:
         raise ValueError("the axial flow reverses beyond velocity_tolerance")
     flow_rate = float(

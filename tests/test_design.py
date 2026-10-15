@@ -320,11 +320,44 @@ def _leaving(lam: float) -> float:
     return 1.0 - (1.0 - np.exp(-lam)) / lam
 
 
+def test_a_wall_heat_flux_enters_its_cells_exactly_as_a_source():
+    """What ``load_attribution`` asks of a wall load: a flux ``q`` in at y = -1 and the source ``q A / V`` in the
+    cells along that wall, with the wall insulated, give the same step to 1e-12 (16 cells, one flowing step)."""
+    from lmhdx.thermal import ThermalProblem, build_thermal_step, initial_thermal_state, thermal_boundary
+
+    faces = uniform_faces(16, -1.0, 1.0)
+    flow = ChannelProblem(
+        Grid(uniform_faces(1, 0.0, 1.0), faces, faces),
+        (BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN), BoundaryCondition(NEUMANN)),
+        magnetic_field=(0.0, 4.0, 0.0),
+        forcing=(1.0, 0.0, 0.0),
+        dt=2.0e-3,
+    )
+    insulated, heated = (thermal_boundary("heat_flux", q, 0.0, conductivity=0.5) for q in (0.0, -3.0))
+    wrap = BoundaryCondition(PERIODIC)
+    walls, bare = (ThermalProblem(flow, (wrap, y, insulated), 2.0, 0.5, 300.0) for y in (heated, insulated))
+    grid = flow.grid
+    rest = zero_velocity(flow)
+    moving = (rest[0].replace_data(jnp.ones_like(rest[0].data)), *rest[1:])
+    noise = 300.0 + np.random.default_rng(23).standard_normal(grid.shape)
+    source = np.zeros(grid.shape)
+    source[:, 0, :] = 3.0 * grid.face_areas(1)[:, 0, :] / grid.cell_volumes()[:, 0, :]
+
+    def stepped(problem, heat):
+        state = initial_thermal_state(problem, noise, moving)
+        return build_thermal_step(problem, dtype=jnp.float64)(
+            state, Field(jnp.asarray(heat), (CENTER,) * 3, grid)
+        )[0]
+
+    flux, cells = stepped(walls, np.zeros(grid.shape)), stepped(bare, source)
+    assert float(jnp.max(jnp.abs(flux.temperature.data - cells.temperature.data))) <= 1e-12 * 300.0
+
+
 def test_a_load_is_credited_by_difference_and_its_heat_balances():
     """O01: at ``lambda = 5`` what the load sends out of the outlet and back out of the inlet is the load, to 1e-12,
     with nothing left in storage; the delivered fraction is within 0.03 of the exact steady 0.801 on 32 cells."""
     attribution, _ = _credit(1.0, 0.2)
-    imposed, delivered, conducted, stored, residual = (float(value) for value in attribution)
+    imposed, delivered, conducted, stored, residual = (float(value) for value in attribution[:5])
     assert imposed == pytest.approx(1.0, rel=1e-12) and abs(stored) <= 1e-9
     assert abs(residual) <= 1e-12 and delivered + conducted == pytest.approx(1.0, rel=1e-12)
     assert conducted > 0.0 and abs(delivered - _leaving(5.0)) < 0.03

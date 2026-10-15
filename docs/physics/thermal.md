@@ -113,14 +113,17 @@ temperature is kept rather than removed as a gauge.
     $T_b = T_\mathrm{res}$.
   - Recirculation inside the duct needs neither; its upwind donor is another cell.
 
-On a divergence-free flow it makes no new extremum while $\Delta t$ times every
-cell's outgoing volume-flux rate stays below one. `validate_thermal_inputs`
+On a divergence-free flow it makes no new extremum, beyond the range of the
+initial, inlet and reservoir temperatures, while $\Delta t$ times every cell's
+outgoing volume-flux rate stays below one. `validate_thermal_inputs`
 refuses a start whose Courant number, that rate's largest value times
 $\Delta t$, exceeds `advective_cfl_limit`, 0.8 by default. Conduction alone
 (`advection="off"`) has no such limit. A held flow keeps its Courant number for
-the whole run. An evolving flow is checked at its start only, and its run is
-accepted on the `advective_cfl` each step reports. Upwinding adds a numerical diffusivity of about $|u|h/2$, so a
-heat-transfer result must be refined until it stops changing.
+the whole run. An evolving flow is checked at its start only, which a start
+from rest passes trivially; nothing checks it again, so compare the
+`advective_cfl` each step reports with the limit. Upwinding adds a numerical
+diffusivity of about $|u|h/2$, so a heat-transfer result must be refined until
+it stops changing.
 
 **Joule heat** is each face current squared, then shared between the half
 cells on either side by `ops.face_average_adjoint`:
@@ -211,8 +214,8 @@ with respect to `backflow_temperature`. They
 are not supported with respect to $k$, $c_p$, $\sigma$, $\Delta t$, the geometry
 or the boundary conditions, which are built into the prepared step. Upwinding
 picks its donor by the sign of each face velocity. A derivative is therefore
-exact while no face changes sign, and only one-sided where one does: nothing is
-smoothed to hide it.
+one-sided only where a face velocity is exactly zero, or where the perturbation
+flips a face's sign; nothing is smoothed to hide it.
 
 **Memory.** `advance_thermal` keeps no field history; in reverse mode it keeps
 one state per step.
@@ -255,10 +258,12 @@ The duct is one cell long along its axis. `validate_developed_inputs` checks
 on the host that the flow is the reduction's single throughflow, with
 tolerances in physical units:
 - a flow rate $\sum A u$ above `flow_rate_tolerance`, a volume rate;
-- no transverse velocity, and no reversed axial velocity, beyond
-  `velocity_tolerance`, a speed.
+- the same axial velocity on both axial faces, and no transverse velocity or
+  reversed axial velocity, beyond `velocity_tolerance`, a speed;
+- a finite `axial_gradient` where one is given.
 
-A flow that stops gives NaN, not a division by zero.
+A flow that stops gives NaN for the bulk temperature and $Nu$, not a division
+by zero.
 
 The result gives:
 - the bulk temperature, weighted by the axial flow;
@@ -269,16 +274,20 @@ The result gives:
 
 The wall means are over every transverse wall, heated or not. With an internal
 source, $Nu$ is an apparent number for that source, not a coefficient of the
-duct alone. It is NaN where $|T_w-T_b|$ is within $64\varepsilon$ of the
-largest temperature scale: those of the solution, and each heat input's own
+duct alone. It is NaN where $|T_w-T_b|$ is within $64\varepsilon(L/h)^2$ of the
+largest temperature scale. Here $L/h$ is the section's largest extent over its
+smallest cell, since the solve's rounding grows with its conditioning. The
+scales are those of the solution and each heat input's own
 ($D_h^2|\rho_0c_pu\gamma|/k$, $D_h^2|q+q_J|/k$ and $D_h|q_w|/k$). A
 difference cancelled to rounding is therefore undefined, as when heat crosses
 the duct from wall to wall. The temperatures and the heat balance stay valid.
 
 With heat-flux walls only, $\theta$ is fixed only up to a constant, its zero
 mean. The physical temperature is $T=T_{b,\mathrm{in}}+\gamma x+\theta-\theta_b$,
-and `DevelopedHeat.anchored_peaks(T_in, length)` returns the hottest wall and
-fluid temperatures over the length, at whichever end $\gamma$ rises toward. It
+and `DevelopedHeat.anchored_peaks(T_in, length)` returns the hottest wall face
+and hottest cell over the length, at whichever end $\gamma$ rises toward. With a
+prescribed wall temperature, whose station values already fix the reference,
+both are NaN. It
 takes the profile as developed from the inlet. An entrance region needs the
 open duct below.
 
@@ -362,10 +371,14 @@ own response, since the temperature is affine in the heat source at constant
 properties. It reports the load's power and what the load adds:
 - to the enthalpy leaving through the outlet;
 - to the conduction out, which is what leaks through the inlet and any
-  prescribed-temperature wall (a prescribed wall flux cancels);
+  prescribed-temperature wall, together (a prescribed wall flux cancels);
 - to the storage.
 
-A buoyant flow, which the load moves, is not affine in it.
+A buoyant flow, which the load moves, is not affine in it. The load is a heat
+source on the cells: a wall's heat flux is boundary data, present in both runs.
+To credit one, pass the source $qA/V$ in the cells along that wall and set the
+wall's flux to zero. A face flux enters its cell's equation exactly as that
+source, so the cell temperatures are the same.
 
 In a plug flow with $\lambda=\rho_0c_pu/k$, a uniform load leaves through the
 outlet in the steady fraction $1-(1-e^{-\lambda})/\lambda$. The rest conducts
