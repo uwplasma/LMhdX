@@ -908,6 +908,71 @@ def test_buoyancy_accelerates_the_flow_independently_of_its_density():
     assert np.allclose(np.asarray(heavy[1].data), 2.5 * np.asarray(light[1].data), rtol=1e-12, atol=1e-12)
 
 
+def _benard_growth(rayleigh: float, dt: float, chandrasekhar: float = 0.0) -> float:
+    """Growth rate of the critical roll between rigid isothermal plates, heated below, in units of ``alpha/d^2``.
+
+    ``d = nu = alpha = 1``, so ``g beta Delta T = Ra``; a vertical field of ``sigma B^2 = Q``. The rate is
+    taken between ``t = 2`` and ``3``, after the faster modes have decayed and long before saturation.
+    """
+    from lmhdx.thermal import (
+        ThermalProblem,
+        advance_thermal,
+        build_thermal_step,
+        initial_thermal_state,
+        thermal_boundary,
+    )
+
+    wavenumber = 3.117
+    grid = Grid(
+        uniform_faces(16, 0.0, 2.0 * np.pi / wavenumber),
+        uniform_faces(1, 0.0, 1.0),
+        uniform_faces(16, 0.0, 1.0),
+    )
+    field = (0.0, 0.0, float(np.sqrt(chandrasekhar)))
+    flow = ChannelProblem(grid, (PERIODIC_X, PERIODIC_X, WALL), magnetic_field=field, dt=dt)
+    plates = thermal_boundary("temperature", 1.0, 0.0)
+    thermal = ThermalProblem(
+        flow,
+        (PERIODIC_X, PERIODIC_X, plates),
+        1.0,
+        1.0,
+        0.0,
+        expansion_coefficient=1.0,
+        gravity=(0.0, 0.0, -rayleigh),
+    )
+    x, z = np.asarray(grid.centers[0])[:, None, None], np.asarray(grid.centers[2])[None, None, :]
+    state = initial_thermal_state(
+        thermal, np.broadcast_to(1.0 - z + 1e-8 * np.cos(wavenumber * x) * np.sin(np.pi * z), grid.shape)
+    )
+    thermal_step = build_thermal_step(thermal, dtype=jnp.float64)
+    heat = state.temperature.replace_data(jnp.zeros(grid.shape))
+    run = jax.jit(
+        lambda start: advance_thermal(thermal_step, start, heat, round(1.0 / dt), checkpoint=False)[0]
+    )
+    amplitudes = []
+    for _ in range(3):
+        state = run(state)
+        amplitudes.append(float(jnp.max(jnp.abs(state.velocity[2].data))))
+    return float(np.log(amplitudes[2] / amplitudes[1]))
+
+
+def test_benard_convection_sets_in_at_the_critical_rayleigh_number():
+    """Rigid plates: onset at ``Ra_c = 1707.76``, ``k_c = 3.117`` (Reid & Harris 1958; Chandrasekhar 1961, Ch. II).
+
+    The partitioned step lags buoyancy and transport by one step, so the onset converges at first order in
+    ``dt`` from below; Richardson in ``dt`` on 16 x 16 cells lands within 4 %. A vertical field of
+    ``Q = Ha^2 = 100`` lifts onset to ``Ra_c = 3757`` (Chandrasekhar 1961, Ch. IV), so ``Ra = 2500`` grows
+    without it and decays with it.
+    """
+    onsets = []
+    for dt in (2.5e-3, 1.25e-3):
+        below, above = (_benard_growth(rayleigh, dt) for rayleigh in (1600.0, 1800.0))
+        onsets.append(1600.0 - below * 200.0 / (above - below))
+    assert onsets[0] < onsets[1] < 1707.76, onsets
+    assert abs((2.0 * onsets[1] - onsets[0]) / 1707.76 - 1.0) < 0.04, onsets
+    assert _benard_growth(2500.0, 1.25e-3) > 0.0 > _benard_growth(2500.0, 1.25e-3, chandrasekhar=100.0)
+
+
 # The coupled thermal step's accuracy (plan step 5.1f).
 
 
