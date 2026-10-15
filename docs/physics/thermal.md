@@ -251,12 +251,36 @@ this once on the cross-section, with the fast-diagonal Poisson factorization
   decides, so $\gamma$ is given. A peripherally uniform wall temperature with a
   uniform axial heat input is the H1 condition.
 
+The duct is one cell long along its axis. `validate_developed_inputs` checks
+on the host that the flow is the reduction's single throughflow, with
+tolerances in physical units:
+- a flow rate $\sum A u$ above `flow_rate_tolerance`, a volume rate;
+- no transverse velocity, and no reversed axial velocity, beyond
+  `velocity_tolerance`, a speed.
+
+A flow that stops gives NaN, not a division by zero.
+
 The result gives:
 - the bulk temperature, weighted by the axial flow;
 - the area-mean and peak wall temperatures;
 - the mean wall heat flux into the fluid;
 - $Nu=q_w D_h/\left(k\,(T_w-T_b)\right)$, with $D_h=4A/P$;
 - the heat-balance residual.
+
+The wall means are over every transverse wall, heated or not. With an internal
+source, $Nu$ is an apparent number for that source, not a coefficient of the
+duct alone. It is NaN where $|T_w-T_b|$ is within $64\varepsilon$ of the
+largest temperature scale: those of the solution, and each heat input's own
+($D_h^2|\rho_0c_pu\gamma|/k$, $D_h^2|q+q_J|/k$ and $D_h|q_w|/k$). A
+difference cancelled to rounding is therefore undefined, as when heat crosses
+the duct from wall to wall. The temperatures and the heat balance stay valid.
+
+With heat-flux walls only, $\theta$ is fixed only up to a constant, its zero
+mean. The physical temperature is $T=T_{b,\mathrm{in}}+\gamma x+\theta-\theta_b$,
+and `DevelopedHeat.anchored_peaks(T_in, length)` returns the hottest wall and
+fluid temperatures over the length, at whichever end $\gamma$ rises toward. It
+takes the profile as developed from the inlet. An entrance region needs the
+open duct below.
 
 It differentiates through the velocity, and so through the implicit derivative
 of `steady.solve_steady_state` in a field scale or a drive. It also
