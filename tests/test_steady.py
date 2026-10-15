@@ -1099,18 +1099,18 @@ def _uniform_flow(thermal):
     ("aspect", "slug"), [(1.0, False), (0.5, False), (1.0, True)], ids=["square", "half", "slug"]
 )
 def test_the_h1_nusselt_number_converges_to_the_exact_series(aspect, slug):
-    """Uniform axial heat input, peripherally uniform wall temperature: within 0.5 % on 64 cells, order above 1.5.
+    """Uniform axial heat input, peripherally uniform wall temperature: within 0.5 % on 64 cells, order above 1.5 (square).
 
     The series is computed independently of any discrete operator (square 3.60795, aspect 0.5 4.12330,
     square slug 7.1135). The flow is the package's own steady solve, or a uniform slug.
     """
     exact = _h1_nusselt(1.0, aspect, slug=slug)
     errors = []
-    for cells in (16, 32, 64):
+    for cells in (16, 32, 64) if aspect == 1.0 else (64,):  # the square ducts carry the refinement family
         thermal = _developed_duct(cells, aspect)
         result = _developed(thermal, _uniform_flow(thermal) if slug else None, axial_gradient=1.0)
         errors.append(abs(float(result.nusselt) / exact - 1.0))
-    assert errors[-1] < 5e-3 and np.log2(errors[1] / errors[2]) > 1.5, errors
+    assert errors[-1] < 5e-3 and (len(errors) == 1 or np.log2(errors[1] / errors[2]) > 1.5), errors
 
 
 def test_a_hartmann_flow_transfers_heat_better_toward_slug_flow():
@@ -1215,6 +1215,87 @@ def test_developed_heat_refuses_an_ill_posed_duct():
     wrapped = ThermalProblem(box, (_WRAP, _WRAP, flux.thermal_conditions[2]), 1.0, 1.0, 0.0)
     with pytest.raises(ValueError, match="exactly one axis"):
         developed_heat(wrapped, velocity, heat)
+
+
+# Review corrections, part 5a: an MHD thermal reference (ADR 0008, D33).
+
+
+def _plate_antiderivative(s, hartmann: float):
+    """``F_H(s)``, the integral from 0 of the mean-normalized Hartmann velocity, odd in ``s``; scaled exponentials."""
+    sign, s = np.sign(s), np.abs(s)
+    if hartmann == 0.0:
+        return sign * (1.5 * s - 0.5 * s**3)
+    if np.isinf(hartmann):  # slug flow
+        return sign * s
+    decay = np.exp(-2.0 * hartmann)
+    ratio = (
+        np.exp(hartmann * (s - 1.0)) * (1.0 - np.exp(-2.0 * hartmann * s)) / (1.0 + decay)
+    )  # sinh(Hs)/cosh H
+    return sign * (s - ratio / hartmann) / (1.0 - (1.0 - decay) / ((1.0 + decay) * hartmann))
+
+
+def _plate_nusselt(hartmann: float, points: int = 400) -> float:
+    """``Nu = 4 / int_0^1 F_H^2 ds``: uniformly heated Hartmann plates, ``D_h = 4a``, by Gauss-Legendre quadrature."""
+    nodes, weights = np.polynomial.legendre.leggauss(points)
+    return 4.0 / (0.5 * np.sum(weights * _plate_antiderivative(0.5 * (nodes + 1.0), hartmann) ** 2))
+
+
+def test_the_hartmann_plate_reference_meets_its_closed_form_and_limits():
+    """Quadrature converged to 1e-12; the closed form at finite Ha to 1e-12; the handoff's values; 140/17 and 12."""
+    for hartmann, value in ((1.0, 8.31820244), (5.0, 9.36646553), (10.0, 10.25857521), (30.0, 11.28543472)):
+        tanh, sech = np.tanh(hartmann), 1.0 / np.cosh(hartmann)
+        closed = (
+            4.0
+            * (1.0 - tanh / hartmann) ** 2
+            / (
+                1.0 / 3.0
+                - 2.0 / hartmann**2
+                - sech**2 / (2.0 * hartmann**2)
+                + 5.0 * tanh / (2.0 * hartmann**3)
+            )
+        )
+        assert abs(_plate_nusselt(hartmann, 200) - _plate_nusselt(hartmann)) <= 1e-12 * closed
+        assert _plate_nusselt(hartmann) == pytest.approx(closed, rel=1e-12)
+        assert _plate_nusselt(hartmann) == pytest.approx(value, abs=1e-8)
+    assert _plate_nusselt(0.0) == pytest.approx(140.0 / 17.0, rel=1e-14)
+    assert _plate_nusselt(np.inf) == pytest.approx(12.0, rel=1e-14)
+    assert 11.9 < _plate_nusselt(300.0) < 12.0
+
+
+def _plates(cells: int, hartmann: float):
+    """Plates at ``y = +-1`` each taking in a unit heat flux, insulated ``z`` ends one cell apart, carrying the
+    analytical Hartmann velocity as each cell's mean of ``f_H`` (from ``F_H``): no MHD solve."""
+    from lmhdx.thermal import ThermalProblem, thermal_boundary
+
+    y = uniform_faces(cells, -1.0, 1.0)
+    flow = ChannelProblem(
+        Grid(uniform_faces(1, 0.0, 1.0), y, uniform_faces(1, 0.0, 1.0)), (_WRAP, _WALL, _WALL)
+    )
+    plates = thermal_boundary("heat_flux", -1.0, -1.0, conductivity=1.0)
+    ends = thermal_boundary("heat_flux", conductivity=1.0)
+    thermal = ThermalProblem(flow, (_WRAP, plates, ends), 1.0, 1.0, 0.0, joule_heating=False)
+    rest, mean = zero_velocity(flow), np.diff(_plate_antiderivative(y, hartmann)) / np.diff(y)
+    along = rest[0].replace_data(jnp.broadcast_to(jnp.asarray(mean)[None, :, None], rest[0].shape))
+    return thermal, (along, *rest[1:])
+
+
+@pytest.mark.parametrize("hartmann", [0.0, 10.0, np.inf], ids=["poiseuille", "hartmann-10", "slug"])
+def test_heated_hartmann_plates_reach_the_analytical_nusselt_number(hartmann):
+    """D01: ``4 / (T_w - T_b)`` (``q = k = 1``, ``D_h = 4``) within 0.5 % of ``4 / int F_H^2`` on 64 cells, at an
+    order above 1.5. ``T_w`` is the plates' face temperature, the hottest; the four-wall ``nusselt`` averages in
+    the insulated ends and is a different number.
+
+    The wall value's leading error is ``-h^2 theta''(wall) / 6``, and ``k theta'' = rho c_p gamma u``: a slug flow
+    keeps it (order 2.0), while no slip removes it (order 4.0 at Ha 0 and 10).
+    """
+    errors = []
+    for cells in (32, 64, 128):
+        thermal, velocity = _plates(cells, hartmann)
+        result = _developed(thermal, velocity)
+        plate = 4.0 / float(result.peak_wall_temperature - result.bulk_temperature)
+        errors.append(abs(plate / _plate_nusselt(hartmann) - 1.0))
+    orders = np.log2(np.divide(errors[:-1], errors[1:]))
+    assert errors[1] < 5e-3 and np.all(orders > 1.5), (errors, orders)
 
 
 def test_a_heated_hunt_duct_balances_its_enthalpy():
