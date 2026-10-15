@@ -25,6 +25,16 @@ conditions. The boundary data enter as the fixed lift ``b = L(0)``, since
 :func:`lmhdx.grid.pad` is affine and ``L(T) = L_0(T) + b``. The unit shift keeps
 the operator nonsingular under insulated and periodic walls, so the solve keeps
 the mean: stored heat is never removed as a gauge.
+
+*Transport.* Conservative and first-order upwind: each velocity face carries
+``u_f T_up``, the temperature of the cell the flow comes from, and the transport
+term is minus the divergence of those fluxes. A wall face carries none, whatever
+its thermal condition; a periodic axis reads its wrap face from the last and the
+first cell, so a one-cell axis carries the same flux in and out. Forward in time
+on a discretely divergence-free carrier, the update makes no new extremum while
+``dt`` times every cell's outgoing volume-flux rate stays below one; 0.8 is the
+documented envelope. Upwinding adds a numerical diffusivity of about ``|u| h/2``,
+which is measured against ``alpha`` before a heat-transfer number is quoted.
 """
 
 from __future__ import annotations
@@ -36,8 +46,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from .core3d import ChannelProblem
-from .grid import CENTER, DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field
-from .ops import laplacian
+from .grid import CENTER, DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, pad
+from .ops import laplacian, wall_insulated
 from .poisson import FastDiagonalHelmholtz, fast_diagonal_helmholtz
 
 __all__ = ["ThermalProblem", "thermal_boundary"]
@@ -174,3 +184,42 @@ def _conduct(
     dt, alpha = float(problem.flow.dt), problem.diffusivity
     rhs = temperature.data + dt * (heating.data / problem.heat_capacity + alpha * lift.data)
     return factorization.solve(temperature.replace_data(rhs))
+
+
+def _upwind_fluxes(
+    temperature: Field, velocity: tuple[Field, Field, Field], problem: ThermalProblem
+) -> tuple[Field, Field, Field]:
+    """Return ``u_f T_up`` on the velocity faces; the transport term is minus their divergence.
+
+    ``T_up`` is the temperature of the cell the face velocity comes from. The
+    flow's scalar conditions pad periodic axes by wrapping and walls by copying;
+    the copy is never used, since a wall face carries no advective flux.
+    """
+    scalar = problem.flow.scalar_conditions
+    fluxes = []
+    for axis, carrier in enumerate(velocity):
+        padded = pad(temperature.data, axis, scalar[axis], grid=temperature.grid)
+        lower, upper = (_sliced(padded, axis, start) for start in (0, 1))
+        upstream = jnp.where(carrier.data >= 0.0, lower, upper)
+        fluxes.append(wall_insulated(carrier.replace_data(carrier.data * upstream), axis, scalar[axis]))
+    return tuple(fluxes)
+
+
+def _outgoing_rate(velocity: tuple[Field, Field, Field]) -> jnp.ndarray:
+    """Return each cell's outgoing volume flux over its volume, ``sum_f max(u_f . n_f, 0) A_f / V``.
+
+    ``dt`` times its maximum is the transport's Courant number. On a Cartesian
+    grid ``A_f / V`` is one over the cell's width along the face normal.
+    """
+    grid, total = velocity[0].grid, 0.0
+    for axis, carrier in enumerate(velocity):
+        lower, upper = (_sliced(carrier.data, axis, start) for start in (0, 1))
+        shape = [-1 if position == axis else 1 for position in range(3)]
+        widths = jnp.asarray(np.reshape(grid.widths[axis], shape), dtype=carrier.dtype)
+        total = total + (jnp.maximum(upper, 0.0) + jnp.maximum(-lower, 0.0)) / widths
+    return total
+
+
+def _sliced(data: jnp.ndarray, axis: int, start: int) -> jnp.ndarray:
+    """All but the last (``start`` 0) or the first (``start`` 1) entry along ``axis``."""
+    return jax.lax.slice_in_dim(data, start, data.shape[axis] - 1 + start, axis=axis)
