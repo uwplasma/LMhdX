@@ -638,3 +638,16 @@ def test_thermal_gradients_match_central_differences(target):
         for size in (1.0e-2, 1.0e-3, 1.0e-4)
     ]
     assert abs(gradient) > 0.0 and min(errors) < 1e-5, (gradient, errors)
+
+
+def test_the_thermal_page_workflow_runs_as_written():
+    """The worked example of docs/physics/thermal.md, executed from the page (plan step 5.1h)."""
+    from pathlib import Path
+
+    page = Path(__file__).resolve().parents[1] / "docs" / "physics" / "thermal.md"
+    section = page.read_text().split("## A worked example", 1)[1]
+    code = section.split("```python\n", 1)[1].split("```", 1)[0]
+    namespace = {"__name__": "thermal_page"}
+    exec(compile(code, str(page), "exec"), namespace)
+    assert namespace["history"].temperature_max.shape == (200,)
+    assert float(namespace["problem"].expansion_coefficient) > 0.0  # both variants ran

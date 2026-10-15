@@ -82,6 +82,7 @@ how_to/restart_and_output
 
 physics/equations
 physics/numerics
+physics/thermal
 ```
 
 ```{toctree}

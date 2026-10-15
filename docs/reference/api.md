@@ -77,6 +77,13 @@ restart, progress, logging, and timing hooks in their owning modules.
    :members:
 ```
 
+## Heat transport
+
+```{eval-rst}
+.. automodule:: lmhdx.thermal
+   :members:
+```
+
 ## Fast-diagonal Poisson and Helmholtz solvers
 
 ```{eval-rst}
