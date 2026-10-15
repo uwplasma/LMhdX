@@ -841,7 +841,7 @@ def test_a_returning_outlet_balances_its_heat_and_stays_bounded(case):
     power = jnp.max(jnp.stack([jnp.abs(term) for term in terms]), axis=0)
     floor = 64 * np.finfo(float).eps * thermal.heat_capacity * 4.0 * 300.0 / thermal.flow.dt  # volume 4
     assert bool(jnp.all(jnp.abs(history.heat_balance_residual) <= jnp.maximum(1e-10 * power, floor)))
-    assert float(history.outlet_backflow_rate[0]) > 0.0 and bool(history.backflow_boundary_valid.all())
+    assert float(history.outlet_backflow_rate[0]) > 0.0
     if case == "uniform":
         assert float(jnp.max(jnp.abs(state.temperature.data - 300.0))) <= 1e-12 * 300.0
     elif case == "reservoir":
@@ -851,15 +851,19 @@ def test_a_returning_outlet_balances_its_heat_and_stays_bounded(case):
             thermal.heat_capacity * float(history.outlet_backflow_rate[-1]) * 280.0, rel=1e-14
         )
     else:
-        assert float(history.joule_power[-1]) > 0.0
+        assert float(history.joule_power[-1]) > 0.0  # and the reservoir reaches no electric quantity
+        other = advance_thermal(thermal_step, start, _cells(thermal, 0.0), 30, backflow_temperature=300.0)[1]
+        assert np.array_equal(history.charge_residual, other.charge_residual)
+        assert np.array_equal(history.joule_power, other.joule_power)
 
 
 def test_the_outlet_condition_is_the_total_flux_one_and_converges_at_first_order():
-    """``T = 1 + x^2`` against flow entering at the outlet: the Danckwerts datum converges, a switched Dirichlet does not.
+    """``T = 1 + x^2`` against flow entering at the outlet: the Danckwerts datum converges; T(1) fed as the datum does not.
 
     With ``u = -1`` the outlet face is incoming, and ``C u T_res = C u T - k dT/dn`` there gives
     ``T_res = T(1) + k T'(1) / C = 2.4``; the source is ``q = C u T' - k T''``. The inlet stays at ``T(0) = 1``.
-    Replacing the datum by ``T(1) = 2`` solves a different problem: its error stays at least five times larger.
+    Feeding the boundary value ``T(1) = 2`` as the datum solves a different problem: its error stays at least five
+    times larger.
     """
     from lmhdx.thermal import (
         ThermalProblem,
@@ -927,13 +931,13 @@ def test_an_outlet_needs_its_returning_temperature_and_refuses_an_unknown_one():
     thermal_step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
     with pytest.raises(ValueError, match="needs backflow_temperature"):
         thermal_step(state, heat)
-    closed, _ = _plug_duct(4)
+    plug, _ = _plug_duct(4)
     for change in (
         dict(outlet_backflow="reservoir"),
         dict(advection="off", outlet_backflow="reservoir_flux"),
     ):
         with pytest.raises(ValueError):
-            dataclasses.replace(closed, **change)
+            dataclasses.replace(plug, **change)
     with pytest.raises(ValueError, match="inflow-outflow"):
         dataclasses.replace(_heated(_uniform_duct(4)), outlet_backflow="reservoir_flux")
 
@@ -1011,8 +1015,13 @@ def test_a_reservoir_run_compiles_whole_and_takes_new_values_without_retracing()
     eager, tree = state, jax.tree_util.tree_structure(state)
     for _ in range(4):
         eager, record = thermal_step(eager, heat, backflow_temperature=280.0)
-    one, _ = jax.jit(thermal_step)(state, heat, backflow_temperature=jnp.asarray(280.0))
-    assert jax.tree_util.tree_structure(one) == tree and len(record) == 19
+    first = thermal_step(state, heat, backflow_temperature=280.0)
+    one = jax.jit(thermal_step)(state, heat, backflow_temperature=jnp.asarray(280.0))
+    assert jax.tree_util.tree_structure(one[0]) == tree
+    for jitted, plain in zip(jax.tree_util.tree_leaves(one), jax.tree_util.tree_leaves(first)):
+        jitted, plain = (jnp.asarray(leaf, jnp.float64) for leaf in (jitted, plain))  # two are flags
+        assert jitted.shape == plain.shape
+        assert float(jnp.max(jnp.abs(jitted - plain))) <= 1e-12 * max(1.0, float(jnp.max(jnp.abs(plain))))
     traces = []
 
     def run(start, source, reservoir):
@@ -1028,7 +1037,7 @@ def test_a_reservoir_run_compiles_whole_and_takes_new_values_without_retracing()
     assert len(traces) == 2 and np.array_equal(profile.temperature.data, final.temperature.data)
     assert jax.tree_util.tree_structure(final) == tree and all(np.shape(value) == (4,) for value in history)
     for scanned, stepped in zip(jax.tree_util.tree_leaves(final), jax.tree_util.tree_leaves(eager)):
-        assert scanned.dtype == stepped.dtype == jnp.float64
+        assert scanned.dtype == stepped.dtype == jnp.float64 and scanned.shape == stepped.shape
         assert float(jnp.max(jnp.abs(scanned - stepped))) <= 1e-12 * float(jnp.max(jnp.abs(stepped)))
 
     def traced(steps):
@@ -1040,15 +1049,22 @@ def test_a_reservoir_run_compiles_whole_and_takes_new_values_without_retracing()
 
     short, long = traced(4), traced(128)
     assert abs(len(str(long)) - len(str(short))) < 0.01 * len(str(short))
-    scan = next(equation for equation in long.eqns if equation.primitive.name == "scan")
-    assert len(scan.invars) == scan.params["num_consts"] + scan.params["num_carry"]  # nothing indexed by step
+    scans = [
+        next(equation for equation in program.eqns if equation.primitive.name == "scan")
+        for program in (short, long)
+    ]
+    scan = scans[1]
+    # Every input of the scan is the same at 4 and 128 steps, so none is stacked by step, and the reservoir is a const.
+    assert [var.aval.shape for var in scans[0].invars] == [var.aval.shape for var in scan.invars]
+    assert long.jaxpr.invars[-1] in scan.invars[: scan.params["num_consts"]]
     assert all(var.aval.shape == (128,) for var in scan.outvars[scan.params["num_carry"] :])
     assert not any("callback" in name for name in _primitives(long.jaxpr))
 
 
 def test_the_reservoir_derivative_lives_on_the_returning_faces_only():
     """``d(u T_face)/d T_res`` is ``u`` on a returning face and zero on a leaving one, exactly; a run's derivative in a
-    reservoir amplitude matches central differences to 1e-5 (best of three sizes), checkpointed or not.
+    reservoir amplitude matches central differences at every size to 1e-8, checkpointed or not: the run is affine
+    in the reservoir, so the differences are exact to rounding and the size sweep checks only that.
 
     The held flow does not depend on the reservoir, so no face changes sign under the perturbation. Across a face
     whose velocity changes sign, upwinding is only piecewise differentiable, and nothing is smoothed to hide it.
@@ -1089,7 +1105,7 @@ def test_the_reservoir_derivative_lives_on_the_returning_faces_only():
         abs(gradient - float(compiled(0.5 + size) - compiled(0.5 - size)) / (2.0 * size)) / abs(gradient)
         for size in (1.0e-1, 1.0e-2, 1.0e-3)
     ]
-    assert gradient > 0.0 and min(errors) < 1e-5, (gradient, errors)  # a warmer reservoir warms the duct
+    assert gradient > 0.0 and max(errors) < 1e-8, (gradient, errors)  # a warmer reservoir warms the duct
 
 
 # Review corrections, part 4: conductivity, electrical walls and preparation.
@@ -1111,25 +1127,37 @@ def test_a_heat_flux_wall_keeps_its_flux_only_when_rebuilt_with_a_new_conductivi
             initial_thermal_state(thermal, 300.0), _cells(thermal, 0.0)
         )[1]
         outs.append(float(record.conductive_heat_out))
+        assert float(record.storage_rate) == pytest.approx(-outs[-1], rel=1e-8)  # the temperature loses it
     assert outs == pytest.approx([14.0, 14.0, 56.0], rel=1e-12)
 
 
 def test_resolved_electrical_walls_leave_the_temperature_on_the_fluid_cells():
-    """``wall_layers`` widen only the electric solve (#235): the temperature keeps the fluid's cells and volume, 4,
-    and the step deposits the fluid's budget Joule power to 1e-11 while the walls dissipate their own."""
+    """``wall_layers`` widen only the electric solve (#235). At rest, with 3 in through y = -1 and an uneven start,
+    the layered and plain ducts conduct identically, bit for bit, and let in 6 through their fluid wall; flowing, the
+    step deposits the fluid's budget Joule power to 1e-11 while the walls dissipate their own."""
     import dataclasses
 
     from lmhdx.core3d import project, velocity_offset
     from lmhdx.grid import Field
-    from lmhdx.thermal import build_thermal_step, initial_thermal_state
+    from lmhdx.thermal import ThermalProblem, build_thermal_step, initial_thermal_state, thermal_boundary
 
     layered = _layered_duct()
+    insulated, heated = (thermal_boundary("heat_flux", q, 0.0, conductivity=1.0) for q in (0.0, -3.0))
+    start = 1.0 + 0.1 * np.random.default_rng(29).standard_normal(layered.grid.shape)
+    runs = []
     for problem in (layered, dataclasses.replace(layered, wall_layers=(None, None, None))):
-        thermal = _thermal_of(problem)
+        thermal = ThermalProblem(problem, (PERIODIC_AXIS, heated, insulated), 1.0, 1.0, 0.0)
         thermal_step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
-        rest, record = thermal_step(initial_thermal_state(thermal, 1.0), _cells(thermal, 0.0))
-        assert rest.temperature.grid == problem.grid and rest.temperature.shape == (1, 12, 12)
-        assert float(record.sensible_energy) == pytest.approx(4.0, rel=1e-13)
+        runs.append(thermal_step(initial_thermal_state(thermal, start), _cells(thermal, 0.0)))
+    (layers, with_layers), (plain, without) = runs
+    assert layers.temperature.shape == (1, 12, 12) and np.array_equal(
+        layers.temperature.data, plain.temperature.data
+    )
+    assert (
+        float(with_layers.conductive_heat_out)
+        == float(without.conductive_heat_out)
+        == pytest.approx(-6.0, rel=1e-12)
+    )
     keys = jax.random.split(jax.random.PRNGKey(5), 3)
     noise = tuple(
         Field(

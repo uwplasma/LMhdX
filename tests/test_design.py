@@ -307,13 +307,12 @@ def _uniform(state, value: float) -> Field:
 
 
 def _credit(speed: float, conductivity: float, field: float = 0.0):
-    """The unit load's attribution and the load-on run's last diagnostics, at steady state (60 residence times)."""
-    from lmhdx.thermal import advance_thermal, load_attribution
+    """The unit load's attribution and the load-on run's last diagnostics, at steady state (30 residence times)."""
+    from lmhdx.thermal import load_attribution
 
     thermal_step, state = _held_plug(speed, conductivity, field)
     attribution = load_attribution(thermal_step, state, _uniform(state, 0.0), _uniform(state, 1.0), 1920)
-    record = advance_thermal(thermal_step, state, _uniform(state, 1.0), 1920)[1]
-    return attribution, jax.tree_util.tree_map(lambda history: float(history[-1]), record)
+    return attribution, jax.tree_util.tree_map(float, attribution.loaded)
 
 
 def _leaving(lam: float) -> float:
@@ -375,13 +374,40 @@ def test_more_flow_credits_neither_joule_heat_nor_gross_outlet_enthalpy():
     for credit in (slow, fast):
         assert float(credit.imposed) == pytest.approx(1.0, rel=1e-12) and 0.0 < float(credit.delivered) < 1.0
     assert float(slow.delivered) < float(fast.delivered) < _leaving(10.0)
-    assert float(fast.delivered) == pytest.approx(float(_credit(2.0, 0.2)[0].delivered), rel=1e-12)
+    fieldless = _credit(2.0, 0.2)[0]
+    for credit in (slow, fast):  # the whole balance, not only the delivered part
+        assert abs(float(credit.residual)) <= 1e-12 and abs(float(credit.stored)) <= 1e-9
+        assert float(credit.delivered + credit.conducted) == pytest.approx(1.0, rel=1e-12)
+    for name in ("delivered", "conducted"):
+        assert float(getattr(fast, name)) == pytest.approx(float(getattr(fieldless, name)), rel=1e-12)
+
+
+def test_neither_the_background_nor_the_start_is_credited():
+    """The load's response is the same with a background source of 2 and an uneven start as with neither, to 1e-12,
+    and also while it is still filling the duct (50 steps, storing heat): the difference removes both exactly."""
+    from lmhdx.thermal import load_attribution
+
+    thermal_step, state = _held_plug(1.0, 0.2, field=3.0)
+    uneven = state._replace(
+        temperature=state.temperature.replace_data(
+            jnp.asarray(np.random.default_rng(31).uniform(0.0, 2.0, state.temperature.shape))
+        )
+    )
+    plain, busy = (
+        load_attribution(thermal_step, start, _uniform(state, background), _uniform(state, 1.0), 50)
+        for start, background in ((state, 0.0), (uneven, 2.0))
+    )
+    assert float(plain.stored) > 0.1  # still filling
+    for name in ("imposed", "delivered", "conducted", "stored"):
+        assert float(getattr(busy, name)) == pytest.approx(float(getattr(plain, name)), rel=1e-12, abs=1e-13)
+    assert float(busy.loaded.external_power) == pytest.approx(3.0, rel=1e-12)  # the background is in the run
 
 
 def test_heat_leaking_out_of_the_inlet_does_not_count_as_delivered_duty():
     """A conductive fluid (``lambda = 0.5``) keeps its peak under a limit of 0.5, which the ``lambda = 20`` duct
     exceeds, only by sending most of the load back out of the thermostatted inlet: it fails a 90 % delivery
-    requirement, so it is not a feasible cooling design."""
+    requirement, so it is not a feasible cooling design. In this fixture (``u = C = A = 1``) the outlet temperature is
+    the delivered fraction, so the two limits are tied; the point is that only the delivery check names the leak."""
     accepted = []
     for conductivity in (2.0, 0.05):  # lambda 0.5 and 20
         credit, run = _credit(1.0, conductivity)

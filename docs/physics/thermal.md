@@ -315,14 +315,14 @@ Nusselt number of the square duct rises from 3.62 at Ha 0 to 4.56 at Ha 10 and
 5.35 at Ha 30, toward the slug value of 7.09.
 
 **An MHD reference.** Hartmann flow between plates at $y=\pm a$, each taking
-in a uniform heat flux with no source, has
+in a uniform heat flux with no source and no Joule heat, has
 $Nu=4/\int_0^1F_H^2\,ds$ with $D_h=4a$. Here $F_H$ is the integral of the
 mean-normalized Hartmann velocity $f_H=(1-\cosh(Hs)/\cosh H)/(1-\tanh H/H)$.
 The reference is computed by quadrature, with no discrete operator. It runs
 from $140/17$ at Ha 0 to 12 as Ha grows.
 
-The test gives the solver the analytical velocity across one cell with
-insulated ends, and measures the plates' own $Nu$:
+The test gives the solver the cell means of the analytical velocity, across
+one cell with insulated ends, and measures the plates' own $Nu$:
 
 | Flow | Exact | 32 / 64 / 128 cells | Order |
 |:--|--:|:--|:--|
@@ -330,8 +330,11 @@ insulated ends, and measures the plates' own $Nu$:
 | Ha 10 | 10.25858 | −1.2e‑5 / −7.6e‑7 / −4.7e‑8 | 4.0 |
 | slug | 12 | −1.9e‑3 / −4.9e‑4 / −1.2e‑4 | 2.0 |
 
-The wall value's leading error is $-h^2\theta''_w/6$, and
-$k\theta''=\rho_0c_p\gamma u$, so no slip removes it. The public four-wall
+With the velocity's cell means the discrete fluxes are exact, and the
+$O(h^2)$ error of $T_w-T_b$ is $+h^2\theta''_w/6$, half from the wall value and
+half from the bulk. Since $k\theta''=\rho_0c_p\gamma u$, no slip removes it;
+with point values of the velocity the order falls to 2. Slug flow keeps it, and
+its discrete answer is exactly $12/(1+h^2/2)$. The public four-wall
 `nusselt` of that fixture averages in the insulated ends, and is a different
 number.
 
