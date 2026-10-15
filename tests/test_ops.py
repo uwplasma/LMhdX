@@ -7,7 +7,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lmhdx.core3d import ChannelProblem, step, velocity_offset, zero_velocity
+from lmhdx.core3d import (
+    ChannelProblem,
+    enforce_face_constraints,
+    project,
+    step,
+    velocity_offset,
+    zero_velocity,
+)
 from lmhdx.grid import (
     CENTER,
     DIRICHLET,
@@ -36,7 +43,7 @@ from lmhdx.ops import (
     momentum_advection,
     staggered_laplacian,
 )
-from lmhdx.thermal import ThermalProblem, _conduct, thermal_boundary
+from lmhdx.thermal import ThermalProblem, _conduct, _outgoing_rate, _upwind_fluxes, thermal_boundary
 
 pytestmark = pytest.mark.unit
 
@@ -905,3 +912,125 @@ def test_a_heated_slab_converges_at_second_order(stretch):
         assert abs(flux - wall) <= 1e-11 * wall
         errors.append(np.max(np.abs(steady[0, :, 0] - exact)))
     assert np.log2(errors[1] / errors[2]) > 1.8, errors
+
+
+# Heat transport (plan step 5.1c): conservative first-order upwind fluxes and the outgoing-flux Courant number.
+
+INSULATED = thermal_boundary("heat_flux", conductivity=2.0)
+
+
+def _carrier(problem: ThermalProblem, seed: int, *, solenoidal: bool = False) -> tuple[Field, Field, Field]:
+    rng = np.random.default_rng(seed)
+    noise = tuple(
+        f.replace_data(jnp.asarray(rng.standard_normal(f.data.shape))) for f in zero_velocity(problem.flow)
+    )
+    velocity = enforce_face_constraints(noise, problem.flow)
+    return project(velocity, problem.flow)[0] if solenoidal else velocity
+
+
+def _transport(temperature: Field, velocity, problem: ThermalProblem) -> jnp.ndarray:
+    return divergence(_upwind_fluxes(temperature, velocity, problem)).data
+
+
+def test_the_upwind_flux_takes_the_upstream_cell_and_nothing_through_a_wall():
+    """On STRETCHED, periodic along its geometric axis, whose two end cells differ in width.
+
+    The carrier is shifted by one, so its wall faces carry a velocity the walls must not pass on.
+    """
+    problem = _thermal(STRETCHED, (WRAP, INSULATED, INSULATED))
+    temperature = Field(
+        jnp.asarray(np.random.default_rng(6).standard_normal(STRETCHED.shape)), CELL, STRETCHED
+    )
+    velocity = tuple(f.replace_data(f.data + 1.0) for f in _carrier(problem, 7))
+    for axis, flux in enumerate(_upwind_fluxes(temperature, velocity, problem)):
+        t, u, f = (np.moveaxis(np.asarray(a.data), axis, 0) for a in (temperature, velocity[axis], flux))
+        assert np.array_equal(f[1:-1], u[1:-1] * np.where(u[1:-1] >= 0.0, t[:-1], t[1:]))
+        if axis:
+            assert np.all(u[[0, -1]]) and not np.any(f[[0, -1]])
+        else:
+            assert np.array_equal(f[0], f[-1]) and np.array_equal(
+                f[0], u[0] * np.where(u[0] >= 0.0, t[-1], t[0])
+            )
+
+
+def test_upwind_transport_conserves_heat_and_moves_a_constant_only_by_the_divergence():
+    problem = _thermal(STRETCHED, (WRAP, INSULATED, INSULATED))
+    velocity = _carrier(problem, 8, solenoidal=True)
+    temperature = Field(
+        jnp.asarray(np.random.default_rng(9).standard_normal(STRETCHED.shape)), CELL, STRETCHED
+    )
+    transport = temperature.replace_data(_transport(temperature, velocity, problem))
+    ones = temperature.replace_data(jnp.ones(STRETCHED.shape))
+    absolute = float(cell_inner_product(transport.replace_data(jnp.abs(transport.data)), ones))
+    assert abs(float(cell_inner_product(transport, ones))) <= 1e-13 * absolute
+    constant = _transport(temperature.replace_data(jnp.full(STRETCHED.shape, 300.0)), velocity, problem)
+    scale = 300.0 * float(jnp.max(_outgoing_rate(velocity)))
+    assert float(jnp.max(jnp.abs(constant - 300.0 * divergence(velocity).data))) <= 1e-12 * scale
+
+
+def test_upwind_transport_makes_no_new_extremum_at_courant_0_8():
+    problem = _thermal(STRETCHED, (WRAP, INSULATED, INSULATED))
+    velocity = _carrier(problem, 10, solenoidal=True)
+    start = np.random.default_rng(11).uniform(0.0, 1.0, STRETCHED.shape)
+    temperature = Field(jnp.asarray(start), CELL, STRETCHED)
+    dt = 0.8 / float(jnp.max(_outgoing_rate(velocity)))
+    for _ in range(10):
+        temperature = temperature.replace_data(
+            temperature.data - dt * _transport(temperature, velocity, problem)
+        )
+    assert (
+        start.min() - 1e-12
+        <= float(jnp.min(temperature.data))
+        <= float(jnp.max(temperature.data))
+        <= start.max() + 1e-12
+    )
+
+
+@pytest.mark.parametrize("cells", [1, 2])
+def test_a_short_periodic_axis_carries_heat_through_its_wrap_face(cells):
+    """A one-cell axis carries the same flux in and out, so its transport vanishes; heat is conserved either way."""
+    grid = Grid(uniform_faces(cells, 0.0, 1.0), tanh_faces(6, -1.0, 1.0, 1.3), uniform_faces(4, -1.0, 1.0))
+    problem = _thermal(grid, (WRAP, INSULATED, INSULATED))
+    velocity = _carrier(problem, 12)
+    temperature = Field(jnp.asarray(np.random.default_rng(13).standard_normal(grid.shape)), CELL, grid)
+    transport = _transport(temperature, velocity, problem)
+    assert abs(float(jnp.sum(jnp.asarray(grid.cell_volumes()) * transport))) <= 1e-13 * float(
+        jnp.sum(jnp.abs(transport))
+    )
+    if cells == 1:
+        still = (velocity[0].replace_data(jnp.zeros_like(velocity[0].data)), *velocity[1:])
+        assert np.allclose(transport, _transport(temperature, still, problem), rtol=0.0, atol=1e-13)
+
+
+def test_the_outgoing_rate_counts_only_what_leaves_each_cell():
+    """Against ``sum_f max(u.n, 0) A_f / V`` from the grid's own areas and volumes; zero at rest."""
+    problem = _thermal(STRETCHED, (WRAP, INSULATED, INSULATED))
+    velocity = _carrier(problem, 14)
+    expected = np.zeros(STRETCHED.shape)
+    for axis, carrier in enumerate(velocity):
+        flux = np.moveaxis(np.asarray(carrier.data) * STRETCHED.face_areas(axis), axis, 0)
+        leaving = np.maximum(flux[1:], 0.0) + np.maximum(-flux[:-1], 0.0)
+        expected += np.moveaxis(leaving, 0, axis)
+    expected /= STRETCHED.cell_volumes()
+    assert np.allclose(np.asarray(_outgoing_rate(velocity)), expected, rtol=1e-13, atol=0.0)
+    assert not np.any(np.asarray(_outgoing_rate(zero_velocity(problem.flow))))
+
+
+def test_upwind_transport_converges_at_first_order():
+    """A cosine carried at Courant 0.5 to t = 1/4: upwinding diffuses by ``u h (1 - C)/2``, so the error is O(h)."""
+    errors = []
+    for cells in (32, 64, 128):
+        grid = Grid(uniform_faces(cells, 0.0, 1.0), uniform_faces(1, -1.0, 1.0), uniform_faces(1, -1.0, 1.0))
+        problem = _thermal(grid, (WRAP, INSULATED, INSULATED))
+        rest = zero_velocity(problem.flow)
+        velocity = (rest[0].replace_data(jnp.ones_like(rest[0].data)), *rest[1:])
+        temperature = _cells(grid, lambda x, y, z: np.cos(2.0 * np.pi * x) + 0.0 * (y + z))
+        dt = 0.5 / cells
+        for _ in range(cells // 2):
+            temperature = temperature.replace_data(
+                temperature.data - dt * _transport(temperature, velocity, problem)
+            )
+        exact = np.cos(2.0 * np.pi * (np.asarray(grid.centers[0]) - 0.25))
+        errors.append(float(np.max(np.abs(np.asarray(temperature.data)[:, 0, 0] - exact))))
+    orders = np.log2(np.divide(errors[:-1], errors[1:]))
+    assert np.all((orders > 0.8) & (orders < 1.2)), (errors, orders)
