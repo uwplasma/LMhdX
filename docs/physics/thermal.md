@@ -168,13 +168,65 @@ one state per step.
 - Open ducts and downstream heat removal.
 - Higher-order transport.
 - Variable properties.
-- A steady thermal solve.
+- A steady solve of the coupled equations. The developed duct below is the one steady thermal solve, for a given flow.
 - A thermal restart format.
 - Dispatch through `lmhdx.solve`.
 
 A closed domain with net heating has no steady temperature. The state returned
 is not a `cases.MHDState` or an archive-compatible `Solution`. The final
 electric fields come from `core3d.face_currents(state.velocity, flow)`.
+
+## The thermally fully developed duct
+
+A duct can be periodic in its flow direction, with the velocity and the heat
+sources uniform along it. Under a uniform axial heat input its temperature is
+then $T=\gamma x+\theta(y,z)$, where $\gamma$ is the bulk temperature's axial
+gradient and
+
+$$
+k\,\nabla^2\theta=\rho_0 c_p\,u\,\gamma-q-q_J .
+$$
+
+`developed_heat(problem, velocity, heat_source, axial_gradient=...)` solves
+this once on the cross-section, with the fast-diagonal Poisson factorization
+(ADR 0008, D33). How $\gamma$ is set depends on the walls:
+- **Heat-flux walls only.** $\gamma$ follows from the heat balance
+  $\rho_0 c_p\gamma Q$ = heat in per unit length, and $\theta$ has zero mean. A
+  uniform flux is the H2 condition.
+- **Any prescribed-temperature wall.** That wall takes in heat the solve
+  decides, so $\gamma$ is given. A peripherally uniform wall temperature with a
+  uniform axial heat input is the H1 condition.
+
+The result gives:
+- the bulk temperature, weighted by the axial flow;
+- the area-mean and peak wall temperatures;
+- the mean wall heat flux into the fluid;
+- $Nu=q_w D_h/\left(k\,(T_w-T_b)\right)$, with $D_h=4A/P$;
+- the heat-balance residual.
+
+It differentiates through the velocity, and so through the implicit derivative
+of `steady.solve_steady_state` in a field scale or a drive. It also
+differentiates through the heat source and $\gamma$, but not through the
+geometry.
+
+The H1 Nusselt number is checked against its exact double-sine series, which
+involves no discrete operator. The flow is the package's own steady solve, or a
+uniform slug:
+
+| Duct | Exact | 16 / 32 / 64 cells | Order |
+|:--|--:|:--|:--|
+| square | 3.60795 | +1.35 % / +0.35 % / +0.087 % | 1.97, 1.99 |
+| aspect ratio 0.5 | 4.12330 | +2.7 % / +0.73 % / +0.18 % | 1.92, 1.98 |
+| square, slug flow | 7.11354 | −1.5 % / −0.38 % / −0.094 % | 1.98, 1.99 |
+
+The comparison with the tables of Shah & London (1978) waits for the book.
+A transverse field flattens the core. On 32 cells with Joule heat off, the H1
+Nusselt number of the square duct rises from 3.62 at Ha 0 to 4.56 at Ha 10 and
+5.35 at Ha 30, toward the slug value of 7.09.
+
+Not covered:
+- the uniform-wall-temperature condition, an eigenvalue problem;
+- the pipe.
 
 ## A worked example
 
