@@ -160,6 +160,11 @@ class ThermalProblem:
     ``gravity`` the gravitational acceleration, pointing down, along the grid's
     three axes. ``advection`` is ``"upwind"``, or ``"off"`` for conduction alone,
     whatever the flow's own momentum transport.
+
+    ``outlet_backflow`` says what enters where the flow returns through the
+    outlet of an inflow-outflow axis: ``"error"`` refuses such a run, and
+    ``"reservoir_flux"`` brings in the reservoir temperature each step is given
+    as ``backflow_temperature``, a prescribed total heat flux ``C u T_res``.
     """
 
     flow: ChannelProblem
@@ -171,6 +176,7 @@ class ThermalProblem:
     expansion_coefficient: float = 0.0
     gravity: tuple[float, float, float] = (0.0, 0.0, 0.0)
     advection: str = "upwind"
+    outlet_backflow: str = "error"
 
     def __post_init__(self) -> None:
         if not isinstance(self.flow, ChannelProblem):
@@ -192,6 +198,16 @@ class ThermalProblem:
         object.__setattr__(self, "gravity", tuple(float(component) for component in self.gravity))
         if self.advection not in ("upwind", "off"):
             raise ValueError(f"advection must be 'upwind' or 'off', got {self.advection!r}")
+        if self.outlet_backflow not in ("error", "reservoir_flux"):
+            raise ValueError(
+                f"outlet_backflow must be 'error' or 'reservoir_flux', got {self.outlet_backflow!r}"
+            )
+        if self.outlet_backflow == "reservoir_flux" and (
+            self.flow.open_axis is None or self.advection != "upwind"
+        ):
+            raise ValueError(
+                "outlet_backflow='reservoir_flux' needs an inflow-outflow axis and upwind transport"
+            )
         if not isinstance(self.joule_heating, bool):
             raise TypeError("joule_heating must be True or False")
         if len(self.thermal_conditions) != 3:
@@ -262,7 +278,10 @@ def _conduct(
 
 
 def _upwind_fluxes(
-    temperature: Field, velocity: tuple[Field, Field, Field], problem: ThermalProblem
+    temperature: Field,
+    velocity: tuple[Field, Field, Field],
+    problem: ThermalProblem,
+    reservoir: jnp.ndarray | None = None,
 ) -> tuple[Field, Field, Field]:
     """Return ``u_f T_up`` on the velocity faces; the transport term is minus their divergence.
 
@@ -270,8 +289,11 @@ def _upwind_fluxes(
     flow's scalar conditions pad periodic axes by wrapping and walls by copying;
     the copy is never used, since a wall face carries no advective flux. The
     inlet face brings in the inlet temperature, or takes out the first cell's
-    against a backflow; the outlet face takes out the last cell's, and a backflow
-    there brings in that same temperature.
+    against a backflow. The outlet face takes out the last cell's; where the flow
+    returns there it brings in ``reservoir``, the outlet's incoming temperature.
+    Without one, only an unvalidated step under ``outlet_backflow="error"``
+    reaches a returning face; it takes the last cell's temperature and reports the
+    boundary invalid.
     """
     scalar, opening = problem.flow.scalar_conditions, problem.flow.open_axis
     fluxes = []
@@ -287,9 +309,10 @@ def _upwind_fluxes(
         entering = carrier.data[ends[0]] * jnp.where(
             carrier.data[ends[0]] >= 0.0, inlet, temperature.data[ends[0]]
         )
-        flux = (
-            flux.at[ends[0]].set(entering).at[ends[1]].set(carrier.data[ends[1]] * temperature.data[ends[1]])
-        )
+        leaving = carrier.data[ends[1]]
+        returning = temperature.data[ends[1]] if reservoir is None else reservoir
+        flux = flux.at[ends[0]].set(entering)
+        flux = flux.at[ends[1]].set(leaving * jnp.where(leaving >= 0.0, temperature.data[ends[1]], returning))
         fluxes.append(carrier.replace_data(flux))
     return tuple(fluxes)
 
@@ -379,6 +402,14 @@ class ThermalDiagnostics(NamedTuple):
     the old velocity; ``boussinesq_measure`` is the largest ``beta |T - T_r|`` of
     the old and new temperatures. ``finite`` says every value is a number, not
     that the step is accepted.
+
+    At the outlet of an inflow-outflow axis, ``outlet_backflow_rate`` and
+    ``outlet_outflow_rate`` are the volume rates returning and leaving, and
+    ``outlet_backflow_enthalpy_in`` is ``C`` times the returning rate weighted by
+    the reservoir temperature: what ``advective_heat_out`` counts in at the
+    returning faces. ``backflow_boundary_valid`` is false where the flow returns
+    under ``outlet_backflow="error"``, whose enthalpy in is then reported as zero.
+    All four are zero, and the boundary valid, in a closed duct.
     """
 
     mass_residual: jnp.ndarray
@@ -396,6 +427,10 @@ class ThermalDiagnostics(NamedTuple):
     advective_cfl: jnp.ndarray
     boussinesq_measure: jnp.ndarray
     finite: jnp.ndarray
+    outlet_backflow_rate: jnp.ndarray
+    outlet_outflow_rate: jnp.ndarray
+    outlet_backflow_enthalpy_in: jnp.ndarray
+    backflow_boundary_valid: jnp.ndarray
 
 
 def initial_thermal_state(
@@ -416,13 +451,20 @@ def initial_thermal_state(
 
 
 def validate_thermal_inputs(
-    problem: ThermalProblem, state: ThermalState, heat_source: Field, *, divergence_tolerance: float
+    problem: ThermalProblem,
+    state: ThermalState,
+    heat_source: Field,
+    *,
+    divergence_tolerance: float,
+    backflow_temperature: float | np.ndarray | None = None,
 ) -> None:
     """Check a state and heat source on the host before a run, raising ``ValueError`` on the first fault.
 
     Grids, offsets and shapes; the core's compute dtype; finite values; the wall
-    and periodic face constraints; and a velocity divergence within
-    ``divergence_tolerance``, in inverse time. Nothing is changed or returned.
+    and periodic face constraints; a velocity divergence within
+    ``divergence_tolerance``, in inverse time; and, at an outlet, no returning
+    face under ``outlet_backflow="error"``, or a finite ``backflow_temperature`` of
+    the outlet's shape under ``"reservoir_flux"``. Nothing is changed or returned.
     """
     if not (np.isfinite(divergence_tolerance) and divergence_tolerance >= 0.0):
         raise ValueError("divergence_tolerance must be nonnegative and finite")
@@ -450,6 +492,16 @@ def validate_thermal_inputs(
         raise ValueError("the velocity does not meet the wall and periodic face constraints")
     if float(jnp.max(jnp.abs(divergence(state.velocity).data))) > divergence_tolerance:
         raise ValueError("the velocity divergence exceeds divergence_tolerance")
+    if problem.outlet_backflow == "reservoir_flux":
+        if not np.all(np.isfinite(np.asarray(_reservoir(problem, backflow_temperature, dtype)))):
+            raise ValueError("backflow_temperature must be finite")
+    else:
+        _reservoir(problem, backflow_temperature, dtype)
+        axis = flow.open_axis
+        if axis is not None and np.any(
+            np.asarray(state.velocity[axis].data[(slice(None),) * axis + (-1,)]) < 0.0
+        ):
+            raise ValueError("the flow returns through the outlet: use outlet_backflow='reservoir_flux'")
 
 
 def build_thermal_step(
@@ -497,8 +549,11 @@ def build_thermal_step(
     def total(data):
         return cell_inner_product(Field(data, _CELL, grid), Field(jnp.ones_like(data), _CELL, grid))
 
-    def thermal_step(state: ThermalState, heat_source: Field) -> tuple[ThermalState, ThermalDiagnostics]:
+    def thermal_step(
+        state: ThermalState, heat_source: Field, *, backflow_temperature: float | jnp.ndarray | None = None
+    ) -> tuple[ThermalState, ThermalDiagnostics]:
         velocity, temperature = state.velocity, state.temperature
+        reservoir = _reservoir(problem, backflow_temperature, compute)
         _, currents, field = face_currents(velocity, flow, pressure)
         joule = _joule_heating(currents, problem).data
         if hold_flow:
@@ -507,7 +562,7 @@ def build_thermal_step(
             body = face_lorentz_force(_lorentz_from_currents(currents, field, flow), flow)
             buoyancy = _buoyancy(temperature, problem)
             moved, _ = _advance_momentum(velocity, body, flow, pressure, viscous, extra_force=buoyancy)
-        fluxes = _upwind_fluxes(temperature, velocity, problem) if upwind else None
+        fluxes = _upwind_fluxes(temperature, velocity, problem, reservoir) if upwind else None
         transport = divergence(fluxes).data if upwind else 0.0
         carried = (
             _carried_out(fluxes, problem) if upwind and flow.open_axis is not None else jnp.zeros((), compute)
@@ -542,7 +597,9 @@ def build_thermal_step(
         finite = jnp.all(
             jnp.stack([jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree_util.tree_leaves((new, values))])
         )
-        return new, ThermalDiagnostics(*values, finite)
+        return new, ThermalDiagnostics(
+            *values, finite, *_outlet_exchange(velocity, reservoir, problem, compute)
+        )
 
     return thermal_step
 
@@ -554,10 +611,12 @@ def advance_thermal(
     steps: int,
     *,
     checkpoint: bool = True,
+    backflow_temperature: float | jnp.ndarray | None = None,
 ) -> tuple[ThermalState, ThermalDiagnostics]:
     """Take ``steps`` steps of a prepared step as one compiled scan; return the end state and the history.
 
-    The carry is the state alone and only the scalar diagnostics are stacked, one
+    ``backflow_temperature`` goes to every step, constant over the call as the
+    heat source is. The carry is the state alone and only the scalar diagnostics are stacked, one
     per step, so no field history is kept. ``steps`` is static and the heat source
     is constant over the call. ``checkpoint`` recomputes each step in reverse mode
     rather than storing its intermediates; a differentiated run still keeps one
@@ -566,11 +625,44 @@ def advance_thermal(
     if steps < 1:
         raise ValueError("steps must be positive")
 
+    options = {} if backflow_temperature is None else {"backflow_temperature": backflow_temperature}
+
     def single(carry: ThermalState, _) -> tuple[ThermalState, ThermalDiagnostics]:
-        return thermal_step(carry, heat_source)
+        return thermal_step(carry, heat_source, **options)
 
     body = jax.checkpoint(single) if checkpoint else single
     return jax.lax.scan(body, state, xs=None, length=steps)
+
+
+def _reservoir(problem: ThermalProblem, value, dtype) -> jnp.ndarray | None:
+    """Return the outlet's incoming temperature over its face: a number broadcasts, an array must match."""
+    if problem.outlet_backflow != "reservoir_flux":
+        if value is not None:
+            raise ValueError("backflow_temperature is for outlet_backflow='reservoir_flux'")
+        return None
+    if value is None:
+        raise ValueError("outlet_backflow='reservoir_flux' needs backflow_temperature")
+    axis, shape = problem.flow.open_axis, problem.flow.grid.shape
+    face = shape[:axis] + shape[axis + 1 :]
+    data = jnp.asarray(value, dtype=dtype)
+    if data.shape not in ((), face):
+        raise ValueError(f"backflow_temperature must be a number or an array of shape {face}")
+    return jnp.broadcast_to(data, face)
+
+
+def _outlet_exchange(velocity, reservoir, problem: ThermalProblem, dtype) -> tuple[jnp.ndarray, ...]:
+    """Return the outlet's returning and leaving volume rates, the enthalpy the return brings in, and validity."""
+    axis = problem.flow.open_axis
+    if axis is None:
+        zero = jnp.zeros((), dtype)
+        return zero, zero, zero, jnp.asarray(True)
+    end = (slice(None),) * axis + (-1,)
+    normal = velocity[axis].data[end]
+    area = jnp.asarray(problem.flow.grid.face_areas(axis)[end], dtype=normal.dtype)
+    back = jnp.maximum(-normal, 0.0) * area
+    brought = jnp.zeros((), dtype) if reservoir is None else problem.heat_capacity * jnp.sum(back * reservoir)
+    valid = jnp.asarray(True) if reservoir is not None else jnp.all(back == 0.0)
+    return jnp.sum(back), jnp.sum(jnp.maximum(normal, 0.0) * area), brought, valid
 
 
 def _carried_out(fluxes: tuple[Field, Field, Field], problem: ThermalProblem) -> jnp.ndarray:

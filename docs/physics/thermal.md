@@ -96,7 +96,22 @@ temperature is kept rather than removed as a gauge.
 - A wall face carries no advective heat.
 - A periodic axis reads its wrap face from its last and first cells.
 - An inlet face brings in the inlet temperature. An outlet face takes out the
-  last cell's, and a backflow there brings in that same temperature.
+  last cell's temperature where the flow leaves.
+- Where the flow returns through the outlet, the incoming enthalpy is boundary
+  data. The fluid comes from outside the model, so its temperature cannot be
+  read from the adjacent cell:
+  - `outlet_backflow="error"`, the default, refuses such a run.
+    `validate_thermal_inputs` rejects any returning outlet face, even when the
+    net flow leaves. An unvalidated step reports `backflow_boundary_valid`
+    false.
+  - `outlet_backflow="reservoir_flux"` brings in $C\,u_n T_\mathrm{res}$, a
+    prescribed total (Danckwerts) heat flux. The reservoir temperature
+    $T_\mathrm{res}$, a number or a profile over the outlet, is passed to every
+    step as `backflow_temperature`. The outlet's conduction operator stays
+    homogeneous Neumann, so the fast inverse is unchanged. The condition is
+    $C u_n T_b - k\,\partial_n T_b = C u_n T_\mathrm{res}$, not
+    $T_b = T_\mathrm{res}$.
+  - Recirculation inside the duct needs neither; its upwind donor is another cell.
 
 On a divergence-free flow it makes no new extremum while $\Delta t$ times every
 cell's outgoing volume-flux rate stays below one; 0.8 is the documented
@@ -144,7 +159,12 @@ $$
 
 computed from local increments and the same wall gradients the conduction uses.
 `advective_heat_out` is the enthalpy the flow carries out through an outlet,
-less what it brings in at an inlet. It is zero in a closed duct.
+less what it brings in at an inlet or with a returning outlet flow. It is zero
+in a closed duct.
+At the outlet, `outlet_outflow_rate` and `outlet_backflow_rate` are the volume
+rates leaving and returning, and `outlet_backflow_enthalpy_in` is the
+enthalpy the return brings in. `backflow_boundary_valid` is separate from
+`finite`.
 It closes to its rounding floor, which is about $\varepsilon\,\rho_0 c_p\sum V\,|T|/\Delta t$
 for temperatures stored in kelvin. The other diagnostics are:
 - `heat_solve_residual`: the largest local residual of the temperature equation;
