@@ -348,6 +348,17 @@ def _layer_grid(cells: int, layer: float, axial: int = 4) -> Grid:
     return Grid(uniform_faces(axial, 0.0, 1.0), faces, faces)
 
 
+def test_fast_diagonal_bases_are_orthonormal_parity_modes_of_a_symmetric_layer_mesh():
+    """Each axis basis is orthonormal to 1e-14, and every mode is even or odd about the duct centre.
+
+    The layer mesh has eigenvalue pairs equal to float64; NumPy 2.5's LAPACK returned a rotated
+    pair and the Ha 1000 mixed solve below drifted to 6.4e-10, the Stokes symmetry tests to 7.4e-12.
+    """
+    for vectors in fast_diagonal_poisson(_layer_grid(64, 1.0e-3), (WRAPPED, WALL, WALL)).vectors:
+        assert np.max(np.abs(vectors.T @ vectors - np.eye(len(vectors)))) < 1e-14
+        assert np.max(np.abs(np.abs(np.sum(vectors[::-1] * vectors, axis=0)) - 1.0)) < 1e-14
+
+
 def _relative(candidate, reference) -> float:
     return float(jnp.max(jnp.abs(candidate - reference)) / jnp.max(jnp.abs(reference)))
 
