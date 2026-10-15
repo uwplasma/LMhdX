@@ -98,8 +98,12 @@ one uniform tilt per duct), so their errors are in-sample.
 
 The design above takes its area from a smallest allowed velocity, which stands
 in for heat removal. A thermal design asks the question directly: which shape
-and flow remove a fixed duty within a temperature limit, at the least pumping
-power?
+and flow remove the heat within a temperature limit, at the least pumping
+power? There are two versions of that question:
+- **a fixed duty per channel**;
+- **a fixed flux on the first wall**, which a plasma sets.
+
+They favour different shapes, so both are computed below.
 
 **The specification** is illustrative. None of these values is an engineering
 requirement.
@@ -107,20 +111,25 @@ requirement.
   al. (2019), Table 1: $\rho$ 9838 kg/m³, $c_p$ 189.8 J/(kg K), $k$ 20.4 W/(m K),
   $\mu$ 2.153 mPa s and $\sigma$ 8.835×10⁵ S/m, so $Pr = 0.020$.
 - **The correlations' ranges differ:** 508–800 K for $c_p$, 508–625 K for
-  $\mu$, and 600–800 K for $\sigma$. The temperature limit, 625 K, is the top of
-  the viscosity's range.
+  $\mu$, and 600–800 K for $\sigma$, so $\sigma$ at 573 K is extrapolated 27 K
+  below its range. The temperature limit, 625 K, is the top of the viscosity's
+  range.
 - **The duct** is straight, with the design's area, 2.4×10⁻⁴ m², and length,
   0.982 m. Its walls are insulating, in a uniform 0.5 T along $a$.
-- **The duty** is 1.5 kW, entering through the first wall $z=-b$. That is a side
-  wall, parallel to the field, as for a channel behind a first wall whose
-  toroidal field lies in its plane. The duty is held fixed as the shape
-  changes, so the flux is $P/(2aL)$. It is deposited in the fluid's row of cells
-  along that wall, which tends to the surface flux as the mesh refines.
+- **The heat** enters through the first wall $z=-b$, a side wall of width $2a$
+  parallel to the field, as for a channel behind a first wall whose toroidal
+  field lies in its plane. It is either:
+  - a duty of 1.5 kW per channel, whose flux $P/(2aL)$ falls as the wall
+    widens; or
+  - the square duct's flux, 98.6 kW/m², whose duty grows with $2a$.
 - **The inlet** is at 573 K.
 - **The limits:**
   - fluid and wall-interface peaks of at most 625 K;
-  - $Re/Ha \le 200$, for laminar Hartmann layers;
-  - at least 95 % of the duty leaving at the outlet.
+  - $Re/Ha \le 200$, with $Re$ on $D_h$ and $Ha$ on $a$, for laminar Hartmann
+    layers;
+  - at least 95 % of the duty leaving at the outlet. The developed screening
+    delivers every watt by construction, so this is checked on the candidate,
+    in an open duct.
 - **The cost** is the hydraulic power $Q\,\Delta p$, with no assumed pump
   efficiency.
 
@@ -128,7 +137,8 @@ requirement.
 1. Solve the developed flow of its shape under a unit pressure gradient.
 2. Scale that flow to the trial's flow. The Stokes flow is linear in its drive,
    and the Joule heat is recomputed from the scaled velocity.
-3. Solve the developed temperature with `developed_heat`.
+3. Solve the developed temperature with `developed_heat`, with the duty as the
+   first wall's heat flux.
 4. Take its peaks over the length from the inlet's 573 K with
    `DevelopedHeat.anchored_peaks`.
 
@@ -140,9 +150,11 @@ A rejected trial records why.
    sampled infeasible flow and a feasible one.
 3. A golden-section refinement of the cheapest shape.
 
-Nothing assumes the temperature falls monotonically with flow. The square
-duct's feasible flows form an interval, closed above by $Re/Ha$. The shape is a
-host design variable, so no derivative through the geometry is claimed.
+It does not assume the temperature falls with the flow across the range: the
+square duct's feasible flows form an interval, closed above by $Re/Ha$. It does
+assume one crossing between bracketing samples, and one minimum between the
+cheapest shape's neighbours. The shape is a host design variable, so no
+derivative through the geometry is claimed.
 
 ```python
 import jax.numpy as jnp
@@ -154,8 +166,8 @@ from lmhdx.fully_developed import channel_flow_rate
 from lmhdx.grid import CENTER, DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid
 from lmhdx.grid import uniform_faces, wall_resolving_faces
 from lmhdx.steady import solve_compiled
-from lmhdx.thermal import ThermalProblem, advance_thermal, build_thermal_step, developed_heat
-from lmhdx.thermal import initial_thermal_state, load_attribution, thermal_boundary, validate_developed_inputs
+from lmhdx.thermal import ThermalProblem, build_thermal_step, developed_heat, initial_thermal_state
+from lmhdx.thermal import load_attribution, thermal_boundary, validate_developed_inputs, validate_thermal_inputs
 
 lmhdx.enable_x64()
 
@@ -165,7 +177,7 @@ RHO, CP, K, MU, SIGMA = 9838.0, 189.8, 20.40, 2.153e-3, 8.835e5  # kg/m^3, J/(kg
 AREA, LENGTH, FIELD = 2.4e-4, 0.982, 0.5  # m^2 and m, fixed; T, uniform, along the half-width a
 DUTY = 1500.0  # W, through the first wall z = -b, parallel to the field
 T_IN, T_MAX = 573.0, 625.0  # K; 625 K is the top of the viscosity correlation's range
-LAMINAR, DELIVERED = 200.0, 0.95  # the largest Re/Ha; the least fraction of the duty leaving at the outlet
+LAMINAR, DELIVERED = 200.0, 0.95  # the largest Re/Ha (Re on D_h, Ha on a); the least share of the duty delivered
 ASPECTS, FLOWS = np.geomspace(0.08, 1.0, 7), np.geomspace(4e-6, 6e-5, 9)  # b/a, and m^3/s
 WRAP, WALL = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN)
 INSULATED = thermal_boundary("heat_flux", conductivity=K)
@@ -189,35 +201,30 @@ def duct(aspect, cells=32, layer=4):
         forcing=(1.0, 0.0, 0.0),
     )
     unit = solve_compiled(flow).velocity
-    rate = float(channel_flow_rate(flow, unit[0].data[0]))
-    thermal = ThermalProblem(flow, (WRAP, INSULATED, INSULATED), CP, K, T_IN)
-    return dict(aspect=aspect, a=a, hartmann=hartmann, unit=unit, rate=rate, thermal=thermal)
-
-
-def first_wall(grid, duty):
-    """The duty in the fluid's row of cells along the first wall: its surface flux as the mesh refines."""
-    data = np.zeros(grid.shape)
-    data[:, :, 0] = duty / np.sum(grid.cell_volumes()[:, :, 0])
-    return Field(jnp.asarray(data), (CENTER,) * 3, grid)
+    return dict(aspect=aspect, a=a, hartmann=hartmann, flow=flow, unit=unit,
+                rate=float(channel_flow_rate(flow, unit[0].data[0])))
 
 
 def trial(duct, flow_rate, duty=DUTY):
     """A design's developed temperatures, anchored at the inlet, its cost, and every reason to reject it."""
-    thermal, drive = duct["thermal"], flow_rate / duct["rate"]
+    flow, drive = duct["flow"], flow_rate / duct["rate"]
     velocity = tuple(component.replace_data(drive * component.data) for component in duct["unit"])
-    load = first_wall(thermal.flow.grid, duty)
+    first_wall = thermal_boundary("heat_flux", -duty / (2.0 * duct["a"] * LENGTH), 0.0, conductivity=K)
+    thermal = ThermalProblem(flow, (WRAP, INSULATED, first_wall), CP, K, T_IN)
+    none = Field(jnp.zeros(flow.grid.shape), (CENTER,) * 3, flow.grid)
     record = dict(aspect=duct["aspect"], flow_rate=flow_rate, duty=duty, velocity=velocity,
                   pressure_drop=drive * LENGTH, hydraulic_power=flow_rate * drive * LENGTH)
     try:
         validate_developed_inputs(
-            thermal, velocity, load, flow_rate_tolerance=1e-12, velocity_tolerance=1e-9 * flow_rate / AREA
+            thermal, velocity, none, flow_rate_tolerance=1e-12, velocity_tolerance=1e-9 * flow_rate / AREA
         )
     except ValueError as error:
         return {**record, "rejected": [f"invalid: {error}"]}
-    result = developed_heat(thermal, velocity, load)
+    result = developed_heat(thermal, velocity, none)
     record["wall_peak"], record["fluid_peak"] = (float(t) for t in result.anchored_peaks(T_IN, LENGTH))
     record["joule"] = RHO * CP * float(result.axial_gradient) * flow_rate * LENGTH - duty
-    record["re_over_ha"] = RHO * flow_rate / AREA * result.hydraulic_diameter / MU / duct["hartmann"]
+    record["reynolds"] = RHO * flow_rate / AREA * result.hydraulic_diameter / MU
+    record["re_over_ha"] = record["reynolds"] / duct["hartmann"]
     rejected = [
         f"{name} {record[name]:.1f} K over {T_MAX:.0f} K"
         for name in ("wall_peak", "fluid_peak")
@@ -228,16 +235,16 @@ def trial(duct, flow_rate, duty=DUTY):
     return {**record, "rejected": rejected}
 
 
-def lowest_flow(duct, below, above, tolerance=1e-3):
-    """Bisect ln Q between an infeasible and a feasible flow, which must bracket the boundary."""
-    if trial(duct, above)["rejected"] or not trial(duct, below)["rejected"]:
+def lowest_flow(duct, below, above, duty=DUTY, tolerance=1e-3):
+    """Bisect ln Q between an infeasible and a feasible flow, which must bracket one crossing of the boundary."""
+    if trial(duct, above, duty)["rejected"] or not trial(duct, below, duty)["rejected"]:
         raise RuntimeError(
             f"{below:.3g} and {above:.3g} m^3/s do not bracket b/a = {duct['aspect']:.3g}'s boundary"
         )
     while above / below - 1.0 > tolerance:
         middle = np.sqrt(below * above)
-        below, above = (below, middle) if not trial(duct, middle)["rejected"] else (middle, above)
-    return trial(duct, above)
+        below, above = (below, middle) if not trial(duct, middle, duty)["rejected"] else (middle, above)
+    return trial(duct, above, duty)
 
 
 # Sweep the bounded design set; at each aspect, refine each observed lower edge of the feasible flows.
@@ -247,11 +254,14 @@ edges = []
 for each, row in zip(ducts, sweep):
     feasible = [not record["rejected"] for record in row]
     print(f"b/a {each['aspect']:.3f}: " + " ".join("o" if ok else "x" for ok in feasible))
+    if feasible[0]:  # the lowest sampled flow already passes: the flow bound, not a limit, is active
+        edges.append(row[0])
     edges += [
         lowest_flow(each, FLOWS[j - 1], FLOWS[j])
         for j in range(1, len(FLOWS))
         if feasible[j] > feasible[j - 1]
     ]
+print("lowest flows: " + ", ".join(f"b/a {r['aspect']:.3f} {r['flow_rate']:.4e}" for r in edges))
 
 # Refine the cheapest edge's aspect by golden section in ln(b/a) between its sampled neighbours.
 best = min(edges, key=lambda record: record["hydraulic_power"])
@@ -272,7 +282,7 @@ def cheapest(x):
 
 ratio = (np.sqrt(5.0) - 1.0) / 2.0
 left, right = high - ratio * (high - low), low + ratio * (high - low)
-while high - low > 0.02:  # in ln(b/a)
+while high - low > 0.02:  # in ln(b/a); this assumes one minimum between the neighbours
     if cheapest(left) < cheapest(right):
         high, right = right, left
         left = high - ratio * (high - low)
@@ -284,51 +294,76 @@ square = next(record for record in edges if record["aspect"] == 1.0)
 
 saving = 1.0 - candidate["hydraulic_power"] / square["hydraulic_power"]
 for name, record in (("square", square), ("candidate", candidate)):
+    a = np.sqrt(AREA / (4.0 * record["aspect"]))
+    hartmann, speed = FIELD * a * np.sqrt(SIGMA / MU), record["flow_rate"] / AREA
     print(
         f"{name}: b/a {record['aspect']:.4f}, Q {record['flow_rate']:.4e} m^3/s, dp {record['pressure_drop']:.1f} Pa, "
         f"W {record['hydraulic_power']:.3e} W, wall {record['wall_peak']:.2f} K, Joule {record['joule']:.1e} W, "
-        f"Re/Ha {record['re_over_ha']:.0f}"
+        f"flux {record['duty'] / (2.0 * a * LENGTH) / 1e3:.1f} kW/m^2, Re {record['reynolds']:.0f}, Ha {hartmann:.0f}, "
+        f"N {hartmann**2 / record['reynolds']:.2f}, Pe {record['reynolds'] * MU * CP / K:.0f}, "
+        f"Rm {4e-7 * np.pi * SIGMA * speed * a:.1e}"
     )
-print(f"the candidate needs {100 * saving:.1f} % less pumping power than the square duct")
+print(f"at the same duty, the candidate needs {100 * saving:.1f} % less pumping power than the square duct")
 
 # Check the candidate: a finer mesh, then its flow carried down an open duct from an inlet at T_IN.
 refined = lowest_flow(
     duct(candidate["aspect"], cells=48, layer=6), 0.9 * candidate["flow_rate"], 1.1 * candidate["flow_rate"]
 )
-profile, section = candidate["velocity"][0].data[0], candidate["velocity"][0].grid
-grid = Grid(uniform_faces(12, 0.0, LENGTH), section.y_faces, section.z_faces)
-dt = 0.5 * (LENGTH / 12) / float(jnp.max(profile))  # a Courant number of 0.5 along the duct
-flow = ChannelProblem(
-    grid,
-    (BoundaryCondition(DIRICHLET, lower=np.asarray(profile), upper_kind=NEUMANN), WALL, WALL),
-    density=RHO,
-    viscosity=MU / RHO,
-    conductivity=SIGMA,
-    magnetic_field=(0.0, FIELD, 0.0),
-    dt=dt,
-)
-inlet = thermal_boundary("temperature", T_IN, upper_kind="heat_flux", conductivity=K)
-open_duct = ThermalProblem(flow, (inlet, INSULATED, INSULATED), CP, K, T_IN)
-rest = zero_velocity(flow)
-start = initial_thermal_state(
-    open_duct, T_IN, (rest[0].replace_data(jnp.broadcast_to(profile, rest[0].shape)), *rest[1:])
-)
-step = build_thermal_step(open_duct, dtype=jnp.float64, hold_flow=True)
-steps = int(np.ceil(6.0 * AREA * LENGTH / candidate["flow_rate"] / dt))  # six residence times
-nothing, load = Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid), first_wall(grid, DUTY)
-credit = load_attribution(step, start, nothing, load, steps)
-open_peak = float(advance_thermal(step, start, load, steps)[1].temperature_max[-1])
-delivered = float(credit.delivered / credit.imposed)
 print(
     f"48/6 cells: Q {100 * (refined['flow_rate'] / candidate['flow_rate'] - 1):+.2f} %, "
     f"W {100 * (refined['hydraulic_power'] / candidate['hydraulic_power'] - 1):+.2f} %"
 )
-print(f"open duct: {100 * delivered:.2f} % of the duty leaves at the outlet, peak {open_peak:.2f} K")
-assert delivered >= DELIVERED and open_peak <= T_MAX
+
+
+def open_duct(record, refine=1):
+    """Carry a design's developed flow down 12 axial cells from an inlet at T_IN, and credit its duty by difference.
+
+    The duty is the cell source q A / V along the first wall: a face flux enters its cell exactly as that source.
+    """
+    profile, section = record["velocity"][0].data[0], record["velocity"][0].grid
+    grid = Grid(uniform_faces(12, 0.0, LENGTH), section.y_faces, section.z_faces)
+    dt = 0.5 * (LENGTH / 12) / float(jnp.max(profile)) / refine  # a Courant number of 0.5 / refine
+    flow = ChannelProblem(
+        grid,
+        (BoundaryCondition(DIRICHLET, lower=np.asarray(profile), upper_kind=NEUMANN), WALL, WALL),
+        density=RHO,
+        viscosity=MU / RHO,
+        conductivity=SIGMA,
+        magnetic_field=(0.0, FIELD, 0.0),
+        dt=dt,
+    )
+    inlet = thermal_boundary("temperature", T_IN, upper_kind="heat_flux", conductivity=K)
+    thermal = ThermalProblem(flow, (inlet, INSULATED, INSULATED), CP, K, T_IN)
+    rest = zero_velocity(flow)
+    held = (rest[0].replace_data(jnp.broadcast_to(profile, rest[0].shape)), *rest[1:])
+    start, nothing = initial_thermal_state(thermal, T_IN, held), Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid)
+    source = np.zeros(grid.shape)
+    source[:, :, 0] = record["duty"] / np.sum(grid.cell_volumes()[:, :, 0])
+    load = Field(jnp.asarray(source), (CENTER,) * 3, grid)
+    validate_thermal_inputs(thermal, start, load, divergence_tolerance=1e-12)
+    steps = int(np.ceil(6.0 * AREA * LENGTH / record["flow_rate"] / dt))  # six residence times
+    step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+    return load_attribution(step, start, nothing, load, steps)
+
+
+credits = [open_duct(candidate, refine) for refine in (1, 2)]
+delivered = [float(credit.delivered / credit.imposed) for credit in credits]
+peaks = [float(credit.loaded.temperature_max) for credit in credits]
+print(
+    f"open duct: {100 * delivered[0]:.3f} % of the duty leaves at the outlet, {float(credits[0].conducted):.2f} W "
+    f"back out of the inlet, storage {float(credits[0].stored):.1e} W; hottest cell {peaks[0]:.2f} K; "
+    f"at half the time step {100 * delivered[1]:.3f} % and {peaks[1]:.2f} K"
+)
+assert delivered[0] >= DELIVERED and max(peaks) <= T_MAX and abs(float(credits[0].stored)) <= 1e-6 * DUTY
 
 
 def largest_duty(duct, flow_rate, tolerance=1e-3):
-    """The largest duty a design carries within its limits: more duty only heats it, so bisect from zero."""
+    """The largest duty a design carries within its limits, or None where it fails them at no duty at all.
+
+    More duty only heats the duct, so the feasible duties run from zero to that one, and bisection finds it.
+    """
+    if trial(duct, flow_rate, 0.0)["rejected"]:
+        return None
     low, high = 0.0, DUTY
     while not trial(duct, flow_rate, high)["rejected"]:
         low, high = high, 2.0 * high
@@ -341,9 +376,24 @@ def largest_duty(duct, flow_rate, tolerance=1e-3):
 # Capacity: the most duty each sampled shape removes for the square duct's pumping power.
 budget = square["hydraulic_power"]
 capacity = [(each["aspect"], largest_duty(each, np.sqrt(budget * each["rate"] / LENGTH))) for each in ducts]
-print(
-    "capacity at the square's power: " + ", ".join(f"b/a {r:.3f} {duty / DUTY:.2f}" for r, duty in capacity)
-)
+print("capacity at the square's power: " + ", ".join(
+    f"b/a {r:.3f} " + ("infeasible" if duty is None else f"{duty / DUTY:.2f}") for r, duty in capacity
+))
+
+# At a fixed first-wall flux instead, the square's: each shape's duty grows with its heated width 2a, so compare
+# the pumping power per metre of first wall.
+flux = DUTY / (2.0 * ducts[-1]["a"] * LENGTH)
+per_width = []
+for each in ducts:
+    duty = flux * 2.0 * each["a"] * LENGTH
+    flows = FLOWS * duty / DUTY  # the same sweep, scaled to this duty
+    feasible = [not trial(each, flow_rate, duty)["rejected"] for flow_rate in flows]
+    j = next(j for j in range(1, len(flows)) if feasible[j] > feasible[j - 1])
+    record = lowest_flow(each, flows[j - 1], flows[j], duty)
+    per_width.append((each["aspect"], record["hydraulic_power"] / (2.0 * each["a"])))
+print(f"at the square's flux, {flux / 1e3:.1f} kW/m^2, W per metre of first wall: " + ", ".join(
+    f"b/a {r:.3f} {w:.3e}" for r, w in per_width
+))
 ```
 
 ```text
@@ -354,53 +404,74 @@ b/a 0.283: x x x x x o o o o
 b/a 0.431: x x x x x o o o o
 b/a 0.656: x x x x x x o o o
 b/a 1.000: x x x x x x x o x
-square: b/a 1.0000, Q 3.0548e-05 m^3/s, dp 388.7 Pa, W 1.187e-02 W, wall 625.00 K, Joule 5.5e-03 W, Re/Ha 115
-candidate: b/a 0.1436, Q 1.7267e-05 m^3/s, dp 126.8 Pa, W 2.189e-03 W, wall 625.00 K, Joule 7.1e-04 W, Re/Ha 16
-the candidate needs 81.6 % less pumping power than the square duct
-48/6 cells: Q +0.05 %, W +0.85 %
-open duct: 99.97 % of the duty leaves at the outlet, peak 624.91 K
-capacity at the square's power: b/a 0.080 1.84, b/a 0.122 2.03, b/a 0.186 2.00, b/a 0.283 1.81, b/a 0.431 1.54, b/a 0.656 1.26, b/a 1.000 1.00
+lowest flows: b/a 0.080 1.7965e-05, b/a 0.122 1.7358e-05, b/a 0.186 1.7508e-05, b/a 0.283 1.8325e-05, b/a 0.431 1.9969e-05, b/a 0.656 2.3264e-05, b/a 1.000 3.1078e-05
+square: b/a 1.0000, Q 3.1078e-05 m^3/s, dp 395.4 Pa, W 1.229e-02 W, wall 624.99 K, Joule 5.7e-03 W, flux 98.6 kW/m^2, Re 9167, Ha 78, N 0.67, Pe 184, Rm 1.1e-03
+candidate: b/a 0.1436, Q 1.7330e-05 m^3/s, dp 127.2 Pa, W 2.205e-03 W, wall 625.00 K, Joule 7.2e-04 W, flux 37.4 kW/m^2, Re 3388, Ha 207, N 12.65, Pe 68, Rm 1.6e-03
+at the same duty, the candidate needs 82.1 % less pumping power than the square duct
+48/6 cells: Q -0.03 %, W +0.69 %
+open duct: 99.968 % of the duty leaves at the outlet, 0.49 W back out of the inlet, storage 4.1e-12 W; hottest cell 624.74 K; at half the time step 99.968 % and 624.74 K
+capacity at the square's power: b/a 0.080 1.85, b/a 0.122 2.04, b/a 0.186 2.01, b/a 0.283 1.81, b/a 0.431 1.54, b/a 0.656 1.26, b/a 1.000 1.00
+at the square's flux, 98.6 kW/m^2, W per metre of first wall: b/a 0.080 1.755e+00, b/a 0.122 6.949e-01, b/a 0.186 5.039e-01, b/a 0.283 4.700e-01, b/a 0.431 5.012e-01, b/a 0.656 5.930e-01, b/a 1.000 7.933e-01
 ```
 
-The workflow takes about 30 s on a CPU.
+The workflow takes about 40 s on a CPU.
+
+**At a fixed duty per channel:**
 
 | | Square | Candidate |
 |:--|:--|:--|
 | $b/a$ | 1 | 0.144 |
 | half-widths $a \times b$ | 7.75 × 7.75 mm | 20.4 × 2.94 mm |
-| flow | 3.05×10⁻⁵ m³/s (0.127 m/s) | 1.73×10⁻⁵ m³/s (0.072 m/s) |
-| $\Delta p$ | 389 Pa | 127 Pa |
-| hydraulic power | 1.19×10⁻² W | 2.19×10⁻³ W |
-| wall-to-bulk at the outlet | 25.7 K | 5.5 K |
-| Joule heat | 5.5×10⁻³ W | 7.1×10⁻⁴ W |
-| $Re/Ha$ | 115 | 16 |
+| first-wall flux | 98.6 kW/m² | 37.4 kW/m² |
+| flow | 3.11×10⁻⁵ m³/s (0.129 m/s) | 1.73×10⁻⁵ m³/s (0.072 m/s) |
+| $\Delta p$ | 395 Pa | 127 Pa |
+| hydraulic power | 1.23×10⁻² W | 2.21×10⁻³ W |
+| wall-to-bulk at the outlet | 26.1 K | 5.6 K |
+| Joule heat | 5.7×10⁻³ W | 7.2×10⁻⁴ W |
+| $Re$, $Ha$, $N$ | 9,170, 78, 0.67 | 3,390, 207, 12.7 |
+| $Pe$, $Rm$ | 184, 1.1×10⁻³ | 68, 1.6×10⁻³ |
 
-**What the result shows:**
-- **Both ducts run at the 625 K wall limit.** The slender duct needs 43 % less
-  flow. The duty enters through its wide side wall and crosses a thin gap, so
-  its wall runs only 5.5 K above the bulk.
+- **Both ducts run at the 625 K wall limit.** The slender duct needs 44 % less
+  flow, because the duty enters through its wide side wall at a lower flux and
+  crosses a thin gap.
 - **Joule heat is a burden, not cooling,** and it is under 10⁻⁵ of the duty.
-- **The shape is still the isothermal law's:** 0.1436, against
-  $\beta^* = 0.145$ at $H = 78.5$. Near the optimum the minimum flow changes by
-  under 1 % across $b/a$ 0.12–0.19. Pressure therefore sets the shape, and the
-  temperature limit sets the flow, in place of the smallest allowed velocity.
+- **The shape is the isothermal law's:** 0.1436, against $\beta^* = 0.145$ at
+  $H = 78.5$. Near it the lowest feasible flow changes by about 1 % across $b/a$
+  0.12–0.19, so pressure sets the shape, and the temperature limit sets the flow
+  in place of the smallest allowed velocity.
+- **Validity:** at $N = 0.67$ the square duct's inertia is not small. A straight
+  developed laminar flow has no inertial term, but its entrance region and
+  stability would feel it.
 
-**The reference checks.** The square duct's pressure drop is 1.48 % below
-the spectral solver's (`validation.shercliff`) on the screening mesh. It
-converges at second order: −0.66 %, −0.37 % and −0.17 % on 48/6, 64/8 and 96/12
-cells. Its Joule heat equals `core3d.energy_budget`'s to $10^{-9}$, and is
-below its hydraulic power, which in a developed Stokes flow is the viscous
-plus the Joule dissipation.
+**At a fixed first-wall flux** the comparison is per metre of first wall,
+since covering a wall takes $1/(2a)$ channels per metre. A wide channel then
+takes more duty and needs more flow. Of the sampled shapes, $b/a = 0.28$ is the
+cheapest: 0.470 W/m, 41 % below the square's 0.793 W/m. The slender shapes lose:
+$b/a = 0.08$ costs 1.755 W/m. **Which shape is best therefore depends on which
+quantity the application fixes,** the duty or the flux.
+
+**The reference checks.** The square duct's pressure drop is 1.48 % below the
+spectral solver's (`validation.shercliff`) on the screening mesh. It converges
+at second order: −0.66 %, −0.37 % and −0.17 % on 48/6, 64/8 and 96/12 cells. Its
+Joule heat, computed with no duty, equals `core3d.energy_budget`'s to
+$10^{-9}$. It is below its hydraulic power, which in a developed Stokes flow is
+the viscous plus the Joule dissipation.
 
 **The candidate's checks:**
-- **On 48/6 cells** its minimum flow moves +0.05 % and its power +0.85 %.
+- **On 48/6 cells** its minimum flow moves −0.03 % and its power +0.69 %.
 - **In an open duct.** Twelve axial cells carry its profile from an inlet at
-  573 K, and `thermal.load_attribution` credits the duty by difference:
-  - 99.97 % of it leaves at the outlet, and the rest conducts back out of the
+  573 K. The duty is the cell source $qA/V$ along the first wall, which a face
+  flux enters as exactly, and `thermal.load_attribution` credits it by
+  difference:
+  - 99.968 % of it leaves at the outlet, and 0.49 W conducts back out of the
     inlet;
-  - the open duct's peak, with its entrance region, is 624.91 K, so the
-    developed screening (developed from the inlet) is conservative here.
-- **At the square duct's pumping power** the slender shapes carry up to 2.03
+  - the storage is 4×10⁻¹² W, so the run is steady, and half the time step
+    changes neither number;
+  - the hottest cell is 624.74 K.
+
+  Twelve cells do not resolve the entrance region, so this checks the delivered
+  duty, not the developed screening's peak.
+- **At the square duct's pumping power** the slender shapes carry up to 2.04
   times the duty, at $b/a$ 0.122.
 
 This is a screening optimum within the declared model, not an engineering
