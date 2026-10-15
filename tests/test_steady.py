@@ -1162,6 +1162,46 @@ def test_the_developed_nusselt_number_differentiates_through_the_flow():
     assert gradient > 0.0 and min(errors) < 1e-5, (gradient, errors)
 
 
+def test_the_developed_duct_compiles_whole_and_forms_no_current_without_joule_heat(monkeypatch):
+    """One jit over the whole result, new source and velocity values reusing it, within 1e-12 of the eager result;
+    with Joule heat off no current is formed, and the result is exactly a field-free flow's with it on."""
+    import dataclasses
+
+    import lmhdx.thermal
+    from lmhdx.thermal import developed_heat
+
+    thermal = _developed_duct(8, hartmann=10.0, walls="heat_flux")
+    grid, velocity = thermal.flow.grid, solve_steady_state(thermal.flow).velocity
+    traces = []
+
+    def result(flow, source):
+        traces.append(1)
+        return developed_heat(thermal, flow, source)
+
+    compiled = jax.jit(result)
+    for scale, source in ((1.0, 0.3), (1.5, 0.6)):
+        flow = tuple(component.replace_data(scale * component.data) for component in velocity)
+        heat = Field(jnp.full(grid.shape, source), (CENTER,) * 3, grid)
+        jitted, eager = compiled(flow, heat), developed_heat(thermal, flow, heat)
+        for value, expected in zip(jax.tree_util.tree_leaves(jitted), jax.tree_util.tree_leaves(eager)):
+            assert float(jnp.max(jnp.abs(value - expected))) <= 1e-12 * max(
+                1.0, float(jnp.max(jnp.abs(expected)))
+            )
+    assert len(traces) == 1
+    calls, currents = [], lmhdx.thermal.face_currents
+    monkeypatch.setattr(lmhdx.thermal, "face_currents", lambda *args: calls.append(1) or currents(*args))
+    off = developed_heat(dataclasses.replace(thermal, joule_heating=False), velocity, heat)
+    assert not calls
+    fieldless = dataclasses.replace(
+        thermal, flow=dataclasses.replace(thermal.flow, magnetic_field=(0.0, 0.0, 0.0))
+    )
+    on = developed_heat(fieldless, velocity, heat)
+    assert calls == [1]
+    assert all(
+        np.array_equal(a, b) for a, b in zip(jax.tree_util.tree_leaves(off), jax.tree_util.tree_leaves(on))
+    )
+
+
 def test_developed_heat_refuses_an_ill_posed_duct():
     from lmhdx.thermal import ThermalProblem, developed_heat
 
