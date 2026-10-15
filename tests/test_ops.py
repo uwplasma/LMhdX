@@ -43,7 +43,14 @@ from lmhdx.ops import (
     momentum_advection,
     staggered_laplacian,
 )
-from lmhdx.thermal import ThermalProblem, _conduct, _outgoing_rate, _upwind_fluxes, thermal_boundary
+from lmhdx.thermal import (
+    ThermalProblem,
+    _conduct,
+    _joule_heating,
+    _outgoing_rate,
+    _upwind_fluxes,
+    thermal_boundary,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -1034,3 +1041,35 @@ def test_upwind_transport_converges_at_first_order():
         errors.append(float(np.max(np.abs(np.asarray(temperature.data)[:, 0, 0] - exact))))
     orders = np.log2(np.divide(errors[:-1], errors[1:]))
     assert np.all((orders > 0.8) & (orders < 1.2)), (errors, orders)
+
+
+# Joule heat (plan step 5.1d): each face current squared, then shared between the half cells beside it.
+
+
+def _face_fields(grid: Grid, values) -> tuple[Field, Field, Field]:
+    offsets = [tuple(FACE if position == axis else CENTER for position in range(3)) for axis in range(3)]
+    return tuple(Field(jnp.asarray(value), offsets[axis], grid) for axis, value in enumerate(values))
+
+
+def test_joule_heat_squares_each_face_current_before_sharing_it():
+    """Uniform currents give ``|J|^2 / sigma``; alternating ones, whose cell average is zero, still heat."""
+    base = _thermal(STRETCHED, (WRAP, INSULATED, INSULATED))
+    problem = dataclasses.replace(base, flow=dataclasses.replace(base.flow, conductivity=2.0))
+    shapes = [STRETCHED.face_shape(axis) for axis in range(3)]
+    uniform = _face_fields(
+        STRETCHED, [np.full(shape, value) for shape, value in zip(shapes, (0.5, -1.5, 2.0))]
+    )
+    assert np.allclose(np.asarray(_joule_heating(uniform, problem).data), 6.5 / 2.0, rtol=1e-14, atol=0.0)
+    sign = np.broadcast_to((-1.0) ** np.arange(shapes[0][0])[:, None, None], shapes[0])
+    alternating = _face_fields(STRETCHED, [sign, np.zeros(shapes[1]), np.zeros(shapes[2])])
+    assert np.allclose(np.asarray(_joule_heating(alternating, problem).data), 0.5, rtol=1e-14, atol=0.0)
+    rng = np.random.default_rng(15)
+    noise = _face_fields(STRETCHED, [rng.standard_normal(shape) for shape in shapes])
+    assert float(jnp.min(_joule_heating(noise, problem).data)) >= 0.0
+    for off in (
+        dataclasses.replace(base, joule_heating=False),
+        dataclasses.replace(base, flow=dataclasses.replace(base.flow, conductivity=0.0)),
+    ):
+        assert not np.any(np.asarray(_joule_heating(noise, off).data))
+    with pytest.raises(TypeError):
+        dataclasses.replace(base, joule_heating=1)
