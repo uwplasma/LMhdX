@@ -59,8 +59,10 @@ from .core3d import (
     ChannelProblem,
     _advance_momentum,
     _lorentz_from_currents,
+    enforce_face_constraints,
     face_currents,
     face_lorentz_force,
+    velocity_offset,
     zero_velocity,
 )
 from .grid import CENTER, DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, pad
@@ -79,9 +81,11 @@ __all__ = [
     "ThermalDiagnostics",
     "ThermalProblem",
     "ThermalState",
+    "advance_thermal",
     "build_thermal_step",
     "initial_thermal_state",
     "thermal_boundary",
+    "validate_thermal_inputs",
 ]
 
 _KINDS = {"temperature": DIRICHLET, "heat_flux": NEUMANN, "periodic": PERIODIC}
@@ -370,12 +374,47 @@ def initial_thermal_state(
     """Return a state from an explicit temperature, a number or an array over the cells.
 
     The velocity is the flow at rest unless given; a given one must already meet
-    the face constraints and be divergence free.
+    the face constraints and be divergence free, as :func:`validate_thermal_inputs` checks.
     """
     grid, dtype = problem.flow.grid, jnp.result_type(float)
     data = jnp.broadcast_to(jnp.asarray(temperature, dtype=dtype), grid.shape)
     velocity = zero_velocity(problem.flow) if velocity is None else tuple(velocity)
     return ThermalState(velocity, Field(data, _CELL, grid), jnp.asarray(time, dtype=dtype))
+
+
+def validate_thermal_inputs(
+    problem: ThermalProblem, state: ThermalState, heat_source: Field, *, divergence_tolerance: float
+) -> None:
+    """Check a state and heat source on the host before a run, raising ``ValueError`` on the first fault.
+
+    Grids, offsets and shapes; the core's compute dtype; finite values; the wall
+    and periodic face constraints; and a velocity divergence within
+    ``divergence_tolerance``, in inverse time. Nothing is changed or returned.
+    """
+    if not (np.isfinite(divergence_tolerance) and divergence_tolerance >= 0.0):
+        raise ValueError("divergence_tolerance must be nonnegative and finite")
+    flow, dtype = problem.flow, jnp.result_type(float)
+    if len(state.velocity) != 3:
+        raise ValueError("the velocity needs three components")
+    fields = [(state.temperature, _CELL, "temperature"), (heat_source, _CELL, "heat source")]
+    fields += [
+        (field, velocity_offset(c), f"velocity component {c}") for c, field in enumerate(state.velocity)
+    ]
+    for field, offset, name in fields:
+        if not (isinstance(field, Field) and field.grid == flow.grid and field.offset == offset):
+            raise ValueError(f"the {name} must be a Field at offset {offset} on the problem's grid")
+        if field.shape != flow.grid.offset_shape(offset) or field.dtype != dtype:
+            raise ValueError(f"the {name} must have shape {flow.grid.offset_shape(offset)} and dtype {dtype}")
+        if not np.all(np.isfinite(np.asarray(field.data))):
+            raise ValueError(f"the {name} is not finite")
+    time = jnp.asarray(state.time)
+    if time.shape or time.dtype != dtype or not np.isfinite(float(time)):
+        raise ValueError(f"the time must be a finite {dtype} scalar")
+    constrained = enforce_face_constraints(state.velocity, flow)
+    if not all(np.array_equal(a.data, b.data) for a, b in zip(constrained, state.velocity)):
+        raise ValueError("the velocity does not meet the wall and periodic face constraints")
+    if float(jnp.max(jnp.abs(divergence(state.velocity).data))) > divergence_tolerance:
+        raise ValueError("the velocity divergence exceeds divergence_tolerance")
 
 
 def build_thermal_step(
@@ -452,6 +491,32 @@ def build_thermal_step(
         return new, ThermalDiagnostics(*values, finite)
 
     return thermal_step
+
+
+def advance_thermal(
+    thermal_step: Callable[[ThermalState, Field], tuple[ThermalState, ThermalDiagnostics]],
+    state: ThermalState,
+    heat_source: Field,
+    steps: int,
+    *,
+    checkpoint: bool = True,
+) -> tuple[ThermalState, ThermalDiagnostics]:
+    """Take ``steps`` steps of a prepared step as one compiled scan; return the end state and the history.
+
+    The carry is the state alone and only the scalar diagnostics are stacked, one
+    per step, so no field history is kept. ``steps`` is static and the heat source
+    is constant over the call. ``checkpoint`` recomputes each step in reverse mode
+    rather than storing its intermediates; a differentiated run still keeps one
+    state per step.
+    """
+    if steps < 1:
+        raise ValueError("steps must be positive")
+
+    def single(carry: ThermalState, _) -> tuple[ThermalState, ThermalDiagnostics]:
+        return thermal_step(carry, heat_source)
+
+    body = jax.checkpoint(single) if checkpoint else single
+    return jax.lax.scan(body, state, xs=None, length=steps)
 
 
 def _heat_out(temperature: Field, problem: ThermalProblem) -> jnp.ndarray:

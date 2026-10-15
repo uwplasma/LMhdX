@@ -497,3 +497,144 @@ print(new.temperature.dtype, record.sensible_energy.dtype, bool(record.finite))
         [sys.executable, "-c", code], env=environment, capture_output=True, text=True, check=True
     )
     assert result.stdout.split() == ["float32", "float32", "True"]
+
+
+def test_thermal_inputs_are_checked_before_a_run():
+    from lmhdx.thermal import initial_thermal_state, validate_thermal_inputs
+
+    thermal = _heated(_uniform_duct(6))
+    state, source = initial_thermal_state(thermal, 300.0), _cells(thermal, 0.0)
+    validate_thermal_inputs(thermal, state, source, divergence_tolerance=1e-12)
+    velocity = state.velocity
+    leaky = (velocity[0], velocity[1].replace_data(velocity[1].data.at[:, 0, :].set(1.0)), velocity[2])
+    swirl = (velocity[0], velocity[1].replace_data(velocity[1].data.at[:, 3, :].set(1.0)), velocity[2])
+    for bad_state, bad_source, tolerance in (
+        (state, source, -1.0),
+        (state._replace(temperature=velocity[0]), source, 0.0),
+        (
+            state._replace(
+                temperature=state.temperature.replace_data(state.temperature.data.at[0, 0, 0].set(np.nan))
+            ),
+            source,
+            0.0,
+        ),
+        (
+            state._replace(
+                temperature=state.temperature.replace_data(state.temperature.data.astype(jnp.float32))
+            ),
+            source,
+            0.0,
+        ),
+        (state._replace(velocity=velocity[:2]), source, 0.0),
+        (state._replace(time=jnp.asarray(np.inf)), source, 0.0),
+        (state._replace(velocity=leaky), source, 1e9),
+        (state._replace(velocity=swirl), source, 1e-12),
+        (state, _cells(_heated(_uniform_duct(8)), 0.0), 0.0),
+    ):
+        with pytest.raises(ValueError):
+            validate_thermal_inputs(thermal, bad_state, bad_source, divergence_tolerance=tolerance)
+
+
+# The compiled thermal run: scan, derivatives and compilation (plan step 5.1g).
+
+
+def _buoyant_duct():
+    from lmhdx.thermal import thermal_boundary
+
+    insulated = thermal_boundary("heat_flux", conductivity=0.5)
+    walls = (PERIODIC_AXIS, insulated, thermal_boundary("temperature", 301.0, 299.0))
+    return _heated(
+        _uniform_duct(6, hartmann=4.0), walls, expansion_coefficient=1.0e-2, gravity=(0.0, 0.0, -1.0)
+    )
+
+
+def _pattern(thermal, seed: int) -> np.ndarray:
+    return np.random.default_rng(seed).standard_normal(thermal.flow.grid.shape)
+
+
+def test_the_thermal_scan_reproduces_the_stepped_loop_and_stacks_only_scalars():
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
+
+    thermal = _buoyant_duct()
+    thermal_step = build_thermal_step(thermal, dtype=jnp.float64)
+    state, source = initial_thermal_state(thermal, 300.0 + 0.3 * _pattern(thermal, 18)), _cells(thermal, 1.0)
+    looped = state
+    for _ in range(6):
+        looped, _ = thermal_step(looped, source)
+    final, history = jax.jit(lambda start, heat: advance_thermal(thermal_step, start, heat, 6))(state, source)
+    for scanned, stepped in zip(jax.tree_util.tree_leaves(final), jax.tree_util.tree_leaves(looped)):
+        assert float(jnp.max(jnp.abs(scanned - stepped))) <= 1e-12 * max(
+            1.0, float(jnp.max(jnp.abs(stepped)))
+        )
+    assert all(np.shape(value) == (6,) for value in history) and bool(jnp.all(history.finite))
+
+    def traced(steps):
+        return jax.make_jaxpr(lambda start: advance_thermal(thermal_step, start, source, steps))(state)
+
+    short, long = traced(4), traced(128)
+    assert abs(len(str(long)) - len(str(short))) < 0.01 * len(str(short))
+    scan = next(equation for equation in long.eqns if equation.primitive.name == "scan")
+    assert all(var.aval.shape == (128,) for var in scan.outvars[scan.params["num_carry"] :])
+    with pytest.raises(ValueError, match="steps must be positive"):
+        advance_thermal(thermal_step, state, source, 0)
+
+
+def test_new_values_reuse_the_compiled_run_and_a_new_problem_rebuilds():
+    import dataclasses
+
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
+
+    thermal = _buoyant_duct()
+    thermal_step, traces = build_thermal_step(thermal, dtype=jnp.float64), []
+
+    def run(start, heat):
+        traces.append(1)
+        return advance_thermal(thermal_step, start, heat, 3)[0].temperature.data
+
+    compiled = jax.jit(run)
+    first = compiled(initial_thermal_state(thermal, 300.0), _cells(thermal, 1.0))
+    second = compiled(
+        initial_thermal_state(thermal, 300.5 + 0.1 * _pattern(thermal, 19)), _cells(thermal, 2.0)
+    )
+    assert len(traces) == 1 and not np.allclose(first, second)
+    for problem, same in ((dataclasses.replace(thermal, thermal_conductivity=2.0), False), (thermal, True)):
+        rebuilt = build_thermal_step(problem, dtype=jnp.float64)
+        again = advance_thermal(rebuilt, initial_thermal_state(thermal, 300.0), _cells(thermal, 1.0), 3)[0]
+        assert np.allclose(again.temperature.data, first, rtol=1e-13, atol=0.0) == same
+
+
+def _objective(thermal, target: str):
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
+
+    thermal_step = build_thermal_step(thermal, dtype=jnp.float64)
+    base, direction = 300.0 + 0.5 * _pattern(thermal, 20), _pattern(thermal, 21)
+
+    def objective(amplitude, checkpoint=True):
+        heated = target == "heat source"
+        start = initial_thermal_state(thermal, base + (0.0 if heated else amplitude) * direction)
+        heat = _cells(thermal, 1.0 + (amplitude if heated else 0.0))
+        final, _ = advance_thermal(thermal_step, start, heat, 6, checkpoint=checkpoint)
+        if target == "buoyant velocity":
+            return sum(jnp.sum(component.data**2) for component in final.velocity)
+        return jnp.sum((final.temperature.data - 300.0) ** 2)
+
+    return objective
+
+
+def test_checkpointing_changes_neither_the_thermal_run_nor_its_gradient():
+    objective = _objective(_buoyant_duct(), "initial temperature")
+    saved, plain = (jax.value_and_grad(lambda a, c=c: objective(a, c))(0.2) for c in (True, False))
+    assert float(saved[0]) == pytest.approx(float(plain[0]), rel=1e-13)
+    assert float(saved[1]) == pytest.approx(float(plain[1]), rel=1e-12)
+
+
+@pytest.mark.parametrize("target", ["initial temperature", "heat source", "buoyant velocity"])
+def test_thermal_gradients_match_central_differences(target):
+    """The best of three difference sizes within 1e-5 (ADR 0008, V17); the velocity feels the temperature only by buoyancy."""
+    objective = jax.jit(_objective(_buoyant_duct(), target))
+    gradient = float(jax.jit(jax.grad(objective))(0.0))
+    errors = [
+        abs(gradient - float(objective(size) - objective(-size)) / (2.0 * size)) / abs(gradient)
+        for size in (1.0e-2, 1.0e-3, 1.0e-4)
+    ]
+    assert abs(gradient) > 0.0 and min(errors) < 1e-5, (gradient, errors)
