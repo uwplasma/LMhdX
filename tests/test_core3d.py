@@ -357,6 +357,76 @@ def test_the_step_differentiates_and_jits():
     assert gradient == pytest.approx(float(difference), rel=1e-6)
 
 
+# The step's stages (plan step 5.1a): a caller that composes them, as the thermal step does, advances
+# the same flow. Insulating with transport, thin walls on a stretched one-cell periodic duct, resolved layers.
+
+
+def _stage_cases() -> tuple[tuple[ChannelProblem, bool], ...]:
+    stretched = Grid(uniform_faces(1, 0.0, 1.0), tanh_faces(8, -1.0, 1.0, 1.3), tanh_faces(8, -1.0, 1.0, 1.3))
+    thin = dict(magnetic_field=(0.0, 0.5, 4.0), wall_conductance=(0.0, 0.05, 0.08), density=1.3)
+    layers = (((2.0, 2.0), (0.1, 0.1)),) * 2
+    return (
+        (_problem(_duct(6, 6, 2), magnetic_field=(0.0, 0.0, 4.0), advection="limited", density=1.3), False),
+        (_problem(stretched, **thin), True),
+        (_problem(_duct(6, 6, 1), magnetic_field=(0.0, 0.0, 3.0), wall_layers=(None, layers, layers)), True),
+    )
+
+
+def _random_velocity(problem: ChannelProblem) -> tuple[Field, Field, Field]:
+    rng = np.random.default_rng(7)
+    noise = (f.replace_data(jnp.asarray(rng.standard_normal(f.data.shape))) for f in zero_velocity(problem))
+    return enforce_face_constraints(tuple(noise), problem)
+
+
+def _identical(first, second) -> bool:
+    return all(np.array_equal(a.data, b.data) for a, b in zip(first, second, strict=True))
+
+
+def test_the_step_is_the_force_and_momentum_stages_it_is_built_from():
+    from lmhdx.core3d import (
+        _advance_momentum,
+        _lorentz_from_currents,
+        electric_state,
+        face_currents,
+        face_lorentz_force,
+    )
+
+    for problem, implicit in _stage_cases():
+        velocity, factorization = _random_velocity(problem), problem.factorization()
+        viscous = problem.viscous_factorizations() if implicit else None
+        potential, currents, field = face_currents(velocity, problem, factorization)
+        force = _lorentz_from_currents(currents, field, problem)
+        body = face_lorentz_force(force, problem)
+        moved, pressure = _advance_momentum(velocity, body, problem, factorization, viscous)
+        stepped, stepped_pressure, stepped_potential = step(velocity, problem, factorization, viscous)
+        assert _identical(force, electric_state(velocity, problem, factorization)[1])
+        assert _identical((*moved, pressure, potential), (*stepped, stepped_pressure, stepped_potential))
+
+
+def test_an_extra_force_density_enters_beside_the_forcing():
+    """Zero is the step bit for bit; a uniform one is more forcing, divided by the same density."""
+    from lmhdx.core3d import _advance_momentum, electric_state, face_lorentz_force
+
+    problem = _stage_cases()[1][0]
+    velocity, factorization = _random_velocity(problem), problem.factorization()
+    viscous = problem.viscous_factorizations()
+    body = face_lorentz_force(electric_state(velocity, problem, factorization)[1], problem)
+    extra = (0.4, -0.3, 0.2)
+
+    def advance(case, force=None):
+        moved, pressure = _advance_momentum(velocity, body, case, factorization, viscous, extra_force=force)
+        return (*moved, pressure)
+
+    zero = tuple(f.replace_data(jnp.zeros_like(f.data)) for f in velocity)
+    uniform = tuple(f.replace_data(jnp.full_like(f.data, value)) for f, value in zip(velocity, extra))
+    more = dataclasses.replace(problem, forcing=tuple(a + b for a, b in zip(problem.forcing, extra)))
+    assert _identical(advance(problem, zero), advance(problem))
+    # Only the order of one addition differs, so each array agrees to its own rounding.
+    for pushed, forced in zip(advance(problem, uniform), advance(more)):
+        error, scale = (float(jnp.max(jnp.abs(data))) for data in (pushed.data - forced.data, forced.data))
+        assert error <= 1e-13 * scale
+
+
 def _implicit_channel_error(cells: int, *, step_multiple: float) -> tuple[float, float]:
     """Integrate the plane channel with implicit viscosity at a chosen step size.
 
