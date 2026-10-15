@@ -1298,6 +1298,150 @@ def test_heated_hartmann_plates_reach_the_analytical_nusselt_number(hartmann):
     assert errors[1] < 5e-3 and np.all(orders > 1.5), (errors, orders)
 
 
+# Review corrections, part 5b: the reduction's guards, an undefined Nu and physical temperatures (D33).
+
+
+def test_developed_inputs_are_checked_against_the_reduction():
+    """D03: one axial cell; a single throughflow above a volume-rate tolerance; no transverse or reversed velocity
+    beyond a speed; and a flow that stops gives NaN rather than a division by zero."""
+    from lmhdx.thermal import ThermalProblem, developed_heat, validate_developed_inputs
+
+    thermal = _developed_duct(8, walls="heat_flux")
+    grid, velocity = thermal.flow.grid, _uniform_flow(thermal)  # flow rate 4 through the 2 x 2 section
+    heat = Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid)
+    check = functools.partial(validate_developed_inputs, flow_rate_tolerance=1e-6, velocity_tolerance=1e-9)
+    check(thermal, velocity, heat)
+    check(
+        thermal,
+        (velocity[0], velocity[1].replace_data(velocity[1].data.at[0, 4, 3].set(1e-12)), velocity[2]),
+        heat,
+    )
+    across = (velocity[0], velocity[1].replace_data(velocity[1].data.at[0, 4, 3].set(1e-3)), velocity[2])
+    reversing = (velocity[0].replace_data(velocity[0].data.at[:, 2, 3].set(-0.5)), *velocity[1:])
+    still = zero_velocity(thermal.flow)
+    for flow, options in (
+        (across, {}),
+        (reversing, {}),
+        (still, {}),
+        (velocity, dict(flow_rate_tolerance=4.0)),
+        (velocity, dict(velocity_tolerance=-1.0)),
+        (velocity, dict(flow_rate_tolerance=np.nan)),
+        (velocity, dict(axial_gradient=1.0)),
+        (velocity[:2], {}),
+    ):
+        with pytest.raises(ValueError):
+            check(thermal, flow, heat, **options)
+    long = ChannelProblem(Grid(uniform_faces(2, 0.0, 1.0), *grid.faces[1:]), thermal.flow.conditions)
+    with pytest.raises(ValueError, match="one cell"):
+        developed_heat(ThermalProblem(long, thermal.thermal_conditions, 1.0, 1.0, 0.0), velocity, heat)
+    stopped = developed_heat(thermal, still, heat)
+    assert np.isnan(float(stopped.axial_gradient)) and np.isnan(float(stopped.nusselt))
+
+
+def _insulated(thermal):
+    from lmhdx.thermal import thermal_boundary
+
+    insulated = thermal_boundary("heat_flux", conductivity=1.0)
+    return dataclasses.replace(thermal, thermal_conditions=(_WRAP, insulated, insulated))
+
+
+def test_the_nusselt_number_is_defined_only_where_its_temperature_difference_is_resolved():
+    """D05: a zero wall flux gives 0; a difference cancelled to rounding is NaN with the temperature and balance valid,
+    whether nothing heats the walls or heat crosses the duct from wall to wall (``theta = -y``); reversing every heat
+    flow keeps Nu; with a source too it is an apparent, different, finite number."""
+    from lmhdx.thermal import thermal_boundary
+
+    thermal = _developed_duct(16, walls="heat_flux")  # a unit flux in through every wall
+    adiabatic, poiseuille = _insulated(thermal), solve_steady_state(thermal.flow).velocity
+    sourced = _developed(adiabatic, poiseuille, source=1.0)
+    assert float(sourced.wall_heat_flux) == 0.0 and float(sourced.nusselt) == 0.0
+    flat = _developed(adiabatic, _uniform_flow(adiabatic), source=1.0)
+    assert np.isnan(float(flat.nusselt)) and float(flat.axial_gradient) == pytest.approx(1.0, rel=1e-14)
+    assert (
+        float(jnp.max(jnp.abs(flat.temperature.data))) <= 1e-12
+        and abs(float(flat.heat_balance_residual)) <= 1e-12
+    )
+    crossing = thermal_boundary("heat_flux", -1.0, 1.0, conductivity=1.0)  # in at y = -1, out at y = +1
+    walls = (_WRAP, crossing, adiabatic.thermal_conditions[2])
+    across = _developed(dataclasses.replace(adiabatic, thermal_conditions=walls), poiseuille)
+    y = np.asarray(thermal.flow.grid.centers[1])[None, :, None]
+    assert np.isnan(float(across.nusselt)) and float(across.axial_gradient) == 0.0
+    assert float(jnp.max(jnp.abs(across.temperature.data + y))) <= 1e-12
+    heated = _developed(thermal, poiseuille)
+    out = thermal_boundary("heat_flux", 1.0, 1.0, conductivity=1.0)
+    cooled = _developed(dataclasses.replace(thermal, thermal_conditions=(_WRAP, out, out)), poiseuille)
+    assert float(cooled.wall_heat_flux) == pytest.approx(-1.0, rel=1e-12)
+    assert float(cooled.wall_temperature) < float(cooled.bulk_temperature)
+    assert float(cooled.nusselt) == pytest.approx(float(heated.nusselt), rel=1e-12)
+    both = float(_developed(thermal, poiseuille, source=0.5).nusselt)
+    assert np.isfinite(both) and abs(both / float(heated.nusselt) - 1.0) > 1e-3
+
+
+def test_the_anchored_peaks_are_physical_temperatures_whatever_the_gauge():
+    """D04: ``T_in + gamma x + theta - theta_b`` at the end ``gamma`` rises toward; ``theta + 7``, as valid a solution,
+    gives the same peaks to 1e-12, and a cooled duct peaks at its inlet."""
+    from lmhdx.ops import laplacian
+    from lmhdx.thermal import thermal_boundary
+
+    thermal = _developed_duct(16, walls="heat_flux")
+    result = _developed(thermal, solve_steady_state(thermal.flow).velocity, source=0.5)
+    wall, fluid = (float(value) for value in result.anchored_peaks(300.0, 10.0))
+    rise = 300.0 + 10.0 * float(result.axial_gradient) - float(result.bulk_temperature)
+    assert float(result.axial_gradient) > 0.0
+    assert wall == pytest.approx(rise + float(result.peak_wall_temperature), rel=1e-14)
+    assert fluid == pytest.approx(rise + float(jnp.max(result.temperature.data)), rel=1e-14)
+    theta = result.temperature
+    shifted = theta.replace_data(theta.data + 7.0)
+    change = (
+        laplacian(shifted, thermal.thermal_conditions).data
+        - laplacian(theta, thermal.thermal_conditions).data
+    )
+    assert float(jnp.max(jnp.abs(change))) <= 1e-10  # the same equation
+    gauge = result._replace(
+        temperature=shifted,
+        bulk_temperature=result.bulk_temperature + 7.0,
+        wall_temperature=result.wall_temperature + 7.0,
+        peak_wall_temperature=result.peak_wall_temperature + 7.0,
+    )
+    assert [float(value) for value in gauge.anchored_peaks(300.0, 10.0)] == pytest.approx(
+        [wall, fluid], rel=1e-12
+    )
+    out = thermal_boundary("heat_flux", 1.0, 1.0, conductivity=1.0)
+    cooled = _developed(
+        dataclasses.replace(thermal, thermal_conditions=(_WRAP, out, out)), _uniform_flow(thermal)
+    )
+    assert float(cooled.axial_gradient) < 0.0
+    assert [float(v) for v in cooled.anchored_peaks(300.0, 10.0)] == [
+        float(v) for v in cooled.anchored_peaks(300.0, 0.0)
+    ]
+
+
+def test_the_developed_temperature_scales_with_its_source_and_with_the_flow():
+    """Doubling a source doubles ``theta`` and ``gamma``. Doubling a Hartmann flow (Ha 10, insulated walls, Joule heat
+    alone) doubles ``gamma`` and quadruples ``theta``: the Joule heat goes as the flow squared, to 1e-12."""
+    thermal = _insulated(_developed_duct(16, hartmann=10.0, walls="heat_flux"))
+    velocity = solve_steady_state(thermal.flow).velocity
+    off = dataclasses.replace(thermal, joule_heating=False)
+    pairs = [
+        (_developed(off, velocity, source=1.0), _developed(off, velocity, source=2.0), 2.0, 2.0),
+        (
+            _developed(thermal, velocity),
+            _developed(thermal, tuple(c.replace_data(2.0 * c.data) for c in velocity)),
+            2.0,
+            4.0,
+        ),
+    ]
+    for once, twice, gradient, temperature in pairs:
+        scale = float(jnp.max(jnp.abs(once.temperature.data)))
+        assert scale > 0.0 and float(twice.axial_gradient) == pytest.approx(
+            gradient * float(once.axial_gradient), rel=1e-12
+        )
+        assert (
+            float(jnp.max(jnp.abs(twice.temperature.data - temperature * once.temperature.data)))
+            <= 1e-12 * temperature * scale
+        )
+
+
 def test_a_heated_hunt_duct_balances_its_enthalpy():
     """Plan step 5.3: a Hunt duct carries heat from its inlet to its outlet, balanced to 1e-6 every step.
 

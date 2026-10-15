@@ -94,6 +94,7 @@ __all__ = [
     "developed_heat",
     "initial_thermal_state",
     "thermal_boundary",
+    "validate_developed_inputs",
     "validate_thermal_inputs",
 ]
 
@@ -483,19 +484,7 @@ def validate_thermal_inputs(
     if not (np.isfinite(advective_cfl_limit) and advective_cfl_limit > 0.0):
         raise ValueError("advective_cfl_limit must be positive and finite")
     flow, dtype = problem.flow, jnp.result_type(float)
-    if len(state.velocity) != 3:
-        raise ValueError("the velocity needs three components")
-    fields = [(state.temperature, _CELL, "temperature"), (heat_source, _CELL, "heat source")]
-    fields += [
-        (field, velocity_offset(c), f"velocity component {c}") for c, field in enumerate(state.velocity)
-    ]
-    for field, offset, name in fields:
-        if not (isinstance(field, Field) and field.grid == flow.grid and field.offset == offset):
-            raise ValueError(f"the {name} must be a Field at offset {offset} on the problem's grid")
-        if field.shape != flow.grid.offset_shape(offset) or field.dtype != dtype:
-            raise ValueError(f"the {name} must have shape {flow.grid.offset_shape(offset)} and dtype {dtype}")
-        if not np.all(np.isfinite(np.asarray(field.data))):
-            raise ValueError(f"the {name} is not finite")
+    _check_fields(flow, state.velocity, [(state.temperature, "temperature"), (heat_source, "heat source")])
     time = jnp.asarray(state.time)
     if time.shape or time.dtype != dtype or not np.isfinite(float(time)):
         raise ValueError(f"the time must be a finite {dtype} scalar")
@@ -522,6 +511,22 @@ def validate_thermal_inputs(
             np.asarray(state.velocity[axis].data[(slice(None),) * axis + (-1,)]) < 0.0
         ):
             raise ValueError("the flow returns through the outlet: use outlet_backflow='reservoir_flux'")
+
+
+def _check_fields(flow: ChannelProblem, velocity, cells: list[tuple[Field, str]]) -> None:
+    """Raise unless each field is a finite Field of the compute dtype at its offset on the flow's grid."""
+    if len(velocity) != 3:
+        raise ValueError("the velocity needs three components")
+    dtype = jnp.result_type(float)
+    fields = [(field, _CELL, name) for field, name in cells]
+    fields += [(field, velocity_offset(c), f"velocity component {c}") for c, field in enumerate(velocity)]
+    for field, offset, name in fields:
+        if not (isinstance(field, Field) and field.grid == flow.grid and field.offset == offset):
+            raise ValueError(f"the {name} must be a Field at offset {offset} on the problem's grid")
+        if field.shape != flow.grid.offset_shape(offset) or field.dtype != dtype:
+            raise ValueError(f"the {name} must have shape {flow.grid.offset_shape(offset)} and dtype {dtype}")
+        if not np.all(np.isfinite(np.asarray(field.data))):
+            raise ValueError(f"the {name} is not finite")
 
 
 def build_thermal_step(
@@ -721,11 +726,21 @@ class DevelopedHeat(NamedTuple):
     """The thermally fully developed duct of :func:`developed_heat`, at its station ``x = 0``.
 
     ``temperature`` is ``theta`` on the cells. The wall values are taken on the
-    wall faces of the cross-section, means weighted by face area: the wall
-    temperature and the heat flux into the fluid. ``nusselt`` is
-    ``q_w D_h / (k (T_w - T_b))``, with the hydraulic diameter ``D_h = 4 A / P``.
+    wall faces of the cross-section, means weighted by face area over every
+    transverse wall, heated or not: the wall temperature and the heat flux into
+    the fluid. ``nusselt`` is ``q_w D_h / (k (T_w - T_b))``, with the hydraulic
+    diameter ``D_h = 4 A / P``. With an internal source it is an apparent number
+    for that source, not a coefficient of the duct alone. It is NaN, undefined,
+    where ``|T_w - T_b|`` is within ``64 eps`` of the largest temperature scale:
+    ``|T_w|``, ``|T_b|``, ``max |theta|``, and each heat input's own,
+    ``D_h^2 max |rho c_p u gamma| / k``, ``D_h^2 max |q + q_J| / k`` and
+    ``D_h max |q_w| / k``, so a difference cancelled to rounding is undefined;
+    the temperatures and the balance stay valid.
     ``heat_balance_residual`` is ``rho c_p gamma Q`` less the heat entering per
     unit length, a power per length.
+
+    With heat-flux walls only, ``theta`` has an arbitrary constant, its zero
+    mean, and :meth:`anchored_peaks` gives the physical temperatures.
     """
 
     temperature: Field
@@ -738,6 +753,23 @@ class DevelopedHeat(NamedTuple):
     hydraulic_diameter: float
     nusselt: jnp.ndarray
     heat_balance_residual: jnp.ndarray
+
+    def anchored_peaks(
+        self, inlet_bulk_temperature: float | jnp.ndarray, length: float
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Return the hottest wall and fluid temperatures over ``0 <= x <= length``, for heat-flux walls.
+
+        The bulk temperature is ``inlet_bulk_temperature`` at ``x = 0``, so the
+        temperature is ``T_in + gamma x + theta - theta_b``, the same for any
+        constant added to ``theta``. It is linear in ``x``: each peak is at the end
+        ``gamma`` rises toward. A prescribed wall temperature fixes the reference
+        itself; use its station values. The profile is taken as developed from
+        ``x = 0``, with no entrance region.
+        """
+        anchor = (
+            inlet_bulk_temperature + jnp.maximum(self.axial_gradient * length, 0.0) - self.bulk_temperature
+        )
+        return anchor + self.peak_wall_temperature, anchor + jnp.max(self.temperature.data)
 
 
 def developed_heat(
@@ -758,17 +790,18 @@ def developed_heat(
     heat the solve decides, so ``axial_gradient`` must then be given, and that
     wall temperature rises along the duct at ``gamma`` too. A uniform axial heat
     input with a peripherally uniform wall temperature is the H1 condition; a
-    uniform wall heat flux is H2. The flow rate must be positive. Differentiable
+    uniform wall heat flux is H2. The flow rate must be positive, which
+    :func:`validate_developed_inputs` checks with the rest of the reduction;
+    otherwise the result is NaN. Differentiable
     in the velocity, the heat source and ``axial_gradient``, and compiled whole
     by :func:`jax.jit`. Without Joule heat no current is formed.
     """
     flow, grid, conditions = problem.flow, problem.flow.grid, problem.thermal_conditions
-    periodic = [axis for axis, condition in enumerate(conditions) if condition.is_periodic]
-    if len(periodic) != 1:
-        raise ValueError("a developed duct is periodic along exactly one axis, the flow's")
-    if any(DIRICHLET in condition.kinds for condition in conditions) == (axial_gradient is None):
-        raise ValueError("give axial_gradient exactly when a wall prescribes its temperature")
-    axial, capacity, k = periodic[0], problem.heat_capacity, float(problem.thermal_conductivity)
+    axial, capacity, k = (
+        _developed_axis(problem, axial_gradient),
+        problem.heat_capacity,
+        float(problem.thermal_conductivity),
+    )
     length = float(np.sum(grid.widths[axial]))
 
     def per_length(data):
@@ -780,8 +813,12 @@ def developed_heat(
     if problem.joule_heating:  # otherwise no current is needed
         sources = _joule_heating(face_currents(velocity, flow)[1], problem).data + sources
     lift, flow_rate = problem.boundary_lift().data, per_length(speed)
+    flowing = flow_rate > 0.0
+    rate = jnp.where(flowing, flow_rate, 1.0)  # no division by zero, so no NaN in a derivative either
     if axial_gradient is None:  # heat-flux walls: k sum(V b) is the heat they let in
-        gradient = (per_length(sources) + k * per_length(lift)) / (capacity * flow_rate)
+        gradient = jnp.where(
+            flowing, (per_length(sources) + k * per_length(lift)) / (capacity * rate), jnp.nan
+        )
     else:
         gradient = jnp.asarray(axial_gradient, dtype=speed.dtype)
     homogeneous = tuple(condition.homogeneous() for condition in conditions)
@@ -806,8 +843,12 @@ def developed_heat(
     perimeter = sum(jnp.sum(area) for area in areas)
     wall = sum(jnp.sum(area * value) for area, value in zip(areas, temperatures)) / perimeter
     flux = sum(jnp.sum(area * value) for area, value in zip(areas, fluxes)) / perimeter
-    bulk = per_length(speed * theta.data) / flow_rate
+    bulk = jnp.where(flowing, per_length(speed * theta.data) / rate, jnp.nan)
     diameter = 4.0 * float(np.sum(grid.cell_volumes())) / wetted
+    difference, scales = wall - bulk, [jnp.abs(wall), jnp.abs(bulk), jnp.max(jnp.abs(theta.data))]
+    scales += [diameter**2 * jnp.max(jnp.abs(term)) / k for term in (capacity * speed * gradient, sources)]
+    scales += [diameter * jnp.max(jnp.abs(value)) / k for value in fluxes]
+    resolved = jnp.abs(difference) > 64.0 * jnp.finfo(difference.dtype).eps * jnp.max(jnp.stack(scales))
     entering = per_length(sources) + flux * perimeter / length
     return DevelopedHeat(
         theta,
@@ -818,6 +859,59 @@ def developed_heat(
         jnp.max(jnp.stack([jnp.max(value) for value in temperatures])),
         flux,
         diameter,
-        flux * diameter / (k * (wall - bulk)),
+        jnp.where(resolved, flux * diameter / (k * jnp.where(resolved, difference, 1.0)), jnp.nan),
         capacity * gradient * flow_rate - entering,
     )
+
+
+def _developed_axis(problem: ThermalProblem, axial_gradient) -> int:
+    """Return the developed duct's axis: its one periodic axis, one cell long, the static checks of the reduction."""
+    conditions = problem.thermal_conditions
+    periodic = [axis for axis, condition in enumerate(conditions) if condition.is_periodic]
+    if len(periodic) != 1:
+        raise ValueError("a developed duct is periodic along exactly one axis, the flow's")
+    if problem.flow.grid.shape[periodic[0]] != 1:
+        raise ValueError("a developed duct has one cell along its axis")
+    if any(DIRICHLET in condition.kinds for condition in conditions) == (axial_gradient is None):
+        raise ValueError("give axial_gradient exactly when a wall prescribes its temperature")
+    return periodic[0]
+
+
+def validate_developed_inputs(
+    problem: ThermalProblem,
+    velocity: tuple[Field, Field, Field],
+    heat_source: Field,
+    *,
+    flow_rate_tolerance: float,
+    velocity_tolerance: float,
+    axial_gradient: float | None = None,
+) -> None:
+    """Check a velocity and heat source for :func:`developed_heat` on the host, raising ``ValueError`` on the first fault.
+
+    The duct is periodic along one axis, one cell long, with ``axial_gradient``
+    given exactly when a wall prescribes its temperature; the fields are finite,
+    of the compute dtype, at their offsets on the problem's grid. The flow is the
+    reduction's single throughflow: a flow rate ``sum A u`` above
+    ``flow_rate_tolerance``, a volume rate, and no transverse velocity or
+    reversed axial velocity beyond ``velocity_tolerance``, a speed. Nothing is
+    changed or returned.
+    """
+    for name, value in (
+        ("flow_rate_tolerance", flow_rate_tolerance),
+        ("velocity_tolerance", velocity_tolerance),
+    ):
+        if not (np.isfinite(value) and value >= 0.0):
+            raise ValueError(f"{name} must be nonnegative and finite")
+    axial, grid = _developed_axis(problem, axial_gradient), problem.flow.grid
+    _check_fields(problem.flow, velocity, [(heat_source, "heat source")])
+    across = max(float(jnp.max(jnp.abs(velocity[axis].data))) for axis in range(3) if axis != axial)
+    if across > velocity_tolerance:
+        raise ValueError(f"a transverse velocity of {across:.4g} exceeds velocity_tolerance")
+    along = np.asarray(velocity[axial].data)
+    if float(np.min(along)) < -velocity_tolerance:
+        raise ValueError("the axial flow reverses beyond velocity_tolerance")
+    flow_rate = float(
+        np.sum(grid.face_areas(axial)[(slice(None),) * axial + (0,)] * along[(slice(None),) * axial + (0,)])
+    )
+    if not flow_rate > flow_rate_tolerance:
+        raise ValueError(f"the flow rate {flow_rate:.4g} is not above flow_rate_tolerance")
