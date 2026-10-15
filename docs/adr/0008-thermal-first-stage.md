@@ -76,3 +76,38 @@ and no dependency. `core3d` gains two private helpers and no import of `thermal`
 Reason: the owner's rule of 2026-10-04 (the size target is a direction; keep
 adding functionality). A scalar transport placed in `core3d` or `ops` would grow
 the two modules that every core change touches.
+
+## Amendments after review (2026-10-15)
+
+From the review of #230–#241. Each adds to its decision; none withdraws one.
+
+**D31, the open duct.** An inflow-outflow axis carries heat on a held flow
+(step 5.3): the state keeps the steady velocity of `axial.solve_open_duct`, the
+step is built with `hold_flow=True`, and a held flow takes no buoyancy. The
+inlet prescribes its temperature. The outlet takes no conductive flux, and a
+face where the flow leaves carries out `u T_P`. Where the flow returns
+(`u < 0`), the incoming enthalpy is boundary data, not a value inferred from the
+adjacent cell. By default (`outlet_backflow="error"`) a run with a returning
+outlet face is refused. With `outlet_backflow="reservoir_flux"` the face brings
+in `C u T_res`, a prescribed total (Danckwerts) flux, with the reservoir
+temperature given to each step as numerical input. The base outlet operator
+stays homogeneous Neumann, so the conduction inverse is unchanged. An evolving
+momentum solution in an open duct, buoyant or not, is outside this decision.
+
+**D32, gravity along a periodic axis.** Along a periodic axis the mean of
+`-rho_0 beta (T - T_r) g` is a uniform force that no periodic pressure can
+balance, and in a heated periodic duct `T - T_r` keeps growing. A component of
+`g` along a periodic axis is therefore refused while `beta > 0`; the mean
+temperature is never subtracted. With `beta = 0` the configuration is exactly
+passive, whatever `g` is.
+
+**D33, an MHD gate and what Nu means.** The developed duct is also gated
+against Hartmann flow between plates heated by equal uniform fluxes, with no
+internal source: `Nu = 4 / integral_0^1 F_H(s)^2 ds` with `D_h = 4a`, which runs
+from 140/17 at `Ha = 0` to 12 as `Ha` grows. The gate is checked at finite
+Hartmann numbers as well as the limits, with the analytical velocity as input.
+`DevelopedHeat.nusselt` is `q_w D_h / (k (T_w - T_b))`, with means over all
+transverse wall area. With an internal source (Joule or external heat) it is an
+apparent, source-dependent number, not a forced-convection coefficient. Where
+its wall-to-bulk difference is unresolved it is undefined (NaN), while the
+temperatures and the heat balance stay valid.
