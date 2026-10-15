@@ -556,6 +556,111 @@ Primary sources marked [P] were read in full for this review.
     factorization serves the adjoint; `jax.experimental.sparse` is not
     differentiable (2b.8).
 
+### 3.8 Research-grade roadmap (2026-10-15)
+
+Desk review, docs and plan only; no package code changed and nothing new
+measured. Read: this plan (Sections 1–3, 6, 7), `docs/adr/`,
+`docs/physics/numerics.md`, `docs/validation/`, the 14 modules on `main`
+`0f5d931` (11,114 lines), issues #222, #226–#228, #233, drafts #224 and #225,
+the thermal stack #229–#241, and SOLVAX `main` `fb6fb75` (PyPI 0.28.2).
+[V] = read in source or in this repository; [M] = literature from memory,
+to be checked before it is cited in a paper.
+
+#### 3.8.1 Methods against the state of the art
+
+| Path | LMhdX today | What other codes do | Gap that matters for a research claim |
+|---|---|---|---|
+| Fully developed (2-D) | staggered core, Ni-consistent face currents, Stokes CG with field-line banded LU [V] | MHD-UCLA/HIMAG and FreeMHD: the same consistent-conservative currents on FV meshes; GridapMHD: monolithic FEM with sparse direct or block preconditioners (Urgorri et al. 2024 reach 0.22 % on Hunt at Ha 10³) [M] | none in the method; Table I is gated (row 27). Missing: a formal observed order (row 8 MMS) on stretched meshes and a direct solve as a second route (2b.8) |
+| 3-D Stokes-limit steady | symmetric PCG on the projected operator, damped projection preconditioner, global rate (#188), symmetric adjoint [V] | PISO/SIMPLE pseudo-time in FreeMHD/MHDFoam and CFX (no Ha-robust linear solver: time-to-steady grows with Ha) [M]; GridapMHD and Firedrake-based work use block preconditioners, and augmented-Lagrangian (AL) Navier–Stokes/MHD preconditioners (Benzi–Olshanskii 2006; Farrell, Mitchell & Wechsung 2019; Laakmann, Farrell & Mitchell 2022) with vertex-star PCPATCH smoothers are the published Ha- and Re-robust route [M] | iterations grow as Ha^0.88 (2b.4 follow-up); the exact AL form is flat (4–10 iterations), and the missing piece is precisely the parallel AL smoother the Farrell group builds with PCPATCH star patches. LMhdX's study is a correct reading of that literature; it has not been compared against it |
+| Open-axis Newton with inertia | central transport, Newton + `solvax.gcrot` right-preconditioned by Stokes CG, continuation in Q [V] | FV codes: upwind/limited convection, segregated PISO; FEM: Newton + Oseen block preconditioners (PCD, LSC, AL-Oseen) [M] | the Stokes CG ignores convection, so outer iterations grow with Re (#225: 4,743 outer, 1.9 h at Ha 100, Re 33); central transport stalls at cell Re 66 in stretched buffers. No Oseen-aware preconditioner, no upwind option |
+| Transient 3-D | projection, implicit Lorentz damping, `lax.scan` [V] | FreeMHD/MHD-PISO: PISO with the consistent-conservative scheme; Krasnov et al. 2023: direct thin-wall inside the solve [M] | adequate; Crank–Nicolson advertised but not implemented (#228) |
+| Q2D | ETDRK pseudo-spectral SM82 model [V] | Dedalus, GeophysicalFlows.jl, Pothérat's Q2D codes [M] | row 16 cross-code not yet run |
+| Core flow | 1.9c inertialess core-flow model with layer conductances (#206) [V] | Walker/Hunt asymptotics, TM-228 SOR; Mistrangelo/Bühler's asymptotic codes [M] | inertial error N^-1/3 unquantified per case |
+| Pipe | polar fast-diagonal, open pipe in Stokes limit (#219) [V] | Ni 2007 II, FreeMHD KIT pipe [M] | row 6 not met station-wise; inertia untested there |
+
+High-Ha meshing: LMhdX's rule (≥ 6–8 cells across a/Ha, ≥ 10 across a/√Ha,
+ratio ≤ 1.15) matches HIMAG/FreeMHD practice [V Section 3.1]; #225 adds that
+axial buffer growth must also bound the cell Reynolds number once inertia is on.
+
+#### 3.8.2 Libraries: adopt where
+
+| Capability | Native JAX | Via SOLVAX | Optional external backend | Not at all |
+|---|---|---|---|---|
+| Fast diagonalization, FFT/DCT | keep (XLA FFT, dense contraction per D24) | — | FFTW: no gain over XLA on CPU at these sizes | — |
+| Krylov (CG, flexible CG, FGMRES, GCRO-DR) | — | yes: `pcg`, `gmres(fixed_precond=)`, `gcrot(recycle=)` exist; flexible CG does not | — | PETSc KSP as a runtime dependency |
+| Sparse direct for 2-D and the core-flow system | — | `solvax.sparse_direct.sparse_solve` (host SuperLU/MUMPS behind `pure_callback`, differentiable, factor reused by the adjoint) exists on `main` [V] | cuDSS through jax-ffi for GPU-resident runs (upstream SOLVAX request) | `jax.experimental.sparse` (not differentiable, re-orders) |
+| AL / block (field-split) preconditioners | combinators are small; keep the operator matrix-free | request upstream block-triangular / Schur combinators (only `schur_complement_precond` exists) | petsc4py PCFIELDSPLIT + PCPATCH (vertex-star) + PCLSC for a host-side *research* prototype of the AL smoother (resolves 2b.4 research item 1 before any JAX engineering) | — |
+| Multigrid | — | `multigrid`, `semicoarsening_hierarchy`, `plane_smoother` serve scalar cell grids only | pyamg / PCPATCH for setup studies | hypre AMS/ADS (H(curl)/H(div) for FEM unknowns; inductionless MAC has no edge field), BoomerAMG on the coupled system (fails the grad-div kernel, measured 816 iterations), AMGX |
+| Domain decomposition (BDDC) | — | — | PETSc BDDC only if G5b ever needs 512³ | before release |
+| Mixed precision | float32 fast-diagonal inside float64 Krylov (2b.10) | `iterative_refinement`, `mixed_precision`, GMRES-IR (documented in SOLVAX CHANGELOG) | — | — |
+
+Differentiability constraint: anything external enters as a preconditioner or
+as a `custom_linear_solve` whose transpose reuses the same factor; nothing
+external is differentiated through. Compile and latency constraints (Section
+2.5, 2b.4 follow-up) rule out per-plane scans on the GPU; host direct solves
+add a device round trip per apply, acceptable for 2-D and verification runs,
+not for the 3-D production path.
+
+#### 3.8.3 SOLVAX: used, available, to request
+
+Used by LMhdX [V]: `pcg`, `gmres`, `gcrot`, `newton_krylov`, `root_solve`,
+`lu_solve_banded`, `iterative_refinement`, `as_low_precision`; floor
+`solvax>=0.19`. Available and unused: `sparse_direct` (`sparse_solve`,
+`sparse_eigenvalue`), `fixed_precond=True` for GMRES/GCROT, `recycle=` warm
+starts, `eisenstat_walker_forcing`, `pseudo_transient_continuation`,
+`adaptive_continuation`, `galerkin_deflation`, `nystrom_preconditioner`,
+`shard_batch`, `block_thomas_*`, `cyclic_tridiagonal_solve`. Upstream
+requests: (1) SOLVAX#130, `pcg` with `x0=None` still applies `A x0`
+(open; one matvec per solve and per adjoint); (2) a flexible CG
+(Notay 2000; Polak–Ribière β) for 2b.10; (3) block-triangular and
+block-diagonal preconditioner combinators over pytrees; (4) a cuDSS backend for
+`sparse_solve`; (5) a batched cyclic-reduction plane solver (the 2b.4 revisit
+trigger).
+
+#### 3.8.4 Results audit
+
+- **Row 7** is defensible as written ("closed as not reachable on the 3-D
+  core; physical model difference"), provided the paper states that the
+  TM-228 number is an inertialess thin-layer asymptote and that LMhdX's Ha → ∞
+  fits give 0.0183–0.0211 (3–18 % above 0.0178): a fit band, not a 1 % check.
+- **Row 24** is met at one point (c 0.1, Ha 2×10⁴) against a model whose layer
+  correction was added by the same lane; at c 0.02 it is 4–5 %. State both
+  numbers; it is internal consistency, not validation.
+- **Row 6** is not met station by station (RMS 2.4, L∞ 5.1 against 1 and 2);
+  the inertia hypothesis is untested because Newton costs hours (#225).
+- **Row 27** (Table I) is the strongest claim: analytic, three meshes per row.
+- **1.9d narrowing**: the 2026-09-28 extrapolation "6–11 % below" and the
+  2026-10-04 "33 % above at Ha 2×10⁴" both stand in the log; a referee needs
+  one sentence saying which superseded which and why (layer conductance).
+- **2b.4 exit** was restated after the measurement (to ≥ 1.9×). Report the
+  scaling (Ha^0.88) with the ratio; a moved goal reads as such.
+- **G4**: 7.85× at 128³ against a CPU baseline measured under 6–20 cores of
+  foreign load; repeat the CPU row in a quiet window or report it as a bound.
+- **Missing for a referee**: observed orders of accuracy with GCI on rows
+  3–7 and 27; uncertainty split per ASME V&V 20 (numerical, digitisation,
+  field model) on rows 6, 10, 11; one independent code on the same case
+  (FreeMHD reduced or GridapMHD) for the fringe; time-to-solution at matched
+  error against FreeMHD on one shared case, same hardware.
+
+#### 3.8.5 Prioritized roadmap (impact per effort)
+
+| # | Item | Approach | Expected gain (evidence) | Effort | Depends on |
+|---|---|---|---|---|---|
+| R1 | Correctness first | land #229 (fixes #226 silent zero-flow, #227 lost periodic pressure, #228 drift) before any claim | removes two silent-wrong results | days (review) | Tyler's #229 |
+| R2 | Order-of-accuracy and GCI table | Richardson/GCI on rows 3–7, 27 and the fringe from existing three-mesh runs; row 8 MMS on stretched meshes | every gated number carries u_num; cheap, uses runs already done | 1 week | none |
+| R3 | Claim wording pass | rewrite rows 6/7/24, 1.9d and 2b.4 statements per 3.8.4 in README, docs/validation and the paper draft | referee-proof scope sentences | 2 days | R2 |
+| R4 | Second code on the fringe | 4.2′ GridapMHD on Shercliff/Hunt Ha 10³ and the ANL fringe at c 0.1, Ha 10³–10⁴ | first independent code-to-code number for 3-D; GridapMHD publishes 0.22 % Hunt | 2–3 weeks | none |
+| R5 | Oseen-aware Newton for the open axis | upwind or limited transport option; uniform buffers by default when advection is on (#225); Eisenstat–Walker forcing; `gcrot(recycle=, fixed_precond=True)` across continuation steps; an AL-Oseen or PCD-type block preconditioner prototyped host-side with petsc4py | #225: cycle 120 halves outer iterations; recycling and forcing typically 2–5× [M]; target Ha 100–400, Re ≤ 100 in minutes, which unblocks row 6's inertia test | 3–5 weeks | SOLVAX (forcing, recycle exist); upstream combinators (R8) |
+| R6 | Row 6 inertia test | B1 pipe with Newton at Re ≈ 4,100, or the core-flow model with an N^-1/3 inertial correction bound | resolves the one failing experimental row or bounds it | 1–2 weeks | R5 |
+| R7 | Sparse direct for 2-D and core flow (2b.8) | `solvax.sparse_direct.sparse_solve` on the assembled 2-D system and the 1.9c system | Ha-independent 2-D solves and a second solver route for row 27; adjoint reuses factors | 1 week | SOLVAX ≥ 0.29 (floor bump) |
+| R8 | SOLVAX upstream | #130 fix; flexible CG; block combinators; cuDSS backend | one matvec per solve; enables 2b.10 and R5 | 2–3 weeks upstream | SOLVAX owner |
+| R9 | AL smoother research item | PCPATCH vertex-star smoother on K_γ host-side, measure Ha-robustness at 41×16²–24² against 2b.4's table before any JAX code | decides whether the 9–30× iteration cut can become flat in Ha; go/no-go for a GPU patch smoother | 3–4 weeks | petsc4py on office |
+| R10 | Performance against FreeMHD and G4 | time-to-solution at matched error on Hunt Ha 10³ and the ANL fringe, same host; repeat G4 CPU row in a quiet window; finish 2b.10 | the comparison a referee asks for; G4 baseline made clean | 1–2 weeks | office time, FreeMHD image |
+
+Not recommended: hypre AMS/ADS, BoomerAMG or AMGX on the coupled system;
+PETSc or MUMPS as a hard runtime dependency; BDDC before G5b needs 512³; a
+coupled (u, φ, p) Vanka multigrid (measured divergent, 2b.4 follow-up).
+
 ### 3.5 Presentation and process
 
 1. **README** [V, 13 READMEs]: tagline → badges → install → ≤ 15-line example or
@@ -1553,3 +1658,4 @@ Process: pyOpenSci README guide · JOSS review criteria · Google small CLs · D
 | 2026-10-06 | Step 1.13 (#160, taken over from Rogerio Jorge by Tyler Brandes): Smolentsev et al. 2015 Table I on the staggered core, all eight rows gated in `tests/test_table_i.py` against the analytic column the package ships (`samper-table-i.toml`). Three meshes per row at ratio 1.5 (32:4 to 72:9 at Ha 500; 64:8:32:4 to 144:18:72:9 above, the field direction twice the cells): finest-mesh error 0.16–0.43 %, observed order 1.96–2.02, Richardson within 2.2e-4 (five of eight inside the table's four-digit rounding). Solves take 7–10 s warm; Ha 500 runs on pull requests (channel shard), the six higher rows (15–35 s each cold) are `slow` and run on `main`. A1 at Ha 15,000, which #160 found not converging, converges since #183 pinned the Neumann null eigenvalue to zero (computed 7.7e-5 against 7.3e12 on 144:18); removing the pin reproduces #160's −0.65 % and +3.16 %, so 2b.3 was not the cause. Ratchets: test files 21 → 22, test lines +105, checkout bytes +9,945 | 1.3b's Ha 1,000 end; why A2's thin-wall route is insensitive to the null eigenvalue |
 | 2026-10-06 | Stage 2 slimming (3b.3; #221, record #222): the study (optimizer, checkpointed driver, figure pipeline, probes) moves out of `examples/scratch` to TylerBrandes/LMhdX-Duct-Optimization, where it reproduced on 1.10.0 (fully developed stages bit-identical, open-axis excess within 4.6e-9); main keeps `examples/duct_design_law.py` (curated, ~15 s, the study's 48/6 optima), `validation/open_axis.py` and the tutorial `duct_design_law.md`, whose `results.json` and figures are release assets (stage2-v1). Ratchets: curated examples 7, validation files 4, test lines +17, checkout −152,144 bytes | 3b.3 wall conductance after traced conductance inputs |
 | 2026-10-06 | 4.6 slimming: the fully developed pipe (`PipeProblem`, `pipe_grid`, `pipe_problem`, `pipe_residual`, `solve_pipe`, `flow_rate`) moves out of `lmhdx.poisson` into `lmhdx.pipe`; `poisson` keeps the fast-diagonal factorizations (Cartesian, thin wall, polar, Helmholtz). Public pipe names stay importable from `lmhdx.poisson` (lazy `__getattr__`, since `pipe` imports `poisson`). Modules 14 → 15, largest module 1,604 → 1,376 lines (`poisson`; `pipe` 263). Office floor stack, load 39–41, three alternating A/B rounds in fresh processes (pipe Ha 50 48×64, polar Poisson 48×64): results SHA-256 identical; pipe cold 7.4–9.7 s vs 7.6–10.0 s, warm 2.1–3.3 s vs 2.5–3.4 s, polar warm 10–13 ms vs 9–19 ms, all within load noise | the other lanes touching polar code rebase onto this |
+| 2026-10-15 | Research-grade roadmap (docs and plan only): Section 3.8 compares each solver path with HIMAG/MHD-UCLA, FreeMHD, GridapMHD and AL/PCPATCH literature, maps MUMPS/PETSc/hypre/cuDSS capabilities to native, SOLVAX, optional or not at all, lists SOLVAX features used, unused and to request (#130, flexible CG, block combinators, cuDSS), audits rows 6/7/24/27, 1.9d, 2b.4 and G4, and ranks ten items R1–R10 | R1 (#229), R2 GCI table, R3 wording |
