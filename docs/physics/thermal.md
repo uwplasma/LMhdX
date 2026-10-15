@@ -114,8 +114,12 @@ temperature is kept rather than removed as a gauge.
   - Recirculation inside the duct needs neither; its upwind donor is another cell.
 
 On a divergence-free flow it makes no new extremum while $\Delta t$ times every
-cell's outgoing volume-flux rate stays below one; 0.8 is the documented
-envelope. Upwinding adds a numerical diffusivity of about $|u|h/2$, so a
+cell's outgoing volume-flux rate stays below one. `validate_thermal_inputs`
+refuses a start whose Courant number, that rate's largest value times
+$\Delta t$, exceeds `advective_cfl_limit`, 0.8 by default. Conduction alone
+(`advection="off"`) has no such limit. A held flow keeps its Courant number for
+the whole run. An evolving flow is checked at its start only, and its run is
+accepted on the `advective_cfl` each step reports. Upwinding adds a numerical diffusivity of about $|u|h/2$, so a
 heat-transfer result must be refined until it stops changing.
 
 **Joule heat** is each face current squared, then shared between the half
@@ -129,6 +133,10 @@ cells on either side by `ops.face_average_adjoint`:
 **Buoyancy** is averaged onto the velocity faces as the Lorentz force is, and
 zeroed on wall faces. It is added before the division by density and the
 projection. Without $\beta$ or $\mathbf g$ there is no force term at all.
+While $\beta>0$, a component of $\mathbf g$ along a periodic axis is refused
+when the problem is built: no periodic pressure balances its mean, and the mean
+temperature is not subtracted (ADR 0008, D32). With $\beta=0$ a stored
+$\mathbf g$ is inert.
 
 **The step** is first-order and partitioned, with every source taken from the
 old state $n$:
@@ -195,9 +203,13 @@ compute dtype: float64 after `lmhdx.enable_x64()`, else float32. Set it before
 building.
 
 **Derivatives** are supported with respect to anything carried in the state or
-the heat source, for example the initial temperature or a source amplitude. They
+the heat source, for example the initial temperature or a source amplitude, and
+with respect to `backflow_temperature`. They
 are not supported with respect to $k$, $c_p$, $\sigma$, $\Delta t$, the geometry
-or the boundary data, which are built into the prepared step.
+or the boundary conditions, which are built into the prepared step. Upwinding
+picks its donor by the sign of each face velocity. A derivative is therefore
+exact while no face changes sign, and only one-sided where one does: nothing is
+smoothed to hide it.
 
 **Memory.** `advance_thermal` keeps no field history; in reverse mode it keeps
 one state per step.
