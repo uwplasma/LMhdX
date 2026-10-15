@@ -196,8 +196,8 @@ cells, 2.6e-16 on a tanh mesh), and the cells take the average of their two
 faces.
 
 These modules supply geometry, operators, the scalar solve and the electric
-coupling. The cell-centred fully developed solver keeps its own mesh,
-`lmhdx.cases`.
+coupling. The fully developed cases of `lmhdx.cases` run on the same core,
+through `lmhdx.fully_developed`.
 
 ## The projection step and its two stiffnesses
 
