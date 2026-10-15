@@ -474,8 +474,10 @@ def test_the_thermal_step_keeps_its_structure_and_compute_dtype():
     state = initial_thermal_state(thermal, 300.0)
     leaves, tree = jax.tree_util.tree_flatten(state)
     new, record = jax.jit(thermal_step)(state, _cells(thermal, 1.0))
-    assert len(leaves) == 5 and jax.tree_util.tree_structure(new) == tree and len(record) == 15
-    assert all(leaf.dtype == jnp.float64 for leaf in jax.tree_util.tree_leaves((new, record[:-1])))
+    assert len(leaves) == 5 and jax.tree_util.tree_structure(new) == tree and len(record) == 19
+    flags = ("finite", "backflow_boundary_valid")
+    values = [value for name, value in record._asdict().items() if name not in flags]
+    assert all(leaf.dtype == jnp.float64 for leaf in jax.tree_util.tree_leaves((new, values)))
     assert jax.tree_util.tree_structure(jax.eval_shape(thermal_step, state, _cells(thermal, 1.0))[0]) == tree
     with pytest.raises(ValueError, match="compute dtype"):
         build_thermal_step(thermal, dtype=jnp.float32)
@@ -732,3 +734,200 @@ def test_an_open_duct_holds_its_flow_and_takes_an_inlet_temperature():
             dataclasses.replace(thermal, thermal_conditions=(ends, *thermal.thermal_conditions[1:]))
     state = initial_thermal_state(thermal, 0.0, plug)
     validate_thermal_inputs(thermal, state, _cells(thermal, 0.0), divergence_tolerance=1e-12)
+
+
+# Flow returning through an outlet (review corrections, part 2): the incoming enthalpy is boundary data.
+
+
+def _returning_duct(
+    amplitude: float = 2.0, shape: str = "outlet", field: float = 0.0, conductance: float = 0.0
+):
+    """A duct open along x on [0, 2], walls at y = +-1, carrying a held discrete curl: divergence free exactly.
+
+    ``psi = (y + 1) + amplitude s(x) sin(pi (y + 1))`` at the cell corners, with ``s = (x/2)^2`` (``"outlet"``:
+    a band returns through the outlet while the net flow is 2) or ``s = sin(pi x / 2)`` (``"inside"``: it
+    returns inside only). ``psi`` is constant on each wall, so no flow crosses one.
+    """
+    from lmhdx.thermal import ThermalProblem, thermal_boundary
+
+    x, y = uniform_faces(8, 0.0, 2.0), uniform_faces(6, -1.0, 1.0)
+    ramp = (x / 2.0) ** 2 if shape == "outlet" else np.sin(np.pi * x / 2.0)
+    wave = np.sin(np.pi * (y + 1.0))
+    wave[[0, -1]] = 0.0  # exactly: sin(2 pi) is not zero in floating point, and no flow may cross a wall
+    psi = (y + 1.0)[None, :] + amplitude * ramp[:, None] * wave[None, :]
+    along = (np.diff(psi, axis=1) / np.diff(y)[None, :])[:, :, None]
+    across = (-np.diff(psi, axis=0) / np.diff(x)[:, None])[:, :, None]
+    grid = Grid(x, y, uniform_faces(1, 0.0, 1.0))
+    opening = BoundaryCondition(DIRICHLET, lower=along[0], upper_kind=NEUMANN)
+    rest = zero_velocity(ChannelProblem(grid, (opening, WALL, PERIODIC_AXIS)))
+    velocity = (rest[0].replace_data(jnp.asarray(along)), rest[1].replace_data(jnp.asarray(across)), rest[2])
+    from lmhdx.thermal import _outgoing_rate
+
+    dt = 0.5 / float(jnp.max(_outgoing_rate(velocity)))
+    flow = ChannelProblem(
+        grid,
+        (opening, WALL, PERIODIC_AXIS),
+        magnetic_field=(0.0, 0.0, field),
+        wall_conductance=(0.0, conductance, 0.0),
+        dt=dt,
+    )
+    walls = (
+        thermal_boundary("temperature", 300.0, upper_kind="heat_flux", conductivity=0.05),
+        thermal_boundary("heat_flux", conductivity=0.05),
+        PERIODIC_AXIS,
+    )
+    thermal = ThermalProblem(flow, walls, 1.0, 0.05, 0.0, outlet_backflow="reservoir_flux")
+    return thermal, velocity
+
+
+def test_the_outlet_face_brings_in_the_reservoir_temperature_where_the_flow_returns():
+    """Two outlet faces, areas 2 and 3, velocities 1 and -0.25, cells at 310 and 330, reservoir at 290 and 280, C = 5.
+
+    Rates 2 out and 0.75 back; 3100 leaves with the cell's temperature, 1050 comes in with the reservoir's, 2050 net.
+    The second cell's 330 takes no part.
+    """
+    import dataclasses
+
+    from lmhdx.grid import CENTER, Field
+    from lmhdx.thermal import ThermalProblem, _carried_out, _outlet_exchange, _upwind_fluxes, thermal_boundary
+
+    grid = Grid(uniform_faces(1, 0.0, 1.0), np.array([0.0, 2.0, 5.0]), uniform_faces(1, 0.0, 1.0))
+    opening = BoundaryCondition(DIRICHLET, lower=np.zeros((2, 1)), upper_kind=NEUMANN)
+    flow = ChannelProblem(grid, (opening, WALL, PERIODIC_AXIS))
+    walls = (
+        thermal_boundary("temperature", 300.0, upper_kind="heat_flux", conductivity=1.0),
+        thermal_boundary("heat_flux", conductivity=1.0),
+        PERIODIC_AXIS,
+    )
+    thermal = ThermalProblem(flow, walls, 5.0, 1.0, 0.0, outlet_backflow="reservoir_flux")
+    rest = zero_velocity(flow)
+    velocity = (rest[0].replace_data(rest[0].data.at[1, :, 0].set(jnp.array([1.0, -0.25]))), *rest[1:])
+    temperature = Field(jnp.array([[[310.0], [330.0]]]), (CENTER,) * 3, grid)
+    reservoir = jnp.array([[290.0], [280.0]])
+    fluxes = _upwind_fluxes(temperature, velocity, thermal, reservoir)
+    back, out, brought, valid = _outlet_exchange(velocity, reservoir, thermal, jnp.float64)
+    assert (float(back), float(out), float(brought), bool(valid)) == (0.75, 2.0, 1050.0, True)
+    assert float(_carried_out(fluxes, thermal)) == pytest.approx(2050.0, rel=1e-14)
+    assert float(5.0 * 2.0 * fluxes[0].data[1, 0, 0]) == pytest.approx(3100.0, rel=1e-14)
+    unchecked = dataclasses.replace(thermal, outlet_backflow="error")
+    assert not bool(_outlet_exchange(velocity, None, unchecked, jnp.float64)[3])
+
+
+@pytest.mark.parametrize("case", ["uniform", "reservoir", "joule"])
+def test_a_returning_outlet_balances_its_heat_and_stays_bounded(case):
+    """Positive net flow with a band returning through the outlet: each ledger closes to max(1e-10 P, 64 eps C V T/dt).
+
+    ``uniform``: inlet, reservoir and duct at 300 stay at 300. ``reservoir``: a 280 reservoir cools the duct from the
+    outlet, within [280, 300]. ``joule``: a field and thin conducting walls add Joule heat, and the ledger still closes.
+    """
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
+
+    thermal, velocity = _returning_duct(**(dict(field=3.0, conductance=0.05) if case == "joule" else {}))
+    reservoir = 300.0 if case == "uniform" else 280.0
+    thermal_step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+    start = initial_thermal_state(thermal, 300.0, velocity)
+    state, history = advance_thermal(
+        thermal_step, start, _cells(thermal, 0.0), 30, backflow_temperature=reservoir
+    )
+    terms = (
+        history.storage_rate,
+        history.conductive_heat_out,
+        history.advective_heat_out,
+        history.joule_power,
+    )
+    power = jnp.max(jnp.stack([jnp.abs(term) for term in terms]), axis=0)
+    floor = 64 * np.finfo(float).eps * thermal.heat_capacity * 4.0 * 300.0 / thermal.flow.dt  # volume 4
+    assert bool(jnp.all(jnp.abs(history.heat_balance_residual) <= jnp.maximum(1e-10 * power, floor)))
+    assert float(history.outlet_backflow_rate[0]) > 0.0 and bool(history.backflow_boundary_valid.all())
+    if case == "uniform":
+        assert float(jnp.max(jnp.abs(state.temperature.data - 300.0))) <= 1e-12 * 300.0
+    elif case == "reservoir":
+        assert 280.0 - 1e-12 <= float(jnp.min(state.temperature.data)) < 300.0
+        assert float(jnp.max(state.temperature.data)) <= 300.0 + 1e-12
+        assert float(history.outlet_backflow_enthalpy_in[-1]) == pytest.approx(
+            thermal.heat_capacity * float(history.outlet_backflow_rate[-1]) * 280.0, rel=1e-14
+        )
+    else:
+        assert float(history.joule_power[-1]) > 0.0
+
+
+def test_the_outlet_condition_is_the_total_flux_one_and_converges_at_first_order():
+    """``T = 1 + x^2`` against flow entering at the outlet: the Danckwerts datum converges, a switched Dirichlet does not.
+
+    With ``u = -1`` the outlet face is incoming, and ``C u T_res = C u T - k dT/dn`` there gives
+    ``T_res = T(1) + k T'(1) / C = 2.4``; the source is ``q = C u T' - k T''``. The inlet stays at ``T(0) = 1``.
+    Replacing the datum by ``T(1) = 2`` solves a different problem: its error stays at least five times larger.
+    """
+    from lmhdx.thermal import (
+        ThermalProblem,
+        advance_thermal,
+        build_thermal_step,
+        initial_thermal_state,
+        thermal_boundary,
+    )
+
+    errors = {2.4: [], 2.0: []}
+    for cells in (16, 32, 64):
+        grid = Grid(uniform_faces(cells, 0.0, 1.0), uniform_faces(1, 0.0, 1.0), uniform_faces(1, 0.0, 1.0))
+        opening = BoundaryCondition(DIRICHLET, lower=-np.ones((1, 1)), upper_kind=NEUMANN)
+        flow = ChannelProblem(grid, (opening, PERIODIC_AXIS, PERIODIC_AXIS), dt=0.5 / cells)
+        ends = thermal_boundary("temperature", 1.0, upper_kind="heat_flux", conductivity=0.2)
+        thermal = ThermalProblem(
+            flow, (ends, PERIODIC_AXIS, PERIODIC_AXIS), 1.0, 0.2, 0.0, outlet_backflow="reservoir_flux"
+        )
+        rest = zero_velocity(flow)
+        reversed_flow = (rest[0].replace_data(-jnp.ones_like(rest[0].data)), *rest[1:])
+        x = np.asarray(grid.centers[0])
+        source = _cells(thermal, (-2.0 * x - 0.4)[:, None, None])
+        thermal_step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+        for datum, found in errors.items():
+            start = initial_thermal_state(thermal, 1.0, reversed_flow)
+            state, _ = advance_thermal(thermal_step, start, source, 20 * cells, backflow_temperature=datum)
+            found.append(float(np.max(np.abs(np.asarray(state.temperature.data)[:, 0, 0] - (1.0 + x**2)))))
+    orders = np.log2(np.divide(errors[2.4][:-1], errors[2.4][1:]))
+    assert np.all((orders > 0.8) & (orders < 1.2)), (errors, orders)
+    assert errors[2.0][-1] >= 5.0 * errors[2.4][-1], errors
+
+
+def test_an_outlet_needs_its_returning_temperature_and_refuses_an_unknown_one():
+    import dataclasses
+
+    from lmhdx.thermal import build_thermal_step, initial_thermal_state, validate_thermal_inputs
+
+    thermal, velocity = _returning_duct()
+    state, heat = initial_thermal_state(thermal, 300.0, velocity), _cells(thermal, 0.0)
+    validate_thermal_inputs(thermal, state, heat, divergence_tolerance=1e-10, backflow_temperature=280.0)
+    validate_thermal_inputs(
+        thermal, state, heat, divergence_tolerance=1e-10, backflow_temperature=np.full((6, 1), 280.0)
+    )
+    unchecked = dataclasses.replace(thermal, outlet_backflow="error")
+    for problem, datum in (
+        (thermal, None),
+        (thermal, np.full((1, 6), 280.0)),
+        (thermal, np.inf),
+        (unchecked, None),  # positive net flow, but a band returns through the outlet
+        (unchecked, 280.0),
+    ):
+        with pytest.raises(ValueError):
+            validate_thermal_inputs(
+                problem, state, heat, divergence_tolerance=1e-10, backflow_temperature=datum
+            )
+    inside, recirculating = _returning_duct(shape="inside")
+    validate_thermal_inputs(  # recirculation that never reaches the outlet is the flow's own business
+        dataclasses.replace(inside, outlet_backflow="error"),
+        initial_thermal_state(inside, 300.0, recirculating),
+        _cells(inside, 0.0),
+        divergence_tolerance=1e-10,
+    )
+    thermal_step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+    with pytest.raises(ValueError, match="needs backflow_temperature"):
+        thermal_step(state, heat)
+    closed, _ = _plug_duct(4)
+    for change in (
+        dict(outlet_backflow="reservoir"),
+        dict(advection="off", outlet_backflow="reservoir_flux"),
+    ):
+        with pytest.raises(ValueError):
+            dataclasses.replace(closed, **change)
+    with pytest.raises(ValueError, match="inflow-outflow"):
+        dataclasses.replace(_heated(_uniform_duct(4)), outlet_backflow="reservoir_flux")
