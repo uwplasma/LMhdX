@@ -840,3 +840,69 @@ def test_resolved_wall_layers_are_frozen_and_checked():
             ChannelProblem(grid, conditions, wall_layers=layers)
     with pytest.raises(ValueError):
         ChannelProblem(grid, conditions, wall_conductance=(0.0, 0.1, 0.0), wall_layers=problem.wall_layers)
+
+
+# Buoyancy in the momentum stages (plan step 5.1e, ADR 0008 D32).
+
+
+def _buoyant(grid: Grid, flow_conditions, *, density: float = 1.0, field=(0.0, 0.0, 0.0)):
+    from lmhdx.thermal import ThermalProblem, thermal_boundary
+
+    flow = ChannelProblem(
+        grid, flow_conditions, density=density, forcing=(0.0, 0.0, 0.0), dt=1.0e-2, magnetic_field=field
+    )
+    insulated = thermal_boundary("heat_flux", conductivity=1.0)
+    conditions = tuple(c if c.is_periodic else insulated for c in flow_conditions)
+    return ThermalProblem(
+        flow, conditions, 1.0, 1.0, 300.0, expansion_coefficient=2.0e-3, gravity=(0.0, 0.0, -9.8)
+    )
+
+
+def _buoyant_step(thermal, temperature):
+    from lmhdx.core3d import _advance_momentum
+    from lmhdx.thermal import _buoyancy
+
+    flow = thermal.flow
+    rest = zero_velocity(flow)
+    body = tuple(field.replace_data(jnp.zeros_like(field.data)) for field in rest)
+    extra = _buoyancy(Field(jnp.asarray(temperature), (CENTER,) * 3, flow.grid), thermal)
+    return _advance_momentum(
+        rest, body, flow, flow.factorization(), flow.viscous_factorizations(), extra_force=extra
+    )
+
+
+def test_a_temperature_stratified_along_gravity_stays_at_rest():
+    """The buoyancy of ``T(z)`` is a pure gradient, so the projection takes all of it into the pressure."""
+    grid = Grid(uniform_faces(2, 0.0, 1.0), uniform_faces(2, 0.0, 1.0), tanh_faces(8, -1.0, 1.0, 1.3))
+    thermal = _buoyant(grid, (PERIODIC_X, PERIODIC_X, WALL))
+    z = np.asarray(grid.centers[2])[None, None, :]
+    velocity, pressure = _buoyant_step(thermal, np.broadcast_to(300.0 + 3.0 * z**2, grid.shape))
+    scale = thermal.flow.dt * 2.0e-3 * 9.8 * 3.0
+    assert max(float(jnp.max(jnp.abs(component.data))) for component in velocity) <= 1e-12 * scale
+    assert float(jnp.max(jnp.abs(pressure.data))) > 0.0
+
+
+def test_a_horizontal_temperature_difference_drives_a_circulation():
+    """``T(x)`` under vertical gravity is not a gradient: the projection keeps a circulation of its size."""
+    grid = Grid(uniform_faces(8, 0.0, 2.0), uniform_faces(1, 0.0, 1.0), uniform_faces(8, -1.0, 1.0))
+    thermal = _buoyant(grid, (PERIODIC_X, PERIODIC_X, WALL))
+    x = np.asarray(grid.centers[0])[:, None, None]
+    velocity, _ = _buoyant_step(thermal, np.broadcast_to(300.0 + np.cos(np.pi * x), grid.shape))
+    scale = thermal.flow.dt * 2.0e-3 * 9.8
+    assert float(jnp.max(jnp.abs(velocity[2].data))) >= 0.1 * scale
+    assert float(jnp.max(jnp.abs(velocity[0].data))) >= 0.1 * scale
+    assert float(jnp.max(jnp.abs(divergence(velocity).data))) <= 1e-10 * scale
+
+
+def test_buoyancy_accelerates_the_flow_independently_of_its_density():
+    """The force density scales with ``rho_0`` and is divided by it; the pressure keeps the factor."""
+    grid = Grid(uniform_faces(8, 0.0, 2.0), uniform_faces(1, 0.0, 1.0), tanh_faces(8, -1.0, 1.0, 1.3))
+    x = np.asarray(grid.centers[0])[:, None, None]
+    temperature = np.broadcast_to(300.0 + np.cos(np.pi * x), grid.shape)
+    light = _buoyant_step(_buoyant(grid, (PERIODIC_X, PERIODIC_X, WALL)), temperature)
+    heavy = _buoyant_step(_buoyant(grid, (PERIODIC_X, PERIODIC_X, WALL), density=2.5), temperature)
+    for first, second in zip(light[0], heavy[0]):
+        assert float(jnp.max(jnp.abs(first.data - second.data))) <= 1e-13 * float(
+            jnp.max(jnp.abs(first.data))
+        )
+    assert np.allclose(np.asarray(heavy[1].data), 2.5 * np.asarray(light[1].data), rtol=1e-12, atol=1e-12)

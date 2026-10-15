@@ -35,6 +35,14 @@ on a discretely divergence-free carrier, the update makes no new extremum while
 ``dt`` times every cell's outgoing volume-flux rate stays below one; 0.8 is the
 documented envelope. Upwinding adds a numerical diffusivity of about ``|u| h/2``,
 which is measured against ``alpha`` before a heat-transfer number is quoted.
+
+*Buoyancy.* With expansion coefficient ``beta`` and gravity ``g`` the force
+density ``-rho_0 beta (T - T_r) g`` joins the Lorentz force before the division
+by density and the projection (ADR 0008, D32). It reaches the velocity faces by
+the same average as the Lorentz force and is zeroed on wall faces. Without
+``beta`` or ``g`` there is no force term at all, so the flow is the isothermal
+one. The fractional step does not hold every hydrostatic state exactly; the
+claim is convergence in the time step.
 """
 
 from __future__ import annotations
@@ -47,7 +55,7 @@ import numpy as np
 
 from .core3d import ChannelProblem
 from .grid import CENTER, DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, pad
-from .ops import face_average_adjoint, laplacian, wall_insulated
+from .ops import face_average, face_average_adjoint, laplacian, wall_insulated
 from .poisson import FastDiagonalHelmholtz, fast_diagonal_helmholtz
 
 __all__ = ["ThermalProblem", "thermal_boundary"]
@@ -105,13 +113,22 @@ class ThermalProblem:
     axis, best built with :func:`thermal_boundary`; an axis is periodic exactly
     where the flow's is. The flow must be on a Cartesian grid without an
     inflow-outflow axis. ``joule_heating`` deposits the fluid's Joule heat.
+
+    ``reference_temperature`` is the ``T_r`` of the Boussinesq density
+    ``rho_0 [1 - beta (T - T_r)]`` and of the reported sensible heat.
+    ``expansion_coefficient`` is ``beta``, zero for passive transport, and
+    ``gravity`` the gravitational acceleration, pointing down, along the grid's
+    three axes.
     """
 
     flow: ChannelProblem
     thermal_conditions: tuple[BoundaryCondition, BoundaryCondition, BoundaryCondition]
     specific_heat: float
     thermal_conductivity: float
+    reference_temperature: float
     joule_heating: bool = True
+    expansion_coefficient: float = 0.0
+    gravity: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     def __post_init__(self) -> None:
         if not isinstance(self.flow, ChannelProblem):
@@ -124,6 +141,13 @@ class ThermalProblem:
         for name in ("density", "dt"):
             if not np.isfinite(getattr(self.flow, name)):
                 raise ValueError(f"the flow's {name} must be finite")
+        if not np.isfinite(self.reference_temperature):
+            raise ValueError("reference_temperature must be finite")
+        if not (np.isfinite(self.expansion_coefficient) and float(self.expansion_coefficient) >= 0.0):
+            raise ValueError("expansion_coefficient must be nonnegative and finite")
+        if len(self.gravity) != 3 or not np.all(np.isfinite(np.asarray(self.gravity, dtype=float))):
+            raise ValueError("gravity must be three finite components")
+        object.__setattr__(self, "gravity", tuple(float(component) for component in self.gravity))
         if not isinstance(self.joule_heating, bool):
             raise TypeError("joule_heating must be True or False")
         if len(self.thermal_conditions) != 3:
@@ -248,3 +272,23 @@ def _joule_heating(currents: tuple[Field, Field, Field], problem: ThermalProblem
         for axis, current in enumerate(currents)
     )
     return Field(sum(squares) / sigma, _CELL, grid)
+
+
+def _buoyancy(temperature: Field, problem: ThermalProblem) -> tuple[Field, Field, Field] | None:
+    """Return the Boussinesq force density on the velocity faces, or ``None`` without buoyancy.
+
+    The cell force ``-rho_0 beta (T - T_r) g`` is averaged onto each velocity
+    face as :func:`lmhdx.core3d.face_lorentz_force` carries the Lorentz force,
+    wrapping a periodic axis and copying at a wall, then zeroed on wall faces,
+    where the velocity is not an unknown. ``None`` when ``beta`` or ``g`` is zero.
+    """
+    beta, gravity = float(problem.expansion_coefficient), problem.gravity
+    if not (beta and any(gravity)):
+        return None
+    scalar = problem.flow.scalar_conditions
+    excess = -float(problem.flow.density) * beta * (temperature.data - float(problem.reference_temperature))
+    faces = (
+        face_average(temperature.replace_data(excess * g), axis, scalar[axis])
+        for axis, g in enumerate(gravity)
+    )
+    return tuple(wall_insulated(face, axis, scalar[axis]) for axis, face in enumerate(faces))
