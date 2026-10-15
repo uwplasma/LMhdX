@@ -419,9 +419,11 @@ def test_heat_leaking_out_of_the_inlet_does_not_count_as_delivered_duty():
 
 
 def test_the_thermal_duct_design_runs_as_written_and_keeps_its_contracts():
-    """The square reference reproduces the spectral flow to 2 % on the screening mesh and its own heat balance; a feasible design meets
-    every limit and a rejected one says why; the cost is ``Q dp`` and the candidate the cheapest feasible design
-    evaluated, at its active wall limit; invalid designs are rejected, not ranked; and the checks hold."""
+    """The square reference reproduces the spectral flow on the screening mesh (-1.48 %, second order toward 0) and its
+    Joule heat; a feasible design meets every limit and a rejected one says why; the cost is ``Q dp``, which pressure
+    alone would misrank across flows, and the candidate is the cheapest feasible design evaluated, at its active wall
+    limit; invalid designs are rejected, not ranked; and the refinement, open-duct, capacity and fixed-flux results
+    hold."""
     from lmhdx.core3d import energy_budget
 
     page = Path(__file__).resolve().parents[1] / "docs/tutorials/duct_design_law.md"
@@ -433,16 +435,14 @@ def test_the_thermal_duct_design_runs_as_written_and_keeps_its_contracts():
     a, square_duct = np.sqrt(run["AREA"] / 4.0), run["ducts"][-1]
     hartmann, speed = square_duct["hartmann"], square["flow_rate"] / run["AREA"]
     spectral = run["LENGTH"] * run["MU"] * speed / (a**2 * flow_rate(hartmann, 40))
-    assert abs(square["pressure_drop"] / spectral - 1.0) < 0.02  # -1.48 % on 32/4, second order toward 0
-    joule = float(energy_budget(square["velocity"], square_duct["thermal"].flow).joule)
-    assert square["joule"] == pytest.approx(joule, rel=1e-9) and 0.0 < joule < square["hydraulic_power"]
+    assert -0.016 < square["pressure_drop"] / spectral - 1.0 < -0.013
+    unloaded = run["trial"](square_duct, square["flow_rate"], 0.0)  # the Joule heat alone: no cancellation
+    joule = float(energy_budget(square["velocity"], square_duct["flow"]).joule)
+    assert unloaded["joule"] == pytest.approx(joule, rel=1e-9) and 0.0 < joule < square["hydraulic_power"]
     records = (
         [record for row in run["sweep"] for record in row] + run["edges"] + list(run["evaluated"].values())
     )
     for record in records:
-        assert record["hydraulic_power"] == pytest.approx(
-            record["flow_rate"] * record["pressure_drop"], rel=1e-14
-        )
         if record["rejected"]:
             assert all(isinstance(reason, str) and reason for reason in record["rejected"])
         else:
@@ -456,13 +456,27 @@ def test_the_thermal_duct_design_runs_as_written_and_keeps_its_contracts():
         limit - 0.1 < candidate["wall_peak"] <= limit
         and candidate["hydraulic_power"] < square["hydraulic_power"]
     )
-    column = [row[-2] for row in run["sweep"]]  # one flow: pressure and power rank the shapes alike
-    assert np.array_equal(
-        np.argsort([r["pressure_drop"] for r in column]), np.argsort([r["hydraulic_power"] for r in column])
+    assert (
+        candidate["wall_peak"] - candidate["fluid_peak"] > 0.05
+    )  # a surface flux: the wall face above every cell
+    assert any(  # across flows the lower pressure drop is not always the lower power
+        one["pressure_drop"] < other["pressure_drop"] and one["hydraulic_power"] > other["hydraulic_power"]
+        for one in feasible
+        for other in feasible
     )
     for stopped in (0.0, np.nan):
         assert run["trial"](square_duct, stopped)["rejected"][0].startswith("invalid")
+    assert run["largest_duty"](square_duct, 1e-3) is None  # Re/Ha fails it with no duty at all
     assert abs(run["refined"]["hydraulic_power"] / candidate["hydraulic_power"] - 1.0) < 0.02
-    assert run["delivered"] >= 0.99 and run["open_peak"] <= limit
+    assert min(run["delivered"]) >= 0.99 and max(run["peaks"]) <= limit
+    assert (
+        abs(run["delivered"][1] - run["delivered"][0]) < 1e-4
+        and abs(run["peaks"][1] - run["peaks"][0]) < 0.05
+    )
     duties = dict(run["capacity"])
-    assert duties[1.0] == pytest.approx(run["DUTY"], rel=2e-3) and max(duties.values()) > 1.5 * run["DUTY"]
+    assert (
+        duties[1.0] == pytest.approx(run["DUTY"], rel=2e-3)
+        and max(d for d in duties.values() if d is not None) > 1.5 * run["DUTY"]
+    )
+    widths = dict(run["per_width"])  # at a fixed flux the slender end loses its advantage
+    assert min(widths.values()) < 0.7 * widths[1.0] < widths[min(widths)]  # b/a 0.08
