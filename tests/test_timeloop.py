@@ -321,3 +321,73 @@ def test_a_run_can_be_taken_in_chunks():
     second = advance(problem, 6, first.velocity, factorization=factorization)
     for chunked, complete in zip(second.velocity, whole.velocity, strict=True):
         assert np.max(np.abs(np.asarray(chunked.data) - np.asarray(complete.data))) < 1e-14
+
+
+def _thermal_of(problem: ChannelProblem):
+    """The flow with insulated thermal walls, for its Joule heat; plan step 5.1d."""
+    from lmhdx.thermal import ThermalProblem, thermal_boundary
+
+    insulated = thermal_boundary("heat_flux", conductivity=1.0)
+    conditions = tuple(PERIODIC_AXIS if c.is_periodic else insulated for c in problem.conditions)
+    return ThermalProblem(problem, conditions, specific_heat=1.0, thermal_conductivity=1.0)
+
+
+def _layered_duct() -> ChannelProblem:
+    grid = Grid(uniform_faces(1, 0.0, 1.0), uniform_faces(12, -1.0, 1.0), uniform_faces(12, -1.0, 1.0))
+    end = ((2.0, 2.0), (0.1, 0.1))
+    return ChannelProblem(
+        grid,
+        (PERIODIC_AXIS, WALL, WALL),
+        magnetic_field=(0.0, 10.0, 0.0),
+        wall_layers=(None, (end, end), None),
+    )
+
+
+@pytest.mark.parametrize("walls", ["insulating-uniform", "insulating-stretched", "thin", "layers"])
+def test_the_deposited_joule_heat_integrates_to_the_budget_joule_power(walls):
+    """On one state, the fluid's deposited heat is energy_budget's ``joule`` to 1e-11 (ADR 0008, V12).
+
+    Interior faces share their dissipation between two half cells, a wall face
+    gives the fluid only its own, and a conducting wall's dissipation stays out.
+    """
+    from lmhdx.core3d import duct_problem, face_currents, project, velocity_offset
+    from lmhdx.grid import CENTER, Field
+    from lmhdx.ops import cell_inner_product
+    from lmhdx.thermal import _joule_heating
+
+    problem = {
+        "insulating-uniform": lambda: _uniform_duct(12),
+        "insulating-stretched": lambda: duct_problem(hartmann=20.0, cells=24),
+        "thin": lambda: duct_problem(hartmann=20.0, cells=24, wall_conductance=0.05),
+        "layers": _layered_duct,
+    }[walls]()
+    keys = jax.random.split(jax.random.PRNGKey(5), 3)
+    noise = tuple(
+        Field(
+            jax.random.normal(keys[axis], problem.grid.offset_shape(velocity_offset(axis))),
+            velocity_offset(axis),
+            problem.grid,
+        )
+        for axis in range(3)
+    )
+    state = project(noise, problem)[0]
+    heat = _joule_heating(face_currents(state, problem)[1], _thermal_of(problem))
+    budget = energy_budget(state, problem)
+    deposited = float(
+        cell_inner_product(heat, Field(jnp.ones(problem.grid.shape), (CENTER,) * 3, problem.grid))
+    )
+    assert float(jnp.min(heat.data)) >= 0.0 and float(budget.joule) > 0.0
+    assert abs(deposited - float(budget.joule)) <= 1e-11 * float(budget.joule)
+    assert (float(budget.wall) > 0.0) == (walls in ("thin", "layers"))
+
+
+def test_no_field_or_a_field_along_the_flow_deposits_no_heat():
+    from lmhdx.core3d import face_currents
+    from lmhdx.thermal import _joule_heating
+
+    for field in ((0.0, 0.0, 0.0), (3.0, 0.0, 0.0)):
+        problem = _uniform_duct(8, magnetic_field=field)
+        rest = zero_velocity(problem)
+        along = (rest[0].replace_data(jnp.ones_like(rest[0].data)), *rest[1:])
+        heat = _joule_heating(face_currents(along, problem)[1], _thermal_of(problem))
+        assert float(jnp.max(jnp.abs(heat.data))) <= 1e-24

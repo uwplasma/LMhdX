@@ -47,7 +47,7 @@ import numpy as np
 
 from .core3d import ChannelProblem
 from .grid import CENTER, DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, pad
-from .ops import laplacian, wall_insulated
+from .ops import face_average_adjoint, laplacian, wall_insulated
 from .poisson import FastDiagonalHelmholtz, fast_diagonal_helmholtz
 
 __all__ = ["ThermalProblem", "thermal_boundary"]
@@ -104,13 +104,14 @@ class ThermalProblem:
     ``thermal_conditions`` holds one :class:`lmhdx.grid.BoundaryCondition` per
     axis, best built with :func:`thermal_boundary`; an axis is periodic exactly
     where the flow's is. The flow must be on a Cartesian grid without an
-    inflow-outflow axis.
+    inflow-outflow axis. ``joule_heating`` deposits the fluid's Joule heat.
     """
 
     flow: ChannelProblem
     thermal_conditions: tuple[BoundaryCondition, BoundaryCondition, BoundaryCondition]
     specific_heat: float
     thermal_conductivity: float
+    joule_heating: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.flow, ChannelProblem):
@@ -123,6 +124,8 @@ class ThermalProblem:
         for name in ("density", "dt"):
             if not np.isfinite(getattr(self.flow, name)):
                 raise ValueError(f"the flow's {name} must be finite")
+        if not isinstance(self.joule_heating, bool):
+            raise TypeError("joule_heating must be True or False")
         if len(self.thermal_conditions) != 3:
             raise ValueError("heat transport needs one boundary condition per axis")
         shape = self.flow.grid.shape
@@ -223,3 +226,25 @@ def _outgoing_rate(velocity: tuple[Field, Field, Field]) -> jnp.ndarray:
 def _sliced(data: jnp.ndarray, axis: int, start: int) -> jnp.ndarray:
     """All but the last (``start`` 0) or the first (``start`` 1) entry along ``axis``."""
     return jax.lax.slice_in_dim(data, start, data.shape[axis] - 1 + start, axis=axis)
+
+
+def _joule_heating(currents: tuple[Field, Field, Field], problem: ThermalProblem) -> Field:
+    """Return the fluid's Joule heat per unit volume, ``|J|^2 / sigma``, from the full face currents.
+
+    Each face's ``J_f^2 / sigma`` is shared between the half cells on either side
+    by :func:`lmhdx.ops.face_average_adjoint`, squared before it is shared so no
+    sub-cell dissipation is lost. A wall face heats only the fluid's half cell;
+    what the current dissipates beyond it, in a conducting wall, is the wall's.
+    The volume integral is the ``joule`` of :func:`lmhdx.core3d.energy_budget`.
+    Without conductivity, or with ``joule_heating`` off, nothing is deposited and
+    nothing is divided.
+    """
+    grid, sigma = currents[0].grid, float(problem.flow.conductivity)
+    if not (problem.joule_heating and sigma):
+        return Field(jnp.zeros(grid.shape, dtype=currents[0].dtype), _CELL, grid)
+    scalar = problem.flow.scalar_conditions
+    squares = (
+        face_average_adjoint(current.replace_data(current.data**2), axis, scalar[axis]).data
+        for axis, current in enumerate(currents)
+    )
+    return Field(sum(squares) / sigma, _CELL, grid)
