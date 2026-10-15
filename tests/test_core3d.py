@@ -906,3 +906,76 @@ def test_buoyancy_accelerates_the_flow_independently_of_its_density():
             jnp.max(jnp.abs(first.data))
         )
     assert np.allclose(np.asarray(heavy[1].data), 2.5 * np.asarray(light[1].data), rtol=1e-12, atol=1e-12)
+
+
+# The coupled thermal step's accuracy (plan step 5.1f).
+
+
+def _thermal_run(thermal, temperature, velocity, source: float, steps: int):
+    from lmhdx.thermal import build_thermal_step, initial_thermal_state
+
+    thermal_step = jax.jit(build_thermal_step(thermal, dtype=jnp.float64))
+    state = initial_thermal_state(thermal, temperature, velocity)
+    heat = state.temperature.replace_data(jnp.full(thermal.flow.grid.shape, source))
+    for _ in range(steps):
+        state, record = thermal_step(state, heat)
+    assert bool(record.finite)
+    return state
+
+
+def test_a_carried_and_diffused_wave_converges_at_first_order():
+    """At uniform speed ``U`` in a periodic box ``exp(-alpha k^2 t) cos k(x - Ut) + q t / C`` is exact.
+
+    Upwinding at Courant 0.5 and backward Euler both err by O(h) at a fixed Courant number.
+    """
+    from lmhdx.thermal import ThermalProblem
+
+    errors = []
+    for cells in (32, 64, 128):
+        grid = Grid(uniform_faces(cells, 0.0, 1.0), uniform_faces(1, 0.0, 1.0), uniform_faces(1, 0.0, 1.0))
+        flow = ChannelProblem(grid, (PERIODIC_X,) * 3, forcing=(0.0, 0.0, 0.0), dt=0.5 / cells)
+        thermal = ThermalProblem(flow, (PERIODIC_X,) * 3, 1.0, 0.05, 0.0)
+        rest = zero_velocity(flow)
+        carrier = (rest[0].replace_data(jnp.ones_like(rest[0].data)), *rest[1:])
+        x = np.asarray(grid.centers[0])[:, None, None]
+        state = _thermal_run(thermal, np.cos(2.0 * np.pi * x), carrier, 2.0, cells // 2)
+        exact = np.exp(-0.05 * (2.0 * np.pi) ** 2 * 0.25) * np.cos(2.0 * np.pi * (x - 0.25)) + 2.0 * 0.25
+        errors.append(float(np.max(np.abs(np.asarray(state.temperature.data) - exact))))
+    orders = np.log2(np.divide(errors[:-1], errors[1:]))
+    assert np.all((orders > 0.8) & (orders < 1.2)), (errors, orders)
+
+
+def test_the_coupled_step_converges_at_first_order_in_time():
+    """Buoyancy, Joule heat, a drive and heated walls together: temperature and velocity err by O(dt).
+
+    Against a run at dt/32 on the same mesh, to t = 0.2 (ADR 0008, V16).
+    """
+    from lmhdx.thermal import ThermalProblem, thermal_boundary
+
+    grid = Grid(uniform_faces(1, 0.0, 1.0), uniform_faces(8, -1.0, 1.0), uniform_faces(8, -1.0, 1.0))
+    y = np.asarray(grid.centers[1])[None, :, None]
+    start = np.broadcast_to(300.0 + 0.5 * np.sin(np.pi * y), grid.shape)
+    walls = (
+        PERIODIC_X,
+        thermal_boundary("heat_flux", conductivity=0.2),
+        thermal_boundary("temperature", 301.0, 299.0),
+    )
+    results = {}
+    for dt in (0.02, 0.01, 0.005, 0.000625):
+        flow = ChannelProblem(
+            grid, (PERIODIC_X, WALL, WALL), magnetic_field=(0.0, 5.0, 0.0), forcing=(1.0, 0.0, 0.0), dt=dt
+        )
+        thermal = ThermalProblem(
+            flow, walls, 1.0, 0.2, 300.0, expansion_coefficient=0.05, gravity=(0.0, 0.0, -1.0)
+        )
+        results[dt] = _thermal_run(thermal, start, None, 0.0, round(0.2 / dt))
+    reference = results.pop(0.000625)
+    errors = [
+        [
+            float(jnp.max(jnp.abs(state.temperature.data - reference.temperature.data))),
+            max(float(jnp.max(jnp.abs(a.data - b.data))) for a, b in zip(state.velocity, reference.velocity)),
+        ]
+        for state in results.values()
+    ]
+    orders = np.log2(np.divide(errors[:-1], errors[1:]))
+    assert np.all((orders > 0.8) & (orders < 1.5)), (errors, orders)

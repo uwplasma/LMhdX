@@ -393,3 +393,107 @@ def test_no_field_or_a_field_along_the_flow_deposits_no_heat():
         along = (rest[0].replace_data(jnp.ones_like(rest[0].data)), *rest[1:])
         heat = _joule_heating(face_currents(along, problem)[1], _thermal_of(problem))
         assert float(jnp.max(jnp.abs(heat.data))) <= 1e-24
+
+
+# The coupled thermal step and its heat ledger (plan step 5.1f).
+
+
+def _heated(flow: ChannelProblem, conditions=None, **settings):
+    from lmhdx.thermal import ThermalProblem, thermal_boundary
+
+    insulated = thermal_boundary("heat_flux", conductivity=0.5)
+    conditions = conditions or tuple(PERIODIC_AXIS if c.is_periodic else insulated for c in flow.conditions)
+    return ThermalProblem(flow, conditions, 2.0, 0.5, 300.0, **settings)
+
+
+def _cells(thermal, values):
+    from lmhdx.grid import CENTER, Field
+
+    grid = thermal.flow.grid
+    return Field(jnp.broadcast_to(jnp.asarray(values, dtype=jnp.float64), grid.shape), (CENTER,) * 3, grid)
+
+
+def test_a_passive_thermal_step_moves_the_flow_exactly_as_step_does(monkeypatch):
+    """With one potential solve: the Lorentz force and the Joule heat share it."""
+    from lmhdx.thermal import build_thermal_step, initial_thermal_state
+
+    flow = _uniform_duct(8, conductance=0.05)
+    viscous = flow.viscous_factorizations()
+    velocity = advance(flow, 3, viscous=viscous).velocity
+    thermal = _heated(flow)
+    state = initial_thermal_state(thermal, 300.0, velocity)
+    solves, solve = [], core3d._solve_potential
+    monkeypatch.setattr(core3d, "_solve_potential", lambda *args: solves.append(1) or solve(*args))
+    moved = build_thermal_step(thermal, dtype=jnp.float64)(state, _cells(thermal, 0.0))[0].velocity
+    assert len(solves) == 1
+    expected = step(velocity, flow, flow.factorization(), viscous)[0]
+    assert all(np.array_equal(a.data, b.data) for a, b in zip(moved, expected))
+
+
+@pytest.mark.parametrize("case", ["heated", "fluxes", "walls", "flowing"])
+def test_the_heat_ledger_closes_at_its_rounding_floor(case):
+    """Storage plus conduction out is Joule plus external heat, measured at ``max(1e-10 P, 64 eps C V T / dt)``."""
+    from lmhdx.thermal import build_thermal_step, initial_thermal_state, thermal_boundary
+
+    flow = _uniform_duct(8, hartmann=10.0 if case == "flowing" else 0.0)
+    insulated = thermal_boundary("heat_flux", conductivity=0.5)
+    walls = {
+        "fluxes": thermal_boundary("heat_flux", 2.0, 5.0, conductivity=0.5),
+        "walls": thermal_boundary("temperature", 290.0, 310.0),
+    }.get(case, insulated)
+    thermal = _heated(flow, (PERIODIC_AXIS, walls, insulated))
+    noise = 0.1 * np.random.default_rng(17).standard_normal(flow.grid.shape)
+    velocity = advance(flow, 5, viscous=flow.viscous_factorizations()).velocity if case == "flowing" else None
+    state = initial_thermal_state(thermal, 300.0 + noise, velocity)
+    source = _cells(thermal, 7.0 if case in ("heated", "flowing") else 0.0)
+    thermal_step = build_thermal_step(thermal, dtype=jnp.float64)
+    floor = 64 * np.finfo(float).eps * thermal.heat_capacity * 4.0 * 310.0 / flow.dt
+    for _ in range(3):
+        state, record = thermal_step(state, source)
+        power = max(abs(float(value)) for value in record[5:9])
+        assert abs(float(record.heat_balance_residual)) <= max(1e-10 * power, floor)
+        assert float(record.heat_solve_residual) <= 1e-12 * 310.0 / flow.dt and bool(record.finite)
+    if case == "fluxes":
+        assert float(record.conductive_heat_out) == pytest.approx((2.0 + 5.0) * 2.0, rel=1e-12)
+    if case == "walls":  # the wall cells keep evolving: no wall value is written into them
+        assert float(jnp.max(state.temperature.data[:, [0, -1], :])) < 309.0
+    assert (float(record.joule_power) > 0.0) == (case == "flowing")
+    assert float(record.external_power) == pytest.approx(28.0 if case in ("heated", "flowing") else 0.0)
+
+
+def test_the_thermal_step_keeps_its_structure_and_compute_dtype():
+    """Five array leaves in, the same out, whole-output jit; a foreign dtype is refused, true float32 runs."""
+    import subprocess
+    import sys
+
+    from lmhdx.thermal import build_thermal_step, initial_thermal_state
+
+    thermal = _heated(_uniform_duct(6, hartmann=4.0), expansion_coefficient=1.0e-3, gravity=(0.0, 0.0, -1.0))
+    thermal_step = build_thermal_step(thermal, dtype=jnp.float64)
+    state = initial_thermal_state(thermal, 300.0)
+    leaves, tree = jax.tree_util.tree_flatten(state)
+    new, record = jax.jit(thermal_step)(state, _cells(thermal, 1.0))
+    assert len(leaves) == 5 and jax.tree_util.tree_structure(new) == tree and len(record) == 14
+    assert all(leaf.dtype == jnp.float64 for leaf in jax.tree_util.tree_leaves((new, record[:-1])))
+    assert jax.tree_util.tree_structure(jax.eval_shape(thermal_step, state, _cells(thermal, 1.0))[0]) == tree
+    with pytest.raises(ValueError, match="compute dtype"):
+        build_thermal_step(thermal, dtype=jnp.float32)
+    code = """
+import jax.numpy as jnp
+from lmhdx.core3d import ChannelProblem
+from lmhdx.grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces
+from lmhdx.thermal import ThermalProblem, build_thermal_step, initial_thermal_state, thermal_boundary
+walls = BoundaryCondition(NEUMANN)
+grid = Grid(uniform_faces(1, 0.0, 1.0), uniform_faces(6, -1.0, 1.0), uniform_faces(6, -1.0, 1.0))
+flow = ChannelProblem(grid, (BoundaryCondition(PERIODIC), walls, walls), magnetic_field=(0.0, 4.0, 0.0))
+insulated = thermal_boundary("heat_flux", conductivity=0.5)
+thermal = ThermalProblem(flow, (BoundaryCondition(PERIODIC), insulated, insulated), 2.0, 0.5, 300.0)
+state = initial_thermal_state(thermal, 300.0)
+new, record = build_thermal_step(thermal, dtype=jnp.float32)(state, state.temperature)
+print(new.temperature.dtype, record.sensible_energy.dtype, bool(record.finite))
+"""
+    environment = {**__import__("os").environ, "JAX_ENABLE_X64": "false"}
+    result = subprocess.run(
+        [sys.executable, "-c", code], env=environment, capture_output=True, text=True, check=True
+    )
+    assert result.stdout.split() == ["float32", "float32", "True"]
