@@ -811,7 +811,10 @@ def test_a_thermal_problem_checks_its_inputs():
         dict(gravity=(0.0, 0.0, np.inf)),
         dict(flow=dataclasses.replace(problem.flow, dt=np.inf)),
         dict(flow=ChannelProblem(_polar(4, 6), (WALL, WRAP, WRAP))),
-        dict(flow=ChannelProblem(grid, (BoundaryCondition(DIRICHLET, upper_kind=NEUMANN), WALL, WALL))),
+        dict(
+            flow=ChannelProblem(grid, (BoundaryCondition(DIRICHLET, upper_kind=NEUMANN), WALL, WALL)),
+            thermal_conditions=(thermal_boundary("heat_flux", conductivity=0.5), *walls[1:]),
+        ),
     ):
         with pytest.raises(ValueError):
             dataclasses.replace(problem, **change)

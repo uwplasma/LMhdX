@@ -1175,3 +1175,58 @@ def test_developed_heat_refuses_an_ill_posed_duct():
     wrapped = ThermalProblem(box, (_WRAP, _WRAP, flux.thermal_conditions[2]), 1.0, 1.0, 0.0)
     with pytest.raises(ValueError, match="exactly one axis"):
         developed_heat(wrapped, velocity, heat)
+
+
+def test_a_heated_hunt_duct_balances_its_enthalpy():
+    """Plan step 5.3: a Hunt duct carries heat from its inlet to its outlet, balanced to 1e-6 every step.
+
+    Thin conducting Hartmann walls (c 0.05, Ha 20), a fully developed inlet at 0, one side wall taking in a
+    unit heat flux, and the Joule heat of the current. The outlet takes out what the flow carries; by the
+    end the duct is steady and the enthalpy leaving is the Joule heat plus the net wall heat.
+    """
+    from lmhdx.axial import open_duct, solve_open_duct
+    from lmhdx.thermal import (
+        ThermalProblem,
+        advance_thermal,
+        build_thermal_step,
+        initial_thermal_state,
+        thermal_boundary,
+        validate_thermal_inputs,
+    )
+
+    grid = Grid(uniform_faces(16, 0.0, 8.0), uniform_faces(12, -1.0, 1.0), uniform_faces(12, -1.0, 1.0))
+    base = ChannelProblem(
+        grid, (_WRAP, _WALL, _WALL), magnetic_field=(0.0, 20.0, 0.0), wall_conductance=(0.0, 0.05, 0.0)
+    )
+    flow = open_duct(base, 4.0)
+    velocity = solve_open_duct(flow).velocity
+    walls = (
+        thermal_boundary("temperature", 0.0, upper_kind="heat_flux", conductivity=0.05),
+        thermal_boundary("heat_flux", conductivity=0.05),
+        thermal_boundary("heat_flux", -1.0, 0.0, conductivity=0.05),
+    )
+    thermal = ThermalProblem(dataclasses.replace(flow, dt=0.1), walls, 1.0, 0.05, 0.0)
+    state, heat = (
+        initial_thermal_state(thermal, 0.0, velocity),
+        Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid),
+    )
+    validate_thermal_inputs(thermal, state, heat, divergence_tolerance=1e-6)
+    _, history = advance_thermal(
+        build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True), state, heat, 400
+    )
+    terms = (
+        history.storage_rate,
+        history.conductive_heat_out,
+        history.advective_heat_out,
+        history.joule_power,
+    )
+    scale = jnp.max(jnp.stack([jnp.abs(term) for term in terms]), axis=0)
+    assert float(jnp.max(jnp.abs(history.heat_balance_residual) / scale)) <= 1e-6 and bool(
+        history.finite.all()
+    )
+    assert float(history.advective_cfl.max()) <= 0.8 and float(history.joule_power[-1]) > 0.0
+    leaving, made = (
+        float(history.advective_heat_out[-1]),
+        float(history.joule_power[-1] - history.conductive_heat_out[-1]),
+    )
+    assert abs(float(history.storage_rate[-1])) <= 1e-6 * leaving and leaving == pytest.approx(made, rel=1e-6)
