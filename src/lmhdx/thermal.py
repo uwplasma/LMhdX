@@ -1195,7 +1195,8 @@ class ThermalRun(NamedTuple):
     """A thermal run read by :func:`thermal_run_from_toml`: the problem, its start, and how to run and record it.
 
     ``provenance`` holds the run's other inputs, its heat source and held flow, kept in each record so that a
-    resume can check them; ``restart`` the record it started from and how, or None.
+    resume can check them; ``limits`` the advective Courant and buoyancy limits each chunk's samples must meet
+    (None: the scheme's own, or none); ``restart`` the record it started from and how, or None.
     """
 
     name: str
@@ -1211,6 +1212,7 @@ class ThermalRun(NamedTuple):
     write_paraview: bool
     write_restart: bool
     provenance: dict
+    limits: dict
     restart: dict | None
 
 
@@ -1242,7 +1244,9 @@ _TOML_KEYS["thermal"] |= dict.fromkeys("xyz", "table") | dict.fromkeys(
     ("specific_heat", "thermal_conductivity", "reference_temperature", "expansion_coefficient"), _NUMBER
 )
 _TOML_KEYS["thermal"] |= dict.fromkeys(("initial_temperature", "heat_source"), _NUMBER)
-_TOML_KEYS["run"]["divergence_tolerance"] = _NUMBER
+_TOML_KEYS["run"] |= dict.fromkeys(
+    ("divergence_tolerance", "advective_cfl_limit", "buoyancy_courant_limit"), _NUMBER
+)
 _TOML_TYPES = {
     "table": lambda value: isinstance(value, dict),
     "array": lambda value: isinstance(value, list),
@@ -1284,8 +1288,8 @@ def thermal_run_from_toml(root: dict, base: str | Path = ".") -> ThermalRun:
     holds :class:`ThermalProblem`'s values, ``hold_flow``, a uniform ``initial_temperature`` and
     ``heat_source``, and for each wall axis, and only those, a table ``[thermal.y]`` of
     :func:`thermal_boundary`'s ``kind`` (``"temperature"`` or ``"heat_flux"``), ``lower`` and ``upper``.
-    ``[run]`` gives ``steps`` in compiled chunks of ``chunk``, each ending in a record and a frame;
-    ``[output]`` the ``directory`` and what to write; ``[restart]`` a
+    ``[run]`` gives ``steps`` in compiled chunks of ``chunk``, each ending in a record and a frame, and the
+    limits of :func:`lmhdx.io.run_thermal`; ``[output]`` the ``directory`` and what to write; ``[restart]`` a
     :func:`write_thermal_record` record's ``path`` and ``mode``: ``"resume"``, the default, continues the run
     that wrote it, whose heat source and held flow must be these, and ``"import"`` starts from its state.
     """
@@ -1358,6 +1362,7 @@ def thermal_run_from_toml(root: dict, base: str | Path = ".") -> ThermalRun:
     else:
         velocity = solve_steady_state(flow).velocity if start == "steady" else None
         state = initial_thermal_state(problem, temperature, velocity)
+    limits = {key: run.get(f"{key}_limit") for key in ("advective_cfl", "buoyancy_courant")}
     return ThermalRun(
         case["name"],
         case["units"],
@@ -1372,5 +1377,6 @@ def thermal_run_from_toml(root: dict, base: str | Path = ".") -> ThermalRun:
         output.get("write_paraview", True),
         output.get("write_restart", True),
         provenance,
+        limits,
         restart,
     )

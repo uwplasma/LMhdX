@@ -501,7 +501,8 @@ an integer and a flag a boolean, neither converted.
 - `[thermal.y]` and `[thermal.z]`: each wall axis's `thermal_boundary` (`kind`
   `"temperature"` or `"heat_flux"`, `lower`, `upper`), required for a wall axis
   and refused for a periodic one;
-- `[run]`: `steps`, compiled in chunks of `chunk`;
+- `[run]`: `steps`, compiled in chunks of `chunk`, and optional limits,
+  `advective_cfl_limit` and `buoyancy_courant_limit`;
 - `[output]`: the `directory`, `write_paraview` and `write_restart`;
 - `[restart]`: an optional record's `path`, and its `mode`.
 
@@ -547,13 +548,33 @@ chunk = 10
 directory = "out"
 ```
 
-After each chunk the run writes two files:
+Each chunk is accepted or rejected after it runs. Every sample in it, not only
+the last, must pass these checks:
+- it is finite, and the outlet is valid;
+- its advective Courant number is within the scheme's limit: 0.8 for upwind,
+  none for conduction alone. `advective_cfl_limit` replaces that limit, and the
+  summary records it as an override;
+- its buoyancy Courant number is within `buoyancy_courant_limit`, if one is
+  given. That limit is a policy calibrated on particular cases, not a stability
+  bound.
+
+The start is held to the same limits. An accepted chunk writes two files:
 - a record, `heated_duct_000010.npz` and so on;
 - a frame, `heated_duct_000010.vtr`, gathered in `heated_duct.pvd`.
 
-`thermal_summary.json` holds the last diagnostics and the run's largest heat
-balance residual, Courant numbers and Boussinesq measure. The command exits
-with 2 if the run left the numbers.
+The first rejected chunk stops the run. It writes only
+`heated_duct_000020_rejected.npz`. That record names its reasons in its run
+provenance, so it can be imported but not resumed.
+
+`thermal_summary.json` holds these entries:
+- `accepted`;
+- the first rejected sample's step, reasons and Courant numbers;
+- the limits;
+- the last diagnostics;
+- the run's largest heat balance residual, Courant numbers and Boussinesq
+  measure. No limit applies to the residual or the Boussinesq measure.
+
+The command exits with 2 if the run was rejected.
 
 To resume, name a record. Its time sets the step count of the frames that
 follow, gathered in a series of their own, `heated_duct_from_000020.pvd`, so
