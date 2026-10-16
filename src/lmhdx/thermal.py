@@ -120,6 +120,8 @@ __all__ = [
 ]
 
 _KINDS = {"temperature": DIRICHLET, "heat_flux": NEUMANN, "periodic": PERIODIC}
+# Each transport scheme and its Courant bound for no new extremum; conduction alone has none.
+_SCHEMES = {"upwind": 0.8, "van_leer": 0.5, "off": None}
 _CELL = (CENTER, CENTER, CENTER)
 
 
@@ -181,8 +183,9 @@ class ThermalProblem:
     ``expansion_coefficient`` is ``beta``, zero for passive transport, and
     ``gravity`` the gravitational acceleration, pointing down, along the grid's
     three axes; while ``beta > 0`` it has no component along a periodic axis,
-    where no periodic pressure balances its mean (ADR 0008, D32). ``advection`` is ``"upwind"``, or ``"off"`` for conduction alone,
-    whatever the flow's own momentum transport.
+    where no periodic pressure balances its mean (ADR 0008, D32). ``advection`` is ``"upwind"``,
+    first order; ``"van_leer"``, a van Leer-limited second-order face value, bounded by the two cells it lies
+    between; or ``"off"`` for conduction alone, whatever the flow's own momentum transport.
 
     ``outlet_backflow`` says what enters where the flow returns through the
     outlet of an inflow-outflow axis: ``"error"`` refuses such a run, and
@@ -219,18 +222,16 @@ class ThermalProblem:
         if len(self.gravity) != 3 or not np.all(np.isfinite(np.asarray(self.gravity, dtype=float))):
             raise ValueError("gravity must be three finite components")
         object.__setattr__(self, "gravity", tuple(float(component) for component in self.gravity))
-        if self.advection not in ("upwind", "off"):
-            raise ValueError(f"advection must be 'upwind' or 'off', got {self.advection!r}")
+        if self.advection not in _SCHEMES:
+            raise ValueError(f"advection must be one of {sorted(_SCHEMES)}, got {self.advection!r}")
         if self.outlet_backflow not in ("error", "reservoir_flux"):
             raise ValueError(
                 f"outlet_backflow must be 'error' or 'reservoir_flux', got {self.outlet_backflow!r}"
             )
         if self.outlet_backflow == "reservoir_flux" and (
-            self.flow.open_axis is None or self.advection != "upwind"
+            self.flow.open_axis is None or self.advection == "off"
         ):
-            raise ValueError(
-                "outlet_backflow='reservoir_flux' needs an inflow-outflow axis and upwind transport"
-            )
+            raise ValueError("outlet_backflow='reservoir_flux' needs an inflow-outflow axis and transport")
         if not isinstance(self.joule_heating, bool):
             raise TypeError("joule_heating must be True or False")
         if len(self.thermal_conditions) != 3:
@@ -312,7 +313,8 @@ def _upwind_fluxes(
 ) -> tuple[Field, Field, Field]:
     """Return ``u_f T_up`` on the velocity faces; the transport term is minus their divergence.
 
-    ``T_up`` is the temperature of the cell the face velocity comes from. The
+    ``T_up`` is the temperature of the cell the face velocity comes from, or with
+    ``advection="van_leer"`` its limited face value (:func:`_limited`). The
     flow's scalar conditions pad periodic axes by wrapping and walls by copying;
     the copy is never used, since a wall face carries no advective flux. The
     inlet face brings in the inlet temperature, or takes out the first cell's
@@ -327,6 +329,8 @@ def _upwind_fluxes(
     for axis, carrier in enumerate(velocity):
         padded = pad(temperature.data, axis, scalar[axis], grid=temperature.grid)
         lower, upper = (_sliced(padded, axis, start) for start in (0, 1))
+        if problem.advection == "van_leer":
+            lower, upper = _limited(temperature, axis, problem, lower, upper)
         flux = carrier.data * jnp.where(carrier.data >= 0.0, lower, upper)
         if axis != opening:
             fluxes.append(wall_insulated(carrier.replace_data(flux), axis, scalar[axis]))
@@ -342,6 +346,39 @@ def _upwind_fluxes(
         flux = flux.at[ends[1]].set(leaving * jnp.where(leaving >= 0.0, temperature.data[ends[1]], returning))
         fluxes.append(carrier.replace_data(flux))
     return tuple(fluxes)
+
+
+def _limited(temperature: Field, axis: int, problem: ThermalProblem, left, right):
+    """Return each face's van Leer value seen from the cell on its left and on its right, on physical distances.
+
+    From a cell of width ``w`` the face value is ``T + (w/2) s`` toward the face, with ``s`` the van Leer mean
+    ``(a |b| + |a| b) / (|a| + |b|)`` of the face gradients on either side of the cell, zero where they differ in sign;
+    it is then held between the two cells the face lies between, which keeps it bounded on a stretched grid.
+    """
+    grid, condition = temperature.grid, problem.thermal_conditions[axis]
+    slopes, count = face_gradient(temperature, axis, condition).data, grid.shape[axis]
+    edges = (count - 1, 1) if condition.is_periodic else (0, count)  # faces -1 and n + 1: the wrap, or a copy
+    outer = [jax.lax.slice_in_dim(slopes, index, index + 1, axis=axis) for index in edges]
+    extended = jnp.concatenate([outer[0], slopes, outer[1]], axis=axis)
+    before, at, after = (
+        jax.lax.slice_in_dim(extended, start, start + count + 1, axis=axis) for start in (0, 1, 2)
+    )
+    widths = np.asarray(grid.widths[axis])
+    beside = (widths[-1], widths[0]) if condition.is_periodic else (widths[0], widths[-1])
+    shape = [-1 if position == axis else 1 for position in range(3)]
+    left_width, right_width = (
+        jnp.asarray(np.reshape(values, shape), dtype=slopes.dtype)
+        for values in (np.concatenate([[beside[0]], widths]), np.concatenate([widths, [beside[1]]]))
+    )
+
+    def van_leer(a, b):
+        size = jnp.abs(a) + jnp.abs(b)
+        return (a * jnp.abs(b) + jnp.abs(a) * b) / jnp.where(size > 0.0, size, 1.0)
+
+    low, high = jnp.minimum(left, right), jnp.maximum(left, right)
+    from_left = jnp.clip(left + 0.5 * left_width * van_leer(before, at), low, high)
+    from_right = jnp.clip(right - 0.5 * right_width * van_leer(at, after), low, high)
+    return from_left, from_right
 
 
 def _outgoing_rate(velocity: tuple[Field, Field, Field]) -> jnp.ndarray:
@@ -509,16 +546,17 @@ def validate_thermal_inputs(
     *,
     divergence_tolerance: float,
     backflow_temperature: float | np.ndarray | None = None,
-    advective_cfl_limit: float = 0.8,
+    advective_cfl_limit: float | None = None,
     buoyancy_courant_limit: float | None = None,
 ) -> None:
     """Check a state and heat source on the host before a run, raising ``ValueError`` on the first fault.
 
     Grids, offsets and shapes; the core's compute dtype; finite values; the wall
     and periodic face constraints; a velocity divergence within
-    ``divergence_tolerance``, in inverse time; with upwind transport, a Courant
-    number ``dt max(sum_f max(u_f . n_f, 0) A_f / V)`` within ``advective_cfl_limit``;
-    and, at an outlet with upwind transport, no returning face under
+    ``divergence_tolerance``, in inverse time; with transport, a Courant number
+    ``dt max(sum_f max(u_f . n_f, 0) A_f / V)`` within ``advective_cfl_limit``, by
+    default the scheme's own bound for no new extremum, 0.8 for ``"upwind"`` and 0.5
+    for ``"van_leer"``; and, at an outlet with transport, no returning face under
     ``outlet_backflow="error"``, or a finite, real ``backflow_temperature`` of the
     outlet's shape under ``"reservoir_flux"``; and, given ``buoyancy_courant_limit``,
     the start's ``buoyancy_courant`` (:class:`ThermalDiagnostics`) within it.
@@ -535,8 +573,11 @@ def validate_thermal_inputs(
         np.isfinite(buoyancy_courant_limit) and buoyancy_courant_limit > 0.0
     ):
         raise ValueError("buoyancy_courant_limit must be positive and finite")
-    if not (np.isfinite(advective_cfl_limit) and advective_cfl_limit > 0.0):
+    if advective_cfl_limit is not None and not (
+        np.isfinite(advective_cfl_limit) and advective_cfl_limit > 0.0
+    ):
         raise ValueError("advective_cfl_limit must be positive and finite")
+    advective_cfl_limit = _SCHEMES[problem.advection] if advective_cfl_limit is None else advective_cfl_limit
     flow, dtype = problem.flow, jnp.result_type(float)
     _check_fields(flow, state.velocity, [(state.temperature, "temperature"), (heat_source, "heat source")])
     time = jnp.asarray(state.time)
@@ -555,7 +596,7 @@ def validate_thermal_inputs(
             raise ValueError(
                 f"buoyancy_courant {buoyant:.4g} exceeds buoyancy_courant_limit {buoyancy_courant_limit}"
             )
-    if problem.advection == "upwind":
+    if problem.advection != "off":
         courant = float(flow.dt) * float(jnp.max(_outgoing_rate(state.velocity)))
         if courant > advective_cfl_limit:
             raise ValueError(
@@ -569,7 +610,7 @@ def validate_thermal_inputs(
         axis = flow.open_axis
         if (
             axis is not None
-            and problem.advection == "upwind"
+            and problem.advection != "off"
             and np.any(np.asarray(state.velocity[axis].data[(slice(None),) * axis + (-1,)]) < 0.0)
         ):
             raise ValueError("the flow returns through the outlet: use outlet_backflow='reservoir_flux'")
@@ -638,7 +679,7 @@ def build_thermal_step(
     diffusion, lift = problem.diffusion_factorization(), problem.boundary_lift()
     dt, alpha, capacity = float(flow.dt), problem.diffusivity, problem.heat_capacity
     reference, beta = float(problem.reference_temperature), float(problem.expansion_coefficient)
-    upwind = problem.advection == "upwind"
+    upwind = problem.advection != "off"  # either scheme carries heat with the flow
 
     def total(data):
         return cell_inner_product(Field(data, _CELL, grid), Field(jnp.ones_like(data), _CELL, grid))
@@ -920,7 +961,7 @@ def _outlet_exchange(velocity, reservoir, problem: ThermalProblem, dtype) -> tup
     area = jnp.asarray(problem.flow.grid.face_areas(axis)[end], dtype=normal.dtype)
     back = jnp.maximum(-normal, 0.0) * area
     brought = jnp.zeros((), dtype) if reservoir is None else problem.heat_capacity * jnp.sum(back * reservoir)
-    carried = reservoir is None and problem.advection == "upwind"  # else nothing crosses with the flow
+    carried = reservoir is None and problem.advection != "off"  # else nothing crosses with the flow
     valid = jnp.all(back == 0.0) if carried else jnp.asarray(True)
     return jnp.sum(back), jnp.sum(jnp.maximum(normal, 0.0) * area), brought, valid
 

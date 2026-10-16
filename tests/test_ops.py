@@ -1003,6 +1003,49 @@ def test_upwind_transport_makes_no_new_extremum_at_courant_0_8():
     )
 
 
+def test_the_van_leer_face_value_is_exact_for_a_linear_temperature_on_a_stretched_grid():
+    """``T = 2 + 3 y`` across the tanh-stretched walls: every face whose two neighbouring faces are interior reads
+    ``2 + 3 y_f`` from either side, to 1e-12; the physical distances make the slopes exact."""
+    from lmhdx.thermal import _limited
+
+    problem = dataclasses.replace(_thermal(STRETCHED, (WRAP, INSULATED, INSULATED)), advection="van_leer")
+    y = np.asarray(STRETCHED.centers[1])
+    temperature = Field(
+        jnp.asarray(np.broadcast_to(2.0 + 3.0 * y[None, :, None], STRETCHED.shape)), CELL, STRETCHED
+    )
+    padded = pad(temperature.data, 1, problem.flow.scalar_conditions[1], grid=STRETCHED)
+    left, right = padded[:, :-1, :], padded[:, 1:, :]
+    from_left, from_right = (np.asarray(value) for value in _limited(temperature, 1, problem, left, right))
+    exact = np.broadcast_to(2.0 + 3.0 * np.asarray(STRETCHED.y_faces)[None, :, None], from_left.shape)
+    inner = slice(2, -2)
+    assert np.allclose(from_left[:, inner], exact[:, inner], rtol=1e-12, atol=0.0)
+    assert np.allclose(from_right[:, inner], exact[:, inner], rtol=1e-12, atol=0.0)
+
+
+def test_van_leer_transport_conserves_heat_and_makes_no_new_extremum_at_courant_0_5():
+    """On STRETCHED with a random solenoidal carrier: the face fluxes cancel in the total, and ten steps at the
+    scheme's Courant bound, 0.5, stay within the start's range."""
+    problem = dataclasses.replace(_thermal(STRETCHED, (WRAP, INSULATED, INSULATED)), advection="van_leer")
+    velocity = _carrier(problem, 10, solenoidal=True)
+    start = np.random.default_rng(11).uniform(0.0, 1.0, STRETCHED.shape)
+    temperature = Field(jnp.asarray(start), CELL, STRETCHED)
+    transport = temperature.replace_data(_transport(temperature, velocity, problem))
+    ones = temperature.replace_data(jnp.ones(STRETCHED.shape))
+    absolute = float(cell_inner_product(transport.replace_data(jnp.abs(transport.data)), ones))
+    assert abs(float(cell_inner_product(transport, ones))) <= 1e-13 * absolute
+    dt = 0.5 / float(jnp.max(_outgoing_rate(velocity)))
+    for _ in range(10):
+        temperature = temperature.replace_data(
+            temperature.data - dt * _transport(temperature, velocity, problem)
+        )
+    assert (
+        start.min() - 1e-12
+        <= float(jnp.min(temperature.data))
+        <= float(jnp.max(temperature.data))
+        <= start.max() + 1e-12
+    )
+
+
 @pytest.mark.parametrize("cells", [1, 2])
 def test_a_short_periodic_axis_carries_heat_through_its_wrap_face(cells):
     """A one-cell axis carries the same flux in and out, so its transport vanishes; heat is conserved either way."""
