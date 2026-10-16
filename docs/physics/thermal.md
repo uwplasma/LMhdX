@@ -42,12 +42,15 @@ The flow should satisfy $\max\beta|T-T_r|\ll 1$. The step reports it as
 `boussinesq_measure`; it is not enforced.
 
 The heat equation leaves out:
-- viscous heating. In a developed duct the hydraulic power is the viscous plus
-  the Joule dissipation, the two of comparable size, and both are negligible
-  against blanket heating while the Brinkman number $\mu U^2/(k\,\Delta T)$ is
-  small: about $10^{-8}$ for PbLi at 0.1 m/s and 100 K. Joule heat is kept so the
-  ledger matches `core3d.energy_budget(...).joule`, not because it matters
-  thermally there;
+- viscous heating. In a developed duct with insulating walls the hydraulic power
+  is the viscous plus the Joule dissipation. The Brinkman number
+  $\mu U^2/(k\,\Delta T)$ scales the viscous part against conduction: about
+  $10^{-8}$ for PbLi at 0.1 m/s and 100 K. It does not bound the Joule part,
+  whose scale on the same length is $Ha^2$ times larger, and whose currents
+  depend on the walls. Whether either matters is a property of the case; the
+  duct design example measures both, under $10^{-5}$ of its duty. Joule heat is
+  kept, from the same currents as the Lorentz force, so the ledger matches
+  `core3d.energy_budget(...).joule`;
 - radiation;
 - phase change;
 - thermoelectric effects;
@@ -194,9 +197,11 @@ order in time as well, so any transient heat-transfer number carries an
 $O(\Delta t)$ error.
 
 The coupling's time error is set by the step over the buoyancy time scale,
-`buoyancy_courant` $=\Delta t\sqrt{\beta|\mathbf g|\max|\nabla T|}$, reported
-beside `advective_cfl`. In the Bénard onset of #252 the critical Rayleigh number
-is about 15 % low near 0.2 and under 3 % near 0.025, at first order.
+`buoyancy_courant` $=\Delta t\sqrt{\beta|\mathbf g|\,G}$, reported beside
+`advective_cfl`, with $G$ the largest absolute face-normal gradient on any face,
+one component rather than a colocated gradient magnitude. In the Bénard onset of
+#252 the critical Rayleigh number is about 15 % low near 0.2 and under 3 % near
+0.025, at first order. That calibrates that case; it is not a general bound.
 `validate_thermal_inputs(..., buoyancy_courant_limit=...)` refuses a start
 above a chosen limit.
 
@@ -506,18 +511,22 @@ for problem in (thermal, dataclasses.replace(thermal, expansion_coefficient=0.02
 ## A run from TOML
 
 A thermal case runs from a TOML file, `lmhdx case.toml`. The keys are the Python
-argument names, and every table refuses an unknown key:
+argument names. Before the run is built, every table, the top level included,
+refuses an unknown or missing key and a value of the wrong TOML type: a count is
+an integer and a flag a boolean, neither converted.
 - `[grid]`: each axis as `{cells, lower, upper}`, with `layer_thickness` and
   `cells_in_layer` for wall-resolving faces;
 - `[flow]`: `ChannelProblem`'s values, with `conditions` `"periodic"` or `"wall"`
   per axis and `initial_velocity` `"rest"` or `"steady"`;
 - `[thermal]`: `ThermalProblem`'s values, `hold_flow`, and a uniform
   `initial_temperature` and `heat_source`;
-- `[thermal.y]` and `[thermal.z]`: each wall axis's `thermal_boundary` (`kind`,
-  `lower`, `upper`);
-- `[run]`: `steps`, compiled in chunks of `chunk`;
+- `[thermal.y]` and `[thermal.z]`: each wall axis's `thermal_boundary` (`kind`
+  `"temperature"` or `"heat_flux"`, `lower`, `upper`), required for a wall axis
+  and refused for a periodic one;
+- `[run]`: `steps`, compiled in chunks of `chunk`, and optional limits,
+  `advective_cfl_limit` and `buoyancy_courant_limit`;
 - `[output]`: the `directory`, `write_paraview` and `write_restart`;
-- `[restart]`: an optional `path` to a record to resume from.
+- `[restart]`: an optional record's `path`, and its `mode`.
 
 ```toml
 [case]
@@ -561,16 +570,37 @@ chunk = 10
 directory = "out"
 ```
 
-After each chunk the run writes two files:
+Each chunk is accepted or rejected after it runs. Every sample in it, not only
+the last, must pass these checks:
+- it is finite, and the outlet is valid;
+- its advective Courant number is within the scheme's limit: 0.8 for upwind,
+  0.5 for van Leer, none for conduction alone. `advective_cfl_limit` replaces that limit, and the
+  summary records it as an override;
+- its buoyancy Courant number is within `buoyancy_courant_limit`, if one is
+  given. That limit is a policy calibrated on particular cases, not a stability
+  bound.
+
+The start is held to the same limits. An accepted chunk writes two files:
 - a record, `heated_duct_000010.npz` and so on;
 - a frame, `heated_duct_000010.vtr`, gathered in `heated_duct.pvd`.
 
-`thermal_summary.json` holds the last diagnostics and the run's largest heat
-balance residual, Courant numbers and Boussinesq measure. The command exits
-with 2 if the run left the numbers.
+The first rejected chunk stops the run. It writes only
+`heated_duct_000020_rejected.npz`. That record names its reasons in its run
+provenance, so it can be imported but not resumed.
+
+`thermal_summary.json` holds these entries:
+- `accepted`;
+- the first rejected sample's step, reasons and Courant numbers;
+- the limits;
+- the last diagnostics;
+- the run's largest heat balance residual, Courant numbers and Boussinesq
+  measure. No limit applies to the residual or the Boussinesq measure.
+
+The command exits with 2 if the run was rejected.
 
 To resume, name a record. Its time sets the step count of the frames that
-follow:
+follow, gathered in a series of their own, `heated_duct_from_000020.pvd`, so
+that the first series is kept:
 
 ```toml
 [restart]
@@ -578,7 +608,9 @@ path = "out/heated_duct_000020.npz"
 ```
 
 With `steps = 20`, that run ends on the same record, bit for bit, as the run of
-40 steps.
+40 steps. Each record keeps the run's heat source and `hold_flow`:
+- `mode = "resume"`, the default, refuses a record written with others;
+- `mode = "import"` starts another experiment from the record's state.
 
 ## Measured cost
 

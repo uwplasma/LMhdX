@@ -945,7 +945,10 @@ def _thermal_duct(cells=(1, 6, 6), dt=2.0e-3):
 
 def test_a_thermal_run_resumes_from_its_record_bit_for_bit(tmp_path: Path):
     """Six steps straight, or three, a record written and read back, and three more: the same state, bit for bit.
-    A record refuses another unit label, another problem, another version and a mangled array."""
+
+    A record refuses another unit label, another problem, and, before any state is made, a missing field, a mangled
+    or nonfinite array, a time that is not a finite scalar of the compute dtype, and a version that is not the
+    integer 1. Given the run's provenance it resumes only that run; without, it imports the state."""
     import dataclasses
 
     import jax
@@ -968,8 +971,13 @@ def test_a_thermal_run_resumes_from_its_record_bit_for_bit(tmp_path: Path):
     )
     straight = advance_thermal(step, start, heat, 6)[0]
     half = advance_thermal(step, start, heat, 3)[0]
-    path = write_thermal_record(tmp_path / "state", thermal, half, units="nondimensional")
-    resumed = advance_thermal(step, load_thermal_record(path, thermal, units="nondimensional"), heat, 3)[0]
+    run = {"heat_source": 0.5, "hold_flow": False}
+    path = write_thermal_record(tmp_path / "state", thermal, half, units="nondimensional", run=run)
+    loaded = load_thermal_record(path, thermal, units="nondimensional", run=run)
+    resumed = advance_thermal(step, loaded, heat, 3)[0]
+    load_thermal_record(path, thermal, units="nondimensional")  # an import, of the same state
+    with pytest.raises(ValueError, match="other inputs"):
+        load_thermal_record(path, thermal, units="nondimensional", run={**run, "heat_source": 0.6})
     assert path.suffix == ".npz" and float(straight.time) == pytest.approx(6 * 2.0e-3, rel=1e-15)
     for a, b in zip(jax.tree_util.tree_leaves(straight), jax.tree_util.tree_leaves(resumed)):
         assert np.array_equal(np.asarray(a), np.asarray(b))
@@ -983,13 +991,24 @@ def test_a_thermal_run_resumes_from_its_record_bit_for_bit(tmp_path: Path):
         )
     with np.load(path) as record:
         arrays = dict(record)
+    hot, fast = arrays["temperature"].copy(), arrays["velocity_x"].copy()
+    hot[0, 0, 0], fast[0, 0, 0] = np.nan, np.inf
     for change, message in (
         (dict(version=2), "version"),
+        (dict(version=1.5), "version"),
         (dict(temperature=arrays["temperature"][:, :3]), "shape"),
+        (dict(temperature=hot), "not finite"),
+        (dict(velocity_x=fast), "not finite"),
+        (dict(time=np.array([0.006, 0.006])), "time"),
+        (dict(time=np.array(np.nan)), "time"),
+        (dict(time=np.array(6)), "time"),
     ):
         np.savez(tmp_path / "bad.npz", **{**arrays, **change})
         with pytest.raises(ValueError, match=message):
             load_thermal_record(tmp_path / "bad.npz", thermal, units="nondimensional")
+    np.savez(tmp_path / "bad.npz", **{name: value for name, value in arrays.items() if name != "time"})
+    with pytest.raises(ValueError, match="lacks time"):
+        load_thermal_record(tmp_path / "bad.npz", thermal, units="nondimensional")
 
 
 def test_a_thermal_state_opens_as_a_rectilinear_grid_in_vtk_order(tmp_path: Path):
@@ -1035,7 +1054,7 @@ def _page_toml() -> str:
 
 def test_a_thermal_run_from_toml_records_frames_and_resumes_bit_for_bit(tmp_path: Path):
     """The page's case through ``lmhdx case.toml``: four records and frames, a series and a summary, exit 0. Its
-    second half, rerun from the record at step 20, ends on the same record, bit for bit."""
+    second half, rerun from the record at step 20, ends on the same record, bit for bit, in a series of its own."""
     import json
 
     case = tmp_path / "case.toml"
@@ -1046,7 +1065,13 @@ def test_a_thermal_run_from_toml_records_frames_and_resumes_bit_for_bit(tmp_path
     expected = {f"{label}.{suffix}" for label in labels for suffix in ("npz", "vtr")}
     assert expected | {"heated_duct.pvd", "thermal_summary.json"} <= written
     summary = json.loads((out / "thermal_summary.json").read_text())
-    assert summary["finite"] and summary["steps"] == 40 and summary["time"] == pytest.approx(0.08, rel=1e-12)
+    assert summary["accepted"] and summary["rejected"] is None and summary["steps"] == 40
+    assert summary["limits"] == {
+        "advective_cfl": 0.8,
+        "advective_cfl_override": False,
+        "buoyancy_courant": None,
+    }
+    assert summary["finite"] and summary["time"] == pytest.approx(0.08, rel=1e-12)
     assert summary["largest"]["heat_balance_residual"] <= 1e-8 and summary["largest"]["advective_cfl"] <= 0.8
     resume = tmp_path / "resume.toml"
     text = (
@@ -1054,6 +1079,7 @@ def test_a_thermal_run_from_toml_records_frames_and_resumes_bit_for_bit(tmp_path
     )
     resume.write_text(text + '\n[restart]\npath = "out/heated_duct_000020.npz"\n')
     assert cli.main([str(resume)]) == 0
+    assert {path.name for path in (tmp_path / "again").glob("*.pvd")} == {"heated_duct_from_000020.pvd"}
     with (
         np.load(out / "heated_duct_000040.npz") as straight,
         np.load(tmp_path / "again/heated_duct_000040.npz") as again,
@@ -1062,22 +1088,153 @@ def test_a_thermal_run_from_toml_records_frames_and_resumes_bit_for_bit(tmp_path
         assert all(np.array_equal(straight[name], again[name]) for name in straight.files)
 
 
-def test_a_thermal_toml_refuses_what_it_cannot_run(tmp_path: Path):
-    """An unknown key, an open axis, steps that are not a multiple of the chunk, and a record of another problem."""
+def test_a_chunk_is_rejected_at_any_sample_past_its_limits():
+    """A sample inside the chunk past a limit is not hidden by a valid last one; a NaN fails; no limit, no check."""
+    good = dict(
+        finite=np.ones(5, bool),
+        backflow_boundary_valid=np.ones(5, bool),
+        advective_cfl=np.full(5, 0.1),
+        buoyancy_courant=np.zeros(5),
+    )
+    limits = {"advective_cfl": 0.8, "buoyancy_courant": None}
+    fast = SimpleNamespace(**{**good, "advective_cfl": np.array([0.1, 0.9, 0.95, 0.2, 0.1])})
+    assert cli._thermal_rejection(SimpleNamespace(**good), limits, 40) is None
+    assert cli._thermal_rejection(fast, limits, 40) == {
+        "step": 42,
+        "reasons": ["advective_cfl over 0.8"],
+        "advective_cfl": 0.9,
+        "buoyancy_courant": 0.0,
+    }
+    assert cli._thermal_rejection(fast, {**limits, "advective_cfl": None}, 40) is None
+    broken = {"finite": np.array([1, 1, 0, 1, 1], bool), "buoyancy_courant": np.array([0, 0, np.nan, 0, 0])}
+    rejected = cli._thermal_rejection(
+        SimpleNamespace(**{**good, **broken}), {**limits, "buoyancy_courant": 1.0}, 0
+    )
+    assert rejected["step"] == 3 and rejected["reasons"] == ["not finite", "buoyancy_courant over 1.0"]
+
+
+@pytest.mark.parametrize(
+    ("limit", "reason"),
+    [
+        ("advective_cfl_limit = 4.0e-5", "advective_cfl over 4e-05"),
+        ("buoyancy_courant_limit = 9.0e-5", "buoyancy_courant over 9e-05"),
+    ],
+)
+def test_a_thermal_run_stops_at_the_first_sample_past_a_limit(tmp_path: Path, limit: str, reason: str):
+    """The page's case with its z walls held at zero: from rest and a uniform temperature the start passes either
+    limit, and the flow and the buoyancy outgrow it inside the second chunk. The run exits 2 after the first
+    chunk's record, writes the second as rejected and names its first sample; that record imports, not resumes."""
+    import json
+
+    from lmhdx.cases import _load_toml
+    from lmhdx.thermal import load_thermal_record, thermal_run_from_toml
+
+    page = _page_toml().replace('kind = "heat_flux"\nupper = 1.0', 'kind = "temperature"')
+    case = tmp_path / "case.toml"
+    case.write_text(page.replace("chunk = 10", f"chunk = 10\n{limit}"))
+    assert 'kind = "temperature"' in page and cli.main([str(case)]) == 2
+    out = tmp_path / "out"
+    summary = json.loads((out / "thermal_summary.json").read_text())
+    assert not summary["accepted"] and summary["steps"] == 10 and summary["rejected"]["chunk"] == 1
+    assert 10 < summary["rejected"]["step"] < 20 and summary["rejected"]["reasons"] == [reason]
+    assert summary["limits"]["advective_cfl_override"] == limit.startswith("advective")
+    written = {path.name for path in out.iterdir()}
+    assert {"heated_duct_000010.npz", "heated_duct_000020_rejected.npz", "heated_duct.pvd"} <= written
+    assert not written & {
+        "heated_duct_000020.npz",
+        "heated_duct_000020.vtr",
+        "heated_duct_000030_rejected.npz",
+    }
+    run, rejected = thermal_run_from_toml(_load_toml(case), tmp_path), out / "heated_duct_000020_rejected.npz"
+    with pytest.raises(ValueError, match="other inputs"):
+        load_thermal_record(rejected, run.problem, units=run.units, run=run.provenance)
+    load_thermal_record(rejected, run.problem, units=run.units)
+
+
+def test_conduction_alone_is_not_held_to_an_advective_limit(tmp_path: Path):
+    """With ``advection = "off"`` no advective Courant limit applies, at the start or after, whatever is configured."""
+    import json
+
+    page = _page_toml().replace("heat_source = 0.5", 'heat_source = 0.5\nadvection = "off"')
+    case = tmp_path / "case.toml"
+    case.write_text(page.replace("chunk = 10", "chunk = 10\nadvective_cfl_limit = 1.0e-9"))
+    assert cli.main([str(case)]) == 0
+    summary = json.loads((tmp_path / "out/thermal_summary.json").read_text())
+    assert summary["accepted"] and summary["limits"]["advective_cfl"] is None and summary["steps"] == 40
+    assert summary["largest"]["advective_cfl"] == 0.0  # nothing is carried, though the flow moves
+
+
+@pytest.mark.parametrize("x64", ["", "true"])
+def test_the_thermal_command_runs_in_a_fresh_process_in_either_precision(tmp_path: Path, x64: str):
+    """``python -m lmhdx case.toml`` in its own process: float32 by default, float64 with ``JAX_ENABLE_X64``."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    (tmp_path / "case.toml").write_text(_page_toml())
+    environment = {key: value for key, value in os.environ.items() if key != "JAX_ENABLE_X64"}
+    environment |= {"JAX_ENABLE_X64": x64} if x64 else {}
+    command = [sys.executable, "-m", "lmhdx", "case.toml"]
+    result = subprocess.run(
+        command, cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=600
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert json.loads((tmp_path / "out/thermal_summary.json").read_text())["accepted"]
+    with np.load(tmp_path / "out/heated_duct_000040.npz") as record:
+        assert record["temperature"].dtype == (np.float64 if x64 else np.float32)
+        assert np.all(np.isfinite(record["temperature"]))
+
+
+def test_a_thermal_toml_refuses_what_it_cannot_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Each named fault, before a steady flow is solved: an unknown table or key, a value of the wrong TOML type,
+    a missing or malformed table, an orphan option, an unsupported boundary, an open axis, steps that are not a
+    multiple of the chunk, and a record of another problem or, to resume, of a run with other inputs."""
+    import lmhdx.thermal
     from lmhdx.cases import _load_toml
     from lmhdx.thermal import thermal_run_from_toml
 
     page = _page_toml()
     (tmp_path / "base.toml").write_text(page)
     assert cli.main([str(tmp_path / "base.toml")]) == 0
+    monkeypatch.setattr(lmhdx.thermal, "solve_steady_state", lambda flow: pytest.fail("solved a steady flow"))
+    page = page.replace("dt = 2.0e-3", 'dt = 2.0e-3\ninitial_velocity = "steady"')
+    restart = '\n[restart]\npath = "out/heated_duct_000020.npz"\n'
     changes = (
-        ("heat_source = 0.5", "heat_source = 0.5\nconductivity_of_walls = 1.0", "unknown"),
+        ("heat_source = 0.5", "heat_source = 0.5\nconductivity_of_walls = 1.0", "unknown keys"),
+        ("[run]", "[solvers]\nkind = 1\n\n[run]", r"\[top level\] has unknown keys \['solvers'\]"),
+        ("steps = 40", "steps = 40.5", "steps must be a TOML integer"),
+        ("y = { cells = 8", "y = { cells = true", "cells must be a TOML integer"),
+        ("heat_source = 0.5", 'heat_source = 0.5\nhold_flow = "false"', "hold_flow must be a TOML boolean"),
+        ("magnetic_field = [0.0, 10.0, 0.0]", "magnetic_field = [0.0, 10.0]", "array of three numbers"),
+        ('[thermal.y]\nkind = "heat_flux"\n', "", r"\[thermal.y\] is needed"),
+        ("lower = 0.0, upper = 1.0 }", "lower = 0.0 }", r"\[grid.x\] lacks \['upper'\]"),
+        ("x = { cells = 1, lower = 0.0, upper = 1.0 }", "x = 1", "x must be a TOML table"),
+        ("y = { cells = 8,", "y = { cells_in_layer = 2, cells = 8,", "cells_in_layer needs layer_thickness"),
+        ('[thermal.y]\nkind = "heat_flux"', '[thermal.y]\nkind = "periodic"', 'kind is "temperature" or'),
+        (
+            '[thermal.y]\nkind = "heat_flux"',
+            '[thermal.y]\nkind = "heat_flux"\nupper_kind = "a"',
+            "unknown keys",
+        ),
         ('conditions = ["periodic", "wall", "wall"]', 'conditions = ["inflow", "wall", "wall"]', "open axis"),
         ("chunk = 10", "chunk = 15", "multiple of chunk"),
-        ("dt = 2.0e-3", 'dt = 1.0e-3\n\n[restart]\npath = "out/heated_duct_000020.npz"', "another problem"),
+        ("[output]", f'{restart}mode = "fork"\n\n[output]', 'mode "resume" or "import"'),
+        ("dt = 2.0e-3", "dt = 1.0e-3", "another problem"),
+        ("heat_source = 0.5", "heat_source = 0.6", "other inputs"),
+        ("heat_source = 0.5", "heat_source = 0.5\nhold_flow = true", "other inputs"),
     )
     for old, new, message in changes:
         assert old in page
-        (tmp_path / "bad.toml").write_text(page.replace(old, new))
+        bad = page.replace(old, new)
+        (tmp_path / "bad.toml").write_text(
+            bad + (restart if message in ("another problem", "other inputs") else "")
+        )
         with pytest.raises(ValueError, match=message):
             thermal_run_from_toml(_load_toml(tmp_path / "bad.toml"), tmp_path)
+    # The same changed inputs import the record's state as the start of another experiment.
+    (tmp_path / "import.toml").write_text(
+        page.replace("heat_source = 0.5", "heat_source = 0.6") + restart + 'mode = "import"\n'
+    )
+    imported = thermal_run_from_toml(_load_toml(tmp_path / "import.toml"), tmp_path)
+    assert imported.restart["mode"] == "import" and imported.provenance["heat_source"] == 0.6
