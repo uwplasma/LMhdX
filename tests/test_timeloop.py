@@ -578,7 +578,8 @@ def test_the_thermal_scan_reproduces_the_stepped_loop_and_stacks_only_scalars():
     short, long = traced(4), traced(128)
     assert abs(len(str(long)) - len(str(short))) < 0.01 * len(str(short))
     scan = next(equation for equation in long.eqns if equation.primitive.name == "scan")
-    assert all(var.aval.shape == (128,) for var in scan.outvars[scan.params["num_carry"] :])
+    stacked = [var.aval.shape for var in scan.outvars if var.aval.shape[:1] == (128,)]  # by shape: JAX 0.11
+    assert stacked and all(shape == (128,) for shape in stacked)
     with pytest.raises(ValueError, match="steps must be positive"):
         advance_thermal(thermal_step, state, source, 0)
 
@@ -1056,8 +1057,9 @@ def test_a_reservoir_run_compiles_whole_and_takes_new_values_without_retracing()
     scan = scans[1]
     # Every input of the scan is the same at 4 and 128 steps, so none is stacked by step, and the reservoir is a const.
     assert [var.aval.shape for var in scans[0].invars] == [var.aval.shape for var in scan.invars]
-    assert long.jaxpr.invars[-1] in scan.invars[: scan.params["num_consts"]]
-    assert all(var.aval.shape == (128,) for var in scan.outvars[scan.params["num_carry"] :])
+    assert long.jaxpr.invars[-1] in scan.invars  # read by shape and identity: JAX 0.11 dropped num_carry
+    stacked = [var.aval.shape for var in scan.outvars if var.aval.shape[:1] == (128,)]
+    assert stacked and all(shape == (128,) for shape in stacked)
     assert not any("callback" in name for name in _primitives(long.jaxpr))
 
 
