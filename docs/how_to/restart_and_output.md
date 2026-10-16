@@ -27,3 +27,34 @@ when every iteration is needed. Positive-stride restart segments preserve
 retained samples and add samples from the resumed segment; stride `0` keeps
 only the latest terminal. Restart state and compact diagnostics are independent,
 
+
+## A thermal run
+
+A thermal state is resumed from a versioned record. The record holds the
+staggered velocity, the temperature and the time, exactly:
+
+```python
+from lmhdx.thermal import load_thermal_record, write_thermal_record
+from lmhdx.io import write_thermal_vtr
+
+path = write_thermal_record("state", problem, state, units="SI")  # state.npz
+state = load_thermal_record(path, problem, units="SI")
+write_thermal_vtr(problem, state, "frame")  # frame.vtr, for ParaView
+```
+
+The record is a NPZ file with this contents:
+- its schema (`lmhdx.thermal.state`) and version;
+- a units label, which the caller declares and the loader checks;
+- the problem it was written with, as plain data.
+
+`load_thermal_record` refuses a record whose schema, version, units, shapes
+or dtype differ, or that was written for another problem. When the problem
+differs, the error names the parts that differ. A run of six steps and a run
+of three steps, through a record, then three more agree bit for bit.
+
+`write_thermal_vtr` writes a rectilinear grid with two cell arrays:
+- the temperature;
+- the velocity, as each component's mean over the two faces of its cell.
+
+The cells are in VTK's order, x varying fastest. `write_pvd` gathers frames
+into a time series.

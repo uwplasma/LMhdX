@@ -53,8 +53,11 @@ heat load, with derivatives.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import NamedTuple
 
 import jax
@@ -63,6 +66,7 @@ import numpy as np
 
 from .core3d import (
     ChannelProblem,
+    ImposedField,
     _advance_momentum,
     _lorentz_from_currents,
     enforce_face_constraints,
@@ -95,9 +99,11 @@ __all__ = [
     "developed_heat",
     "initial_thermal_state",
     "load_attribution",
+    "load_thermal_record",
     "thermal_boundary",
     "validate_developed_inputs",
     "validate_thermal_inputs",
+    "write_thermal_record",
 ]
 
 _KINDS = {"temperature": DIRICHLET, "heat_flux": NEUMANN, "periodic": PERIODIC}
@@ -706,6 +712,106 @@ def advance_thermal(
 
     body = jax.checkpoint(single) if checkpoint else single
     return jax.lax.scan(body, state, xs=None, length=steps)
+
+
+_RECORD_SCHEMA, _RECORD_VERSION = "lmhdx.thermal.state", 1
+
+
+def _described(problem: ThermalProblem) -> str:
+    """The problem as plain data, JSON: what a record must be given again to resume bit for bit."""
+    flow = problem.flow
+
+    def condition(item: BoundaryCondition) -> dict:
+        return {
+            "kinds": list(item.kinds),
+            "lower": np.asarray(item.lower, float).tolist(),
+            "upper": np.asarray(item.upper, float).tolist(),
+        }
+
+    field = flow.magnetic_field
+    if isinstance(field, ImposedField):
+        field = hashlib.sha256(
+            b"".join(np.asarray(array).tobytes() for array in field.components)
+        ).hexdigest()
+    names = (
+        "density",
+        "viscosity",
+        "conductivity",
+        "dt",
+        "forcing",
+        "wall_conductance",
+        "advection",
+        "precision",
+    )
+    thermal = ("specific_heat", "thermal_conductivity", "reference_temperature", "expansion_coefficient")
+    thermal += ("gravity", "joule_heating", "advection", "outlet_backflow")
+    return json.dumps(
+        {
+            "faces": [np.asarray(faces, float).tolist() for faces in flow.grid.faces],
+            "flow": {name: getattr(flow, name) for name in names},
+            "magnetic_field": field if isinstance(field, str) else [float(value) for value in field],
+            "wall_layers": flow.wall_layers,
+            "flow_conditions": [condition(item) for item in flow.conditions],
+            "thermal": {name: getattr(problem, name) for name in thermal},
+            "thermal_conditions": [condition(item) for item in problem.thermal_conditions],
+        },
+        sort_keys=True,
+        default=float,
+    )
+
+
+def write_thermal_record(
+    path: str | Path, problem: ThermalProblem, state: ThermalState, *, units: str
+) -> Path:
+    """Write ``state`` as a versioned NPZ record, its staggered velocity, temperature and time exactly.
+
+    The record holds its schema, version and ``units``, a label the caller
+    declares (such as ``"SI"``) and :func:`load_thermal_record` checks, and the
+    problem it belongs to, as plain data. Returns the path written.
+    """
+    path = Path(path).with_suffix(".npz")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    arrays = {f"velocity_{name}": np.asarray(field.data) for name, field in zip("xyz", state.velocity)}
+    np.savez(
+        path,
+        schema=_RECORD_SCHEMA,
+        version=_RECORD_VERSION,
+        units=units,
+        problem=_described(problem),
+        temperature=np.asarray(state.temperature.data),
+        time=np.asarray(state.time),
+        **arrays,
+    )
+    return path
+
+
+def load_thermal_record(path: str | Path, problem: ThermalProblem, *, units: str) -> ThermalState:
+    """Return the state a :func:`write_thermal_record` record holds, raising ``ValueError`` unless it fits.
+
+    The schema and version must be this one's, ``units`` the record's, and
+    ``problem`` the one it was written with, in every value that the step
+    depends on; the arrays must have the problem's shapes and the compute dtype.
+    """
+    dtype, grid = jnp.result_type(float), problem.flow.grid
+    with np.load(Path(path), allow_pickle=False) as record:
+        if str(record["schema"]) != _RECORD_SCHEMA or int(record["version"]) != _RECORD_VERSION:
+            raise ValueError(f"{path} is not a {_RECORD_SCHEMA} record of version {_RECORD_VERSION}")
+        if str(record["units"]) != units:
+            raise ValueError(f"{path} is in units {str(record['units'])!r}, not {units!r}")
+        written, expected = json.loads(str(record["problem"])), json.loads(_described(problem))
+        if written != expected:
+            differing = sorted(key for key in expected if written.get(key) != expected[key])
+            raise ValueError(f"{path} was written for another problem: {', '.join(differing)} differ")
+        arrays = {name: np.asarray(record[name]) for name in record.files}
+    pieces = [(arrays[f"velocity_{name}"], velocity_offset(axis)) for axis, name in enumerate("xyz")]
+    pieces.append((arrays["temperature"], _CELL))
+    for data, offset in pieces:
+        if data.shape != grid.offset_shape(offset) or data.dtype != dtype:
+            raise ValueError(
+                f"{path} holds a {data.dtype} array of shape {data.shape}, not {dtype} {grid.offset_shape(offset)}"
+            )
+    fields = [Field(jnp.asarray(data), offset, grid) for data, offset in pieces]
+    return ThermalState(tuple(fields[:3]), fields[3], jnp.asarray(arrays["time"], dtype=dtype))
 
 
 class LoadAttribution(NamedTuple):
