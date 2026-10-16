@@ -1211,7 +1211,7 @@ variable properties are later steps, added when a step below needs them.
 | 5.3 **done** (#241) | Heated Hunt duct with Joule heating; balance of inlet/outlet enthalpy, heat input, Joule heating, storage (needs inlet-outlet transport) | balance to 1e-6 |
 | 5.4 | Mistrangelo et al. 2025 heated conducting duct (Ha 235; needs inlet-outlet transport and conjugate walls) | comparison figure; deviations explained |
 | 5.5 | First thermal design: replace the mean-velocity bound of the duct design law (3b.3) with 5.2's peak wall temperature or Nusselt number; minimise hydraulic power subject to heat removal, temperature, throughput and geometry constraints; distinguish fixed-flow from fixed-pump-power comparisons | feasible candidate confirmed on a finer mesh |
-| 5.6 | Thermal runs read from TOML, restart from a versioned record of the staggered velocity, temperature and time, and write ParaView output, as the isothermal paths do; explicit schema, version and units (review of #239) | a TOML-driven thermal run restarts bit for bit and opens in ParaView |
+| 5.6 **done** (#259, #260) | Thermal runs read from TOML, restart from a versioned record of the staggered velocity, temperature and time, and write ParaView output, as the isothermal paths do; explicit schema, version and units (review of #239) | a TOML-driven thermal run restarts bit for bit and opens in ParaView |
 
 Effort: estimated per step in the step 5.1 issue.
 

@@ -75,7 +75,18 @@ from .core3d import (
     velocity_offset,
     zero_velocity,
 )
-from .grid import CENTER, DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, pad
+from .grid import (
+    CENTER,
+    DIRICHLET,
+    NEUMANN,
+    PERIODIC,
+    BoundaryCondition,
+    Field,
+    Grid,
+    pad,
+    uniform_faces,
+    wall_resolving_faces,
+)
 from .ops import (
     cell_inner_product,
     divergence,
@@ -86,13 +97,14 @@ from .ops import (
     wall_insulated,
 )
 from .poisson import FastDiagonalHelmholtz, fast_diagonal_helmholtz, fast_diagonal_poisson
-from .steady import with_inflow
+from .steady import solve_steady_state, with_inflow
 
 __all__ = [
     "DevelopedHeat",
     "LoadAttribution",
     "ThermalDiagnostics",
     "ThermalProblem",
+    "ThermalRun",
     "ThermalState",
     "advance_thermal",
     "build_thermal_step",
@@ -101,6 +113,7 @@ __all__ = [
     "load_attribution",
     "load_thermal_record",
     "thermal_boundary",
+    "thermal_run_from_toml",
     "validate_developed_inputs",
     "validate_thermal_inputs",
     "write_thermal_record",
@@ -1146,3 +1159,152 @@ def validate_developed_inputs(
     )
     if not flow_rate > flow_rate_tolerance:
         raise ValueError(f"the flow rate {flow_rate:.4g} is not above flow_rate_tolerance")
+
+
+class ThermalRun(NamedTuple):
+    """A thermal run read by :func:`thermal_run_from_toml`: the problem, its start, and how to run and record it."""
+
+    name: str
+    units: str
+    problem: ThermalProblem
+    state: ThermalState
+    heat_source: Field
+    hold_flow: bool
+    steps: int
+    chunk: int
+    divergence_tolerance: float
+    directory: Path
+    write_paraview: bool
+    write_restart: bool
+
+
+_TOML_KEYS = {
+    "case": {"name", "units"},
+    "solver": {"kind"},
+    "grid": {"x", "y", "z"},
+    "flow": {"conditions", "density", "viscosity", "conductivity", "magnetic_field", "forcing", "dt"},
+    "thermal": {"specific_heat", "thermal_conductivity", "reference_temperature", "expansion_coefficient"},
+    "run": {"steps", "chunk", "divergence_tolerance"},
+    "output": {"directory", "write_paraview", "write_restart"},
+    "restart": {"path"},
+}
+_TOML_KEYS["flow"] |= {"wall_conductance", "advection", "initial_velocity"}
+_TOML_KEYS["thermal"] |= {
+    "gravity",
+    "joule_heating",
+    "advection",
+    "hold_flow",
+    "initial_temperature",
+    "heat_source",
+}
+
+
+def _table(root: dict, name: str, required: tuple[str, ...] = ()) -> dict:
+    table = dict(root.get(name, {}))
+    unknown = set(table) - _TOML_KEYS[name] - ({"x", "y", "z"} if name == "thermal" else set())
+    missing = [key for key in required if key not in table]
+    if unknown or missing:
+        raise ValueError(f"[{name}]: unknown {sorted(unknown)}, missing {missing}")
+    return table
+
+
+def thermal_run_from_toml(root: dict, base: str | Path = ".") -> ThermalRun:
+    """Read a thermal run from a parsed TOML document with ``[solver] kind = "thermal"``; ``base`` resolves paths.
+
+    The keys are the Python names, every table checked for unknown and missing
+    ones. ``[grid]`` gives each axis as ``{cells, lower, upper}``, with
+    ``layer_thickness`` and ``cells_in_layer`` for wall-resolving faces.
+    ``[flow]`` holds :class:`lmhdx.core3d.ChannelProblem`'s values, its
+    ``conditions`` ``"periodic"`` or ``"wall"`` per axis (an inflow-outflow axis
+    is not read from TOML yet), and ``initial_velocity`` ``"rest"`` or
+    ``"steady"``, the fully developed flow. ``[thermal]`` holds
+    :class:`ThermalProblem`'s values, ``hold_flow``, a uniform
+    ``initial_temperature`` and ``heat_source``, and for each wall axis a table
+    ``[thermal.y]`` of :func:`thermal_boundary`'s ``kind``, ``lower`` and ``upper``.
+    ``[run]`` gives ``steps`` in compiled chunks of ``chunk``, each ending in a record and
+    a frame; ``[output]`` the ``directory`` and what to write; ``[restart]`` an
+    optional ``path`` to a :func:`write_thermal_record` record to resume.
+    """
+    base = Path(base)
+    if _table(root, "solver", ("kind",))["kind"] != "thermal":
+        raise ValueError('a thermal run needs [solver] kind = "thermal"')
+    case, grid_table = _table(root, "case", ("name", "units")), _table(root, "grid", ("x", "y", "z"))
+    faces = []
+    for axis in "xyz":
+        spec = dict(grid_table[axis])
+        if set(spec) - {"cells", "lower", "upper", "layer_thickness", "cells_in_layer"}:
+            raise ValueError(f"[grid] {axis}: unknown {sorted(set(spec) - {'cells', 'lower', 'upper'})}")
+        if "layer_thickness" in spec:
+            faces.append(
+                wall_resolving_faces(
+                    int(spec["cells"]),
+                    float(spec["lower"]),
+                    float(spec["upper"]),
+                    layer_thickness=float(spec["layer_thickness"]),
+                    cells_in_layer=int(spec.get("cells_in_layer", 4)),
+                    max_ratio=None,
+                )
+            )
+        else:
+            faces.append(uniform_faces(int(spec["cells"]), float(spec["lower"]), float(spec["upper"])))
+    flow_table = _table(root, "flow", ("conditions", "dt"))
+    kinds = {"periodic": BoundaryCondition(PERIODIC), "wall": BoundaryCondition(NEUMANN)}
+    if any(kind not in kinds for kind in flow_table["conditions"]) or len(flow_table["conditions"]) != 3:
+        raise ValueError(
+            '[flow] conditions are three of "periodic" and "wall"; an open axis is not read from TOML yet'
+        )
+    start = flow_table.pop("initial_velocity", "rest")
+    flow = ChannelProblem(
+        Grid(*faces),
+        tuple(kinds[kind] for kind in flow_table.pop("conditions")),
+        **{key: tuple(value) if isinstance(value, list) else value for key, value in flow_table.items()},
+    )
+    thermal_table = _table(
+        root, "thermal", ("specific_heat", "thermal_conductivity", "reference_temperature")
+    )
+    k = float(thermal_table["thermal_conductivity"])
+    conditions = []
+    for axis, flow_condition in zip("xyz", flow.conditions):
+        if flow_condition.is_periodic:
+            conditions.append(BoundaryCondition(PERIODIC))
+            continue
+        wall = dict(thermal_table.pop(axis))
+        conditions.append(
+            thermal_boundary(wall.pop("kind"), wall.pop("lower", 0.0), wall.pop("upper", 0.0), conductivity=k)
+        )
+        if wall:
+            raise ValueError(f"[thermal.{axis}]: unknown {sorted(wall)}")
+    hold_flow = bool(thermal_table.pop("hold_flow", False))
+    temperature, source = (
+        float(thermal_table.pop(key, 0.0)) for key in ("initial_temperature", "heat_source")
+    )
+    if "gravity" in thermal_table:
+        thermal_table["gravity"] = tuple(thermal_table["gravity"])
+    problem = ThermalProblem(flow, tuple(conditions), **thermal_table)
+    velocity = {"rest": None, "steady": lambda: solve_steady_state(flow).velocity}
+    if start not in velocity:
+        raise ValueError('[flow] initial_velocity is "rest" or "steady"')
+    state = initial_thermal_state(
+        problem, temperature, None if velocity[start] is None else velocity[start]()
+    )
+    restart = _table(root, "restart").get("path")
+    if restart is not None:
+        state = load_thermal_record(base / restart, problem, units=str(case["units"]))
+    run, output = _table(root, "run", ("steps",)), _table(root, "output", ("directory",))
+    steps, chunk = int(run["steps"]), int(run.get("chunk", run["steps"]))
+    if steps < 1 or chunk < 1 or steps % chunk:
+        raise ValueError("[run] steps must be a positive multiple of chunk")
+    return ThermalRun(
+        str(case["name"]),
+        str(case["units"]),
+        problem,
+        state,
+        Field(jnp.full(flow.grid.shape, source, dtype=jnp.result_type(float)), _CELL, flow.grid),
+        hold_flow,
+        steps,
+        chunk,
+        float(run.get("divergence_tolerance", 1e-10)),
+        base / str(output["directory"]),
+        bool(output.get("write_paraview", True)),
+        bool(output.get("write_restart", True)),
+    )
