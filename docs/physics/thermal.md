@@ -42,12 +42,15 @@ The flow should satisfy $\max\beta|T-T_r|\ll 1$. The step reports it as
 `boussinesq_measure`; it is not enforced.
 
 The heat equation leaves out:
-- viscous heating. In a developed duct the hydraulic power is the viscous plus
-  the Joule dissipation, the two of comparable size, and both are negligible
-  against blanket heating while the Brinkman number $\mu U^2/(k\,\Delta T)$ is
-  small: about $10^{-8}$ for PbLi at 0.1 m/s and 100 K. Joule heat is kept so the
-  ledger matches `core3d.energy_budget(...).joule`, not because it matters
-  thermally there;
+- viscous heating. In a developed duct with insulating walls the hydraulic power
+  is the viscous plus the Joule dissipation. The Brinkman number
+  $\mu U^2/(k\,\Delta T)$ scales the viscous part against conduction: about
+  $10^{-8}$ for PbLi at 0.1 m/s and 100 K. It does not bound the Joule part,
+  whose scale on the same length is $Ha^2$ times larger, and whose currents
+  depend on the walls. Whether either matters is a property of the case; the
+  duct design example measures both, under $10^{-5}$ of its duty. Joule heat is
+  kept, from the same currents as the Lorentz force, so the ledger matches
+  `core3d.energy_budget(...).joule`;
 - radiation;
 - phase change;
 - thermoelectric effects;
@@ -172,9 +175,11 @@ order in time as well, so any transient heat-transfer number carries an
 $O(\Delta t)$ error.
 
 The coupling's time error is set by the step over the buoyancy time scale,
-`buoyancy_courant` $=\Delta t\sqrt{\beta|\mathbf g|\max|\nabla T|}$, reported
-beside `advective_cfl`. In the Bénard onset of #252 the critical Rayleigh number
-is about 15 % low near 0.2 and under 3 % near 0.025, at first order.
+`buoyancy_courant` $=\Delta t\sqrt{\beta|\mathbf g|\,G}$, reported beside
+`advective_cfl`, with $G$ the largest absolute face-normal gradient on any face,
+one component rather than a colocated gradient magnitude. In the Bénard onset of
+#252 the critical Rayleigh number is about 15 % low near 0.2 and under 3 % near
+0.025, at first order. That calibrates that case; it is not a general bound.
 `validate_thermal_inputs(..., buoyancy_courant_limit=...)` refuses a start
 above a chosen limit.
 

@@ -509,7 +509,12 @@ def test_the_thermal_duct_design_runs_as_written_and_keeps_its_contracts():
         duties[1.0] == pytest.approx(run["DUTY"], rel=2e-3)
         and max(d for d in duties.values() if d is not None) > 1.5 * run["DUTY"]
     )
-    for record in (square, candidate):  # buoyancy is not small in either: both are outside the held flow (#251)
-        assert max(record["mixed_convection"].values()) > 0.1
+    for record in (square, candidate):  # the half-width scales, checked against their physical forms
+        numbers, a = record["numbers"], np.sqrt(run["AREA"] / (4.0 * record["aspect"]))
+        speed, flux = record["flow_rate"] / run["AREA"], record["duty"] / (2.0 * a * run["LENGTH"])
+        sigma, field, rho = run["SIGMA"], run["FIELD"], run["RHO"]
+        assert numbers["N_a"] == pytest.approx(sigma * field**2 * a / (rho * speed), rel=1e-12)
+        buoyant = rho * run["GRAVITY"] * run["BETA"] * flux * a / run["K"]  # rho g beta dT, dT = q'' a / k
+        assert numbers["Ri_a/N_a"] == pytest.approx(buoyant / (sigma * speed * field**2), rel=1e-12)
     widths = dict(run["per_width"])  # at a fixed flux the slender end loses its advantage
     assert min(widths.values()) < 0.7 * widths[1.0] < widths[min(widths)]  # b/a 0.08

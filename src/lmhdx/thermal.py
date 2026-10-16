@@ -439,11 +439,13 @@ class ThermalDiagnostics(NamedTuple):
     under ``outlet_backflow="error"``, whose enthalpy in is then reported as zero.
     All four are zero, and the boundary valid, in a closed duct.
 
-    ``buoyancy_courant`` is ``dt sqrt(beta |g| max |grad T|)`` of the old
-    temperature, the step over the buoyancy time scale, with the gradient taken
-    on every face; zero without buoyancy. The partitioned step is first order in
-    it: a Benard onset is low by about 15 % near 0.2 and under 3 % near 0.025
-    (#252).
+    ``buoyancy_courant`` is ``dt sqrt(beta |g| G)`` of the old temperature, the
+    step over the buoyancy time scale, with ``G`` the largest absolute
+    face-normal gradient on any face: one component, not a colocated gradient
+    magnitude. It is zero without buoyancy and counts in ``finite``. The
+    partitioned step is first order in it; in the Benard onset of #252 the
+    critical Rayleigh number is about 15 % low near 0.2 and under 3 % near 0.025,
+    a calibration of that case, not a general bound.
     """
 
     mass_residual: jnp.ndarray
@@ -469,7 +471,7 @@ class ThermalDiagnostics(NamedTuple):
 
 
 def _buoyancy_courant(temperature: Field, problem: ThermalProblem) -> jnp.ndarray:
-    """Return ``dt sqrt(beta |g| max |grad T|)``, taken on every face; a diagnostic, so no derivative flows."""
+    """Return ``dt sqrt(beta |g| G)``, ``G`` the largest absolute face-normal gradient; no derivative flows."""
     strength = float(problem.expansion_coefficient) * float(np.linalg.norm(problem.gravity))
     if not strength:
         return jnp.zeros((), temperature.dtype)
@@ -689,9 +691,10 @@ def build_thermal_step(
         )
         new = ThermalState(moved, heated, state.time + dt)
         exchange = _outlet_exchange(velocity, reservoir, problem, compute)
-        leaves = jax.tree_util.tree_leaves((new, values, exchange[:3]))
+        buoyant = _buoyancy_courant(temperature, problem)
+        leaves = jax.tree_util.tree_leaves((new, values, exchange[:3], buoyant))
         finite = jnp.all(jnp.stack([jnp.all(jnp.isfinite(leaf)) for leaf in leaves]))
-        return new, ThermalDiagnostics(*values, finite, *exchange, _buoyancy_courant(temperature, problem))
+        return new, ThermalDiagnostics(*values, finite, *exchange, buoyant)
 
     thermal_step.hold_flow = hold_flow  # load_attribution needs a flow the load cannot move
     return thermal_step
@@ -742,10 +745,10 @@ def _described(problem: ThermalProblem) -> str:
         }
 
     field = flow.magnetic_field
-    if isinstance(field, ImposedField):
-        field = hashlib.sha256(
-            b"".join(np.asarray(array).tobytes() for array in field.components)
-        ).hexdigest()
+    if isinstance(field, ImposedField):  # its shapes, dtypes and placement as well as its bytes
+        arrays = [*field.components, *(field.faces or ())]
+        layout = repr([(array.shape, str(array.dtype)) for array in arrays] + [field.faces is None]).encode()
+        field = hashlib.sha256(layout + b"".join(np.asarray(array).tobytes() for array in arrays)).hexdigest()
     names = (
         "density",
         "viscosity",
@@ -774,13 +777,15 @@ def _described(problem: ThermalProblem) -> str:
 
 
 def write_thermal_record(
-    path: str | Path, problem: ThermalProblem, state: ThermalState, *, units: str
+    path: str | Path, problem: ThermalProblem, state: ThermalState, *, units: str, run: dict | None = None
 ) -> Path:
     """Write ``state`` as a versioned NPZ record, its staggered velocity, temperature and time exactly.
 
     The record holds its schema, version and ``units``, a label the caller
     declares (such as ``"SI"``) and :func:`load_thermal_record` checks, and the
-    problem it belongs to, as plain data. Returns the path written.
+    problem it belongs to, as plain data. ``run`` is the provenance of the run's
+    other inputs, plain JSON data such as its heat source and whether its flow is
+    held, kept so that a resume can check it. Returns the path written.
     """
     path = Path(path).with_suffix(".npz")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -791,6 +796,7 @@ def write_thermal_record(
         version=_RECORD_VERSION,
         units=units,
         problem=_described(problem),
+        run=json.dumps(run, sort_keys=True),
         temperature=np.asarray(state.temperature.data),
         time=np.asarray(state.time),
         **arrays,
@@ -798,24 +804,45 @@ def write_thermal_record(
     return path
 
 
-def load_thermal_record(path: str | Path, problem: ThermalProblem, *, units: str) -> ThermalState:
+def load_thermal_record(
+    path: str | Path, problem: ThermalProblem, *, units: str, run: dict | None = None
+) -> ThermalState:
     """Return the state a :func:`write_thermal_record` record holds, raising ``ValueError`` unless it fits.
 
     The schema and version must be this one's, ``units`` the record's, and
-    ``problem`` the one it was written with, in every value that the step
-    depends on; the arrays must have the problem's shapes and the compute dtype.
+    ``problem`` the one it was written with, in every value the step depends on.
+    Every field must be finite, of the problem's shape and the compute dtype, and
+    the time a finite scalar of that dtype; all is checked before a state is made.
+    Given ``run``, the load is an exact resume and the record's run provenance must
+    equal it; without, it is a state import, the start of another experiment.
     """
     dtype, grid = jnp.result_type(float), problem.flow.grid
     with np.load(Path(path), allow_pickle=False) as record:
-        if str(record["schema"]) != _RECORD_SCHEMA or int(record["version"]) != _RECORD_VERSION:
-            raise ValueError(f"{path} is not a {_RECORD_SCHEMA} record of version {_RECORD_VERSION}")
-        if str(record["units"]) != units:
-            raise ValueError(f"{path} is in units {str(record['units'])!r}, not {units!r}")
-        written, expected = json.loads(str(record["problem"])), json.loads(_described(problem))
-        if written != expected:
-            differing = sorted(key for key in expected if written.get(key) != expected[key])
-            raise ValueError(f"{path} was written for another problem: {', '.join(differing)} differ")
         arrays = {name: np.asarray(record[name]) for name in record.files}
+    names = ("schema", "version", "units", "problem", "run", "temperature", "time")
+    missing = sorted(set(names + tuple(f"velocity_{name}" for name in "xyz")) - set(arrays))
+    if missing:
+        raise ValueError(f"{path} lacks {', '.join(missing)}")
+
+    def scalar(name: str, kinds: str):
+        value = arrays[name]
+        if value.shape or value.dtype.kind not in kinds:
+            raise ValueError(f"{path}: {name} is not a scalar of kind {kinds!r}")
+        return value[()]
+
+    if str(scalar("schema", "U")) != _RECORD_SCHEMA or int(scalar("version", "iu")) != _RECORD_VERSION:
+        raise ValueError(f"{path} is not a {_RECORD_SCHEMA} record of version {_RECORD_VERSION}")
+    if str(scalar("units", "U")) != units:
+        raise ValueError(f"{path} is in units {str(arrays['units'])!r}, not {units!r}")
+    written, expected = json.loads(str(scalar("problem", "U"))), json.loads(_described(problem))
+    if written != expected:
+        differing = sorted(key for key in expected if written.get(key) != expected[key])
+        raise ValueError(f"{path} was written for another problem: {', '.join(differing)} differ")
+    if run is not None and json.loads(str(scalar("run", "U"))) != json.loads(json.dumps(run)):
+        raise ValueError(f"{path} was written by a run with other inputs: {str(arrays['run'])}")
+    time = arrays["time"]
+    if time.shape or time.dtype != dtype or not np.isfinite(time):
+        raise ValueError(f"{path}: the time must be a finite {dtype} scalar")
     pieces = [(arrays[f"velocity_{name}"], velocity_offset(axis)) for axis, name in enumerate("xyz")]
     pieces.append((arrays["temperature"], _CELL))
     for data, offset in pieces:
@@ -823,8 +850,10 @@ def load_thermal_record(path: str | Path, problem: ThermalProblem, *, units: str
             raise ValueError(
                 f"{path} holds a {data.dtype} array of shape {data.shape}, not {dtype} {grid.offset_shape(offset)}"
             )
+        if not np.all(np.isfinite(data)):
+            raise ValueError(f"{path} holds a field that is not finite")
     fields = [Field(jnp.asarray(data), offset, grid) for data, offset in pieces]
-    return ThermalState(tuple(fields[:3]), fields[3], jnp.asarray(arrays["time"], dtype=dtype))
+    return ThermalState(tuple(fields[:3]), fields[3], jnp.asarray(time))
 
 
 class LoadAttribution(NamedTuple):

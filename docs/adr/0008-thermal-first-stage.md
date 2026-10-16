@@ -98,12 +98,15 @@ step as numerical input. The base outlet operator stays homogeneous Neumann, so
 the conduction inverse is unchanged.
 
 **D31, dissipation and integration** (from the review of #230). Viscous
-heating stays out: with the Joule heat it makes up the hydraulic power of a
-developed duct, but both are negligible against blanket heating while the
-Brinkman number `mu U^2 / (k dT)` is small, about `1e-8` for PbLi at 0.1 m/s and
-100 K. Joule heat is kept so the heat ledger matches `energy_budget(...).joule`.
+heating stays out. With the Joule heat it makes up the hydraulic power of a
+developed duct with insulating walls. The Brinkman number `mu U^2 / (k dT)`,
+about `1e-8` for PbLi at 0.1 m/s and 100 K, scales only the viscous part; the
+Joule part is `Ha^2` larger on the same length and depends on the walls. Their
+size is measured per case: under `1e-5` of the duty in the design example.
+Joule heat is kept so the heat ledger matches `energy_budget(...).joule`.
 A thermal run reads TOML input and writes a versioned restart record and
-ParaView output (plan step 5.6); TOML covers closed ducts.
+ParaView (VTK XML) output, whose layout is checked by parsing it (plan step
+5.6); TOML covers closed ducts.
 
 **D32, gravity along a periodic axis.** Along a periodic axis the mean of
 `-rho_0 beta (T - T_r) g` is a uniform force that no periodic pressure can
