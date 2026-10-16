@@ -99,8 +99,10 @@ the conduction inverse is unchanged.
 
 **D31, transport** (from the review of #234). Upwinding stays the default.
 `advection="van_leer"` adds a van Leer-limited second-order face value, held
-between its two cells, with a Courant bound of 0.5. Open, inlet and wall faces
-keep the first-order value, and the step stays first order in time.
+between its two cells. Its Courant limit of 0.5 is a tested envelope, not a
+derived bound. Open, inlet and wall faces keep the first-order value, and the
+step stays first order in time. The face value is not affine in the
+temperature, so `load_attribution` accepts upwind or no transport only.
 
 **D31, dissipation and integration** (from the review of #230). Viscous
 heating stays out. With the Joule heat it makes up the hydraulic power of a

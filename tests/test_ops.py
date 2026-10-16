@@ -29,6 +29,7 @@ from lmhdx.grid import (
     pad,
     tanh_faces,
     uniform_faces,
+    wall_resolving_faces,
 )
 from lmhdx.ops import (
     advective_step_limit,
@@ -1022,15 +1023,25 @@ def test_the_van_leer_face_value_is_exact_for_a_linear_temperature_on_a_stretche
     assert np.allclose(from_right[:, inner], exact[:, inner], rtol=1e-12, atol=0.0)
 
 
-def test_van_leer_transport_conserves_heat_and_makes_no_new_extremum_at_courant_0_5():
-    """On STRETCHED with a random solenoidal carrier: the face fluxes cancel in the total, and ten steps at the
-    scheme's Courant bound, 0.5, stay within the start's range."""
-    problem = dataclasses.replace(_thermal(STRETCHED, (WRAP, INSULATED, INSULATED)), advection="van_leer")
+# Stretched as far as the duct pages go: a Hartmann-like layer with no ratio limit, and a periodic axis whose first
+# and last widths, side by side at the seam, are 27 to 1.
+AGGRESSIVE = Grid(
+    geometric_faces(8, 0.0, 3.0, 1.6),
+    wall_resolving_faces(16, -1.0, 1.0, layer_thickness=0.02, cells_in_layer=4, max_ratio=None),
+    uniform_faces(4, -0.5, 0.5),
+)
+
+
+@pytest.mark.parametrize("grid", [STRETCHED, AGGRESSIVE], ids=["tanh", "aggressive"])
+def test_van_leer_transport_conserves_heat_and_makes_no_new_extremum_at_courant_0_5(grid):
+    """With a random solenoidal carrier: the face fluxes cancel in the total, and ten steps at the scheme's tested
+    Courant limit, 0.5, stay within the start's range, with nothing clipped after a step."""
+    problem = dataclasses.replace(_thermal(grid, (WRAP, INSULATED, INSULATED)), advection="van_leer")
     velocity = _carrier(problem, 10, solenoidal=True)
-    start = np.random.default_rng(11).uniform(0.0, 1.0, STRETCHED.shape)
-    temperature = Field(jnp.asarray(start), CELL, STRETCHED)
+    start = np.random.default_rng(11).uniform(0.0, 1.0, grid.shape)
+    temperature = Field(jnp.asarray(start), CELL, grid)
     transport = temperature.replace_data(_transport(temperature, velocity, problem))
-    ones = temperature.replace_data(jnp.ones(STRETCHED.shape))
+    ones = temperature.replace_data(jnp.ones(grid.shape))
     absolute = float(cell_inner_product(transport.replace_data(jnp.abs(transport.data)), ones))
     assert abs(float(cell_inner_product(transport, ones))) <= 1e-13 * absolute
     dt = 0.5 / float(jnp.max(_outgoing_rate(velocity)))
@@ -1046,13 +1057,17 @@ def test_van_leer_transport_conserves_heat_and_makes_no_new_extremum_at_courant_
     )
 
 
+@pytest.mark.parametrize("scheme", ["upwind", "van_leer"])
 @pytest.mark.parametrize("cells", [1, 2])
-def test_a_short_periodic_axis_carries_heat_through_its_wrap_face(cells):
-    """A one-cell axis carries the same flux in and out, so its transport vanishes; heat is conserved either way."""
+def test_a_short_periodic_axis_carries_heat_through_its_wrap_face(cells, scheme):
+    """A one-cell axis carries the same flux in and out, so its transport vanishes; heat is conserved either way,
+    and the wrap face's two copies, the first face and the last, carry the same flux."""
     grid = Grid(uniform_faces(cells, 0.0, 1.0), tanh_faces(6, -1.0, 1.0, 1.3), uniform_faces(4, -1.0, 1.0))
-    problem = _thermal(grid, (WRAP, INSULATED, INSULATED))
+    problem = dataclasses.replace(_thermal(grid, (WRAP, INSULATED, INSULATED)), advection=scheme)
     velocity = _carrier(problem, 12)
     temperature = Field(jnp.asarray(np.random.default_rng(13).standard_normal(grid.shape)), CELL, grid)
+    seam = np.asarray(_upwind_fluxes(temperature, velocity, problem)[0].data)
+    assert np.array_equal(seam[0], seam[-1])
     transport = _transport(temperature, velocity, problem)
     assert abs(float(jnp.sum(jnp.asarray(grid.cell_volumes()) * transport))) <= 1e-13 * float(
         jnp.sum(jnp.abs(transport))
@@ -1060,6 +1075,33 @@ def test_a_short_periodic_axis_carries_heat_through_its_wrap_face(cells):
     if cells == 1:
         still = (velocity[0].replace_data(jnp.zeros_like(velocity[0].data)), *velocity[1:])
         assert np.allclose(transport, _transport(temperature, still, problem), rtol=0.0, atol=1e-13)
+
+
+def test_the_limited_face_value_differentiates_where_it_is_smooth():
+    """Under ``jax.jit``, on STRETCHED's walled y axis. A uniform field has every slope zero, where the van Leer mean
+    is 0/0, guarded: its Jacobian is finite. A field increasing along y, with no extremum, has slopes of one sign:
+    the directional derivative matches central differences to 1e-7. The face value is only piecewise smooth, with
+    kinks where a slope vanishes or changes sign and where the value is held between its cells; the transport has
+    one more, where a face velocity changes sign."""
+    from lmhdx.thermal import _limited
+
+    problem = dataclasses.replace(_thermal(STRETCHED, (WRAP, INSULATED, INSULATED)), advection="van_leer")
+
+    @jax.jit
+    def faces(data):
+        padded = pad(data, 1, problem.flow.scalar_conditions[1], grid=STRETCHED)
+        temperature = Field(data, CELL, STRETCHED)
+        return jnp.stack(_limited(temperature, 1, problem, padded[:, :-1, :], padded[:, 1:, :]))
+
+    jacobian = jax.jacfwd(faces)(jnp.full(STRETCHED.shape, 3.0))
+    assert bool(jnp.all(jnp.isfinite(jacobian)))
+    y = np.asarray(STRETCHED.centers[1])[None, :, None]
+    rising = jnp.asarray(np.broadcast_to(2.0 + y + 0.3 * y**2, STRETCHED.shape))
+    direction = jnp.asarray(np.random.default_rng(16).standard_normal(STRETCHED.shape))
+    tangent = jax.jvp(faces, (rising,), (direction,))[1]
+    size = 1e-6
+    central = (faces(rising + size * direction) - faces(rising - size * direction)) / (2.0 * size)
+    assert float(jnp.max(jnp.abs(tangent - central))) <= 1e-7 * float(jnp.max(jnp.abs(tangent)))
 
 
 def test_the_outgoing_rate_counts_only_what_leaves_each_cell():
