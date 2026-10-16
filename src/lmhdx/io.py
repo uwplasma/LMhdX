@@ -31,6 +31,7 @@ from .cases import (
     Solution,
     StreamingSolverLogger,
     StructuredMesh,
+    _load_toml,
     default_log_path,
     load_run_config,
     make_hartmann_case,
@@ -455,6 +456,41 @@ def write_pvd(entries: list[tuple[float, str]], out_dir: str | Path, name: str =
         f"{datasets}\n"
         "</Collection>\n"
         "</VTKFile>\n"
+    )
+    target.write_text(content)
+    return target
+
+
+def write_thermal_vtr(problem, state, path: str | Path) -> Path:
+    """Write a thermal state as a ParaView rectilinear grid: the temperature and the cell-centred velocity.
+
+    ``problem`` is a :class:`lmhdx.thermal.ThermalProblem` and ``state`` a
+    :class:`lmhdx.thermal.ThermalState`. The cells are written with x varying
+    fastest, as VTK orders them; the velocity is each component's mean over the
+    two faces of its cell. Returns the path written.
+    """
+    grid, target = problem.flow.grid, Path(path).with_suffix(".vtr")
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    def centred(data, axis):
+        data = np.moveaxis(np.asarray(data), axis, 0)
+        return np.moveaxis(0.5 * (data[:-1] + data[1:]), 0, axis)
+
+    velocity = np.stack([centred(field.data, axis) for axis, field in enumerate(state.velocity)], axis=-1)
+    temperature = np.transpose(np.asarray(state.temperature.data))
+    extent = " ".join(f"0 {count}" for count in grid.shape)
+    coordinates = "\n".join(
+        f'<DataArray type="Float64" Name="{name}" format="ascii">{_array_text(faces)}</DataArray>'
+        for name, faces in zip("XYZ", grid.faces)
+    )
+    content = (
+        '<?xml version="1.0"?>\n'
+        '<VTKFile type="RectilinearGrid" version="0.1" byte_order="LittleEndian">\n'
+        f'<RectilinearGrid WholeExtent="{extent}">\n<Piece Extent="{extent}">\n<CellData>\n'
+        f'<DataArray type="Float64" Name="temperature" format="ascii">{_array_text(temperature)}</DataArray>\n'
+        '<DataArray type="Float64" Name="velocity" NumberOfComponents="3" format="ascii">'
+        f"{_array_text(np.transpose(velocity, (2, 1, 0, 3)))}</DataArray>\n"
+        f"</CellData>\n<Coordinates>\n{coordinates}\n</Coordinates>\n</Piece>\n</RectilinearGrid>\n</VTKFile>\n"
     )
     target.write_text(content)
     return target
@@ -928,8 +964,10 @@ def _write_run_summary(summary: dict[str, object], case, out_dir: Path) -> Path 
 
 
 def _summary_exit_code(summary: dict[str, object]) -> int:
-    """Return failure only for a recorded unconverged steady result."""
+    """Return failure for a recorded unconverged steady result or a rejected thermal run."""
 
+    if summary.get("solver_mode") == "thermal":
+        return 0 if summary.get("accepted") else 2
     return 2 if summary.get("solver_mode") == "steady" and summary.get("converged") is False else 0
 
 
@@ -1019,7 +1057,120 @@ def _run_config(config: RunConfig) -> dict[str, object]:
     return summary
 
 
+def _thermal_rejection(history, limits: dict, done: int) -> dict | None:
+    """Return the first sample of a chunk's ``history`` outside the run's ``limits``, its step and reasons, or None.
+
+    Every sample is checked, so a violation inside a chunk is not hidden by a valid last one; a NaN fails.
+    """
+    checks = {
+        "not finite": ~np.asarray(history.finite),
+        "the flow returns through the outlet": ~np.asarray(history.backflow_boundary_valid),
+    }
+    for name in ("advective_cfl", "buoyancy_courant"):
+        if limits[name] is not None:
+            checks[f"{name} over {limits[name]}"] = ~(np.asarray(getattr(history, name)) <= limits[name])
+    failing = {reason: np.flatnonzero(mask) for reason, mask in checks.items()}
+    samples = [int(found[0]) for found in failing.values() if found.size]
+    if not samples:
+        return None
+    sample = min(samples)
+    reasons = [reason for reason, found in failing.items() if sample in found]
+    values = {
+        name: float(np.asarray(getattr(history, name))[sample])
+        for name in ("advective_cfl", "buoyancy_courant")
+    }
+    return {"step": done + sample + 1, "reasons": reasons, **values}
+
+
+def run_thermal(run) -> dict[str, object]:
+    """Run a :class:`lmhdx.thermal.ThermalRun` in compiled chunks, accepting each before recording it.
+
+    Every sample of a chunk must be finite, keep a valid outlet, and stay within the scheme's advective Courant
+    limit (upwind 0.8, van Leer 0.5, none for conduction alone) and a configured ``buoyancy_courant_limit``; the start is held
+    to the same limits. ``[run] advective_cfl_limit`` replaces the scheme's, recorded as an override. An accepted
+    chunk writes the record ``{name}_{step:06d}.npz`` and the frame ``{name}_{step:06d}.vtr``, ``step`` counted
+    from the record's own time on a restart, gathered in ``{name}.pvd`` from step 0 and in
+    ``{name}_from_{first:06d}.pvd`` from a restart, so a resume keeps the earlier series. The first rejected
+    chunk stops the run and writes only ``{name}_{step:06d}_rejected.npz``, whose run provenance names the
+    reasons, so it imports but does not resume. ``thermal_summary.json`` holds ``accepted``, the first rejected
+    sample (its step, reasons and Courant numbers), the limits, the last diagnostics and the extremes over the
+    run of the ledger, the Courant numbers and the Boussinesq measure, which no limit applies to.
+    """
+    from .thermal import (
+        _SCHEMES,
+        advance_thermal,
+        build_thermal_step,
+        validate_thermal_inputs,
+        write_thermal_record,
+    )
+
+    problem, state, heat = run.problem, run.state, run.heat_source
+    scheme = _SCHEMES[problem.advection]
+    courant = run.limits["advective_cfl"] if problem.advection != "off" else None
+    limits = {
+        "advective_cfl": scheme if courant is None else courant,
+        "advective_cfl_override": courant is not None and courant != scheme,
+        "buoyancy_courant": run.limits["buoyancy_courant"],
+    }
+    start_limits = {"buoyancy_courant_limit": limits["buoyancy_courant"]}
+    if limits["advective_cfl"] is not None:
+        start_limits["advective_cfl_limit"] = limits["advective_cfl"]
+    validate_thermal_inputs(
+        problem, state, heat, divergence_tolerance=run.divergence_tolerance, **start_limits
+    )
+    thermal_step = build_thermal_step(problem, dtype=jnp.result_type(float), hold_flow=run.hold_flow)
+    chunk = jax.jit(lambda start: advance_thermal(thermal_step, start, heat, run.chunk))
+    first, frames, histories, rejected = round(float(state.time) / float(problem.flow.dt)), [], [], None
+    accepted, done = state, first
+    for index in range(run.steps // run.chunk):
+        state, history = chunk(accepted)
+        histories.append(history)
+        rejected, label = _thermal_rejection(history, limits, done), f"{run.name}_{done + run.chunk:06d}"
+        if rejected is not None:
+            rejected["chunk"] = index
+            if run.write_restart:
+                provenance = {**run.provenance, "rejected": rejected["reasons"]}
+                write_thermal_record(
+                    run.directory / f"{label}_rejected", problem, state, units=run.units, run=provenance
+                )
+            break
+        accepted, done = state, done + run.chunk
+        if run.write_restart:
+            write_thermal_record(run.directory / label, problem, state, units=run.units, run=run.provenance)
+        if run.write_paraview:
+            frames.append((float(state.time), write_thermal_vtr(problem, state, run.directory / label).name))
+    if frames:
+        write_pvd(frames, run.directory, name=run.name if first == 0 else f"{run.name}_from_{first:06d}")
+    history = jax.tree_util.tree_map(
+        lambda *parts: np.concatenate([np.asarray(p) for p in parts]), *histories
+    )
+    last = {name: float(np.asarray(values)[-1]) for name, values in history._asdict().items()}
+    largest = ("heat_balance_residual", "advective_cfl", "buoyancy_courant", "boussinesq_measure")
+    summary = {
+        "case": run.name,
+        "solver_mode": "thermal",
+        "units": run.units,
+        "accepted": rejected is None,
+        "rejected": rejected,
+        "limits": limits,
+        "restart": run.restart,
+        "steps": done - first,
+        "time": float(accepted.time),
+        "finite": bool(np.all(history.finite)),
+        "last": last,
+        "largest": {name: float(np.max(np.abs(getattr(history, name)))) for name in largest},
+    }
+    run.directory.mkdir(parents=True, exist_ok=True)
+    (run.directory / "thermal_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    return summary
+
+
 def run_from_toml(path: str | Path) -> dict[str, object]:
+    root = _load_toml(path)
+    if root.get("solver", {}).get("kind") == "thermal":
+        from .thermal import thermal_run_from_toml
+
+        return run_thermal(thermal_run_from_toml(root, Path(path).resolve().parent))
     config = load_run_config(path)
     return _run_config(config)
 
