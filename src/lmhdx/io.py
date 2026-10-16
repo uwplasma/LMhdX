@@ -1086,7 +1086,7 @@ def run_thermal(run) -> dict[str, object]:
     """Run a :class:`lmhdx.thermal.ThermalRun` in compiled chunks, accepting each before recording it.
 
     Every sample of a chunk must be finite, keep a valid outlet, and stay within the scheme's advective Courant
-    limit (upwind 0.8, none for conduction alone) and a configured ``buoyancy_courant_limit``; the start is held
+    limit (upwind 0.8, van Leer 0.5, none for conduction alone) and a configured ``buoyancy_courant_limit``; the start is held
     to the same limits. ``[run] advective_cfl_limit`` replaces the scheme's, recorded as an override. An accepted
     chunk writes the record ``{name}_{step:06d}.npz`` and the frame ``{name}_{step:06d}.vtr``, ``step`` counted
     from the record's own time on a restart, gathered in ``{name}.pvd`` from step 0 and in
@@ -1096,10 +1096,16 @@ def run_thermal(run) -> dict[str, object]:
     sample (its step, reasons and Courant numbers), the limits, the last diagnostics and the extremes over the
     run of the ledger, the Courant numbers and the Boussinesq measure, which no limit applies to.
     """
-    from .thermal import advance_thermal, build_thermal_step, validate_thermal_inputs, write_thermal_record
+    from .thermal import (
+        _SCHEMES,
+        advance_thermal,
+        build_thermal_step,
+        validate_thermal_inputs,
+        write_thermal_record,
+    )
 
     problem, state, heat = run.problem, run.state, run.heat_source
-    scheme = {"upwind": 0.8, "off": None}[problem.advection]
+    scheme = _SCHEMES[problem.advection]
     courant = run.limits["advective_cfl"] if problem.advection != "off" else None
     limits = {
         "advective_cfl": scheme if courant is None else courant,

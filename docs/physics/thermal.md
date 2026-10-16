@@ -99,7 +99,7 @@ boundary data enter as the fixed lift $b=L(0)$. Its unit shift keeps the
 operator nonsingular under insulated and periodic walls, so the mean
 temperature is kept rather than removed as a gauge.
 
-**Transport** is conservative and first-order upwind:
+**Transport** is conservative, first-order upwind by default:
 - Each face carries $u_f T_\mathrm{up}$.
 - A wall face carries no advective heat.
 - A periodic axis reads its wrap face from its last and first cells.
@@ -134,6 +134,28 @@ makes that comparison at every step; see "A run from TOML" below.
 Upwinding adds a numerical
 diffusivity of about $|u|h/2$, so a heat-transfer result must be refined until
 it stops changing.
+
+`advection="van_leer"` gives a second-order face value instead, with the same
+conservative flux:
+- From a cell of width $w$ the face takes $T+\tfrac{w}{2}s$. Here $s$ is van
+  Leer's mean $(a|b|+|a|b)/(|a|+|b|)$ of the face gradients on either side,
+  zero at an extremum.
+- The face value is held between the two cells it lies between, which keeps it
+  bounded on a stretched grid. A linear temperature on the tanh-stretched test
+  grid reads exactly.
+- The validator's default Courant limit is then 0.5, its bound for no new
+  extremum.
+- Faces at an inlet, an outlet and a wall keep their first-order value.
+- The step stays first order in time.
+
+On the steady plug flow of the open duct below, the face value converges at
+order 1.95 and 1.98, where upwinding converges at order 0.81 and 0.91:
+
+| Cells | Upwind error | Van Leer error |
+|--:|--:|--:|
+| 16 | 4.6×10⁻² | 4.8×10⁻³ |
+| 32 | 2.6×10⁻² | 1.2×10⁻³ |
+| 64 | 1.4×10⁻² | 3.1×10⁻⁴ |
 
 **Joule heat** is each face current squared, then shared between the half
 cells on either side by `ops.face_average_adjoint`:
@@ -250,9 +272,9 @@ one state per step.
 **Not included**
 - Conjugate wall conduction.
 - A flow that evolves in an open duct with the heat. There the flow is held.
-- Higher-order transport: a limited second-order face value is planned. Until
-  then every open-duct result below quotes $Pe_h/2$, the first-order scheme's
-  numerical diffusivity over the physical one.
+- Transport above second order. The open-duct results below use first-order
+  upwinding and quote $Pe_h/2$, its numerical diffusivity over the physical one;
+  `advection="van_leer"` removes most of it.
 - Variable properties.
 - A steady solve of the coupled equations. The developed duct below is the one steady thermal solve, for a given flow.
 - An inflow-outflow axis read from TOML. A run from TOML (below) covers closed
@@ -554,7 +576,7 @@ Each chunk is accepted or rejected after it runs. Every sample in it, not only
 the last, must pass these checks:
 - it is finite, and the outlet is valid;
 - its advective Courant number is within the scheme's limit: 0.8 for upwind,
-  none for conduction alone. `advective_cfl_limit` replaces that limit, and the
+  0.5 for van Leer, none for conduction alone. `advective_cfl_limit` replaces that limit, and the
   summary records it as an override;
 - its buoyancy Courant number is within `buoyancy_courant_limit`, if one is
   given. That limit is a policy calibrated on particular cases, not a stability

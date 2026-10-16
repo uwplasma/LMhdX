@@ -699,6 +699,45 @@ def test_an_open_duct_carries_its_heat_out_at_first_order():
     assert np.all((orders > 0.8) & (orders < 1.2)), (errors, orders)
 
 
+def test_van_leer_carries_an_open_duct_s_heat_at_second_order():
+    """The same plug flow and exact profile as the first-order test, with ``advection="van_leer"`` at its Courant bound
+    0.5: the steady error falls at order 1.8 to 2.3 and on 64 cells is under a tenth of upwinding's (#234, #241). The
+    profile is monotone, so the limiter never clips, and at steady state the time step drops out."""
+    import dataclasses
+
+    from lmhdx.thermal import (
+        advance_thermal,
+        build_thermal_step,
+        initial_thermal_state,
+        validate_thermal_inputs,
+    )
+
+    errors = {}
+    for scheme in ("van_leer", "upwind"):
+        errors[scheme] = []
+        for cells in (16, 32, 64):
+            thermal, plug = _plug_duct(cells)
+            thermal = dataclasses.replace(thermal, advection=scheme)
+            start = initial_thermal_state(thermal, 0.0, plug)
+            validate_thermal_inputs(thermal, start, _cells(thermal, 2.0), divergence_tolerance=1e-12)
+            step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+            state = advance_thermal(step, start, _cells(thermal, 2.0), 20 * cells)[0]
+            x = np.asarray(thermal.flow.grid.centers[0])
+            exact = 2.0 * (x - (np.exp(5.0 * (x - 1.0)) - np.exp(-5.0)) / 5.0)
+            errors[scheme].append(float(np.max(np.abs(np.asarray(state.temperature.data)[:, 0, 0] - exact))))
+    orders = np.log2(np.divide(errors["van_leer"][:-1], errors["van_leer"][1:]))
+    assert np.all((orders > 1.8) & (orders < 2.3)), (errors, orders)
+    assert errors["van_leer"][-1] < 0.1 * errors["upwind"][-1], errors
+    fast, plug = _plug_duct(16)
+    fast = dataclasses.replace(fast, advection="van_leer", flow=dataclasses.replace(fast.flow, dt=0.6 / 16))
+    start = initial_thermal_state(fast, 0.0, plug)
+    with pytest.raises(ValueError, match="Courant number 0.6 exceeds advective_cfl_limit 0.5"):
+        validate_thermal_inputs(fast, start, _cells(fast, 0.0), divergence_tolerance=1e-12)
+    validate_thermal_inputs(
+        fast, start, _cells(fast, 0.0), divergence_tolerance=1e-12, advective_cfl_limit=0.8
+    )
+
+
 def test_an_inflow_at_the_duct_temperature_leaves_it_unchanged():
     """No source and an inlet at the duct's own 300: nothing changes, and what flows in flows out."""
     from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
