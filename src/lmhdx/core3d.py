@@ -514,9 +514,20 @@ def electric_state(
     moves by at most 2.2e-4 of itself on 24 and 48 cells.
     """
     potential, currents, field = face_currents(velocity, problem, factorization, field_scale)
+    return potential, _lorentz_from_currents(currents, field, problem)
+
+
+def _lorentz_from_currents(
+    currents: tuple[Field, Field, Field], field: tuple[Field, Field, Field], problem: ChannelProblem
+) -> tuple[Field, Field, Field]:
+    """Return the cell-centred Lorentz force of the face currents :func:`face_currents` returns.
+
+    The force leaves out a thin wall's half-cell current; a caller that needs the
+    full currents, as the Joule power does, keeps them from :func:`face_currents`.
+    """
     scalar = problem.scalar_conditions
     closed = tuple(wall_insulated(current, axis, scalar[axis]) for axis, current in enumerate(currents))
-    return potential, lorentz_force(closed, field, scalar)
+    return lorentz_force(closed, field, scalar)
 
 
 def face_lorentz_force(
@@ -697,8 +708,27 @@ def step(
     """
     factorization = problem.factorization() if factorization is None else factorization
     potential, force = electric_state(velocity, problem, factorization)
-    body = face_lorentz_force(force, problem)
+    corrected, pressure = _advance_momentum(
+        velocity, face_lorentz_force(force, problem), problem, factorization, viscous
+    )
+    return corrected, pressure, potential
 
+
+def _advance_momentum(
+    velocity: tuple[Field, Field, Field],
+    body: tuple[Field, Field, Field],
+    problem: ChannelProblem,
+    factorization: FastDiagonalPoisson,
+    viscous: tuple[FastDiagonalHelmholtz, ...] | None = None,
+    *,
+    extra_force: tuple[Field, Field, Field] | None = None,
+) -> tuple[tuple[Field, Field, Field], Field]:
+    """Predict with the face Lorentz force ``body``, then project; return velocity and pressure.
+
+    ``extra_force`` is a further force density on the velocity faces, added to the
+    forcing before the division by density, so a body force such as buoyancy rides
+    the same predictor and projection as the drive.
+    """
     velocity_conditions = tuple(velocity_condition(problem.conditions, axis) for axis in range(3))
     transport = (
         None
@@ -707,7 +737,10 @@ def step(
     )
     predicted = []
     for component, component_field in enumerate(velocity):
-        drive = (body[component].data + problem.forcing[component]) / problem.density
+        force = body[component].data + problem.forcing[component]
+        if extra_force is not None:
+            force = force + extra_force[component].data
+        drive = force / problem.density
         if transport is not None:
             drive = drive - transport[component].data
         rate = problem.damping_rates[component]
@@ -719,9 +752,7 @@ def step(
             source = component_field.replace_data(shift * component_field.data + problem.dt * drive)
             updated = viscous[component].solve(source).data
         predicted.append(component_field.replace_data(updated))
-
-    corrected, pressure = project(tuple(predicted), problem, factorization)
-    return corrected, pressure, potential
+    return project(tuple(predicted), problem, factorization)
 
 
 @functools.lru_cache(maxsize=16)
@@ -933,9 +964,7 @@ def energy_budget(
     scalar = problem.scalar_conditions
     conditions = tuple(velocity_condition(problem.conditions, axis) for axis in range(3))
     potential, currents, field = face_currents(velocity, problem, factorization)
-    force = lorentz_force(
-        tuple(wall_insulated(c, axis, scalar[axis]) for axis, c in enumerate(currents)), field, scalar
-    )
+    force = _lorentz_from_currents(currents, field, problem)
     density = float(problem.density)
     drive = sum(
         float(problem.forcing[axis])

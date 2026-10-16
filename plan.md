@@ -51,7 +51,8 @@ serve one benchmark; *gate* = a measured condition with a stated tolerance.
 | G10 | Thermal channel physics | Passive-scalar energy equation with conjugate walls on the new core, verified against laminar limits |
 | G11 | Steady solves and adjoints at blanket Ha | Certified adjoints to Ha 1000 in the regression tier (today the tests stop at Ha 5 and the shipped tangent solve fails at Ha 300); a 3-D 128³ steady solve within 16 GB; Krylov iterations reported against Ha |
 
-Non-goals before the release after 2.0: buoyancy, curved or mapped channels,
+Non-goals before the release after 2.0: buoyancy beyond the optional
+Boussinesq term of the thermal step (D32), curved or mapped channels,
 live coil or equilibrium derivatives, neutronics or structural coupling, free
 surfaces, magnetic induction (Rm ≪ 1 stays), 3-D turbulent heat transfer.
 
@@ -784,7 +785,10 @@ campaigns nightly on the office box, never in PR CI.
 
 **D9. Thermal transport as a passive scalar on the new core (Phase 5).** #65's
 sequencing: conduction slab and MMS → laminar Nu limits → conjugate walls with
-Joule heating → Mistrangelo 2025 target. No buoyancy before 2.0.
+Joule heating → Mistrangelo 2025 target. No buoyancy before 2.0. *Amended by
+ADR 0008:* the first stage is fluid-only with Joule heating (D31), Boussinesq
+buoyancy is an option of the thermal step (D32), and the laminar limits start
+with the thermally fully developed rectangular duct (D33).
 
 **D10. Design and device examples use offline-sampled fields, not live coil AD.**
 Envelope, channel topology, exterior field and mesh are separate inputs (#65);
@@ -848,6 +852,13 @@ computed by LMX on the same mesh, against TM-228's 0.0932 − 0.0754 = 0.0178
 within 1 %. The absolute Δp (0.0951 against 0.0932, 2.0 %) is reported, not
 gated: TM-228's own fully developed gradient integrates to 0.0776 over
 `[−6, 2]`, not the quoted 0.0754.
+
+**D31–D34** (2026-10-14) are recorded in
+[`docs/adr/0008-thermal-first-stage.md`](docs/adr/0008-thermal-first-stage.md):
+Phase 5 starts with a fluid-only temperature equation on the Cartesian core
+(D31); optional Boussinesq buoyancy, amending D9 (D32); the thermally fully
+developed duct as the design observable (D33); one package module,
+`lmhdx.thermal` (D34).
 
 ---
 
@@ -1335,17 +1346,29 @@ update. `write_solution_npz` writes the fluid's material arrays. `lmhdx.__all__`
 unchanged in signature. Step 4.6's ≤ 14 modules / ≤ 9,000 lines exit is still
 not met (25 modules, 11,046 lines); that is lane C's slimming.
 
-### Phase 5 — Thermal passive scalar (weeks 8–10)
+### Phase 5 — Thermal transport (restated by ADR 0008, D31–D34)
+
+Step 5.1 is the fluid-only temperature equation of D31, one pull request per
+row. Conjugate walls, inlet-outlet transport, higher-order transport and
+variable properties are later steps, added when a step below needs them.
 
 | Step | Action | Exit |
 |---|---|---|
-| 5.1 | `thermal.py`: `ρc_p(∂_t T + u·∇T) = ∇·(k∇T) + q_vol + J²/σ`, constant properties, conjugate walls (T and normal-flux continuity; optional contact resistance), inlet/outlet conditions; axial conduction when Pe requires; integrated in the scan | conduction slab and advection–diffusion MMS at second order |
-| 5.2 | Laminar limits: Nu = 48/11 (uniform flux) and 3.66 (uniform T) for the pipe; rectangular duct values (Shah & London); bulk temperature by enthalpy-flux weighting | within 0.5 % |
-| 5.3 | Heated Hunt duct with Joule heating; balance of inlet/outlet enthalpy, heat input, Joule and viscous heating, storage | balance to 1e-6 |
-| 5.4 | Mistrangelo et al. 2025 heated conducting duct (Ha 235) | comparison figure; deviations explained |
-| 5.5 | First thermal design: minimise maximum wall temperature or hydraulic power subject to heat removal, temperature, throughput and geometry constraints; distinguish fixed-flow from fixed-pump-power comparisons | feasible candidate confirmed on a finer mesh |
+| 5.1a **done** (#231) | `core3d`: the current-to-Lorentz-force map of `electric_state` and the predictor and projection of `step` become two private helpers; the second takes an optional face force density. `step` keeps its signature and result | `step` before and after agree to its existing tolerance (identical where the arithmetic is unchanged): explicit and implicit viscosity, insulating, thin and resolved walls, stretched cells, a one-cell periodic axis |
+| 5.1b **done** (#232) | `thermal.py` (D34): `ThermalProblem`, `ThermalState`, `thermal_boundary`, setup validation, the affine boundary lift and the cell-centred Helmholtz inverse | lift identity 1e-12 and inverse residual 1e-10 relative (float64); outward flux cools at both ends; slab conduction at second order; mean kept under insulated and periodic walls |
+| 5.1c **done** (#234) | Conservative upwind scalar flux and the outgoing-flux CFL number | conservation; no new extrema at CFL ≤ 0.8 without sources; first order measured |
+| 5.1d **done** (#235) | Joule deposition from the full face currents | nonnegative; volume integral equals `energy_budget(...).joule` within 1e-11 relative on insulating, thin and resolved walls, uniform and stretched |
+| 5.1e **done** (#236) | Boussinesq force (D32) | sign and density scaling; `β = 0` matches `step`; a nonuniform temperature drives projected circulation; first order in dt |
+| 5.1f **done** (#237) | Coupled step and heat ledger | ledger residual at its rounding and solve floor; manufactured advection–diffusion; temperature and velocity first order in dt |
+| 5.1g **done** (#238) | `advance_thermal`: scan, derivatives, compilation | scan equals eager steps; gradients in initial temperature and source within 1e-5 of central differences; no retrace for value changes; no field history in the loop |
+| 5.1h **done** (#239) | `docs/physics/thermal.md`: equations, envelope, failure behaviour, an executable workflow exercised by a test; cold, warm and memory record | docs build with `-W`; workflow test |
+| 5.2 **done** (#240) | Thermally fully developed duct (D33): one periodic axial cell, uniform axial heat input, steady transverse solve; bulk temperature by enthalpy-flux weighting; Nusselt number and peak wall temperature with implicit gradients. Pipe values (Nu = 48/11, 3.66) wait for a polar thermal operator | rectangular-duct Nusselt numbers (Shah & London) within 0.5 %; heat balance closed |
+| 5.3 **done** (#241) | Heated Hunt duct with Joule heating; balance of inlet/outlet enthalpy, heat input, Joule heating, storage (needs inlet-outlet transport) | balance to 1e-6 |
+| 5.4 | Mistrangelo et al. 2025 heated conducting duct (Ha 235; needs inlet-outlet transport and conjugate walls) | comparison figure; deviations explained |
+| 5.5 | First thermal design: replace the mean-velocity bound of the duct design law (3b.3) with 5.2's peak wall temperature or Nusselt number; minimise hydraulic power subject to heat removal, temperature, throughput and geometry constraints; distinguish fixed-flow from fixed-pump-power comparisons | feasible candidate confirmed on a finer mesh |
+| 5.6 | Thermal runs read from TOML, restart from a versioned record of the staggered velocity, temperature and time, and write ParaView output, as the isothermal paths do; explicit schema, version and units (review of #239) | a TOML-driven thermal run restarts bit for bit and opens in ParaView |
 
-Effort ≈ 1.5 weeks.
+Effort: estimated per step in the step 5.1 issue.
 
 ### Phase 6 — Device examples (weeks 9–11)
 
@@ -1708,6 +1731,10 @@ Process: pyOpenSci README guide · JOSS review criteria · Google small CLs · D
 | 2026-10-06 | Step 1.13 (#160, taken over from Rogerio Jorge by Tyler Brandes): Smolentsev et al. 2015 Table I on the staggered core, all eight rows gated in `tests/test_table_i.py` against the analytic column the package ships (`samper-table-i.toml`). Three meshes per row at ratio 1.5 (32:4 to 72:9 at Ha 500; 64:8:32:4 to 144:18:72:9 above, the field direction twice the cells): finest-mesh error 0.16–0.43 %, observed order 1.96–2.02, Richardson within 2.2e-4 (five of eight inside the table's four-digit rounding). Solves take 7–10 s warm; Ha 500 runs on pull requests (channel shard), the six higher rows (15–35 s each cold) are `slow` and run on `main`. A1 at Ha 15,000, which #160 found not converging, converges since #183 pinned the Neumann null eigenvalue to zero (computed 7.7e-5 against 7.3e12 on 144:18); removing the pin reproduces #160's −0.65 % and +3.16 %, so 2b.3 was not the cause. Ratchets: test files 21 → 22, test lines +105, checkout bytes +9,945 | 1.3b's Ha 1,000 end; why A2's thin-wall route is insensitive to the null eigenvalue |
 | 2026-10-06 | Stage 2 slimming (3b.3; #221, record #222): the study (optimizer, checkpointed driver, figure pipeline, probes) moves out of `examples/scratch` to TylerBrandes/LMhdX-Duct-Optimization, where it reproduced on 1.10.0 (fully developed stages bit-identical, open-axis excess within 4.6e-9); main keeps `examples/duct_design_law.py` (curated, ~15 s, the study's 48/6 optima), `validation/open_axis.py` and the tutorial `duct_design_law.md`, whose `results.json` and figures are release assets (stage2-v1). Ratchets: curated examples 7, validation files 4, test lines +17, checkout −152,144 bytes | 3b.3 wall conductance after traced conductance inputs |
 | 2026-10-06 | 4.6 slimming: the fully developed pipe (`PipeProblem`, `pipe_grid`, `pipe_problem`, `pipe_residual`, `solve_pipe`, `flow_rate`) moves out of `lmhdx.poisson` into `lmhdx.pipe`; `poisson` keeps the fast-diagonal factorizations (Cartesian, thin wall, polar, Helmholtz). Public pipe names stay importable from `lmhdx.poisson` (lazy `__getattr__`, since `pipe` imports `poisson`). Modules 14 → 15, largest module 1,604 → 1,376 lines (`poisson`; `pipe` 263). Office floor stack, load 39–41, three alternating A/B rounds in fresh processes (pipe Ha 50 48×64, polar Poisson 48×64): results SHA-256 identical; pipe cold 7.4–9.7 s vs 7.6–10.0 s, warm 2.1–3.3 s vs 2.5–3.4 s, polar warm 10–13 ms vs 9–19 ms, all within load noise | the other lanes touching polar code rebase onto this |
+| 2026-10-14 | ADR 0008 (D31–D34, amends D9; docs and plan only): Phase 5 starts with a fluid-only, constant-property temperature equation on the Cartesian core, with Joule heating from the full face currents and its own thermal boundary conditions; Boussinesq buoyancy is an option of that step, research-stage; the thermally fully developed rectangular duct (5.2) is the design observable that replaces the mean-velocity bound of 3b.3; `lmhdx.thermal` is the sixteenth module, and its tests go into existing files. Phase 5 restated as 5.1a–5.1h and 5.2–5.5. Proposed by Tyler Brandes | 5.1a: the two `core3d` extractions with isothermal parity |
 | 2026-10-15 | Research-grade roadmap (docs and plan only): Section 3.8 compares each solver path with HIMAG/MHD-UCLA, FreeMHD, GridapMHD and AL/PCPATCH literature, maps MUMPS/PETSc/hypre/cuDSS capabilities to native, SOLVAX, optional or not at all, lists SOLVAX features used, unused and to request (#130, flexible CG, block combinators, cuDSS), audits rows 6/7/24/27, 1.9d, 2b.4 and G4, and ranks ten items R1–R10 | R1 (#229), R2 GCI table, R3 wording |
 | 2026-10-15 | JAX 0.11 support: JAX 0.11 removed the scan `num_carry` parameter, so `tests/test_timeloop.py` reads the stacked trajectory outputs off their shapes. On Python 3.14, JAX 0.11.2, SOLVAX 0.28.2 the unit and regression tiers otherwise pass on CPU. Separate finding, no code change: NumPy 2.5 `eigh` moves the layer-mesh Stokes symmetry tests to 7e-12 (gate 1e-12) and the ha1000 mixed-precision Poisson test to 6e-10 (gate 1e-10); all pass with NumPy 2.4.6 | decide NumPy 2.5: pin below 2.5 or make the eigenbasis orthogonal to round-off |
 | 2026-10-15 | R2 and R3 (this lane): `validation/gci.py` (Celik 2008 observed order, Richardson and GCI; reproduces Celik's Table 1), used by `tests/test_table_i.py`, which now also requires the analytic value inside the fine GCI band; docs table for rows 3/4/27, 5 and 7 (orders 1.96–2.02, 2.00, 1.63); R3 scope sentences on rows 6, 7, 24, 1.9d and 2b.4 in plan, README, validation page and fringe tutorial; Section 3.8.6 FreeMHD comparison and anchor audit | 3.8.6 (a)–(e) |
+| 2026-10-15 | Step 5.1, the fluid-only temperature equation (ADR 0008, #230; issue #233; #231, #232, #234–#238, #239; Tyler Brandes): `lmhdx.thermal` (16th module) on the staggered core. 5.1a: `core3d` stage helpers, bit-identical to `main` (100/100 arrays, identical jaxprs). 5.1b: conduction, lift identity and inverse residual at rounding, slab order 1.98, wall flux exact to rounding. 5.1c: upwind transport, conservative, bounded at Courant 0.8, order 0.97–0.98. 5.1d: Joule heat equals `energy_budget(...).joule` to 0–1.6e-16 on insulating, thin and resolved walls. 5.1e: Boussinesq force (D32), a stratified state stays at rest to 1e-12, velocity independent of density. 5.1f: the coupled step, one electric solve, passive velocity bit-identical to `step`, heat ledger 4e-10–9e-10 at powers 0.6–28 (the 300 K rounding floor), orders 0.96–0.98 (manufactured) and 0.90–1.09 in dt (coupled). 5.1g: one scan, jaxpr 176,550 / 176,580 characters at 4 / 128 steps, gradients within 7.8e-11–3.8e-8 of central differences. 5.1h: `docs/physics/thermal.md` with a tested worked example; thermal step 1.4–1.9× the isothermal one warm, forward memory 1.5–2.1× and flat in steps, reverse memory one state per step (Ryzen 9 5900HS, float64). Found: momentum transport fails on a one-cell periodic axis (pre-existing). PRs stacked; CI green on #230–#238 | 5.2: the thermally fully developed duct (D33) |
+| 2026-10-15 | Step 5.2, the thermally fully developed duct (D33; #240, stacked on #239): `lmhdx.thermal.developed_heat` solves `T = gamma x + theta` on the cross-section once (fast-diagonal Poisson), with `gamma` from the heat balance (flux walls) or given (temperature walls); bulk (flow-weighted), mean and peak wall temperature, wall flux, Nu, heat-balance residual; differentiable through the steady solve. H1 Nu against the exact double-sine series (no discrete operator): square 3.60795 at +0.087 %, aspect 0.5 4.12330 at +0.18 %, slug 7.11354 at -0.094 % on 64 cells, order 1.97-1.99; Ha 0/10/30 raises Nu 3.62/4.56/5.35 toward slug 7.09; balance to 1e-15; dNu/d(field scale) against central differences within 1e-5. The comparison with Shah & London's tables waits for the book (not in paper_references) | 5.5: the duct design law with Nu or peak wall temperature in place of V >= V_min |
+| 2026-10-15 | Step 5.3, heat into and out of an open duct (#241, stacked on #240): an inflow-outflow axis takes an inlet temperature (number or profile) and no conductive flux at the outlet; the inlet face brings in `u T_in`, the outlet takes out `u T_last` (a backflow brings in `T_last`); the ledger gains `advective_heat_out`; an open duct's flow is held (`hold_flow=True`, the steady velocity of `axial.solve_open_duct`, no buoyancy). Plug flow with a source: exact steady profile at order 0.81, 0.91 on 16/32/64 cells, ledger 1e-13. Heated Hunt duct (Ha 20, c 0.05, one side wall at unit flux, Joule heat, inlet 0, 400 steps): balance 2.5e-14 of its largest term every step (gate 1e-6), steady at the end, enthalpy out 124.6 = Joule 110.3 + net wall 14.3. The Mistrangelo et al. 2025 paper is in paper_references/mistrangelo2025 for 5.4, whose scope (conjugate walls, a coupled buoyant open-duct flow) waits for agreement | 5.4 scope; 5.5 |

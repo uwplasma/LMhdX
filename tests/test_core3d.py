@@ -357,6 +357,76 @@ def test_the_step_differentiates_and_jits():
     assert gradient == pytest.approx(float(difference), rel=1e-6)
 
 
+# The step's stages (plan step 5.1a): a caller that composes them, as the thermal step does, advances
+# the same flow. Insulating with transport, thin walls on a stretched one-cell periodic duct, resolved layers.
+
+
+def _stage_cases() -> tuple[tuple[ChannelProblem, bool], ...]:
+    stretched = Grid(uniform_faces(1, 0.0, 1.0), tanh_faces(8, -1.0, 1.0, 1.3), tanh_faces(8, -1.0, 1.0, 1.3))
+    thin = dict(magnetic_field=(0.0, 0.5, 4.0), wall_conductance=(0.0, 0.05, 0.08), density=1.3)
+    layers = (((2.0, 2.0), (0.1, 0.1)),) * 2
+    return (
+        (_problem(_duct(6, 6, 2), magnetic_field=(0.0, 0.0, 4.0), advection="limited", density=1.3), False),
+        (_problem(stretched, **thin), True),
+        (_problem(_duct(6, 6, 1), magnetic_field=(0.0, 0.0, 3.0), wall_layers=(None, layers, layers)), True),
+    )
+
+
+def _random_velocity(problem: ChannelProblem) -> tuple[Field, Field, Field]:
+    rng = np.random.default_rng(7)
+    noise = (f.replace_data(jnp.asarray(rng.standard_normal(f.data.shape))) for f in zero_velocity(problem))
+    return enforce_face_constraints(tuple(noise), problem)
+
+
+def _identical(first, second) -> bool:
+    return all(np.array_equal(a.data, b.data) for a, b in zip(first, second, strict=True))
+
+
+def test_the_step_is_the_force_and_momentum_stages_it_is_built_from():
+    from lmhdx.core3d import (
+        _advance_momentum,
+        _lorentz_from_currents,
+        electric_state,
+        face_currents,
+        face_lorentz_force,
+    )
+
+    for problem, implicit in _stage_cases():
+        velocity, factorization = _random_velocity(problem), problem.factorization()
+        viscous = problem.viscous_factorizations() if implicit else None
+        potential, currents, field = face_currents(velocity, problem, factorization)
+        force = _lorentz_from_currents(currents, field, problem)
+        body = face_lorentz_force(force, problem)
+        moved, pressure = _advance_momentum(velocity, body, problem, factorization, viscous)
+        stepped, stepped_pressure, stepped_potential = step(velocity, problem, factorization, viscous)
+        assert _identical(force, electric_state(velocity, problem, factorization)[1])
+        assert _identical((*moved, pressure, potential), (*stepped, stepped_pressure, stepped_potential))
+
+
+def test_an_extra_force_density_enters_beside_the_forcing():
+    """Zero is the step bit for bit; a uniform one is more forcing, divided by the same density."""
+    from lmhdx.core3d import _advance_momentum, electric_state, face_lorentz_force
+
+    problem = _stage_cases()[1][0]
+    velocity, factorization = _random_velocity(problem), problem.factorization()
+    viscous = problem.viscous_factorizations()
+    body = face_lorentz_force(electric_state(velocity, problem, factorization)[1], problem)
+    extra = (0.4, -0.3, 0.2)
+
+    def advance(case, force=None):
+        moved, pressure = _advance_momentum(velocity, body, case, factorization, viscous, extra_force=force)
+        return (*moved, pressure)
+
+    zero = tuple(f.replace_data(jnp.zeros_like(f.data)) for f in velocity)
+    uniform = tuple(f.replace_data(jnp.full_like(f.data, value)) for f, value in zip(velocity, extra))
+    more = dataclasses.replace(problem, forcing=tuple(a + b for a, b in zip(problem.forcing, extra)))
+    assert _identical(advance(problem, zero), advance(problem))
+    # Only the order of one addition differs, so each array agrees to its own rounding.
+    for pushed, forced in zip(advance(problem, uniform), advance(more)):
+        error, scale = (float(jnp.max(jnp.abs(data))) for data in (pushed.data - forced.data, forced.data))
+        assert error <= 1e-13 * scale
+
+
 def _implicit_channel_error(cells: int, *, step_multiple: float) -> tuple[float, float]:
     """Integrate the plane channel with implicit viscosity at a chosen step size.
 
@@ -770,3 +840,142 @@ def test_resolved_wall_layers_are_frozen_and_checked():
             ChannelProblem(grid, conditions, wall_layers=layers)
     with pytest.raises(ValueError):
         ChannelProblem(grid, conditions, wall_conductance=(0.0, 0.1, 0.0), wall_layers=problem.wall_layers)
+
+
+# Buoyancy in the momentum stages (plan step 5.1e, ADR 0008 D32).
+
+
+def _buoyant(grid: Grid, flow_conditions, *, density: float = 1.0, field=(0.0, 0.0, 0.0)):
+    from lmhdx.thermal import ThermalProblem, thermal_boundary
+
+    flow = ChannelProblem(
+        grid, flow_conditions, density=density, forcing=(0.0, 0.0, 0.0), dt=1.0e-2, magnetic_field=field
+    )
+    insulated = thermal_boundary("heat_flux", conductivity=1.0)
+    conditions = tuple(c if c.is_periodic else insulated for c in flow_conditions)
+    return ThermalProblem(
+        flow, conditions, 1.0, 1.0, 300.0, expansion_coefficient=2.0e-3, gravity=(0.0, 0.0, -9.8)
+    )
+
+
+def _buoyant_step(thermal, temperature):
+    from lmhdx.core3d import _advance_momentum
+    from lmhdx.thermal import _buoyancy
+
+    flow = thermal.flow
+    rest = zero_velocity(flow)
+    body = tuple(field.replace_data(jnp.zeros_like(field.data)) for field in rest)
+    extra = _buoyancy(Field(jnp.asarray(temperature), (CENTER,) * 3, flow.grid), thermal)
+    return _advance_momentum(
+        rest, body, flow, flow.factorization(), flow.viscous_factorizations(), extra_force=extra
+    )
+
+
+def test_a_temperature_stratified_along_gravity_stays_at_rest():
+    """The buoyancy of ``T(z)`` is a pure gradient, so the projection takes all of it into the pressure."""
+    grid = Grid(uniform_faces(2, 0.0, 1.0), uniform_faces(2, 0.0, 1.0), tanh_faces(8, -1.0, 1.0, 1.3))
+    thermal = _buoyant(grid, (PERIODIC_X, PERIODIC_X, WALL))
+    z = np.asarray(grid.centers[2])[None, None, :]
+    velocity, pressure = _buoyant_step(thermal, np.broadcast_to(300.0 + 3.0 * z**2, grid.shape))
+    scale = thermal.flow.dt * 2.0e-3 * 9.8 * 3.0
+    assert max(float(jnp.max(jnp.abs(component.data))) for component in velocity) <= 1e-12 * scale
+    assert float(jnp.max(jnp.abs(pressure.data))) > 0.0
+
+
+def test_a_horizontal_temperature_difference_drives_a_circulation():
+    """``T(x)`` under vertical gravity is not a gradient: the projection keeps a circulation of its size."""
+    grid = Grid(uniform_faces(8, 0.0, 2.0), uniform_faces(1, 0.0, 1.0), uniform_faces(8, -1.0, 1.0))
+    thermal = _buoyant(grid, (PERIODIC_X, PERIODIC_X, WALL))
+    x = np.asarray(grid.centers[0])[:, None, None]
+    velocity, _ = _buoyant_step(thermal, np.broadcast_to(300.0 + np.cos(np.pi * x), grid.shape))
+    scale = thermal.flow.dt * 2.0e-3 * 9.8
+    assert float(jnp.max(jnp.abs(velocity[2].data))) >= 0.1 * scale
+    assert float(jnp.max(jnp.abs(velocity[0].data))) >= 0.1 * scale
+    assert float(jnp.max(jnp.abs(divergence(velocity).data))) <= 1e-10 * scale
+
+
+def test_buoyancy_accelerates_the_flow_independently_of_its_density():
+    """The force density scales with ``rho_0`` and is divided by it; the pressure keeps the factor."""
+    grid = Grid(uniform_faces(8, 0.0, 2.0), uniform_faces(1, 0.0, 1.0), tanh_faces(8, -1.0, 1.0, 1.3))
+    x = np.asarray(grid.centers[0])[:, None, None]
+    temperature = np.broadcast_to(300.0 + np.cos(np.pi * x), grid.shape)
+    light = _buoyant_step(_buoyant(grid, (PERIODIC_X, PERIODIC_X, WALL)), temperature)
+    heavy = _buoyant_step(_buoyant(grid, (PERIODIC_X, PERIODIC_X, WALL), density=2.5), temperature)
+    for first, second in zip(light[0], heavy[0]):
+        assert float(jnp.max(jnp.abs(first.data - second.data))) <= 1e-13 * float(
+            jnp.max(jnp.abs(first.data))
+        )
+    assert np.allclose(np.asarray(heavy[1].data), 2.5 * np.asarray(light[1].data), rtol=1e-12, atol=1e-12)
+
+
+# The coupled thermal step's accuracy (plan step 5.1f).
+
+
+def _thermal_run(thermal, temperature, velocity, source: float, steps: int):
+    from lmhdx.thermal import build_thermal_step, initial_thermal_state
+
+    thermal_step = jax.jit(build_thermal_step(thermal, dtype=jnp.float64))
+    state = initial_thermal_state(thermal, temperature, velocity)
+    heat = state.temperature.replace_data(jnp.full(thermal.flow.grid.shape, source))
+    for _ in range(steps):
+        state, record = thermal_step(state, heat)
+    assert bool(record.finite)
+    return state
+
+
+def test_a_carried_and_diffused_wave_converges_at_first_order():
+    """At uniform speed ``U`` in a periodic box ``exp(-alpha k^2 t) cos k(x - Ut) + q t / C`` is exact.
+
+    Upwinding at Courant 0.5 and backward Euler both err by O(h) at a fixed Courant number.
+    """
+    from lmhdx.thermal import ThermalProblem
+
+    errors = []
+    for cells in (32, 64, 128):
+        grid = Grid(uniform_faces(cells, 0.0, 1.0), uniform_faces(1, 0.0, 1.0), uniform_faces(1, 0.0, 1.0))
+        flow = ChannelProblem(grid, (PERIODIC_X,) * 3, forcing=(0.0, 0.0, 0.0), dt=0.5 / cells)
+        thermal = ThermalProblem(flow, (PERIODIC_X,) * 3, 1.0, 0.05, 0.0)
+        rest = zero_velocity(flow)
+        carrier = (rest[0].replace_data(jnp.ones_like(rest[0].data)), *rest[1:])
+        x = np.asarray(grid.centers[0])[:, None, None]
+        state = _thermal_run(thermal, np.cos(2.0 * np.pi * x), carrier, 2.0, cells // 2)
+        exact = np.exp(-0.05 * (2.0 * np.pi) ** 2 * 0.25) * np.cos(2.0 * np.pi * (x - 0.25)) + 2.0 * 0.25
+        errors.append(float(np.max(np.abs(np.asarray(state.temperature.data) - exact))))
+    orders = np.log2(np.divide(errors[:-1], errors[1:]))
+    assert np.all((orders > 0.8) & (orders < 1.2)), (errors, orders)
+
+
+def test_the_coupled_step_converges_at_first_order_in_time():
+    """Buoyancy, Joule heat, a drive and heated walls together: temperature and velocity err by O(dt).
+
+    Against a run at dt/32 on the same mesh, to t = 0.2 (ADR 0008, V16).
+    """
+    from lmhdx.thermal import ThermalProblem, thermal_boundary
+
+    grid = Grid(uniform_faces(1, 0.0, 1.0), uniform_faces(8, -1.0, 1.0), uniform_faces(8, -1.0, 1.0))
+    y = np.asarray(grid.centers[1])[None, :, None]
+    start = np.broadcast_to(300.0 + 0.5 * np.sin(np.pi * y), grid.shape)
+    walls = (
+        PERIODIC_X,
+        thermal_boundary("heat_flux", conductivity=0.2),
+        thermal_boundary("temperature", 301.0, 299.0),
+    )
+    results = {}
+    for dt in (0.02, 0.01, 0.005, 0.000625):
+        flow = ChannelProblem(
+            grid, (PERIODIC_X, WALL, WALL), magnetic_field=(0.0, 5.0, 0.0), forcing=(1.0, 0.0, 0.0), dt=dt
+        )
+        thermal = ThermalProblem(
+            flow, walls, 1.0, 0.2, 300.0, expansion_coefficient=0.05, gravity=(0.0, 0.0, -1.0)
+        )
+        results[dt] = _thermal_run(thermal, start, None, 0.0, round(0.2 / dt))
+    reference = results.pop(0.000625)
+    errors = [
+        [
+            float(jnp.max(jnp.abs(state.temperature.data - reference.temperature.data))),
+            max(float(jnp.max(jnp.abs(a.data - b.data))) for a, b in zip(state.velocity, reference.velocity)),
+        ]
+        for state in results.values()
+    ]
+    orders = np.log2(np.divide(errors[:-1], errors[1:]))
+    assert np.all((orders > 0.8) & (orders < 1.5)), (errors, orders)
