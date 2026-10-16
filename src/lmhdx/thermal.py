@@ -420,11 +420,13 @@ class ThermalDiagnostics(NamedTuple):
     under ``outlet_backflow="error"``, whose enthalpy in is then reported as zero.
     All four are zero, and the boundary valid, in a closed duct.
 
-    ``buoyancy_courant`` is ``dt sqrt(beta |g| max |grad T|)`` of the old
-    temperature, the step over the buoyancy time scale, with the gradient taken
-    on every face; zero without buoyancy. The partitioned step is first order in
-    it: a Benard onset is low by about 15 % near 0.2 and under 3 % near 0.025
-    (#252).
+    ``buoyancy_courant`` is ``dt sqrt(beta |g| G)`` of the old temperature, the
+    step over the buoyancy time scale, with ``G`` the largest absolute
+    face-normal gradient on any face: one component, not a colocated gradient
+    magnitude. It is zero without buoyancy and counts in ``finite``. The
+    partitioned step is first order in it; in the Benard onset of #252 the
+    critical Rayleigh number is about 15 % low near 0.2 and under 3 % near 0.025,
+    a calibration of that case, not a general bound.
     """
 
     mass_residual: jnp.ndarray
@@ -450,7 +452,7 @@ class ThermalDiagnostics(NamedTuple):
 
 
 def _buoyancy_courant(temperature: Field, problem: ThermalProblem) -> jnp.ndarray:
-    """Return ``dt sqrt(beta |g| max |grad T|)``, taken on every face; a diagnostic, so no derivative flows."""
+    """Return ``dt sqrt(beta |g| G)``, ``G`` the largest absolute face-normal gradient; no derivative flows."""
     strength = float(problem.expansion_coefficient) * float(np.linalg.norm(problem.gravity))
     if not strength:
         return jnp.zeros((), temperature.dtype)
@@ -670,9 +672,10 @@ def build_thermal_step(
         )
         new = ThermalState(moved, heated, state.time + dt)
         exchange = _outlet_exchange(velocity, reservoir, problem, compute)
-        leaves = jax.tree_util.tree_leaves((new, values, exchange[:3]))
+        buoyant = _buoyancy_courant(temperature, problem)
+        leaves = jax.tree_util.tree_leaves((new, values, exchange[:3], buoyant))
         finite = jnp.all(jnp.stack([jnp.all(jnp.isfinite(leaf)) for leaf in leaves]))
-        return new, ThermalDiagnostics(*values, finite, *exchange, _buoyancy_courant(temperature, problem))
+        return new, ThermalDiagnostics(*values, finite, *exchange, buoyant)
 
     thermal_step.hold_flow = hold_flow  # load_attribution needs a flow the load cannot move
     return thermal_step
