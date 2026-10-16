@@ -915,3 +915,133 @@ def test_streaming_solver_logger_progress_falls_back_without_header_context():
     text = stream.getvalue()
     assert "elapsed=" in text
     assert "average_step=" in text
+
+
+# A thermal run's restart record and ParaView output (plan step 5.6).
+
+
+def _thermal_duct(cells=(1, 6, 6), dt=2.0e-3):
+    """A buoyant, heated Hartmann duct whose flow evolves: periodic along x, walls across."""
+    from lmhdx.core3d import ChannelProblem
+    from lmhdx.grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces
+    from lmhdx.thermal import ThermalProblem, thermal_boundary
+
+    wrap, wall = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN)
+    grid = Grid(
+        uniform_faces(cells[0], 0.0, 1.0),
+        uniform_faces(cells[1], -1.0, 1.0),
+        uniform_faces(cells[2], -1.0, 1.0),
+    )
+    flow = ChannelProblem(
+        grid, (wrap, wall, wall), magnetic_field=(0.0, 4.0, 0.0), forcing=(1.0, 0.0, 0.0), dt=dt
+    )
+    walls = (
+        wrap,
+        thermal_boundary("heat_flux", conductivity=0.5),
+        thermal_boundary("temperature", 301.0, 299.0),
+    )
+    return ThermalProblem(flow, walls, 2.0, 0.5, 300.0, expansion_coefficient=1e-2, gravity=(0.0, 0.0, -1.0))
+
+
+def test_a_thermal_run_resumes_from_its_record_bit_for_bit(tmp_path: Path):
+    """Six steps straight, or three, a record written and read back, and three more: the same state, bit for bit.
+
+    A record refuses another unit label, another problem, and, before any state is made, a missing field, a mangled
+    or nonfinite array, a time that is not a finite scalar of the compute dtype, and a version that is not the
+    integer 1. Given the run's provenance it resumes only that run; without, it imports the state."""
+    import dataclasses
+
+    import jax
+
+    from lmhdx.grid import CENTER, Field
+    from lmhdx.thermal import (
+        advance_thermal,
+        build_thermal_step,
+        initial_thermal_state,
+        load_thermal_record,
+        write_thermal_record,
+    )
+
+    thermal = _thermal_duct()
+    grid = thermal.flow.grid
+    step = build_thermal_step(thermal, dtype=jnp.float64)
+    heat = Field(jnp.full(grid.shape, 0.5), (CENTER,) * 3, grid)
+    start = initial_thermal_state(
+        thermal, 300.0 + 0.1 * np.random.default_rng(37).standard_normal(grid.shape)
+    )
+    straight = advance_thermal(step, start, heat, 6)[0]
+    half = advance_thermal(step, start, heat, 3)[0]
+    run = {"heat_source": 0.5, "hold_flow": False}
+    path = write_thermal_record(tmp_path / "state", thermal, half, units="nondimensional", run=run)
+    loaded = load_thermal_record(path, thermal, units="nondimensional", run=run)
+    resumed = advance_thermal(step, loaded, heat, 3)[0]
+    load_thermal_record(path, thermal, units="nondimensional")  # an import, of the same state
+    with pytest.raises(ValueError, match="other inputs"):
+        load_thermal_record(path, thermal, units="nondimensional", run={**run, "heat_source": 0.6})
+    assert path.suffix == ".npz" and float(straight.time) == pytest.approx(6 * 2.0e-3, rel=1e-15)
+    for a, b in zip(jax.tree_util.tree_leaves(straight), jax.tree_util.tree_leaves(resumed)):
+        assert np.array_equal(np.asarray(a), np.asarray(b))
+    with pytest.raises(ValueError, match="units"):
+        load_thermal_record(path, thermal, units="SI")
+    with pytest.raises(ValueError, match="another problem: flow"):
+        load_thermal_record(
+            path,
+            dataclasses.replace(thermal, flow=dataclasses.replace(thermal.flow, dt=1e-3)),
+            units="nondimensional",
+        )
+    with np.load(path) as record:
+        arrays = dict(record)
+    hot, fast = arrays["temperature"].copy(), arrays["velocity_x"].copy()
+    hot[0, 0, 0], fast[0, 0, 0] = np.nan, np.inf
+    for change, message in (
+        (dict(version=2), "version"),
+        (dict(version=1.5), "version"),
+        (dict(temperature=arrays["temperature"][:, :3]), "shape"),
+        (dict(temperature=hot), "not finite"),
+        (dict(velocity_x=fast), "not finite"),
+        (dict(time=np.array([0.006, 0.006])), "time"),
+        (dict(time=np.array(np.nan)), "time"),
+        (dict(time=np.array(6)), "time"),
+    ):
+        np.savez(tmp_path / "bad.npz", **{**arrays, **change})
+        with pytest.raises(ValueError, match=message):
+            load_thermal_record(tmp_path / "bad.npz", thermal, units="nondimensional")
+    np.savez(tmp_path / "bad.npz", **{name: value for name, value in arrays.items() if name != "time"})
+    with pytest.raises(ValueError, match="lacks time"):
+        load_thermal_record(tmp_path / "bad.npz", thermal, units="nondimensional")
+
+
+def test_a_thermal_state_opens_as_a_rectilinear_grid_in_vtk_order(tmp_path: Path):
+    """The file parses as a VTK RectilinearGrid of 2 x 3 x 4 cells; ``T = x + 10 y + 100 z`` reads back with x
+    varying fastest, the velocity as each component's mean over its two faces, and the coordinates as the faces."""
+    import xml.etree.ElementTree as ElementTree
+
+    from lmhdx.core3d import zero_velocity
+    from lmhdx.io import write_thermal_vtr
+    from lmhdx.thermal import initial_thermal_state
+
+    thermal = _thermal_duct(cells=(2, 3, 4))
+    grid = thermal.flow.grid
+    x, y, z = (np.asarray(centres) for centres in grid.centers)
+    temperature = x[:, None, None] + 10.0 * y[None, :, None] + 100.0 * z[None, None, :]
+    rest = zero_velocity(thermal.flow)
+    velocity = tuple(
+        component.replace_data(jnp.asarray(np.random.default_rng(41 + axis).standard_normal(component.shape)))
+        for axis, component in enumerate(rest)
+    )
+    path = write_thermal_vtr(
+        thermal, initial_thermal_state(thermal, temperature, velocity), tmp_path / "frame"
+    )
+    root = ElementTree.parse(path).getroot()
+    assert (
+        root.get("type") == "RectilinearGrid"
+        and root.find("RectilinearGrid").get("WholeExtent") == "0 2 0 3 0 4"
+    )
+    arrays = {item.get("Name"): np.array(item.text.split(), dtype=float) for item in root.iter("DataArray")}
+    assert np.allclose(arrays["temperature"], np.transpose(temperature).ravel(), rtol=1e-12)
+    centred = [np.moveaxis(np.asarray(v.data), a, 0) for a, v in enumerate(velocity)]
+    centred = [np.moveaxis(0.5 * (c[:-1] + c[1:]), 0, a) for a, c in enumerate(centred)]
+    expected = np.stack([np.transpose(c) for c in centred], axis=-1).ravel()
+    assert np.allclose(arrays["velocity"], expected, rtol=1e-12, atol=1e-14)
+    for name, faces in zip("XYZ", grid.faces):
+        assert np.allclose(arrays[name], faces, rtol=1e-12)

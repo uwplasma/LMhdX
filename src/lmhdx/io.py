@@ -460,6 +460,41 @@ def write_pvd(entries: list[tuple[float, str]], out_dir: str | Path, name: str =
     return target
 
 
+def write_thermal_vtr(problem, state, path: str | Path) -> Path:
+    """Write a thermal state as a ParaView rectilinear grid: the temperature and the cell-centred velocity.
+
+    ``problem`` is a :class:`lmhdx.thermal.ThermalProblem` and ``state`` a
+    :class:`lmhdx.thermal.ThermalState`. The cells are written with x varying
+    fastest, as VTK orders them; the velocity is each component's mean over the
+    two faces of its cell. Returns the path written.
+    """
+    grid, target = problem.flow.grid, Path(path).with_suffix(".vtr")
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    def centred(data, axis):
+        data = np.moveaxis(np.asarray(data), axis, 0)
+        return np.moveaxis(0.5 * (data[:-1] + data[1:]), 0, axis)
+
+    velocity = np.stack([centred(field.data, axis) for axis, field in enumerate(state.velocity)], axis=-1)
+    temperature = np.transpose(np.asarray(state.temperature.data))
+    extent = " ".join(f"0 {count}" for count in grid.shape)
+    coordinates = "\n".join(
+        f'<DataArray type="Float64" Name="{name}" format="ascii">{_array_text(faces)}</DataArray>'
+        for name, faces in zip("XYZ", grid.faces)
+    )
+    content = (
+        '<?xml version="1.0"?>\n'
+        '<VTKFile type="RectilinearGrid" version="0.1" byte_order="LittleEndian">\n'
+        f'<RectilinearGrid WholeExtent="{extent}">\n<Piece Extent="{extent}">\n<CellData>\n'
+        f'<DataArray type="Float64" Name="temperature" format="ascii">{_array_text(temperature)}</DataArray>\n'
+        '<DataArray type="Float64" Name="velocity" NumberOfComponents="3" format="ascii">'
+        f"{_array_text(np.transpose(velocity, (2, 1, 0, 3)))}</DataArray>\n"
+        f"</CellData>\n<Coordinates>\n{coordinates}\n</Coordinates>\n</Piece>\n</RectilinearGrid>\n</VTKFile>\n"
+    )
+    target.write_text(content)
+    return target
+
+
 def write_paraview(solution: Solution, out_dir: str | Path) -> list[Path]:
     paths = []
     paths.append(write_vtr(solution, out_dir))
