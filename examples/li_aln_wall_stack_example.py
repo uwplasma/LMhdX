@@ -147,6 +147,7 @@ for model in WALL_MODELS:
         dt=half**2 / kinematic_viscosity,
         wall_layers=(None, (stack, stack), (stack, stack)),
     )
+    print(f"Solving the {model} wall stack at Ha = {nondimensional['hartmann_number']:.0f}...", flush=True)
     solution = solve_steady_state(problem)
     gradient = MEAN_VELOCITY_M_S * float(np.sum(areas)) / float(np.sum(areas * solution.velocity[0].data[0]))
     currents = [gradient * jnp.asarray(current.data[0]) for current in solution.currents]
@@ -212,4 +213,9 @@ axes[2].tick_params(axis="x", rotation=15)
 figure_path = OUTPUT_DIR / "li_aln_wall_stack.png"
 figure.savefig(figure_path, dpi=150)
 plt.close(figure)
-print(json.dumps({"summary": str(summary_path), "figure": str(figure_path)}, indent=2))
+for name, result in results.items():
+    print(
+        f"  {name}: c = {result['tangential_conductance_ratio']:.3g}, "
+        f"dp/dx = {result['pressure_gradient_pa_m']:.4g} Pa/m at {MEAN_VELOCITY_M_S:g} m/s"
+    )
+print(f"Wrote {summary_path} and {figure_path}")

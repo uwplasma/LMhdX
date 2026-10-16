@@ -34,7 +34,8 @@ cross-section equations. The three-dimensional staggered core
 (`lmhdx.core3d`, `lmhdx.steady`) retains all three velocity, current and
 Lorentz-force components; a duct with an inlet and an outlet (`lmhdx.axial`)
 is solved in the inertialess limit, without $\mathbf u\cdot\nabla\mathbf u$, or
-with it by Newton's method from that solution.
+with it by Newton's method from that solution; the
+pipe with an inlet and an outlet is solved in the inertialess limit only.
 The inertialess core-flow model (`lmhdx.coreflow`) reduces the core of a
 thin-walled duct in a field $B_y(x)$ to three two-dimensional equations
 (ANL/FPP/TM-228, eqs. 4a–4c). Their verification and open gates are in the

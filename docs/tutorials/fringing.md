@@ -33,8 +33,8 @@ print(station_flow_rates(solution.velocity))  # 4.0 at every station
 print(pressure_drop(solution.pressure, -3.0, 3.0))
 ```
 
-The solve is one preconditioned conjugate-gradient solve, certified on its
-residual; it raises if the residual is not reached. Check the balances it
+In the Stokes limit the solve is one preconditioned conjugate-gradient solve,
+certified on its residual; it raises if the residual is not reached. Check the balances it
 guarantees before reading a pressure:
 
 ```python
@@ -77,7 +77,8 @@ What is and is not established:
   TM-228's uncorrected 0.0178 is the inertialess thin-layer Ha → ∞ asymptote,
   which no 3-D solve reaches; LMhdX's Ha → ∞ fits give 0.0183–0.0211, 3–18 %
   above it, a fit band rather than a 1 % check.
-- There is no straight pipe with an open axis yet, and no thick or layered wall.
+- A circular pipe with an open axis (`fringe_pipe`, `solve_open_pipe`) is solved
+  in the Stokes limit only. There is no thick or layered wall.
 
 Run `python examples/fringe_duct_example.py` for the case above with its
 conservation checks and a central-difference check of the derivative. The
