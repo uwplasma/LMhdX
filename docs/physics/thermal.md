@@ -42,7 +42,15 @@ The flow should satisfy $\max\beta|T-T_r|\ll 1$. The step reports it as
 `boussinesq_measure`; it is not enforced.
 
 The heat equation leaves out:
-- viscous heating;
+- viscous heating. In a developed duct with insulating walls the hydraulic power
+  is the viscous plus the Joule dissipation. The Brinkman number
+  $\mu U^2/(k\,\Delta T)$ scales the viscous part against conduction: about
+  $10^{-8}$ for PbLi at 0.1 m/s and 100 K. It does not bound the Joule part,
+  whose scale on the same length is $Ha^2$ times larger, and whose currents
+  depend on the walls. Whether either matters is a property of the case; the
+  duct design example measures both, under $10^{-5}$ of its duty. Joule heat is
+  kept, from the same currents as the Lorentz force, so the ledger matches
+  `core3d.energy_budget(...).joule`;
 - radiation;
 - phase change;
 - thermoelectric effects;
@@ -133,6 +141,12 @@ cells on either side by `ops.face_average_adjoint`:
   is built from.
 - Its volume integral is `core3d.energy_budget(...).joule`.
 
+Thin conducting walls take much of the dissipation away from the fluid. In the
+developed duct at Ha 20 with $c = 0.05$ the walls dissipate 56 % of it, at
+Ha 100 76 %, and at Ha 20 with $c = 0.5$ 43 % (`energy_budget(...).wall` against
+`.joule`, unchanged from 24 to 48 cells). The fluid-only model leaves that heat
+out until conjugate walls arrive.
+
 **Buoyancy** is averaged onto the velocity faces as the Lorentz force is, and
 zeroed on wall faces. It is added before the division by density and the
 projection. Without $\beta$ or $\mathbf g$ there is no force term at all.
@@ -156,7 +170,18 @@ solve per step supplies both the Lorentz force and the Joule heat.
 
 The fractional step does not hold every hydrostatic state exactly. A
 temperature varying only along gravity stays at rest; in general, the claim
-is first-order convergence in $\Delta t$.
+is first-order convergence in $\Delta t$. Backward-Euler conduction is first
+order in time as well, so any transient heat-transfer number carries an
+$O(\Delta t)$ error.
+
+The coupling's time error is set by the step over the buoyancy time scale,
+`buoyancy_courant` $=\Delta t\sqrt{\beta|\mathbf g|\,G}$, reported beside
+`advective_cfl`, with $G$ the largest absolute face-normal gradient on any face,
+one component rather than a colocated gradient magnitude. In the Bénard onset of
+#252 the critical Rayleigh number is about 15 % low near 0.2 and under 3 % near
+0.025, at first order. That calibrates that case; it is not a general bound.
+`validate_thermal_inputs(..., buoyancy_courant_limit=...)` refuses a start
+above a chosen limit.
 
 ## Diagnostics and the heat ledger
 
@@ -223,10 +248,13 @@ one state per step.
 **Not included**
 - Conjugate wall conduction.
 - A flow that evolves in an open duct with the heat. There the flow is held.
-- Higher-order transport.
+- Higher-order transport: a limited second-order face value is planned. Until
+  then every open-duct result below quotes $Pe_h/2$, the first-order scheme's
+  numerical diffusivity over the physical one.
 - Variable properties.
 - A steady solve of the coupled equations. The developed duct below is the one steady thermal solve, for a given flow.
-- A thermal restart format.
+- TOML input, a restart record and ParaView output. A thermal run has none of
+  the three yet; plan step 5.6 adds them next.
 - Dispatch through `lmhdx.solve`.
 
 A closed domain with net heating has no steady temperature. The state returned
@@ -305,8 +333,12 @@ uniform slug:
 | square | 3.60795 | +1.35 % / +0.35 % / +0.087 % | 1.97, 1.99 |
 | aspect ratio 0.5 | 4.12330 | +2.7 % / +0.73 % / +0.18 % | 1.92, 1.98 |
 | square, slug flow | 7.11354 | −1.5 % / −0.38 % / −0.094 % | 1.98, 1.99 |
+| square, H2 (uniform flux on every wall) | 3.091 | +1.3 % / +0.24 % / −0.027 % | 1.97 |
 
-The comparison with the tables of Shah & London (1978) waits for the book.
+The H2 gate exercises the heat-flux path the design workflow uses. Its 3.091 is
+Shah & London's (1978), as cited in the review of #240; Richardson extrapolation
+gives 3.0873, 0.12 % below. The H1 numbers' comparison with the book's tables
+waits for the book.
 The aspect-0.5 duct is gated at 64 cells; the square ducts carry the
 refinement study.
 
@@ -339,8 +371,12 @@ its discrete answer is exactly $12/(1+h^2/2)$. The public four-wall
 number.
 
 Not covered:
-- the uniform-wall-temperature condition, an eigenvalue problem;
-- the pipe.
+- the uniform-wall-temperature condition, an eigenvalue problem ($Nu_T = 2.976$
+  for the square duct);
+- the pipe;
+- an MHD duct against a published $Nu$, for example a square insulating duct
+  near Ha 100 (Tao & Ni 2013; Smolentsev et al.). That is a documentation
+  campaign to come, not a CI gate.
 
 ## An open duct
 
@@ -361,8 +397,12 @@ steady state:
   14.3. That is the 16 entering through the heated wall, less what conducts
   back out through the inlet.
 
+Its axial cells give $Pe_h/2 = 5$: first-order upwinding carries five times the
+physical axial diffusivity. That is why the duct is quoted for its balance,
+not for a Nusselt number.
+
 A plug flow carrying a uniform source converges to its exact steady profile at
-first order, 0.81 and then 0.91.
+first order, 0.81 and then 0.91, at $Pe_h/2$ of 0.16, 0.08 and 0.04.
 
 **Crediting a load.** A design that must remove a given duty is judged on what
 the duty itself does, not on the gross outlet enthalpy. Joule heat and a
@@ -387,7 +427,7 @@ In a plug flow with $\lambda=\rho_0c_pu/k$, a uniform load leaves through the
 outlet in the steady fraction $1-(1-e^{-\lambda})/\lambda$. The rest conducts
 back out of the thermostatted inlet. On 32 cells the credited fraction is
 0.788 at $\lambda=5$, against 0.801 exactly; the gap is first-order upwind
-diffusion. A conductive fluid ($\lambda=0.5$) stays coolest only by returning
+diffusion, at $Pe_h/2 = 0.08$. A conductive fluid ($\lambda=0.5$) stays coolest only by returning
 79 % of its load through the inlet. A field's Joule heat multiplies the gross
 outlet enthalpy, from 7.9 to 32.8 as the flow doubles, but adds nothing to the
 load's credit.

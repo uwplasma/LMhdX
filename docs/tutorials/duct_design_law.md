@@ -132,6 +132,17 @@ requirement.
     in an open duct.
 - **The cost** is the hydraulic power $Q\,\Delta p$, with no assumed pump
   efficiency.
+- **Buoyancy** is left out: the flow is held. The workflow reports scales on
+  the half-width $a$, with the flux's temperature scale $q''a/k$,
+  $\beta = 1.21\times10^{-4}$ /K from the same table and $|g| = 9.81$ m/s²:
+  - $N_a = Ha_a^2/Re_a = \sigma B^2 a/(\rho U)$, the Lorentz force against
+    inertia;
+  - $Ri_a = Gr_a/Re_a^2$, buoyancy against inertia;
+  - $Ri_a/N_a = Gr_a/(Re_a Ha_a^2) = \rho g\beta\Delta T/(\sigma U B^2)$, the
+    velocity buoyancy drives against the Lorentz force over the forced one.
+
+  They are scales, not a verdict. The direction of gravity, the electrical
+  walls' closure and the thermal entrance are not qualified here.
 
 **Each trial** follows four steps:
 1. Solve the developed flow of its shape under a unit pressure gradient.
@@ -173,6 +184,7 @@ lmhdx.enable_x64()
 
 # Pb-17Li at 573 K, held constant: Martelli et al. (2019), Table 1.
 RHO, CP, K, MU, SIGMA = 9838.0, 189.8, 20.40, 2.153e-3, 8.835e5  # kg/m^3, J/(kg K), W/(m K), Pa s, S/m
+BETA, GRAVITY = 1.21e-4, 9.81  # 1/K, the same table; m/s^2, in any direction: the flow is held, so g only flags
 # An illustrative specification, not an engineering one.
 AREA, LENGTH, FIELD = 2.4e-4, 0.982, 0.5  # m^2 and m, fixed; T, uniform, along the half-width a
 DUTY = 1500.0  # W, through the first wall z = -b, parallel to the field
@@ -295,14 +307,24 @@ square = next(record for record in edges if record["aspect"] == 1.0)
 saving = 1.0 - candidate["hydraulic_power"] / square["hydraulic_power"]
 for name, record in (("square", square), ("candidate", candidate)):
     a = np.sqrt(AREA / (4.0 * record["aspect"]))
-    hartmann, speed = FIELD * a * np.sqrt(SIGMA / MU), record["flow_rate"] / AREA
+    nu, speed, flux = MU / RHO, record["flow_rate"] / AREA, record["duty"] / (2.0 * a * LENGTH)
+    # On the half-width a throughout: N_a = Ha_a^2 / Re_a = sigma B^2 a / (rho U), the Lorentz force over inertia.
+    # Buoyancy on the flux's temperature scale q'' a / k: Ri_a = Gr_a / Re_a^2 against inertia, and
+    # Ri_a / N_a = Gr_a / (Re_a Ha_a^2) = rho g beta dT / (sigma U B^2), the velocity buoyancy drives against the
+    # Lorentz force over the forced one. Scales of a forced-convection screening, not a verdict on a design.
+    reynolds, hartmann = speed * a / nu, FIELD * a * np.sqrt(SIGMA / MU)
+    grashof = GRAVITY * BETA * (flux * a / K) * a**3 / nu**2
+    record["numbers"] = dict(Re_a=reynolds, Ha_a=hartmann, N_a=hartmann**2 / reynolds, Ri_a=grashof / reynolds**2)
+    record["numbers"]["Ri_a/N_a"] = record["numbers"]["Ri_a"] / record["numbers"]["N_a"]
+    viscous = record["hydraulic_power"] - record["joule"]  # a developed Stokes flow's pumping is its dissipation
     print(
         f"{name}: b/a {record['aspect']:.4f}, Q {record['flow_rate']:.4e} m^3/s, dp {record['pressure_drop']:.1f} Pa, "
-        f"W {record['hydraulic_power']:.3e} W, wall {record['wall_peak']:.2f} K, Joule {record['joule']:.1e} W, "
-        f"flux {record['duty'] / (2.0 * a * LENGTH) / 1e3:.1f} kW/m^2, Re {record['reynolds']:.0f}, Ha {hartmann:.0f}, "
-        f"N {hartmann**2 / record['reynolds']:.2f}, Pe {record['reynolds'] * MU * CP / K:.0f}, "
-        f"Rm {4e-7 * np.pi * SIGMA * speed * a:.1e}"
+        f"W {record['hydraulic_power']:.3e} W, wall {record['wall_peak']:.2f} K, flux {flux / 1e3:.1f} kW/m^2, "
+        f"Re_Dh/Ha_a {record['re_over_ha']:.0f}, Pe_Dh {record['reynolds'] * MU * CP / K:.0f}, "
+        f"Rm {4e-7 * np.pi * SIGMA * speed * a:.1e}, viscous/duty {viscous / record['duty']:.1e}, "
+        f"Joule/duty {record['joule'] / record['duty']:.1e}"
     )
+    print("  " + ", ".join(f"{key} {value:.4g}" for key, value in record["numbers"].items()) + f", Gr_a {grashof:.3g}")
 print(f"at the same duty, the candidate needs {100 * saving:.1f} % less pumping power than the square duct")
 
 # Check the candidate: a finer mesh, then its flow carried down an open duct from an inlet at T_IN.
@@ -349,8 +371,10 @@ def open_duct(record, refine=1):
 credits = [open_duct(candidate, refine) for refine in (1, 2)]
 delivered = [float(credit.delivered / credit.imposed) for credit in credits]
 peaks = [float(credit.loaded.temperature_max) for credit in credits]
+axial_peclet = candidate["flow_rate"] / AREA * (LENGTH / 12) * RHO * CP / K  # numerical / physical diffusivity x 2
 print(
-    f"open duct: {100 * delivered[0]:.3f} % of the duty leaves at the outlet, {float(credits[0].conducted):.2f} W "
+    f"open duct (Pe_h/2 {axial_peclet / 2:.0f}): "
+    f"{100 * delivered[0]:.3f} % of the duty leaves at the outlet, {float(credits[0].conducted):.2f} W "
     f"back out of the inlet, storage {float(credits[0].stored):.1e} W; hottest cell {peaks[0]:.2f} K; "
     f"at half the time step {100 * delivered[1]:.3f} % and {peaks[1]:.2f} K"
 )
@@ -405,16 +429,32 @@ b/a 0.431: x x x x x o o o o
 b/a 0.656: x x x x x x o o o
 b/a 1.000: x x x x x x x o x
 lowest flows: b/a 0.080 1.7965e-05, b/a 0.122 1.7358e-05, b/a 0.186 1.7508e-05, b/a 0.283 1.8325e-05, b/a 0.431 1.9969e-05, b/a 0.656 2.3264e-05, b/a 1.000 3.1078e-05
-square: b/a 1.0000, Q 3.1078e-05 m^3/s, dp 395.4 Pa, W 1.229e-02 W, wall 624.99 K, Joule 5.7e-03 W, flux 98.6 kW/m^2, Re 9167, Ha 78, N 0.67, Pe 184, Rm 1.1e-03
-candidate: b/a 0.1436, Q 1.7330e-05 m^3/s, dp 127.2 Pa, W 2.205e-03 W, wall 625.00 K, Joule 7.2e-04 W, flux 37.4 kW/m^2, Re 3388, Ha 207, N 12.65, Pe 68, Rm 1.6e-03
+square: b/a 1.0000, Q 3.1078e-05 m^3/s, dp 395.4 Pa, W 1.229e-02 W, wall 624.99 K, flux 98.6 kW/m^2, Re_Dh/Ha_a 117, Pe_Dh 184, Rm 1.1e-03, viscous/duty 4.4e-06, Joule/duty 3.8e-06
+  Re_a 4583, Ha_a 78.46, N_a 1.343, Ri_a 0.02053, Ri_a/N_a 0.01529, Gr_a 4.31e+05
+candidate: b/a 0.1436, Q 1.7330e-05 m^3/s, dp 127.2 Pa, W 2.205e-03 W, wall 625.00 K, flux 37.4 kW/m^2, Re_Dh/Ha_a 16, Pe_Dh 68, Rm 1.6e-03, viscous/duty 9.9e-07, Joule/duty 4.8e-07
+  Re_a 6744, Ha_a 207, N_a 6.355, Ri_a 0.1742, Ri_a/N_a 0.02741, Gr_a 7.92e+06
 at the same duty, the candidate needs 82.1 % less pumping power than the square duct
 48/6 cells: Q -0.03 %, W +0.69 %
-open duct: 99.968 % of the duty leaves at the outlet, 0.49 W back out of the inlet, storage 4.1e-12 W; hottest cell 624.74 K; at half the time step 99.968 % and 624.74 K
+open duct (Pe_h/2 270): 99.968 % of the duty leaves at the outlet, 0.49 W back out of the inlet, storage 4.1e-12 W; hottest cell 624.74 K; at half the time step 99.968 % and 624.74 K
 capacity at the square's power: b/a 0.080 1.85, b/a 0.122 2.04, b/a 0.186 2.01, b/a 0.283 1.81, b/a 0.431 1.54, b/a 0.656 1.26, b/a 1.000 1.00
 at the square's flux, 98.6 kW/m^2, W per metre of first wall: b/a 0.080 1.755e+00, b/a 0.122 6.949e-01, b/a 0.186 5.039e-01, b/a 0.283 4.700e-01, b/a 0.431 5.012e-01, b/a 0.656 5.930e-01, b/a 1.000 7.933e-01
 ```
 
-The workflow takes about 40 s on a CPU.
+The workflow takes about 45 s on a CPU.
+
+**Read this first: these are forced-convection screening results.**
+- **Buoyancy against inertia is not small for the candidate:** $Ri_a = 0.17$,
+  against 0.02 for the square.
+- **Against the Lorentz force at the flow speed it is:** $Ri_a/N_a$ is 0.027
+  and 0.015.
+- **What has not been qualified:** buoyancy, its direction, the electrical
+  walls' closure and the thermal entrance. Mixed-convection MHD studies show
+  buoyancy reorganizing the flow and the wall temperatures in heated ducts
+  (Zikanov et al. 2013; Vetcha, Smolentsev and Abdou; Mistrangelo et al. 2025).
+
+Neither these scales nor a small force ratio certifies or rules out a shape. The
+comparison below ranks screenings, and a coupled buoyant calculation with the
+direction of gravity declared has to come before an engineering choice.
 
 **At a fixed duty per channel:**
 
@@ -428,20 +468,24 @@ The workflow takes about 40 s on a CPU.
 | hydraulic power | 1.23×10⁻² W | 2.21×10⁻³ W |
 | wall-to-bulk at the outlet | 26.1 K | 5.6 K |
 | Joule heat | 5.7×10⁻³ W | 7.2×10⁻⁴ W |
-| $Re$, $Ha$, $N$ | 9,170, 78, 0.67 | 3,390, 207, 12.7 |
-| $Pe$, $Rm$ | 184, 1.1×10⁻³ | 68, 1.6×10⁻³ |
+| $Re_a$, $Ha_a$, $N_a$ | 4,583, 78.5, 1.34 | 6,744, 207, 6.36 |
+| $Ri_a$, $Ri_a/N_a$ | 0.021, 0.015 | 0.174, 0.027 |
+| $Re_{D_h}/Ha_a$, $Pe_{D_h}$, $Rm$ | 117, 184, 1.1×10⁻³ | 16, 68, 1.6×10⁻³ |
+| viscous and Joule heat over the duty | 4.4×10⁻⁶, 3.8×10⁻⁶ | 9.9×10⁻⁷, 4.8×10⁻⁷ |
 
 - **Both ducts run at the 625 K wall limit.** The slender duct needs 44 % less
   flow, because the duty enters through its wide side wall at a lower flux and
   crosses a thin gap.
-- **Joule heat is a burden, not cooling,** and it is under 10⁻⁵ of the duty.
+- **Joule heat is a burden, not cooling.** Measured here, it and the viscous
+  heat are each under 10⁻⁵ of the duty, which justifies leaving viscous heat
+  out of this example; that does not carry over to every strong-field duct.
 - **The shape is the isothermal law's:** 0.1436, against $\beta^* = 0.145$ at
   $H = 78.5$. Near it the lowest feasible flow changes by about 1 % across $b/a$
   0.12–0.19, so pressure sets the shape, and the temperature limit sets the flow
   in place of the smallest allowed velocity.
-- **Validity:** at $N = 0.67$ the square duct's inertia is not small. A straight
-  developed laminar flow has no inertial term, but its entrance region and
-  stability would feel it.
+- **Validity:** $N_a = 1.34$ for the square duct, so its inertia is not small
+  against the Lorentz force. A straight developed laminar flow has no inertial
+  term, but its entrance region and stability would feel it.
 
 **At a fixed first-wall flux** the comparison is per metre of first wall,
 since covering a wall takes $1/(2a)$ channels per metre. A wide channel then
@@ -467,7 +511,12 @@ the viscous plus the Joule dissipation.
     inlet;
   - the storage is 4×10⁻¹² W, so the run is steady, and half the time step
     changes neither number;
-  - the hottest cell is 624.74 K.
+  - the hottest cell is 624.74 K;
+  - its axial cell Péclet number is large: $Pe_h/2 = 270$ is the first-order
+    scheme's numerical diffusivity over the physical one along the duct. The
+    tiny storage shows the run is stationary, not that it is accurate in space:
+    neither the delivered share nor the entrance profile has been shown
+    independent of the axial mesh, and none is quoted beyond this check.
 
   Twelve cells do not resolve the entrance region, so this checks the delivered
   duty, not the developed screening's peak.
@@ -476,6 +525,7 @@ the viscous plus the Joule dissipation.
 
 This is a screening optimum within the declared model, not an engineering
 design. The model is:
+- forced convection only: buoyancy, its direction, the walls' electrical closure and the thermal entrance are not qualified (above);
 - fluid only;
 - the wall-interface temperature, not the solid's;
 - constant properties;
