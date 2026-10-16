@@ -82,6 +82,7 @@ how_to/restart_and_output
 
 physics/equations
 physics/numerics
+physics/thermal
 ```
 
 ```{toctree}
@@ -114,4 +115,5 @@ adr/0004-process
 adr/0005-review-2026-09-13
 adr/0006-review-2026-09-22
 adr/0007-rename-lmhdx
+adr/0008-thermal-first-stage
 ```
