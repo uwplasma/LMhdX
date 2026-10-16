@@ -529,7 +529,7 @@ def fast_diagonal_polar_poisson(
     vectors, values = [], []
     for eigenvalue in azimuthal:
         operator = symmetric + np.diag(eigenvalue * inverse_square)
-        mode_values, mode_vectors = np.linalg.eigh(operator)
+        mode_values, mode_vectors = _eigh(operator)
         # Descending, so the zero eigenvalue of a singular mode is first, as the
         # Cartesian factorization also arranges it.
         vectors.append(mode_vectors[:, ::-1])
@@ -540,7 +540,7 @@ def fast_diagonal_polar_poisson(
     axial_weights = np.asarray(grid.widths[2])
     axial_root = np.sqrt(axial_weights)
     axial_symmetric = axial_root[:, None] * axial / axial_root[None, :]
-    axial_values, axial_vectors = np.linalg.eigh(0.5 * (axial_symmetric + axial_symmetric.T))
+    axial_values, axial_vectors = _eigh(0.5 * (axial_symmetric + axial_symmetric.T))
     axial_values, axial_vectors = axial_values[::-1], axial_vectors[:, ::-1]
     singular = shift == 0.0 and conditions[0].kind == NEUMANN and DIRICHLET not in conditions[2].kinds
     return FastDiagonalPolarPoisson(
@@ -714,6 +714,31 @@ def _promote_null_mode(
     return ordered_vectors, ordered_values
 
 
+def _eigh(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """``np.linalg.eigh``, solved in its mirror-even and mirror-odd blocks when ``matrix`` is mirror symmetric.
+
+    A layer mesh symmetric about the duct centre has pairs of eigenvalues equal to float64, and
+    which basis of such a pair ``eigh`` returns depends on the LAPACK build: scipy-openblas 0.3.34
+    (NumPy 2.5) rotates the parity pair that 0.3.31 returned, and the Stokes operator then lost its
+    symmetry to 7e-12. The parity blocks fix that basis, so the transforms keep the mesh's symmetry.
+    """
+    n, half = len(matrix), len(matrix) // 2
+    if n < 2 or not np.array_equal(matrix, matrix[::-1, ::-1]):
+        return np.linalg.eigh(matrix)
+    even, k = n - half, np.arange(half)
+    basis = np.zeros((n, n))
+    basis[k, k] = basis[n - 1 - k, k] = basis[k, even + k] = np.sqrt(0.5)
+    basis[n - 1 - k, even + k] = -np.sqrt(0.5)
+    if n % 2:
+        basis[half, half] = 1.0
+    blocks = basis.T @ matrix @ basis
+    pairs = [np.linalg.eigh(b) for b in (blocks[:even, :even], blocks[even:, even:])]
+    values = np.concatenate([w for w, _ in pairs])
+    vectors = np.concatenate([basis[:, :even] @ pairs[0][1], basis[:, even:] @ pairs[1][1]], axis=1)
+    order = np.argsort(values, kind="stable")
+    return values[order], vectors[:, order]
+
+
 def _symmetric_eigen(operator: np.ndarray, weights: np.ndarray, message: str):
     """Return the eigenvalues, eigenvectors and weight roots of an operator symmetric under ``weights``."""
     root = np.sqrt(weights)
@@ -723,7 +748,7 @@ def _symmetric_eigen(operator: np.ndarray, weights: np.ndarray, message: str):
         raise ValueError(
             f"{message} (relative asymmetry {asymmetry:.3e}); fast diagonalization does not apply"
         )
-    eigenvalues, eigenvectors = np.linalg.eigh(0.5 * (symmetric + symmetric.T))
+    eigenvalues, eigenvectors = _eigh(0.5 * (symmetric + symmetric.T))
     if np.max(np.abs(operator @ np.ones(len(weights)))) <= _SINGULAR_TOLERANCE * np.max(np.abs(operator)):
         # Constants are in the null space, so that eigenvalue is zero. Computed, it carries round-off
         # of the largest one (5e-10 across a Hartmann layer at Ha 100), which the lowest mode of a
@@ -1327,7 +1352,7 @@ def fast_diagonal_helmholtz(
                 f"axis {axis} operator is not symmetric under its cell weights "
                 f"(relative asymmetry {asymmetry:.3e}); fast diagonalization does not apply"
             )
-        eigenvalues, eigenvectors = np.linalg.eigh(0.5 * (symmetric + symmetric.T))
+        eigenvalues, eigenvectors = _eigh(0.5 * (symmetric + symmetric.T))
         vectors.append(eigenvectors)
         values.append(eigenvalues)
         scales.append(root)

@@ -348,6 +348,17 @@ def _layer_grid(cells: int, layer: float, axial: int = 4) -> Grid:
     return Grid(uniform_faces(axial, 0.0, 1.0), faces, faces)
 
 
+def test_fast_diagonal_bases_are_orthonormal_parity_modes_of_a_symmetric_layer_mesh():
+    """Each axis basis is orthonormal to 1e-14, and every mode is even or odd about the duct centre.
+
+    The layer mesh has eigenvalue pairs equal to float64; NumPy 2.5's LAPACK returned a rotated
+    pair and the Ha 1000 mixed solve below drifted to 6.4e-10, the Stokes symmetry tests to 7.4e-12.
+    """
+    for vectors in fast_diagonal_poisson(_layer_grid(64, 1.0e-3), (WRAPPED, WALL, WALL)).vectors:
+        assert np.max(np.abs(vectors.T @ vectors - np.eye(len(vectors)))) < 1e-14
+        assert np.max(np.abs(np.abs(np.sum(vectors[::-1] * vectors, axis=0)) - 1.0)) < 1e-14
+
+
 def _relative(candidate, reference) -> float:
     return float(jnp.max(jnp.abs(candidate - reference)) / jnp.max(jnp.abs(reference)))
 
@@ -366,8 +377,12 @@ def test_mixed_precision_poisson_reaches_the_float64_solve(true_float32_matmuls,
 
 
 def test_mixed_precision_is_as_accurate_as_float64_where_float64_is_not_exact(true_float32_matmuls):
-    """At width ratio 3e5 the float64 solve is itself 1e-7 off; mixed lands on its float64 correction."""
-    grid, conditions = _layer_grid(24, 1.0e-3), (WRAPPED, WALL, WALL)
+    """A 1e-4 layer on 64 cells leaves the float64 solve 1.3e-8 off; mixed lands on its float64 correction.
+
+    The 24-cell 1e-3 mesh this used was 1e-7 off; with the parity bases of ``_eigh`` it is 5e-11
+    off, so it no longer tests this.
+    """
+    grid, conditions = _layer_grid(64, 1.0e-4), (WRAPPED, WALL, WALL)
     exact = fast_diagonal_poisson(grid, conditions)
     rhs = _random_cells(grid, seed=37)
     first = exact.solve(rhs)
