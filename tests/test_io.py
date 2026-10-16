@@ -1065,7 +1065,13 @@ def test_a_thermal_run_from_toml_records_frames_and_resumes_bit_for_bit(tmp_path
     expected = {f"{label}.{suffix}" for label in labels for suffix in ("npz", "vtr")}
     assert expected | {"heated_duct.pvd", "thermal_summary.json"} <= written
     summary = json.loads((out / "thermal_summary.json").read_text())
-    assert summary["finite"] and summary["steps"] == 40 and summary["time"] == pytest.approx(0.08, rel=1e-12)
+    assert summary["accepted"] and summary["rejected"] is None and summary["steps"] == 40
+    assert summary["limits"] == {
+        "advective_cfl": 0.8,
+        "advective_cfl_override": False,
+        "buoyancy_courant": None,
+    }
+    assert summary["finite"] and summary["time"] == pytest.approx(0.08, rel=1e-12)
     assert summary["largest"]["heat_balance_residual"] <= 1e-8 and summary["largest"]["advective_cfl"] <= 0.8
     resume = tmp_path / "resume.toml"
     text = (
@@ -1080,6 +1086,104 @@ def test_a_thermal_run_from_toml_records_frames_and_resumes_bit_for_bit(tmp_path
     ):
         assert straight.files == again.files
         assert all(np.array_equal(straight[name], again[name]) for name in straight.files)
+
+
+def test_a_chunk_is_rejected_at_any_sample_past_its_limits():
+    """A sample inside the chunk past a limit is not hidden by a valid last one; a NaN fails; no limit, no check."""
+    good = dict(
+        finite=np.ones(5, bool),
+        backflow_boundary_valid=np.ones(5, bool),
+        advective_cfl=np.full(5, 0.1),
+        buoyancy_courant=np.zeros(5),
+    )
+    limits = {"advective_cfl": 0.8, "buoyancy_courant": None}
+    fast = SimpleNamespace(**{**good, "advective_cfl": np.array([0.1, 0.9, 0.95, 0.2, 0.1])})
+    assert cli._thermal_rejection(SimpleNamespace(**good), limits, 40) is None
+    assert cli._thermal_rejection(fast, limits, 40) == {
+        "step": 42,
+        "reasons": ["advective_cfl over 0.8"],
+        "advective_cfl": 0.9,
+        "buoyancy_courant": 0.0,
+    }
+    assert cli._thermal_rejection(fast, {**limits, "advective_cfl": None}, 40) is None
+    broken = {"finite": np.array([1, 1, 0, 1, 1], bool), "buoyancy_courant": np.array([0, 0, np.nan, 0, 0])}
+    rejected = cli._thermal_rejection(
+        SimpleNamespace(**{**good, **broken}), {**limits, "buoyancy_courant": 1.0}, 0
+    )
+    assert rejected["step"] == 3 and rejected["reasons"] == ["not finite", "buoyancy_courant over 1.0"]
+
+
+@pytest.mark.parametrize(
+    ("limit", "reason"),
+    [
+        ("advective_cfl_limit = 4.0e-5", "advective_cfl over 4e-05"),
+        ("buoyancy_courant_limit = 9.0e-5", "buoyancy_courant over 9e-05"),
+    ],
+)
+def test_a_thermal_run_stops_at_the_first_sample_past_a_limit(tmp_path: Path, limit: str, reason: str):
+    """The page's case with its z walls held at zero: from rest and a uniform temperature the start passes either
+    limit, and the flow and the buoyancy outgrow it inside the second chunk. The run exits 2 after the first
+    chunk's record, writes the second as rejected and names its first sample; that record imports, not resumes."""
+    import json
+
+    from lmhdx.cases import _load_toml
+    from lmhdx.thermal import load_thermal_record, thermal_run_from_toml
+
+    page = _page_toml().replace('kind = "heat_flux"\nupper = 1.0', 'kind = "temperature"')
+    case = tmp_path / "case.toml"
+    case.write_text(page.replace("chunk = 10", f"chunk = 10\n{limit}"))
+    assert 'kind = "temperature"' in page and cli.main([str(case)]) == 2
+    out = tmp_path / "out"
+    summary = json.loads((out / "thermal_summary.json").read_text())
+    assert not summary["accepted"] and summary["steps"] == 10 and summary["rejected"]["chunk"] == 1
+    assert 10 < summary["rejected"]["step"] < 20 and summary["rejected"]["reasons"] == [reason]
+    assert summary["limits"]["advective_cfl_override"] == limit.startswith("advective")
+    written = {path.name for path in out.iterdir()}
+    assert {"heated_duct_000010.npz", "heated_duct_000020_rejected.npz", "heated_duct.pvd"} <= written
+    assert not written & {
+        "heated_duct_000020.npz",
+        "heated_duct_000020.vtr",
+        "heated_duct_000030_rejected.npz",
+    }
+    run, rejected = thermal_run_from_toml(_load_toml(case), tmp_path), out / "heated_duct_000020_rejected.npz"
+    with pytest.raises(ValueError, match="other inputs"):
+        load_thermal_record(rejected, run.problem, units=run.units, run=run.provenance)
+    load_thermal_record(rejected, run.problem, units=run.units)
+
+
+def test_conduction_alone_is_not_held_to_an_advective_limit(tmp_path: Path):
+    """With ``advection = "off"`` no advective Courant limit applies, at the start or after, whatever is configured."""
+    import json
+
+    page = _page_toml().replace("heat_source = 0.5", 'heat_source = 0.5\nadvection = "off"')
+    case = tmp_path / "case.toml"
+    case.write_text(page.replace("chunk = 10", "chunk = 10\nadvective_cfl_limit = 1.0e-9"))
+    assert cli.main([str(case)]) == 0
+    summary = json.loads((tmp_path / "out/thermal_summary.json").read_text())
+    assert summary["accepted"] and summary["limits"]["advective_cfl"] is None and summary["steps"] == 40
+    assert summary["largest"]["advective_cfl"] == 0.0  # nothing is carried, though the flow moves
+
+
+@pytest.mark.parametrize("x64", ["", "true"])
+def test_the_thermal_command_runs_in_a_fresh_process_in_either_precision(tmp_path: Path, x64: str):
+    """``python -m lmhdx case.toml`` in its own process: float32 by default, float64 with ``JAX_ENABLE_X64``."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    (tmp_path / "case.toml").write_text(_page_toml())
+    environment = {key: value for key, value in os.environ.items() if key != "JAX_ENABLE_X64"}
+    environment |= {"JAX_ENABLE_X64": x64} if x64 else {}
+    command = [sys.executable, "-m", "lmhdx", "case.toml"]
+    result = subprocess.run(
+        command, cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=600
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert json.loads((tmp_path / "out/thermal_summary.json").read_text())["accepted"]
+    with np.load(tmp_path / "out/heated_duct_000040.npz") as record:
+        assert record["temperature"].dtype == (np.float64 if x64 else np.float32)
+        assert np.all(np.isfinite(record["temperature"]))
 
 
 def test_a_thermal_toml_refuses_what_it_cannot_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

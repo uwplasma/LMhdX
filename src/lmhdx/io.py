@@ -964,10 +964,10 @@ def _write_run_summary(summary: dict[str, object], case, out_dir: Path) -> Path 
 
 
 def _summary_exit_code(summary: dict[str, object]) -> int:
-    """Return failure for a recorded unconverged steady result or a thermal run that left the numbers."""
+    """Return failure for a recorded unconverged steady result or a rejected thermal run."""
 
     if summary.get("solver_mode") == "thermal":
-        return 0 if summary.get("finite") else 2
+        return 0 if summary.get("accepted") else 2
     return 2 if summary.get("solver_mode") == "steady" and summary.get("converged") is False else 0
 
 
@@ -1057,26 +1057,78 @@ def _run_config(config: RunConfig) -> dict[str, object]:
     return summary
 
 
-def run_thermal(run) -> dict[str, object]:
-    """Run a :class:`lmhdx.thermal.ThermalRun` in compiled chunks; write a record and a frame after each.
+def _thermal_rejection(history, limits: dict, done: int) -> dict | None:
+    """Return the first sample of a chunk's ``history`` outside the run's ``limits``, its step and reasons, or None.
 
-    The records are ``{name}_{step:06d}.npz``, each with the run's provenance, and the frames
-    ``{name}_{step:06d}.vtr``, with ``step`` counted from the record's own time on a restart. The frames are
-    gathered in ``{name}.pvd`` from step 0 and in ``{name}_from_{first:06d}.pvd`` from a restart, so a resume
-    keeps the earlier series. ``thermal_summary.json`` holds the restart, the last diagnostics and the extremes
-    of the ledger, the Courant numbers and the Boussinesq measure over the run.
+    Every sample is checked, so a violation inside a chunk is not hidden by a valid last one; a NaN fails.
+    """
+    checks = {
+        "not finite": ~np.asarray(history.finite),
+        "the flow returns through the outlet": ~np.asarray(history.backflow_boundary_valid),
+    }
+    for name in ("advective_cfl", "buoyancy_courant"):
+        if limits[name] is not None:
+            checks[f"{name} over {limits[name]}"] = ~(np.asarray(getattr(history, name)) <= limits[name])
+    failing = {reason: np.flatnonzero(mask) for reason, mask in checks.items()}
+    samples = [int(found[0]) for found in failing.values() if found.size]
+    if not samples:
+        return None
+    sample = min(samples)
+    reasons = [reason for reason, found in failing.items() if sample in found]
+    values = {
+        name: float(np.asarray(getattr(history, name))[sample])
+        for name in ("advective_cfl", "buoyancy_courant")
+    }
+    return {"step": done + sample + 1, "reasons": reasons, **values}
+
+
+def run_thermal(run) -> dict[str, object]:
+    """Run a :class:`lmhdx.thermal.ThermalRun` in compiled chunks, accepting each before recording it.
+
+    Every sample of a chunk must be finite, keep a valid outlet, and stay within the scheme's advective Courant
+    limit (upwind 0.8, none for conduction alone) and a configured ``buoyancy_courant_limit``; the start is held
+    to the same limits. ``[run] advective_cfl_limit`` replaces the scheme's, recorded as an override. An accepted
+    chunk writes the record ``{name}_{step:06d}.npz`` and the frame ``{name}_{step:06d}.vtr``, ``step`` counted
+    from the record's own time on a restart, gathered in ``{name}.pvd`` from step 0 and in
+    ``{name}_from_{first:06d}.pvd`` from a restart, so a resume keeps the earlier series. The first rejected
+    chunk stops the run and writes only ``{name}_{step:06d}_rejected.npz``, whose run provenance names the
+    reasons, so it imports but does not resume. ``thermal_summary.json`` holds ``accepted``, the first rejected
+    sample (its step, reasons and Courant numbers), the limits, the last diagnostics and the extremes over the
+    run of the ledger, the Courant numbers and the Boussinesq measure, which no limit applies to.
     """
     from .thermal import advance_thermal, build_thermal_step, validate_thermal_inputs, write_thermal_record
 
     problem, state, heat = run.problem, run.state, run.heat_source
-    validate_thermal_inputs(problem, state, heat, divergence_tolerance=run.divergence_tolerance)
+    scheme = {"upwind": 0.8, "off": None}[problem.advection]
+    courant = run.limits["advective_cfl"] if problem.advection != "off" else None
+    limits = {
+        "advective_cfl": scheme if courant is None else courant,
+        "advective_cfl_override": courant is not None and courant != scheme,
+        "buoyancy_courant": run.limits["buoyancy_courant"],
+    }
+    start_limits = {"buoyancy_courant_limit": limits["buoyancy_courant"]}
+    if limits["advective_cfl"] is not None:
+        start_limits["advective_cfl_limit"] = limits["advective_cfl"]
+    validate_thermal_inputs(
+        problem, state, heat, divergence_tolerance=run.divergence_tolerance, **start_limits
+    )
     thermal_step = build_thermal_step(problem, dtype=jnp.result_type(float), hold_flow=run.hold_flow)
     chunk = jax.jit(lambda start: advance_thermal(thermal_step, start, heat, run.chunk))
-    first, frames, histories = round(float(state.time) / float(problem.flow.dt)), [], []
+    first, frames, histories, rejected = round(float(state.time) / float(problem.flow.dt)), [], [], None
+    accepted, done = state, first
     for index in range(run.steps // run.chunk):
-        state, history = chunk(state)
+        state, history = chunk(accepted)
         histories.append(history)
-        label = f"{run.name}_{first + (index + 1) * run.chunk:06d}"
+        rejected, label = _thermal_rejection(history, limits, done), f"{run.name}_{done + run.chunk:06d}"
+        if rejected is not None:
+            rejected["chunk"] = index
+            if run.write_restart:
+                provenance = {**run.provenance, "rejected": rejected["reasons"]}
+                write_thermal_record(
+                    run.directory / f"{label}_rejected", problem, state, units=run.units, run=provenance
+                )
+            break
+        accepted, done = state, done + run.chunk
         if run.write_restart:
             write_thermal_record(run.directory / label, problem, state, units=run.units, run=run.provenance)
         if run.write_paraview:
@@ -1092,9 +1144,12 @@ def run_thermal(run) -> dict[str, object]:
         "case": run.name,
         "solver_mode": "thermal",
         "units": run.units,
+        "accepted": rejected is None,
+        "rejected": rejected,
+        "limits": limits,
         "restart": run.restart,
-        "steps": run.steps,
-        "time": float(state.time),
+        "steps": done - first,
+        "time": float(accepted.time),
         "finite": bool(np.all(history.finite)),
         "last": last,
         "largest": {name: float(np.max(np.abs(getattr(history, name)))) for name in largest},
