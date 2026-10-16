@@ -31,7 +31,7 @@ DUCT_LENGTH = 2.5  # Fully developed segment length, not a complete blanket.
 WRITE_PARAVIEW = True
 WRITE_CSV = True
 WRITE_NPZ = True
-WRITE_PLOTS = False
+WRITE_PLOTS = True
 
 
 # Set up the duct. The conducting Hartmann walls are thin walls of conductance
@@ -63,6 +63,10 @@ case = replace(
 
 # The problem is linear, so a unit-drive solve gives the flow per unit drive:
 # Q = G * drive. That eliminates the drive from a fixed-throughput design.
+print(
+    f"Solving the Hunt duct at Ha = {HARTMANN_NUMBER:g}, c = {WALL_CONDUCTANCE_RATIO:g}: unit-drive solve...",
+    flush=True,
+)
 unit = solve(replace(case, forcing=1.0))
 conductance = float(volumetric_flow_rate(case, unit.state.u))
 if TARGET_FLOW_RATE is not None:
@@ -71,6 +75,7 @@ if TARGET_FLOW_RATE is not None:
 # Run the design solve at that drive. Each steady solve is one conjugate-gradient
 # solve whose residual is certified, and the second reuses the compiled program of
 # the first because the drive is an argument; the flow check tests Q = G * drive.
+print(f"  {unit.status}, residual {unit.residual:.2e}; design solve at the target flow rate...", flush=True)
 solution = solve(case)
 flow_rate = float(volumetric_flow_rate(case, solution.state.u))
 expected_flow = conductance * case.forcing
@@ -115,4 +120,9 @@ summary = {
 }
 summary_path = OUTPUT_DIR / "hunt_summary.json"
 summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-print(json.dumps(summary, indent=2))
+design = summary["design"]
+print(f"  {solution.status}, residual {solution.residual:.2e}, flow error {flow_error:.1e}")
+print("Results, in the case's units (unit density, viscosity and conductivity; lengths in a):")
+print(f"  flow rate Q = {flow_rate:.6g}, drive dp/dx = {case.forcing:.6g}, dQ/d(drive) = {conductance:.6g}")
+print(f"  hydraulic power over length {DUCT_LENGTH:g}: {design['hydraulic_power']:.6g}")
+print(f"Wrote {summary_path}")

@@ -41,7 +41,7 @@ CELLS = 12  # across the duct
 CELLS_IN_LAYER = 3
 FLOW_RATE = 4.0  # a unit mean velocity
 FINITE_DIFFERENCE_STEP = 1e-4
-WRITE_PLOTS = False
+WRITE_PLOTS = True
 
 
 # Run the solve. The inlet profile is solved first on the duct's own cross-section.
@@ -56,7 +56,11 @@ problem = fringe_duct(
     cells_in_layer=CELLS_IN_LAYER,
     flow_rate=FLOW_RATE,
 )
+print(
+    f"Fringe duct, Ha = {HARTMANN_NUMBER:g}, grid {problem.grid.shape}: fully developed inlet...", flush=True
+)
 _, inlet_gradient = fully_developed_inlet(problem, FLOW_RATE)
+print("  open-duct steady solve...", flush=True)
 solution = solve_open_duct(problem)
 
 # Check what the solve guarantees: the flow rate through every station, and mass
@@ -89,6 +93,7 @@ def fringe_drop(field_scale):
 
 # The derivative of the drop with respect to the field strength is one adjoint
 # solve; central differences check it.
+print("  adjoint derivative of the drop, then two finite-difference solves...", flush=True)
 derivative = float(jax.grad(fringe_drop)(1.0))
 step = FINITE_DIFFERENCE_STEP
 central = (float(fringe_drop(1.0 + step)) - float(fringe_drop(1.0 - step))) / (2.0 * step)
@@ -126,4 +131,13 @@ summary = {
     "plots": [path.name for path in plots],
 }
 (OUTPUT_DIR / "fringe_duct_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-print(json.dumps(summary, indent=2))
+print("Results (half-width, density, viscosity and conductivity are 1; pressure in mu U / a):")
+print(
+    f"  residual {checks['relative_residual']:.1e}, {checks['cg_iterations']} iterations, flow error "
+    f"{checks['relative_flow_rate_error']:.1e}, mass {checks['mass_balance']:.1e}, charge {checks['charge_balance']:.1e}"
+)
+print(f"  upstream gradient {upstream_gradient:.6g} per half-width (fully developed {inlet_gradient:.6g})")
+print(
+    f"  fringe pressure drop {drop:.6g}; d(drop)/d(field scale) {derivative:.6g} (central difference {central:.6g})"
+)
+print(f"Wrote {OUTPUT_DIR / 'fringe_duct_summary.json'}")

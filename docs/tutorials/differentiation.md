@@ -77,8 +77,8 @@ value, derivative = jax.value_and_grad(drop)(1.0)
 
 `python examples/fringe_duct_example.py` checks this derivative against central
 differences (relative difference about 1e-9 on that mesh; the test gate is
-1e-6). Only the inertialess flow is solved, and the wall conductance, geometry
-and flow rate are fixed when the problem is built; see the
+1e-6). With advection on, the Newton root is differentiated the same way. The
+wall conductance, geometry and flow rate are fixed when the problem is built; see the
 [fringe tutorial](fringing.md).
 
 ## Transient Q2D response
@@ -123,6 +123,7 @@ the full tape. The analytical decay, JVP/VJP identity, and compiled reverse
 memory tests in `tests/test_physics.py` are the executable acceptance contract.
 
 The explicit field-level optimization surfaces are
-`solve_fully_developed_fields`, `lmhdx.axial.solve_open_duct`, and `evolve_q2d`.
+`solve_fully_developed_fields`, `lmhdx.axial.solve_open_duct`,
+`lmhdx.axial.solve_open_pipe`, and `evolve_q2d`.
 Other result objects are host orchestration unless their API reference
 explicitly identifies a traced field core and derivative evidence.
