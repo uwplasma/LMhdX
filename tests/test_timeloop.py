@@ -632,10 +632,14 @@ def test_checkpointing_changes_neither_the_thermal_run_nor_its_gradient():
     assert float(saved[1]) == pytest.approx(float(plain[1]), rel=1e-12)
 
 
+@pytest.mark.parametrize("advection", ["upwind", "van_leer"])
 @pytest.mark.parametrize("target", ["initial temperature", "heat source", "buoyant velocity"])
-def test_thermal_gradients_match_central_differences(target):
-    """The best of three difference sizes within 1e-5 (ADR 0008, V17); the velocity feels the temperature only by buoyancy."""
-    objective = jax.jit(_objective(_buoyant_duct(), target))
+def test_thermal_gradients_match_central_differences(target, advection):
+    """The best of three difference sizes within 1e-5 (ADR 0008, V17); the velocity feels the temperature only by buoyancy.
+    The van Leer limiter is piecewise smooth, and on this random start no difference size crosses one of its kinks."""
+    import dataclasses
+
+    objective = jax.jit(_objective(dataclasses.replace(_buoyant_duct(), advection=advection), target))
     gradient = float(jax.jit(jax.grad(objective))(0.0))
     errors = [
         abs(gradient - float(objective(size) - objective(-size)) / (2.0 * size)) / abs(gradient)
