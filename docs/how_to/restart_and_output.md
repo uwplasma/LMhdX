@@ -53,15 +53,18 @@ The record is a NPZ file with this contents:
 - a field is missing, mangled or not finite, or the time is not a finite
   scalar of the compute dtype. These are checked before any state is made.
 
-A record restores the prognostic state exactly. The step's other inputs, such
-as the heat source and whether the flow is held, are the caller's, so a load
-has two meanings:
+A record restores the prognostic state exactly. The step's other inputs are
+the caller's: the heat source, whether the flow is held, and an outlet's
+backflow temperature. So a load has two meanings:
 - **An exact resume.** Pass the same `run` provenance (plain data) to both
   `write_thermal_record` and `load_thermal_record`; a record written by a run
   with other inputs is refused. A run of six steps and a run of three, through a
   record, then three more, agree bit for bit.
 - **A state import.** Without `run`, the state becomes the start of another
   experiment.
+
+`lmhdx case.toml` keeps the run's heat source and `hold_flow` in each record.
+Its `[restart] mode` chooses between the two meanings.
 
 `write_thermal_vtr` writes a rectilinear grid with two cell arrays:
 - the temperature;

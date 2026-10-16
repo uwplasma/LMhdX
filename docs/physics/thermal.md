@@ -489,18 +489,21 @@ for problem in (thermal, dataclasses.replace(thermal, expansion_coefficient=0.02
 ## A run from TOML
 
 A thermal case runs from a TOML file, `lmhdx case.toml`. The keys are the Python
-argument names, and every table refuses an unknown key:
+argument names. Before the run is built, every table, the top level included,
+refuses an unknown or missing key and a value of the wrong TOML type: a count is
+an integer and a flag a boolean, neither converted.
 - `[grid]`: each axis as `{cells, lower, upper}`, with `layer_thickness` and
   `cells_in_layer` for wall-resolving faces;
 - `[flow]`: `ChannelProblem`'s values, with `conditions` `"periodic"` or `"wall"`
   per axis and `initial_velocity` `"rest"` or `"steady"`;
 - `[thermal]`: `ThermalProblem`'s values, `hold_flow`, and a uniform
   `initial_temperature` and `heat_source`;
-- `[thermal.y]` and `[thermal.z]`: each wall axis's `thermal_boundary` (`kind`,
-  `lower`, `upper`);
+- `[thermal.y]` and `[thermal.z]`: each wall axis's `thermal_boundary` (`kind`
+  `"temperature"` or `"heat_flux"`, `lower`, `upper`), required for a wall axis
+  and refused for a periodic one;
 - `[run]`: `steps`, compiled in chunks of `chunk`;
 - `[output]`: the `directory`, `write_paraview` and `write_restart`;
-- `[restart]`: an optional `path` to a record to resume from.
+- `[restart]`: an optional record's `path`, and its `mode`.
 
 ```toml
 [case]
@@ -553,7 +556,8 @@ balance residual, Courant numbers and Boussinesq measure. The command exits
 with 2 if the run left the numbers.
 
 To resume, name a record. Its time sets the step count of the frames that
-follow:
+follow, gathered in a series of their own, `heated_duct_from_000020.pvd`, so
+that the first series is kept:
 
 ```toml
 [restart]
@@ -561,7 +565,9 @@ path = "out/heated_duct_000020.npz"
 ```
 
 With `steps = 20`, that run ends on the same record, bit for bit, as the run of
-40 steps.
+40 steps. Each record keeps the run's heat source and `hold_flow`:
+- `mode = "resume"`, the default, refuses a record written with others;
+- `mode = "import"` starts another experiment from the record's state.
 
 ## Measured cost
 

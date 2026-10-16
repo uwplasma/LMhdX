@@ -1060,10 +1060,11 @@ def _run_config(config: RunConfig) -> dict[str, object]:
 def run_thermal(run) -> dict[str, object]:
     """Run a :class:`lmhdx.thermal.ThermalRun` in compiled chunks; write a record and a frame after each.
 
-    The records are ``{name}_{step:06d}.npz`` and the frames ``{name}_{step:06d}.vtr``,
-    gathered in ``{name}.pvd``, with ``step`` counted from the record's own time on
-    a restart. ``thermal_summary.json`` holds the last diagnostics and the extremes of
-    the ledger, the Courant numbers and the Boussinesq measure over the run.
+    The records are ``{name}_{step:06d}.npz``, each with the run's provenance, and the frames
+    ``{name}_{step:06d}.vtr``, with ``step`` counted from the record's own time on a restart. The frames are
+    gathered in ``{name}.pvd`` from step 0 and in ``{name}_from_{first:06d}.pvd`` from a restart, so a resume
+    keeps the earlier series. ``thermal_summary.json`` holds the restart, the last diagnostics and the extremes
+    of the ledger, the Courant numbers and the Boussinesq measure over the run.
     """
     from .thermal import advance_thermal, build_thermal_step, validate_thermal_inputs, write_thermal_record
 
@@ -1077,11 +1078,11 @@ def run_thermal(run) -> dict[str, object]:
         histories.append(history)
         label = f"{run.name}_{first + (index + 1) * run.chunk:06d}"
         if run.write_restart:
-            write_thermal_record(run.directory / label, problem, state, units=run.units)
+            write_thermal_record(run.directory / label, problem, state, units=run.units, run=run.provenance)
         if run.write_paraview:
             frames.append((float(state.time), write_thermal_vtr(problem, state, run.directory / label).name))
     if frames:
-        write_pvd(frames, run.directory, name=run.name)
+        write_pvd(frames, run.directory, name=run.name if first == 0 else f"{run.name}_from_{first:06d}")
     history = jax.tree_util.tree_map(
         lambda *parts: np.concatenate([np.asarray(p) for p in parts]), *histories
     )
@@ -1091,6 +1092,7 @@ def run_thermal(run) -> dict[str, object]:
         "case": run.name,
         "solver_mode": "thermal",
         "units": run.units,
+        "restart": run.restart,
         "steps": run.steps,
         "time": float(state.time),
         "finite": bool(np.all(history.finite)),

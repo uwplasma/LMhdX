@@ -1054,7 +1054,7 @@ def _page_toml() -> str:
 
 def test_a_thermal_run_from_toml_records_frames_and_resumes_bit_for_bit(tmp_path: Path):
     """The page's case through ``lmhdx case.toml``: four records and frames, a series and a summary, exit 0. Its
-    second half, rerun from the record at step 20, ends on the same record, bit for bit."""
+    second half, rerun from the record at step 20, ends on the same record, bit for bit, in a series of its own."""
     import json
 
     case = tmp_path / "case.toml"
@@ -1073,6 +1073,7 @@ def test_a_thermal_run_from_toml_records_frames_and_resumes_bit_for_bit(tmp_path
     )
     resume.write_text(text + '\n[restart]\npath = "out/heated_duct_000020.npz"\n')
     assert cli.main([str(resume)]) == 0
+    assert {path.name for path in (tmp_path / "again").glob("*.pvd")} == {"heated_duct_from_000020.pvd"}
     with (
         np.load(out / "heated_duct_000040.npz") as straight,
         np.load(tmp_path / "again/heated_duct_000040.npz") as again,
@@ -1081,22 +1082,55 @@ def test_a_thermal_run_from_toml_records_frames_and_resumes_bit_for_bit(tmp_path
         assert all(np.array_equal(straight[name], again[name]) for name in straight.files)
 
 
-def test_a_thermal_toml_refuses_what_it_cannot_run(tmp_path: Path):
-    """An unknown key, an open axis, steps that are not a multiple of the chunk, and a record of another problem."""
+def test_a_thermal_toml_refuses_what_it_cannot_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Each named fault, before a steady flow is solved: an unknown table or key, a value of the wrong TOML type,
+    a missing or malformed table, an orphan option, an unsupported boundary, an open axis, steps that are not a
+    multiple of the chunk, and a record of another problem or, to resume, of a run with other inputs."""
+    import lmhdx.thermal
     from lmhdx.cases import _load_toml
     from lmhdx.thermal import thermal_run_from_toml
 
     page = _page_toml()
     (tmp_path / "base.toml").write_text(page)
     assert cli.main([str(tmp_path / "base.toml")]) == 0
+    monkeypatch.setattr(lmhdx.thermal, "solve_steady_state", lambda flow: pytest.fail("solved a steady flow"))
+    page = page.replace("dt = 2.0e-3", 'dt = 2.0e-3\ninitial_velocity = "steady"')
+    restart = '\n[restart]\npath = "out/heated_duct_000020.npz"\n'
     changes = (
-        ("heat_source = 0.5", "heat_source = 0.5\nconductivity_of_walls = 1.0", "unknown"),
+        ("heat_source = 0.5", "heat_source = 0.5\nconductivity_of_walls = 1.0", "unknown keys"),
+        ("[run]", "[solvers]\nkind = 1\n\n[run]", r"\[top level\] has unknown keys \['solvers'\]"),
+        ("steps = 40", "steps = 40.5", "steps must be a TOML integer"),
+        ("y = { cells = 8", "y = { cells = true", "cells must be a TOML integer"),
+        ("heat_source = 0.5", 'heat_source = 0.5\nhold_flow = "false"', "hold_flow must be a TOML boolean"),
+        ("magnetic_field = [0.0, 10.0, 0.0]", "magnetic_field = [0.0, 10.0]", "array of three numbers"),
+        ('[thermal.y]\nkind = "heat_flux"\n', "", r"\[thermal.y\] is needed"),
+        ("lower = 0.0, upper = 1.0 }", "lower = 0.0 }", r"\[grid.x\] lacks \['upper'\]"),
+        ("x = { cells = 1, lower = 0.0, upper = 1.0 }", "x = 1", "x must be a TOML table"),
+        ("y = { cells = 8,", "y = { cells_in_layer = 2, cells = 8,", "cells_in_layer needs layer_thickness"),
+        ('[thermal.y]\nkind = "heat_flux"', '[thermal.y]\nkind = "periodic"', 'kind is "temperature" or'),
+        (
+            '[thermal.y]\nkind = "heat_flux"',
+            '[thermal.y]\nkind = "heat_flux"\nupper_kind = "a"',
+            "unknown keys",
+        ),
         ('conditions = ["periodic", "wall", "wall"]', 'conditions = ["inflow", "wall", "wall"]', "open axis"),
         ("chunk = 10", "chunk = 15", "multiple of chunk"),
-        ("dt = 2.0e-3", 'dt = 1.0e-3\n\n[restart]\npath = "out/heated_duct_000020.npz"', "another problem"),
+        ("[output]", f'{restart}mode = "fork"\n\n[output]', 'mode "resume" or "import"'),
+        ("dt = 2.0e-3", "dt = 1.0e-3", "another problem"),
+        ("heat_source = 0.5", "heat_source = 0.6", "other inputs"),
+        ("heat_source = 0.5", "heat_source = 0.5\nhold_flow = true", "other inputs"),
     )
     for old, new, message in changes:
         assert old in page
-        (tmp_path / "bad.toml").write_text(page.replace(old, new))
+        bad = page.replace(old, new)
+        (tmp_path / "bad.toml").write_text(
+            bad + (restart if message in ("another problem", "other inputs") else "")
+        )
         with pytest.raises(ValueError, match=message):
             thermal_run_from_toml(_load_toml(tmp_path / "bad.toml"), tmp_path)
+    # The same changed inputs import the record's state as the start of another experiment.
+    (tmp_path / "import.toml").write_text(
+        page.replace("heat_source = 0.5", "heat_source = 0.6") + restart + 'mode = "import"\n'
+    )
+    imported = thermal_run_from_toml(_load_toml(tmp_path / "import.toml"), tmp_path)
+    assert imported.restart["mode"] == "import" and imported.provenance["heat_source"] == 0.6
