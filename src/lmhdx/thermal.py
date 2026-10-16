@@ -565,9 +565,9 @@ def validate_thermal_inputs(
     Nothing is changed or returned.
 
     A held flow keeps its Courant number for the whole run. An evolving flow is
-    checked at its start only, which a start from rest passes trivially; nothing
-    in the run checks it again, so compare the ``advective_cfl`` it reports each
-    step with the limit.
+    checked at its start only, which a start from rest passes trivially; compare
+    the ``advective_cfl`` each step of :func:`advance_thermal` reports with the
+    limit, as :func:`lmhdx.io.run_thermal` does at every step.
     """
     if not (np.isfinite(divergence_tolerance) and divergence_tolerance >= 0.0):
         raise ValueError("divergence_tolerance must be nonnegative and finite")
