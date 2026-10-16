@@ -120,7 +120,8 @@ __all__ = [
 ]
 
 _KINDS = {"temperature": DIRICHLET, "heat_flux": NEUMANN, "periodic": PERIODIC}
-# Each transport scheme and its Courant bound for no new extremum; conduction alone has none.
+# Each transport's default Courant limit: inside upwinding's bound of one for no new extremum, and van Leer's a
+# tested envelope, not a derived bound; conduction alone has none.
 _SCHEMES = {"upwind": 0.8, "van_leer": 0.5, "off": None}
 _CELL = (CENTER, CENTER, CENTER)
 
@@ -557,8 +558,9 @@ def validate_thermal_inputs(
     and periodic face constraints; a velocity divergence within
     ``divergence_tolerance``, in inverse time; with transport, a Courant number
     ``dt max(sum_f max(u_f . n_f, 0) A_f / V)`` within ``advective_cfl_limit``, by
-    default the scheme's own bound for no new extremum, 0.8 for ``"upwind"`` and 0.5
-    for ``"van_leer"``; and, at an outlet with transport, no returning face under
+    default the scheme's own, 0.8 for ``"upwind"``, inside its bound of one for no new
+    extremum, and for ``"van_leer"`` 0.5, a tested envelope rather than a derived
+    bound; and, at an outlet with transport, no returning face under
     ``outlet_backflow="error"``, or a finite, real ``backflow_temperature`` of the
     outlet's shape under ``"reservoir_flux"``; and, given ``buoyancy_courant_limit``,
     the start's ``buoyancy_courant`` (:class:`ThermalDiagnostics`) within it.
@@ -649,12 +651,14 @@ def build_thermal_step(
     electric solve gives the Lorentz force and the Joule heat, buoyancy comes from
     the old temperature, the momentum takes :func:`lmhdx.core3d.step`'s predictor
     and projection with the flow's implicit viscous factorizations, and the
-    temperature takes upwind transport by the old velocity, then implicit conduction.
+    temperature takes its transport by the old velocity, then implicit conduction.
 
     ``hold_flow`` keeps the state's velocity, a steady flow the heat is carried by,
     without buoyancy, and prepares no viscous inverses. An inflow-outflow duct
     needs it, since the step does not advance such a flow: give it the physical
-    velocity of :func:`lmhdx.axial.solve_open_duct`.
+    velocity of :func:`lmhdx.axial.solve_open_duct`. The step is marked for
+    :func:`load_attribution`: ``hold_flow``, and ``affine``, true for a held flow
+    and ``"upwind"`` or ``"off"`` transport, where the temperature is affine in the heat source.
 
     Beyond the update, the diagnostics apply the temperature's Laplacian and wall
     gradients to the new temperature, for ``heat_solve_residual`` and
@@ -738,6 +742,7 @@ def build_thermal_step(
         return new, ThermalDiagnostics(*values, finite, *exchange, buoyant)
 
     thermal_step.hold_flow = hold_flow  # load_attribution needs a flow the load cannot move
+    thermal_step.affine = hold_flow and problem.advection in ("upwind", "off")  # and a transport linear in T
     return thermal_step
 
 
@@ -933,20 +938,33 @@ def load_attribution(
     Both runs share the start, the held velocity and so its Joule heat, the
     inlet and reservoir temperatures and the walls, so their difference is the
     load's own response: neither Joule heat nor ``background`` is credited to
-    it. That holds for a step built with ``hold_flow=True`` and constant
-    properties, where the temperature is affine in the heat source; a flow the
-    load moves, by buoyancy, is not. A step without the ``hold_flow`` mark of
-    :func:`build_thermal_step`, or built without holding its flow, is refused.
+    it. That holds only where the temperature is affine in the heat source: a
+    step of :func:`build_thermal_step` with ``hold_flow=True``, constant
+    properties and ``"upwind"`` or ``"off"`` transport, marked ``affine``. A flow
+    the load moves, by buoyancy, is not affine in it, nor is van Leer's face
+    value, a nonlinear function of the temperature even on a held flow. Each is
+    refused, and so is a wrapper of the step that drops its marks, such as a
+    lambda; ``jax.jit`` and ``jax.checkpoint`` keep them.
 
     The load is a heat source on the cells. A heat flux ``q`` through a wall is
     part of the step's boundary data, so it is in both runs and cancels; to
     credit it, pass it as the source ``q A / V`` in the cells along that wall,
-    with that wall's flux set to zero. The cell temperatures are then the same:
-    a face flux enters its cell's equation exactly as that source.
+    with that wall's flux set to zero. With the transports accepted here the
+    cell temperatures are then the same: a face flux enters its cell's equation
+    exactly as that source.
     """
-    if not getattr(thermal_step, "hold_flow", False):
+    if not hasattr(thermal_step, "affine"):
+        raise ValueError(
+            "load_attribution needs the step build_thermal_step returns; a wrapper loses its marks"
+        )
+    if not thermal_step.hold_flow:
         raise ValueError(
             "load_attribution needs a step built with hold_flow=True: a moving flow is not affine in the load"
+        )
+    if not thermal_step.affine:
+        raise ValueError(
+            "load_attribution needs upwind or no transport: a limited face value is not affine in the temperature,"
+            " so on a held flow the difference of the runs still depends on the background"
         )
     options = {"backflow_temperature": backflow_temperature}
     on = advance_thermal(

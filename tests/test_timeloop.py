@@ -856,16 +856,21 @@ def test_the_outlet_face_brings_in_the_reservoir_temperature_where_the_flow_retu
     assert not bool(_outlet_exchange(velocity, None, unchecked, jnp.float64)[3])
 
 
+@pytest.mark.parametrize("scheme", ["upwind", "van_leer"])
 @pytest.mark.parametrize("case", ["uniform", "reservoir", "joule"])
-def test_a_returning_outlet_balances_its_heat_and_stays_bounded(case):
+def test_a_returning_outlet_balances_its_heat_and_stays_bounded(case, scheme):
     """Positive net flow with a band returning through the outlet: each ledger closes to max(1e-10 P, 64 eps C V T/dt).
 
     ``uniform``: inlet, reservoir and duct at 300 stay at 300. ``reservoir``: a 280 reservoir cools the duct from the
     outlet, within [280, 300]. ``joule``: a field and thin conducting walls add Joule heat, and the ledger still closes.
+    Each holds with either scheme, at Courant 0.5.
     """
+    import dataclasses
+
     from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
 
     thermal, velocity = _returning_duct(**(dict(field=3.0, conductance=0.05) if case == "joule" else {}))
+    thermal = dataclasses.replace(thermal, advection=scheme)
     reservoir = 300.0 if case == "uniform" else 280.0
     thermal_step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
     start = initial_thermal_state(thermal, 300.0, velocity)
@@ -1102,17 +1107,24 @@ def test_a_reservoir_run_compiles_whole_and_takes_new_values_without_retracing()
     assert not any("callback" in name for name in _primitives(long.jaxpr))
 
 
-def test_the_reservoir_derivative_lives_on_the_returning_faces_only():
-    """``d(u T_face)/d T_res`` is ``u`` on a returning face and zero on a leaving one, exactly; a run's derivative in a
-    reservoir amplitude matches central differences at every size to 1e-8, checkpointed or not: the run is affine
-    in the reservoir, so the differences are exact to rounding and the size sweep checks only that.
+@pytest.mark.parametrize("scheme", ["upwind", "van_leer"])
+def test_the_reservoir_derivative_lives_on_the_returning_faces_only(scheme):
+    """``d(u T_face)/d T_res`` is ``u`` on a returning face and zero on a leaving one, exactly, the outlet face being
+    first order with either scheme; a run's derivative in a reservoir amplitude, checkpointed or not, matches
+    central differences. With upwinding the run is affine in the reservoir, so the differences are exact to
+    rounding at every size, to 1e-8. Van Leer's face value is not affine in the temperature, so the differences
+    converge to it, to 1e-7 at the smallest size.
 
     The held flow does not depend on the reservoir, so no face changes sign under the perturbation. Across a face
-    whose velocity changes sign, upwinding is only piecewise differentiable, and nothing is smoothed to hide it.
+    whose velocity changes sign, either scheme is only piecewise differentiable, and so is the limited face value
+    where a slope vanishes or the value is held between its cells; nothing is smoothed to hide it.
     """
+    import dataclasses
+
     from lmhdx.thermal import _upwind_fluxes, advance_thermal, build_thermal_step, initial_thermal_state
 
     thermal, velocity = _returning_duct()
+    thermal = dataclasses.replace(thermal, advection=scheme)
     state = initial_thermal_state(thermal, 300.0 + 2.0 * _pattern(thermal, 22), velocity)
 
     def outlet(reservoir):
@@ -1142,11 +1154,13 @@ def test_the_reservoir_derivative_lives_on_the_returning_faces_only():
     assert float(saved[1]) == pytest.approx(float(plain[1]), rel=1e-12)
     compiled = jax.jit(objective)
     gradient = float(jax.jit(jax.grad(objective))(0.5))
+    sizes = (1.0e-1, 1.0e-2, 1.0e-3) if scheme == "upwind" else (1.0e-2, 1.0e-3, 1.0e-4)
     errors = [
         abs(gradient - float(compiled(0.5 + size) - compiled(0.5 - size)) / (2.0 * size)) / abs(gradient)
-        for size in (1.0e-1, 1.0e-2, 1.0e-3)
+        for size in sizes
     ]
-    assert gradient > 0.0 and max(errors) < 1e-8, (gradient, errors)  # a warmer reservoir warms the duct
+    assert gradient > 0.0, gradient  # a warmer reservoir warms the duct
+    assert max(errors) < 1e-8 if scheme == "upwind" else errors[-1] < 1e-7, errors
 
 
 # Review corrections, part 4: conductivity, electrical walls and preparation.

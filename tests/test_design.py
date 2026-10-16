@@ -1,5 +1,6 @@
 """Fully developed duct design: linearity, exact drive elimination and gradients."""
 
+import dataclasses
 from pathlib import Path
 
 import jax
@@ -353,7 +354,9 @@ def test_a_wall_heat_flux_enters_its_cells_exactly_as_a_source():
 
 
 def test_a_step_that_moves_its_flow_cannot_be_credited():
-    """``load_attribution`` refuses a step built without ``hold_flow=True``, whose flow the load could move (#250)."""
+    """``load_attribution`` refuses a step built without ``hold_flow=True``, whose flow the load could move (#250);
+    a held van Leer step, whose face value is not affine in the temperature; and a wrapper that dropped the
+    step's marks. ``jax.jit`` and ``jax.checkpoint`` keep them."""
     from lmhdx.thermal import (
         ThermalProblem,
         build_thermal_step,
@@ -371,16 +374,69 @@ def test_a_step_that_moves_its_flow_cannot_be_credited():
     thermal = ThermalProblem(flow, (wrap, insulated, insulated), 1.0, 1.0, 0.0)
     state = initial_thermal_state(thermal, 0.0)
     for held in (False, True):
-        thermal_step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=held)
-        assert thermal_step.hold_flow is held
-    with pytest.raises(ValueError, match="hold_flow=True"):
-        load_attribution(
-            build_thermal_step(thermal, dtype=jnp.float64),
-            state,
-            _uniform(state, 0.0),
-            _uniform(state, 1.0),
-            4,
-        )
+        for scheme in ("upwind", "off", "van_leer"):
+            problem = dataclasses.replace(thermal, advection=scheme)
+            thermal_step = build_thermal_step(problem, dtype=jnp.float64, hold_flow=held)
+            assert thermal_step.hold_flow is held and thermal_step.affine is (held and scheme != "van_leer")
+    held = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+    assert jax.jit(held).affine and jax.checkpoint(held).affine
+    for refused, message in (
+        (build_thermal_step(thermal, dtype=jnp.float64), "hold_flow=True"),
+        (
+            build_thermal_step(
+                dataclasses.replace(thermal, advection="van_leer"), dtype=jnp.float64, hold_flow=True
+            ),
+            "limited face value is not affine",
+        ),
+        (lambda state, heat: held(state, heat), "a wrapper loses its marks"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            load_attribution(refused, state, _uniform(state, 0.0), _uniform(state, 1.0), 4)
+
+
+def test_holding_the_flow_makes_upwind_transport_affine_and_van_leer_s_not():
+    """Why ``load_attribution`` refuses van Leer (R1): on the same held flow, what a load adds to the temperature
+    is the same over two backgrounds with upwinding, to round-off, and differs with the limited face value, whose
+    van Leer mean is not additive: ``s(1, 3) + s(3, 1) = 3``, not ``s(4, 4) = 4``."""
+    from lmhdx.thermal import (
+        ThermalProblem,
+        advance_thermal,
+        build_thermal_step,
+        initial_thermal_state,
+        thermal_boundary,
+    )
+
+    wrap, wall = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN)
+    flow = ChannelProblem(
+        Grid(uniform_faces(16, 0.0, 1.0), uniform_faces(2, -1.0, 1.0), uniform_faces(2, -1.0, 1.0)),
+        (wrap, wall, wall),
+        dt=0.4 / 16,
+    )
+    insulated = thermal_boundary("heat_flux", conductivity=1e-3)
+    x = np.asarray(flow.grid.centers[0])[:, None, None] * np.ones(flow.grid.shape)
+    rest = initial_thermal_state(ThermalProblem(flow, (wrap, insulated, insulated), 1.0, 1e-3, 0.0), 0.0)
+    velocity = (rest.velocity[0].replace_data(jnp.ones_like(rest.velocity[0].data)), *rest.velocity[1:])
+    sources = {
+        "load": np.exp(-(((x - 0.3) / 0.08) ** 2)),
+        "background": 1.0 + np.sin(2.0 * np.pi * x),
+        "none": np.zeros(flow.grid.shape),
+    }
+    sources = {name: Field(jnp.asarray(data), (CENTER,) * 3, flow.grid) for name, data in sources.items()}
+    gaps = {}
+    for scheme in ("upwind", "van_leer"):
+        problem = ThermalProblem(flow, (wrap, insulated, insulated), 1.0, 1e-3, 0.0, advection=scheme)
+        thermal_step = build_thermal_step(problem, dtype=jnp.float64, hold_flow=True)
+        start = rest._replace(velocity=velocity)
+
+        def added(background):
+            def run(source):
+                return advance_thermal(thermal_step, start, source, 40)[0].temperature.data
+
+            loaded = background.replace_data(background.data + sources["load"].data)
+            return run(loaded) - run(background)
+
+        gaps[scheme] = float(jnp.max(jnp.abs(added(sources["background"]) - added(sources["none"]))))
+    assert gaps["upwind"] <= 1e-13 and gaps["van_leer"] >= 1e-4, gaps
 
 
 def test_a_load_is_credited_by_difference_and_its_heat_balances():

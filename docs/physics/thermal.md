@@ -143,10 +143,21 @@ conservative flux:
 - The face value is held between the two cells it lies between, which keeps it
   bounded on a stretched grid. A linear temperature on the tanh-stretched test
   grid reads exactly.
-- The validator's default Courant limit is then 0.5, its bound for no new
-  extremum.
+- The validator's default Courant limit is then 0.5. Upwinding's 0.8 sits
+  inside its derived bound of one; van Leer's 0.5 is a tested envelope, not a
+  derived bound. Ten steps at 0.5 make no new extremum on the test grids:
+  - a tanh-stretched grid;
+  - a grid stretched without a ratio limit, whose periodic axis puts widths 27
+    to 1 side by side at the wrap.
+
+  One- and two-cell periodic axes carry the same flux through both copies of
+  the wrap face. A returning outlet's ledger closes with either scheme. Other
+  meshes are not qualified.
+- Nothing clips the temperature after a step. Holding the face value between
+  its cells is part of the reconstruction.
 - Faces at an inlet, an outlet and a wall keep their first-order value.
-- The step stays first order in time.
+- The step stays first order in time. The steady convergence below does not
+  qualify transient solutions at second order.
 
 On the steady plug flow of the open duct below, the face value converges at
 order 1.95 and 1.98, where upwinding converges at order 0.81 and 0.91:
@@ -435,7 +446,10 @@ recirculating hot flow also raise the gross figure.
 twice, with and without the load, from the same start and with the same
 velocity, Joule heat, inlet, reservoir and walls. The difference is the load's
 own response, since the temperature is affine in the heat source at constant
-properties. It reports the load's power and what the load adds:
+properties, with upwind or no transport. Van Leer's face value is not affine in
+the temperature: its mean has $s(1,3)+s(3,1)=3$ but $s(4,4)=4$. On a held flow
+the load's response then depends on the background, so a van Leer step is
+refused. It reports the load's power and what the load adds:
 - to the enthalpy leaving through the outlet;
 - to the conduction out, which is what leaks through the inlet and any
   prescribed-temperature wall, together (a prescribed wall flux cancels);
@@ -444,8 +458,9 @@ properties. It reports the load's power and what the load adds:
 A buoyant flow, which the load moves, is not affine in it. The load is a heat
 source on the cells: a wall's heat flux is boundary data, present in both runs.
 To credit one, pass the source $qA/V$ in the cells along that wall and set the
-wall's flux to zero. A face flux enters its cell's equation exactly as that
-source, so the cell temperatures are the same.
+wall's flux to zero. With upwind or no transport, a face flux enters its cell's
+equation exactly as that source, so the cell temperatures are the same. Van
+Leer's face value reads the wall's gradient, so there the two can differ.
 
 In a plug flow with $\lambda=\rho_0c_pu/k$, a uniform load leaves through the
 outlet in the steady fraction $1-(1-e^{-\lambda})/\lambda$. The rest conducts
