@@ -31,6 +31,7 @@ from .cases import (
     Solution,
     StreamingSolverLogger,
     StructuredMesh,
+    _load_toml,
     default_log_path,
     load_run_config,
     make_hartmann_case,
@@ -963,8 +964,10 @@ def _write_run_summary(summary: dict[str, object], case, out_dir: Path) -> Path 
 
 
 def _summary_exit_code(summary: dict[str, object]) -> int:
-    """Return failure only for a recorded unconverged steady result."""
+    """Return failure for a recorded unconverged steady result or a thermal run that left the numbers."""
 
+    if summary.get("solver_mode") == "thermal":
+        return 0 if summary.get("finite") else 2
     return 2 if summary.get("solver_mode") == "steady" and summary.get("converged") is False else 0
 
 
@@ -1054,7 +1057,57 @@ def _run_config(config: RunConfig) -> dict[str, object]:
     return summary
 
 
+def run_thermal(run) -> dict[str, object]:
+    """Run a :class:`lmhdx.thermal.ThermalRun` in compiled chunks; write a record and a frame after each.
+
+    The records are ``{name}_{step:06d}.npz`` and the frames ``{name}_{step:06d}.vtr``,
+    gathered in ``{name}.pvd``, with ``step`` counted from the record's own time on
+    a restart. ``thermal_summary.json`` holds the last diagnostics and the extremes of
+    the ledger, the Courant numbers and the Boussinesq measure over the run.
+    """
+    from .thermal import advance_thermal, build_thermal_step, validate_thermal_inputs, write_thermal_record
+
+    problem, state, heat = run.problem, run.state, run.heat_source
+    validate_thermal_inputs(problem, state, heat, divergence_tolerance=run.divergence_tolerance)
+    thermal_step = build_thermal_step(problem, dtype=jnp.result_type(float), hold_flow=run.hold_flow)
+    chunk = jax.jit(lambda start: advance_thermal(thermal_step, start, heat, run.chunk))
+    first, frames, histories = round(float(state.time) / float(problem.flow.dt)), [], []
+    for index in range(run.steps // run.chunk):
+        state, history = chunk(state)
+        histories.append(history)
+        label = f"{run.name}_{first + (index + 1) * run.chunk:06d}"
+        if run.write_restart:
+            write_thermal_record(run.directory / label, problem, state, units=run.units)
+        if run.write_paraview:
+            frames.append((float(state.time), write_thermal_vtr(problem, state, run.directory / label).name))
+    if frames:
+        write_pvd(frames, run.directory, name=run.name)
+    history = jax.tree_util.tree_map(
+        lambda *parts: np.concatenate([np.asarray(p) for p in parts]), *histories
+    )
+    last = {name: float(np.asarray(values)[-1]) for name, values in history._asdict().items()}
+    largest = ("heat_balance_residual", "advective_cfl", "buoyancy_courant", "boussinesq_measure")
+    summary = {
+        "case": run.name,
+        "solver_mode": "thermal",
+        "units": run.units,
+        "steps": run.steps,
+        "time": float(state.time),
+        "finite": bool(np.all(history.finite)),
+        "last": last,
+        "largest": {name: float(np.max(np.abs(getattr(history, name)))) for name in largest},
+    }
+    run.directory.mkdir(parents=True, exist_ok=True)
+    (run.directory / "thermal_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    return summary
+
+
 def run_from_toml(path: str | Path) -> dict[str, object]:
+    root = _load_toml(path)
+    if root.get("solver", {}).get("kind") == "thermal":
+        from .thermal import thermal_run_from_toml
+
+        return run_thermal(thermal_run_from_toml(root, Path(path).resolve().parent))
     config = load_run_config(path)
     return _run_config(config)
 

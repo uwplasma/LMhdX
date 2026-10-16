@@ -1045,3 +1045,58 @@ def test_a_thermal_state_opens_as_a_rectilinear_grid_in_vtk_order(tmp_path: Path
     assert np.allclose(arrays["velocity"], expected, rtol=1e-12, atol=1e-14)
     for name, faces in zip("XYZ", grid.faces):
         assert np.allclose(arrays[name], faces, rtol=1e-12)
+
+
+def _page_toml() -> str:
+    page = Path(__file__).resolve().parents[1] / "docs/physics/thermal.md"
+    return page.read_text().split("## A run from TOML", 1)[1].split("```toml\n", 1)[1].split("```", 1)[0]
+
+
+def test_a_thermal_run_from_toml_records_frames_and_resumes_bit_for_bit(tmp_path: Path):
+    """The page's case through ``lmhdx case.toml``: four records and frames, a series and a summary, exit 0. Its
+    second half, rerun from the record at step 20, ends on the same record, bit for bit."""
+    import json
+
+    case = tmp_path / "case.toml"
+    case.write_text(_page_toml())
+    assert cli.main([str(case)]) == 0
+    out, labels = tmp_path / "out", [f"heated_duct_{step:06d}" for step in (10, 20, 30, 40)]
+    written = {path.name for path in out.iterdir()}
+    expected = {f"{label}.{suffix}" for label in labels for suffix in ("npz", "vtr")}
+    assert expected | {"heated_duct.pvd", "thermal_summary.json"} <= written
+    summary = json.loads((out / "thermal_summary.json").read_text())
+    assert summary["finite"] and summary["steps"] == 40 and summary["time"] == pytest.approx(0.08, rel=1e-12)
+    assert summary["largest"]["heat_balance_residual"] <= 1e-8 and summary["largest"]["advective_cfl"] <= 0.8
+    resume = tmp_path / "resume.toml"
+    text = (
+        _page_toml().replace("steps = 40", "steps = 20").replace('directory = "out"', 'directory = "again"')
+    )
+    resume.write_text(text + '\n[restart]\npath = "out/heated_duct_000020.npz"\n')
+    assert cli.main([str(resume)]) == 0
+    with (
+        np.load(out / "heated_duct_000040.npz") as straight,
+        np.load(tmp_path / "again/heated_duct_000040.npz") as again,
+    ):
+        assert straight.files == again.files
+        assert all(np.array_equal(straight[name], again[name]) for name in straight.files)
+
+
+def test_a_thermal_toml_refuses_what_it_cannot_run(tmp_path: Path):
+    """An unknown key, an open axis, steps that are not a multiple of the chunk, and a record of another problem."""
+    from lmhdx.cases import _load_toml
+    from lmhdx.thermal import thermal_run_from_toml
+
+    page = _page_toml()
+    (tmp_path / "base.toml").write_text(page)
+    assert cli.main([str(tmp_path / "base.toml")]) == 0
+    changes = (
+        ("heat_source = 0.5", "heat_source = 0.5\nconductivity_of_walls = 1.0", "unknown"),
+        ('conditions = ["periodic", "wall", "wall"]', 'conditions = ["inflow", "wall", "wall"]', "open axis"),
+        ("chunk = 10", "chunk = 15", "multiple of chunk"),
+        ("dt = 2.0e-3", 'dt = 1.0e-3\n\n[restart]\npath = "out/heated_duct_000020.npz"', "another problem"),
+    )
+    for old, new, message in changes:
+        assert old in page
+        (tmp_path / "bad.toml").write_text(page.replace(old, new))
+        with pytest.raises(ValueError, match=message):
+            thermal_run_from_toml(_load_toml(tmp_path / "bad.toml"), tmp_path)

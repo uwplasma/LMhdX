@@ -253,8 +253,8 @@ one state per step.
   numerical diffusivity over the physical one.
 - Variable properties.
 - A steady solve of the coupled equations. The developed duct below is the one steady thermal solve, for a given flow.
-- TOML input, a restart record and ParaView output. A thermal run has none of
-  the three yet; plan step 5.6 adds them next.
+- An inflow-outflow axis read from TOML. A run from TOML (below) covers closed
+  ducts; an open one runs from Python.
 - Dispatch through `lmhdx.solve`.
 
 A closed domain with net heating has no steady temperature. The state returned
@@ -485,6 +485,83 @@ for problem in (thermal, dataclasses.replace(thermal, expansion_coefficient=0.02
         f"heat out {float(history.conductive_heat_out[-1]):.4f}, Joule {float(history.joule_power[-1]):.4f}"
     )
 ```
+
+## A run from TOML
+
+A thermal case runs from a TOML file, `lmhdx case.toml`. The keys are the Python
+argument names, and every table refuses an unknown key:
+- `[grid]`: each axis as `{cells, lower, upper}`, with `layer_thickness` and
+  `cells_in_layer` for wall-resolving faces;
+- `[flow]`: `ChannelProblem`'s values, with `conditions` `"periodic"` or `"wall"`
+  per axis and `initial_velocity` `"rest"` or `"steady"`;
+- `[thermal]`: `ThermalProblem`'s values, `hold_flow`, and a uniform
+  `initial_temperature` and `heat_source`;
+- `[thermal.y]` and `[thermal.z]`: each wall axis's `thermal_boundary` (`kind`,
+  `lower`, `upper`);
+- `[run]`: `steps`, compiled in chunks of `chunk`;
+- `[output]`: the `directory`, `write_paraview` and `write_restart`;
+- `[restart]`: an optional `path` to a record to resume from.
+
+```toml
+[case]
+name = "heated_duct"
+units = "nondimensional"
+
+[solver]
+kind = "thermal"
+
+[grid]
+x = { cells = 1, lower = 0.0, upper = 1.0 }
+y = { cells = 8, lower = -1.0, upper = 1.0 }
+z = { cells = 8, lower = -1.0, upper = 1.0 }
+
+[flow]
+conditions = ["periodic", "wall", "wall"]
+magnetic_field = [0.0, 10.0, 0.0]
+forcing = [1.0, 0.0, 0.0]
+dt = 2.0e-3
+
+[thermal]
+specific_heat = 1.0
+thermal_conductivity = 0.05
+reference_temperature = 0.0
+expansion_coefficient = 0.02
+gravity = [0.0, 0.0, -1.0]
+heat_source = 0.5
+
+[thermal.y]
+kind = "heat_flux"
+
+[thermal.z]
+kind = "heat_flux"
+upper = 1.0
+
+[run]
+steps = 40
+chunk = 10
+
+[output]
+directory = "out"
+```
+
+After each chunk the run writes two files:
+- a record, `heated_duct_000010.npz` and so on;
+- a frame, `heated_duct_000010.vtr`, gathered in `heated_duct.pvd`.
+
+`thermal_summary.json` holds the last diagnostics and the run's largest heat
+balance residual, Courant numbers and Boussinesq measure. The command exits
+with 2 if the run left the numbers.
+
+To resume, name a record. Its time sets the step count of the frames that
+follow:
+
+```toml
+[restart]
+path = "out/heated_duct_000020.npz"
+```
+
+With `steps = 20`, that run ends on the same record, bit for bit, as the run of
+40 steps.
 
 ## Measured cost
 

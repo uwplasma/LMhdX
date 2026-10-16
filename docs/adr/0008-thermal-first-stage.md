@@ -104,8 +104,9 @@ about `1e-8` for PbLi at 0.1 m/s and 100 K, scales only the viscous part; the
 Joule part is `Ha^2` larger on the same length and depends on the walls. Their
 size is measured per case: under `1e-5` of the duty in the design example.
 Joule heat is kept so the heat ledger matches `energy_budget(...).joule`.
-A thermal run gains TOML input, a versioned restart record and ParaView output
-in plan step 5.6, the next step after this stack.
+A thermal run reads TOML input and writes a versioned restart record and
+ParaView (VTK XML) output, whose layout is checked by parsing it (plan step
+5.6); TOML covers closed ducts.
 
 **D32, gravity along a periodic axis.** Along a periodic axis the mean of
 `-rho_0 beta (T - T_r) g` is a uniform force that no periodic pressure can
