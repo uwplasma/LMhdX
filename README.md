@@ -259,7 +259,8 @@ PCIe. Correct, not yet faster — the numbers are in
   the steady mechanical power balance within a 1e-10 relative test gate (measured
   3.6e-14 insulating, 6.3e-14 at wall conductance 0.027); all eight rows of
   Smolentsev et al. (2015) Table I (Ha 500 to 15,000), each gated on three meshes
-  for second order and a Richardson value within 1e-3 to 5e-3; Q2D decay identities.
+  for second order, a Richardson value within 1e-3 to 5e-3 and the analytic
+  value inside the fine-mesh GCI band; Q2D decay identities.
 - **Research stage:** three-dimensional convective transport (`advection="central"`
   or `"limited"`, from `lmhdx.ops`) is tested for conservation, order and
   boundedness but not validated against a reference flow, the fringe is gated

@@ -32,8 +32,8 @@ sources and executable test/workflow links.
 
 The CI-executed `examples/hartmann_example.py` case uses $Ha=20$ on a
 $24\times24$ cross-section. Its analytical errors are 0.0064 in $L_2$ and
-0.0098 in $L_\infty$, with steady residual $4.2\times10^{-10}$ and maximum
-current divergence $3.9\times10^{-10}$. The
+0.0098 in $L_\infty$, with steady residual and maximum current divergence
+below $10^{-9}$ (the iterative residuals vary with platform). The
 documented profile-error limits are 0.05 and 0.10.
 
 The weekly FreeMHD workflow runs the frozen B2 inputs in the pinned FreeMHD
