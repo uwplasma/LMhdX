@@ -158,6 +158,14 @@ conservative flux:
 - Faces at an inlet, an outlet and a wall keep their first-order value.
 - The step stays first order in time. The steady convergence below does not
   qualify transient solutions at second order.
+- The reconstruction is piecewise smooth, with kinks where a slope vanishes or
+  changes sign and where a face value is held between its cells. Away from
+  them, the tested gradients agree with central differences: the buoyant duct's
+  end-to-end gradients with either scheme, and the face value itself on a field
+  with no extremum. At a kink, automatic differentiation follows the
+  implementation's derivative conventions, and the result is not guaranteed to
+  equal a directional derivative. A finite gradient at a uniform state does not
+  establish differentiability there.
 
 On the steady plug flow of the open duct below, the face value converges at
 order 1.95 and 1.98, where upwinding converges at order 0.81 and 0.91:
@@ -278,7 +286,9 @@ one-sided only where a face velocity is exactly zero, or where the perturbation
 flips a face's sign; nothing is smoothed to hide it.
 
 **Memory.** `advance_thermal` keeps no field history; in reverse mode it keeps
-one state per step.
+one state per step, so its memory grows with the number of steps. A restart
+record and the command's chunks are not reverse-mode checkpoints and do not
+bound that memory; the command is not differentiated end to end.
 
 **Not included**
 - Conjugate wall conduction.
