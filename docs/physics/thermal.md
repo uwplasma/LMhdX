@@ -128,8 +128,10 @@ refuses a start whose Courant number, that rate's largest value times
 $\Delta t$, exceeds `advective_cfl_limit`, 0.8 by default. Conduction alone
 (`advection="off"`) has no such limit. A held flow keeps its Courant number for
 the whole run. An evolving flow is checked at its start only, which a start
-from rest passes trivially; nothing checks it again, so compare the
-`advective_cfl` each step reports with the limit. Upwinding adds a numerical
+from rest passes trivially. `advance_thermal` does not check it again, so
+compare the `advective_cfl` each step reports with the limit. `lmhdx case.toml`
+makes that comparison at every step; see "A run from TOML" below.
+Upwinding adds a numerical
 diffusivity of about $|u|h/2$, so a heat-transfer result must be refined until
 it stops changing.
 
