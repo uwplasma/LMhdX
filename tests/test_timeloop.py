@@ -475,7 +475,7 @@ def test_the_thermal_step_keeps_its_structure_and_compute_dtype():
     state = initial_thermal_state(thermal, 300.0)
     leaves, tree = jax.tree_util.tree_flatten(state)
     new, record = jax.jit(thermal_step)(state, _cells(thermal, 1.0))
-    assert len(leaves) == 5 and jax.tree_util.tree_structure(new) == tree and len(record) == 19
+    assert len(leaves) == 5 and jax.tree_util.tree_structure(new) == tree and len(record) == 20
     flags = ("finite", "backflow_boundary_valid")
     values = [value for name, value in record._asdict().items() if name not in flags]
     assert all(leaf.dtype == jnp.float64 for leaf in jax.tree_util.tree_leaves((new, values)))
@@ -1211,3 +1211,26 @@ def test_every_outlet_diagnostic_counts_in_finite_and_conduction_alone_needs_no_
     validate_thermal_inputs(conducting, start, heat, divergence_tolerance=1e-10)
     record = build_thermal_step(conducting, dtype=jnp.float64, hold_flow=True)(start, heat)[1]
     assert bool(record.backflow_boundary_valid) and float(record.outlet_backflow_rate) > 0.0
+
+
+def test_the_buoyancy_courant_number_is_the_step_over_the_buoyancy_time():
+    """A temperature falling 1 per unit height under beta 1e-2 and g 1 has ``sqrt(beta g |dT/dz|) = 0.1``: at
+    ``dt = 2e-3`` the step reports 2e-4 to 1e-12, zero without buoyancy, and an opt-in limit refuses a start
+    above it (#237, #246)."""
+    import dataclasses
+
+    from lmhdx.thermal import build_thermal_step, initial_thermal_state, validate_thermal_inputs
+
+    thermal = _buoyant_duct()  # walls at 301 below and 299 above, z in [-1, 1]
+    z = np.asarray(thermal.flow.grid.centers[2])
+    start, heat = initial_thermal_state(thermal, (300.0 - z)[None, None, :]), _cells(thermal, 0.0)
+    record = build_thermal_step(thermal, dtype=jnp.float64)(start, heat)[1]
+    assert float(record.buoyancy_courant) == pytest.approx(2.0e-4, rel=1e-12)
+    passive = dataclasses.replace(thermal, expansion_coefficient=0.0)
+    assert float(build_thermal_step(passive, dtype=jnp.float64)(start, heat)[1].buoyancy_courant) == 0.0
+    validate_thermal_inputs(thermal, start, heat, divergence_tolerance=1e-12, buoyancy_courant_limit=1e-3)
+    for limit in (1e-4, -1.0):
+        with pytest.raises(ValueError, match="buoyancy_courant_limit"):
+            validate_thermal_inputs(
+                thermal, start, heat, divergence_tolerance=1e-12, buoyancy_courant_limit=limit
+            )

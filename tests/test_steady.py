@@ -1098,19 +1098,31 @@ def _uniform_flow(thermal):
 @pytest.mark.parametrize(
     ("aspect", "slug"), [(1.0, False), (0.5, False), (1.0, True)], ids=["square", "half", "slug"]
 )
-def test_the_h1_nusselt_number_converges_to_the_exact_series(aspect, slug):
-    """Uniform axial heat input, peripherally uniform wall temperature: within 0.5 % on 64 cells, order above 1.5 (square).
+def test_the_developed_nusselt_numbers_meet_their_exact_values(aspect, slug):
+    """H1, a uniform axial heat input with a peripherally uniform wall temperature: within 0.5 % of the exact series
+    on 64 cells, order above 1.5 (square). The series is computed independently of any discrete operator (square
+    3.60795, aspect 0.5 4.12330, square slug 7.1135). The flow is the package's own steady solve, or a uniform slug.
 
-    The series is computed independently of any discrete operator (square 3.60795, aspect 0.5 4.12330,
-    square slug 7.1135). The flow is the package's own steady solve, or a uniform slug.
+    H2, a uniform flux on every wall, on the same square Poiseuille flow: Shah & London's 3.091, within 0.5 % on 64
+    cells, at an order between 1.5 and 2.5, and its Richardson value within 0.3 % (#240).
     """
     exact = _h1_nusselt(1.0, aspect, slug=slug)
-    errors = []
+    errors, uniform_flux = [], []
     for cells in (16, 32, 64) if aspect == 1.0 else (64,):  # the square ducts carry the refinement family
         thermal = _developed_duct(cells, aspect)
-        result = _developed(thermal, _uniform_flow(thermal) if slug else None, axial_gradient=1.0)
+        velocity = _uniform_flow(thermal) if slug else solve_steady_state(thermal.flow).velocity
+        result = _developed(thermal, velocity, axial_gradient=1.0)
         errors.append(abs(float(result.nusselt) / exact - 1.0))
+        if aspect == 1.0 and not slug:
+            flux = _developed_duct(cells, walls="heat_flux", joule_heating=False)
+            uniform_flux.append(float(_developed(flux, velocity).nusselt))
     assert errors[-1] < 5e-3 and (len(errors) == 1 or np.log2(errors[1] / errors[2]) > 1.5), errors
+    if uniform_flux:
+        coarse, middle, fine = uniform_flux
+        order = np.log2((coarse - middle) / (middle - fine))
+        extrapolated = fine + (fine - middle) / (2.0**order - 1.0)
+        assert abs(fine / 3.091 - 1.0) < 5e-3 and 1.5 < order < 2.5, uniform_flux
+        assert abs(extrapolated / 3.091 - 1.0) < 3e-3, (uniform_flux, extrapolated)
 
 
 def test_a_hartmann_flow_transfers_heat_better_toward_slug_flow():

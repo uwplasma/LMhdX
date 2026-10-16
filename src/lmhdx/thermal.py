@@ -419,6 +419,12 @@ class ThermalDiagnostics(NamedTuple):
     returning faces. ``backflow_boundary_valid`` is false where the flow returns
     under ``outlet_backflow="error"``, whose enthalpy in is then reported as zero.
     All four are zero, and the boundary valid, in a closed duct.
+
+    ``buoyancy_courant`` is ``dt sqrt(beta |g| max |grad T|)`` of the old
+    temperature, the step over the buoyancy time scale, with the gradient taken
+    on every face; zero without buoyancy. The partitioned step is first order in
+    it: a Benard onset is low by about 15 % near 0.2 and under 3 % near 0.025
+    (#252).
     """
 
     mass_residual: jnp.ndarray
@@ -440,6 +446,24 @@ class ThermalDiagnostics(NamedTuple):
     outlet_outflow_rate: jnp.ndarray
     outlet_backflow_enthalpy_in: jnp.ndarray
     backflow_boundary_valid: jnp.ndarray
+    buoyancy_courant: jnp.ndarray
+
+
+def _buoyancy_courant(temperature: Field, problem: ThermalProblem) -> jnp.ndarray:
+    """Return ``dt sqrt(beta |g| max |grad T|)``, taken on every face; a diagnostic, so no derivative flows."""
+    strength = float(problem.expansion_coefficient) * float(np.linalg.norm(problem.gravity))
+    if not strength:
+        return jnp.zeros((), temperature.dtype)
+    temperature = jax.lax.stop_gradient(temperature)
+    steepest = jnp.max(
+        jnp.stack(
+            [
+                jnp.max(jnp.abs(face_gradient(temperature, axis, condition).data))
+                for axis, condition in enumerate(problem.thermal_conditions)
+            ]
+        )
+    )
+    return float(problem.flow.dt) * jnp.sqrt(strength * steepest)
 
 
 def initial_thermal_state(
@@ -467,6 +491,7 @@ def validate_thermal_inputs(
     divergence_tolerance: float,
     backflow_temperature: float | np.ndarray | None = None,
     advective_cfl_limit: float = 0.8,
+    buoyancy_courant_limit: float | None = None,
 ) -> None:
     """Check a state and heat source on the host before a run, raising ``ValueError`` on the first fault.
 
@@ -476,7 +501,9 @@ def validate_thermal_inputs(
     number ``dt max(sum_f max(u_f . n_f, 0) A_f / V)`` within ``advective_cfl_limit``;
     and, at an outlet with upwind transport, no returning face under
     ``outlet_backflow="error"``, or a finite, real ``backflow_temperature`` of the
-    outlet's shape under ``"reservoir_flux"``. Nothing is changed or returned.
+    outlet's shape under ``"reservoir_flux"``; and, given ``buoyancy_courant_limit``,
+    the start's ``buoyancy_courant`` (:class:`ThermalDiagnostics`) within it.
+    Nothing is changed or returned.
 
     A held flow keeps its Courant number for the whole run. An evolving flow is
     checked at its start only, which a start from rest passes trivially; nothing
@@ -485,6 +512,10 @@ def validate_thermal_inputs(
     """
     if not (np.isfinite(divergence_tolerance) and divergence_tolerance >= 0.0):
         raise ValueError("divergence_tolerance must be nonnegative and finite")
+    if buoyancy_courant_limit is not None and not (
+        np.isfinite(buoyancy_courant_limit) and buoyancy_courant_limit > 0.0
+    ):
+        raise ValueError("buoyancy_courant_limit must be positive and finite")
     if not (np.isfinite(advective_cfl_limit) and advective_cfl_limit > 0.0):
         raise ValueError("advective_cfl_limit must be positive and finite")
     flow, dtype = problem.flow, jnp.result_type(float)
@@ -499,6 +530,12 @@ def validate_thermal_inputs(
         raise ValueError("the velocity does not meet the wall and periodic face constraints")
     if float(jnp.max(jnp.abs(divergence(state.velocity).data))) > divergence_tolerance:
         raise ValueError("the velocity divergence exceeds divergence_tolerance")
+    if buoyancy_courant_limit is not None:
+        buoyant = float(_buoyancy_courant(state.temperature, problem))
+        if buoyant > buoyancy_courant_limit:
+            raise ValueError(
+                f"buoyancy_courant {buoyant:.4g} exceeds buoyancy_courant_limit {buoyancy_courant_limit}"
+            )
     if problem.advection == "upwind":
         courant = float(flow.dt) * float(jnp.max(_outgoing_rate(state.velocity)))
         if courant > advective_cfl_limit:
@@ -635,8 +672,9 @@ def build_thermal_step(
         exchange = _outlet_exchange(velocity, reservoir, problem, compute)
         leaves = jax.tree_util.tree_leaves((new, values, exchange[:3]))
         finite = jnp.all(jnp.stack([jnp.all(jnp.isfinite(leaf)) for leaf in leaves]))
-        return new, ThermalDiagnostics(*values, finite, *exchange)
+        return new, ThermalDiagnostics(*values, finite, *exchange, _buoyancy_courant(temperature, problem))
 
+    thermal_step.hold_flow = hold_flow  # load_attribution needs a flow the load cannot move
     return thermal_step
 
 
@@ -707,7 +745,8 @@ def load_attribution(
     load's own response: neither Joule heat nor ``background`` is credited to
     it. That holds for a step built with ``hold_flow=True`` and constant
     properties, where the temperature is affine in the heat source; a flow the
-    load moves, by buoyancy, is not, and nothing here detects one.
+    load moves, by buoyancy, is not. A step without the ``hold_flow`` mark of
+    :func:`build_thermal_step`, or built without holding its flow, is refused.
 
     The load is a heat source on the cells. A heat flux ``q`` through a wall is
     part of the step's boundary data, so it is in both runs and cancels; to
@@ -715,6 +754,10 @@ def load_attribution(
     with that wall's flux set to zero. The cell temperatures are then the same:
     a face flux enters its cell's equation exactly as that source.
     """
+    if not getattr(thermal_step, "hold_flow", False):
+        raise ValueError(
+            "load_attribution needs a step built with hold_flow=True: a moving flow is not affine in the load"
+        )
     options = {"backflow_temperature": backflow_temperature}
     on = advance_thermal(
         thermal_step, state, background.replace_data(background.data + load.data), steps, **options

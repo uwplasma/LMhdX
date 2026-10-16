@@ -132,6 +132,15 @@ requirement.
     in an open duct.
 - **The cost** is the hydraulic power $Q\,\Delta p$, with no assumed pump
   efficiency.
+- **Buoyancy** is left out: the flow is held. The workflow reports, on the
+  half-width $a$ and the flux's temperature scale $q''a/k$, with
+  $\beta = 1.21\times10^{-4}$ /K from the same table and $|g| = 9.81$ m/s²:
+  - $Ri = Gr/Re^2$, buoyancy against inertia;
+  - $Gr/Ha^2$, buoyancy against the Lorentz force;
+  - $Gr/(Re\,Ha)$.
+
+  A design where one exceeds 0.1 is flagged as outside the held-flow model,
+  whichever way gravity points.
 
 **Each trial** follows four steps:
 1. Solve the developed flow of its shape under a unit pressure gradient.
@@ -173,6 +182,7 @@ lmhdx.enable_x64()
 
 # Pb-17Li at 573 K, held constant: Martelli et al. (2019), Table 1.
 RHO, CP, K, MU, SIGMA = 9838.0, 189.8, 20.40, 2.153e-3, 8.835e5  # kg/m^3, J/(kg K), W/(m K), Pa s, S/m
+BETA, GRAVITY = 1.21e-4, 9.81  # 1/K, the same table; m/s^2, in any direction: the flow is held, so g only flags
 # An illustrative specification, not an engineering one.
 AREA, LENGTH, FIELD = 2.4e-4, 0.982, 0.5  # m^2 and m, fixed; T, uniform, along the half-width a
 DUTY = 1500.0  # W, through the first wall z = -b, parallel to the field
@@ -301,7 +311,18 @@ for name, record in (("square", square), ("candidate", candidate)):
         f"W {record['hydraulic_power']:.3e} W, wall {record['wall_peak']:.2f} K, Joule {record['joule']:.1e} W, "
         f"flux {record['duty'] / (2.0 * a * LENGTH) / 1e3:.1f} kW/m^2, Re {record['reynolds']:.0f}, Ha {hartmann:.0f}, "
         f"N {hartmann**2 / record['reynolds']:.2f}, Pe {record['reynolds'] * MU * CP / K:.0f}, "
-        f"Rm {4e-7 * np.pi * SIGMA * speed * a:.1e}"
+        f"Rm {4e-7 * np.pi * SIGMA * speed * a:.1e}, Br {MU * speed**2 / (K * (T_MAX - T_IN)):.1e}"
+    )
+    # Mixed convection, all on a with the flux's temperature scale q'' a / k: buoyancy against inertia, against the
+    # Lorentz force, and their product. The held flow omits it, so where one is not small the design is outside it.
+    nu, rise = MU / RHO, record["duty"] / (2.0 * a * LENGTH) * a / K
+    grashof, reynolds = GRAVITY * BETA * rise * a**3 / nu**2, speed * a / nu
+    mixed = {"Ri": grashof / reynolds**2, "Gr/Ha^2": grashof / hartmann**2, "Gr/(Re Ha)": grashof / (reynolds * hartmann)}
+    record["mixed_convection"] = mixed
+    outside = [name for name, value in mixed.items() if value > 0.1]
+    print(
+        f"  Gr {grashof:.2e}: " + ", ".join(f"{name} {value:.3g}" for name, value in mixed.items())
+        + (f"; outside the held-flow model, {', '.join(outside)} above 0.1" if outside else "; buoyancy small")
     )
 print(f"at the same duty, the candidate needs {100 * saving:.1f} % less pumping power than the square duct")
 
@@ -349,8 +370,10 @@ def open_duct(record, refine=1):
 credits = [open_duct(candidate, refine) for refine in (1, 2)]
 delivered = [float(credit.delivered / credit.imposed) for credit in credits]
 peaks = [float(credit.loaded.temperature_max) for credit in credits]
+axial_peclet = candidate["flow_rate"] / AREA * (LENGTH / 12) * RHO * CP / K  # numerical / physical diffusivity x 2
 print(
-    f"open duct: {100 * delivered[0]:.3f} % of the duty leaves at the outlet, {float(credits[0].conducted):.2f} W "
+    f"open duct (Pe_h/2 {axial_peclet / 2:.0f}): "
+    f"{100 * delivered[0]:.3f} % of the duty leaves at the outlet, {float(credits[0].conducted):.2f} W "
     f"back out of the inlet, storage {float(credits[0].stored):.1e} W; hottest cell {peaks[0]:.2f} K; "
     f"at half the time step {100 * delivered[1]:.3f} % and {peaks[1]:.2f} K"
 )
@@ -405,16 +428,27 @@ b/a 0.431: x x x x x o o o o
 b/a 0.656: x x x x x x o o o
 b/a 1.000: x x x x x x x o x
 lowest flows: b/a 0.080 1.7965e-05, b/a 0.122 1.7358e-05, b/a 0.186 1.7508e-05, b/a 0.283 1.8325e-05, b/a 0.431 1.9969e-05, b/a 0.656 2.3264e-05, b/a 1.000 3.1078e-05
-square: b/a 1.0000, Q 3.1078e-05 m^3/s, dp 395.4 Pa, W 1.229e-02 W, wall 624.99 K, Joule 5.7e-03 W, flux 98.6 kW/m^2, Re 9167, Ha 78, N 0.67, Pe 184, Rm 1.1e-03
-candidate: b/a 0.1436, Q 1.7330e-05 m^3/s, dp 127.2 Pa, W 2.205e-03 W, wall 625.00 K, Joule 7.2e-04 W, flux 37.4 kW/m^2, Re 3388, Ha 207, N 12.65, Pe 68, Rm 1.6e-03
+square: b/a 1.0000, Q 3.1078e-05 m^3/s, dp 395.4 Pa, W 1.229e-02 W, wall 624.99 K, Joule 5.7e-03 W, flux 98.6 kW/m^2, Re 9167, Ha 78, N 0.67, Pe 184, Rm 1.1e-03, Br 3.4e-08
+  Gr 4.31e+05: Ri 0.0205, Gr/Ha^2 70.1, Gr/(Re Ha) 1.2; outside the held-flow model, Gr/Ha^2, Gr/(Re Ha) above 0.1
+candidate: b/a 0.1436, Q 1.7330e-05 m^3/s, dp 127.2 Pa, W 2.205e-03 W, wall 625.00 K, Joule 7.2e-04 W, flux 37.4 kW/m^2, Re 3388, Ha 207, N 12.65, Pe 68, Rm 1.6e-03, Br 1.1e-08
+  Gr 7.92e+06: Ri 0.174, Gr/Ha^2 185, Gr/(Re Ha) 5.67; outside the held-flow model, Ri, Gr/Ha^2, Gr/(Re Ha) above 0.1
 at the same duty, the candidate needs 82.1 % less pumping power than the square duct
 48/6 cells: Q -0.03 %, W +0.69 %
-open duct: 99.968 % of the duty leaves at the outlet, 0.49 W back out of the inlet, storage 4.1e-12 W; hottest cell 624.74 K; at half the time step 99.968 % and 624.74 K
+open duct (Pe_h/2 270): 99.968 % of the duty leaves at the outlet, 0.49 W back out of the inlet, storage 4.1e-12 W; hottest cell 624.74 K; at half the time step 99.968 % and 624.74 K
 capacity at the square's power: b/a 0.080 1.85, b/a 0.122 2.04, b/a 0.186 2.01, b/a 0.283 1.81, b/a 0.431 1.54, b/a 0.656 1.26, b/a 1.000 1.00
 at the square's flux, 98.6 kW/m^2, W per metre of first wall: b/a 0.080 1.755e+00, b/a 0.122 6.949e-01, b/a 0.186 5.039e-01, b/a 0.283 4.700e-01, b/a 0.431 5.012e-01, b/a 0.656 5.930e-01, b/a 1.000 7.933e-01
 ```
 
-The workflow takes about 40 s on a CPU.
+The workflow takes about 45 s on a CPU.
+
+**Read this first: buoyancy is not small in either design.** For the square
+duct $Gr/Ha^2 = 70$ and $Gr/(Re\,Ha) = 1.2$. For the candidate $Ri = 0.17$,
+$Gr/Ha^2 = 185$ and $Gr/(Re\,Ha) = 5.7$. Mixed-convection MHD studies show
+buoyancy reorganizing the flow and the wall temperatures at such values
+(Zikanov et al. 2013; Vetcha, Smolentsev and Abdou; Mistrangelo et al. 2025).
+The held-flow comparison below is therefore one of forced convection alone,
+and certifies neither shape. A coupled buoyant calculation, with the direction
+of gravity declared, has to come first.
 
 **At a fixed duty per channel:**
 
@@ -430,6 +464,8 @@ The workflow takes about 40 s on a CPU.
 | Joule heat | 5.7×10⁻³ W | 7.2×10⁻⁴ W |
 | $Re$, $Ha$, $N$ | 9,170, 78, 0.67 | 3,390, 207, 12.7 |
 | $Pe$, $Rm$ | 184, 1.1×10⁻³ | 68, 1.6×10⁻³ |
+| Brinkman $\mu U^2/(k\,\Delta T)$ | 3×10⁻⁸ | 1×10⁻⁸ |
+| $Ri$, $Gr/Ha^2$, $Gr/(Re\,Ha)$ on $a$ | 0.02, 70, 1.2 | 0.17, 185, 5.7 |
 
 - **Both ducts run at the 625 K wall limit.** The slender duct needs 44 % less
   flow, because the duty enters through its wide side wall at a lower flux and
@@ -467,7 +503,11 @@ the viscous plus the Joule dissipation.
     inlet;
   - the storage is 4×10⁻¹² W, so the run is steady, and half the time step
     changes neither number;
-  - the hottest cell is 624.74 K.
+  - the hottest cell is 624.74 K;
+  - its axial cell Péclet number is large: $Pe_h/2 = 270$ is the first-order
+    scheme's numerical diffusivity over the physical one along the duct. The
+    delivered share does not depend on axial conduction here, but no open-duct
+    temperature profile should be quoted at this resolution.
 
   Twelve cells do not resolve the entrance region, so this checks the delivered
   duty, not the developed screening's peak.
@@ -476,6 +516,7 @@ the viscous plus the Joule dissipation.
 
 This is a screening optimum within the declared model, not an engineering
 design. The model is:
+- forced convection only, outside its validity here (above);
 - fluid only;
 - the wall-interface temperature, not the solid's;
 - constant properties;
