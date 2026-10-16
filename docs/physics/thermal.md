@@ -142,6 +142,10 @@ conservative flux:
   extremum.
 - Faces at an inlet, an outlet and a wall keep their first-order value.
 - The step stays first order in time.
+- The limiter is piecewise smooth. Away from its kinks, an extremum, a zero
+  slope or a clipped face, `jax.grad` matches central differences (tested with
+  the upwind gradients). At a kink it returns a finite value between the one-sided
+  derivatives; on a uniform temperature it is upwinding's.
 
 On the steady plug flow of the open duct below, the face value converges at
 order 1.95 and 1.98, where upwinding converges at order 0.81 and 0.91:
