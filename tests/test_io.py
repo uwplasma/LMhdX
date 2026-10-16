@@ -945,7 +945,10 @@ def _thermal_duct(cells=(1, 6, 6), dt=2.0e-3):
 
 def test_a_thermal_run_resumes_from_its_record_bit_for_bit(tmp_path: Path):
     """Six steps straight, or three, a record written and read back, and three more: the same state, bit for bit.
-    A record refuses another unit label, another problem, another version and a mangled array."""
+
+    A record refuses another unit label, another problem, and, before any state is made, a missing field, a mangled
+    or nonfinite array, a time that is not a finite scalar of the compute dtype, and a version that is not the
+    integer 1. Given the run's provenance it resumes only that run; without, it imports the state."""
     import dataclasses
 
     import jax
@@ -968,8 +971,13 @@ def test_a_thermal_run_resumes_from_its_record_bit_for_bit(tmp_path: Path):
     )
     straight = advance_thermal(step, start, heat, 6)[0]
     half = advance_thermal(step, start, heat, 3)[0]
-    path = write_thermal_record(tmp_path / "state", thermal, half, units="nondimensional")
-    resumed = advance_thermal(step, load_thermal_record(path, thermal, units="nondimensional"), heat, 3)[0]
+    run = {"heat_source": 0.5, "hold_flow": False}
+    path = write_thermal_record(tmp_path / "state", thermal, half, units="nondimensional", run=run)
+    loaded = load_thermal_record(path, thermal, units="nondimensional", run=run)
+    resumed = advance_thermal(step, loaded, heat, 3)[0]
+    load_thermal_record(path, thermal, units="nondimensional")  # an import, of the same state
+    with pytest.raises(ValueError, match="other inputs"):
+        load_thermal_record(path, thermal, units="nondimensional", run={**run, "heat_source": 0.6})
     assert path.suffix == ".npz" and float(straight.time) == pytest.approx(6 * 2.0e-3, rel=1e-15)
     for a, b in zip(jax.tree_util.tree_leaves(straight), jax.tree_util.tree_leaves(resumed)):
         assert np.array_equal(np.asarray(a), np.asarray(b))
@@ -983,13 +991,24 @@ def test_a_thermal_run_resumes_from_its_record_bit_for_bit(tmp_path: Path):
         )
     with np.load(path) as record:
         arrays = dict(record)
+    hot, fast = arrays["temperature"].copy(), arrays["velocity_x"].copy()
+    hot[0, 0, 0], fast[0, 0, 0] = np.nan, np.inf
     for change, message in (
         (dict(version=2), "version"),
+        (dict(version=1.5), "version"),
         (dict(temperature=arrays["temperature"][:, :3]), "shape"),
+        (dict(temperature=hot), "not finite"),
+        (dict(velocity_x=fast), "not finite"),
+        (dict(time=np.array([0.006, 0.006])), "time"),
+        (dict(time=np.array(np.nan)), "time"),
+        (dict(time=np.array(6)), "time"),
     ):
         np.savez(tmp_path / "bad.npz", **{**arrays, **change})
         with pytest.raises(ValueError, match=message):
             load_thermal_record(tmp_path / "bad.npz", thermal, units="nondimensional")
+    np.savez(tmp_path / "bad.npz", **{name: value for name, value in arrays.items() if name != "time"})
+    with pytest.raises(ValueError, match="lacks time"):
+        load_thermal_record(tmp_path / "bad.npz", thermal, units="nondimensional")
 
 
 def test_a_thermal_state_opens_as_a_rectilinear_grid_in_vtk_order(tmp_path: Path):
