@@ -6,6 +6,7 @@ LMhdX is organized by physical ownership:
 ChannelProblem ──> staggered core (grid, ops, poisson, pipe) ──> steady / axial
 CaseSpec ── fully developed ──> the core, steady or transient ──> Solution
 Q2DProblem ──> vorticity dynamics ──> SOLVAX periodic Poisson ──> Q2DResult
+ThermalProblem ──> the core's stages + cell-centred conduction ──> advance_thermal
 ```
 
 The stable package root contains the common 2-D and Q2D workflows. Three-dimensional,
@@ -18,7 +19,10 @@ requests them.
 an inlet and an outlet, and `lmhdx.coreflow` the inertialess core-flow model.
 `lmhdx.fully_developed` maps a `CaseSpec` onto the core; `lmhdx.cases` holds
 the case builders and `lmhdx.solve`. The cell-centred solver it replaced was
-removed in 1.8 (step 4.6).
+removed in 1.8 (step 4.6). `lmhdx.thermal` (ADR 0008) composes two private stages
+of `lmhdx.core3d`, one electric solve for the Lorentz force and the Joule heat,
+then the predictor and projection with an optional buoyancy force, and adds its
+own conduction inverse; `lmhdx.core3d` does not import it.
 
 Package sources live under `src/lmhdx`, so an editable installation and a wheel
 resolve the same module tree. The wheel includes `lmhdx/py.typed`; every root API
