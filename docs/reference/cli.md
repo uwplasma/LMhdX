@@ -51,6 +51,6 @@ configuration rather than entering the numerical solve.
 
 A file with `[solver] kind = "thermal"` runs the heat-transport solver, with its
 own tables (`[grid]`, `[flow]`, `[thermal]`, `[run]`, `[output]`, `[restart]`;
-see [Heat transport](../physics/thermal.md#a-run-from-toml)). Its top-level
+see [Heat transport](../physics/thermal.md)). Its top-level
 `schema_version` is the integer `1`, the only version; it may be left out, and
 any other value is refused before the run is built.
