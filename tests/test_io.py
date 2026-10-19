@@ -1207,7 +1207,7 @@ def test_a_thermal_toml_refuses_what_it_cannot_run(tmp_path: Path, monkeypatch: 
     changes = (
         ("heat_source = 0.5", "heat_source = 0.5\nconductivity_of_walls = 1.0", "unknown keys"),
         ("[run]", "[solvers]\nkind = 1\n\n[run]", r"\[top level\] has unknown keys \['solvers'\]"),
-        ("[case]", "schema_version = 2\n\n[case]", "schema_version must be 1"),
+        ("schema_version = 1", "schema_version = 2", "schema_version must be 1"),
         ("steps = 40", "steps = 40.5", "steps must be a TOML integer"),
         ("y = { cells = 8", "y = { cells = true", "cells must be a TOML integer"),
         ("heat_source = 0.5", 'heat_source = 0.5\nhold_flow = "false"', "hold_flow must be a TOML boolean"),
