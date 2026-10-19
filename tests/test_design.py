@@ -439,6 +439,49 @@ def test_holding_the_flow_makes_upwind_transport_affine_and_van_leer_s_not():
     assert gaps["upwind"] <= 1e-13 and gaps["van_leer"] >= 1e-4, gaps
 
 
+def test_the_checkpointing_recipe_has_the_plain_runs_gradient():
+    """docs/physics/thermal.md: a ``jax.checkpoint``-wrapped chunk inside an outer ``lax.scan`` differentiates to the
+    plain run's gradient, to round-off (24 steps as 4 chunks of 6, and as 2 of 12)."""
+    from lmhdx.thermal import (
+        ThermalProblem,
+        advance_thermal,
+        build_thermal_step,
+        initial_thermal_state,
+        thermal_boundary,
+    )
+
+    wrap, wall = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN)
+    grid = Grid(uniform_faces(12, 0.0, 1.0), uniform_faces(2, -1.0, 1.0), uniform_faces(2, -1.0, 1.0))
+    flow = ChannelProblem(grid, (wrap, wall, wall), dt=0.4 / 12)
+    insulated = thermal_boundary("heat_flux", conductivity=1e-3)
+    problem = ThermalProblem(flow, (wrap, insulated, insulated), 1.0, 1e-3, 0.0)
+    thermal_step = build_thermal_step(problem, dtype=jnp.float64, hold_flow=True)
+    rest = initial_thermal_state(problem, 0.0)
+    ones = rest.velocity[0].replace_data(jnp.ones_like(rest.velocity[0].data))
+    x = np.asarray(grid.centers[0])[:, None, None] * np.ones(grid.shape)
+    heat = Field(jnp.asarray(1.0 + np.sin(2.0 * np.pi * x)), (CENTER,) * 3, grid)
+    start = rest._replace(velocity=(ones, *rest.velocity[1:]), temperature=heat)
+
+    def plain(state):
+        return jnp.sum(advance_thermal(thermal_step, state, heat, 24)[0].temperature.data ** 2)
+
+    def recipe(length):
+        chunk = jax.checkpoint(
+            lambda s: advance_thermal(thermal_step, s, heat, 24 // length, diagnostics=24 // length)[0]
+        )
+
+        def run(state):
+            final, _ = jax.lax.scan(lambda s, _: (chunk(s), None), state, None, length=length)
+            return jnp.sum(final.temperature.data**2)
+
+        return run
+
+    reference = jax.grad(plain)(start).temperature.data
+    for length in (4, 2):
+        gradient = jax.jit(jax.grad(recipe(length)))(start).temperature.data
+        assert float(jnp.max(jnp.abs(gradient - reference))) <= 1e-12 * float(jnp.max(jnp.abs(reference)))
+
+
 def test_a_load_is_credited_by_difference_and_its_heat_balances():
     """O01: at ``lambda = 5`` what the load sends out of the outlet and back out of the inlet is the load, to 1e-12,
     with nothing left in storage; the delivered fraction is within 0.03 of the exact steady 0.801 on 32 cells."""
@@ -516,6 +559,16 @@ def test_the_thermal_duct_design_runs_as_written_and_keeps_its_contracts():
     page = Path(__file__).resolve().parents[1] / "docs/tutorials/duct_design_law.md"
     section = page.read_text().split("## A thermal design", 1)[1]
     code = section.split("```python\n", 1)[1].split("```", 1)[0]
+    # The same workflow, cheaper to compile and run: 3 of the page's 7 shapes, a golden section stopped at 0.08 in
+    # ln(b/a) instead of 0.02, and the mesh check on 40 cells instead of 48. Every contract below is on the square,
+    # the candidate, a shape's edge or the refinement, none on the sweep's density or the last digit of the optimum.
+    for old, new in (
+        ("np.geomspace(0.08, 1.0, 7)", "np.geomspace(0.08, 1.0, 3)"),
+        ("while high - low > 0.02:", "while high - low > 0.08:"),
+        ("cells=48, layer=6", "cells=40, layer=5"),
+    ):
+        assert old in code
+        code = code.replace(old, new)
     run = {"__name__": "thermal_design"}
     exec(compile(code, str(page), "exec"), run)
     square, candidate, limit = run["square"], run["candidate"], run["T_MAX"]

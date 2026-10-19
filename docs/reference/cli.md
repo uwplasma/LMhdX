@@ -46,3 +46,11 @@ The schema maps directly to the Python dataclasses:
 Start from `examples/hartmann_case.toml`. Unknown keys, inconsistent geometry,
 nonphysical material values, and unsupported solver combinations fail during
 configuration rather than entering the numerical solve.
+
+## Thermal runs
+
+A file with `[solver] kind = "thermal"` runs the heat-transport solver, with its
+own tables (`[grid]`, `[flow]`, `[thermal]`, `[run]`, `[output]`, `[restart]`;
+see [Heat transport](../physics/thermal.md)). Its top-level
+`schema_version` is the integer `1`, the only version; it may be left out, and
+any other value is refused before the run is built.

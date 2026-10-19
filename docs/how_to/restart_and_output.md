@@ -35,11 +35,13 @@ staggered velocity, the temperature and the time, exactly:
 
 ```python
 from lmhdx.thermal import load_thermal_record, write_thermal_record
-from lmhdx.io import write_thermal_vtr
+from lmhdx.io import write_vtr
+from lmhdx.ops import cell_average
 
 path = write_thermal_record("state", problem, state, units="SI")  # state.npz
 state = load_thermal_record(path, problem, units="SI")
-write_thermal_vtr(problem, state, "frame")  # frame.vtr, for ParaView
+velocity = jnp.stack([cell_average(f, a).data for a, f in enumerate(state.velocity)], axis=-1)
+write_vtr("frame", problem.flow.grid.faces, temperature=state.temperature.data, velocity=velocity)  # for ParaView
 ```
 
 The record is a NPZ file with this contents:
@@ -66,7 +68,7 @@ backflow temperature. So a load has two meanings:
 `lmhdx case.toml` keeps the run's heat source and `hold_flow` in each record.
 Its `[restart] mode` chooses between the two meanings.
 
-`write_thermal_vtr` writes a rectilinear grid with two cell arrays:
+`lmhdx.io.write_vtr` writes any named cell arrays as a rectilinear grid; a thermal run writes two:
 - the temperature;
 - the velocity, as each component's mean over the two faces of its cell.
 

@@ -82,22 +82,25 @@ from .grid import (
     PERIODIC,
     BoundaryCondition,
     Field,
-    Grid,
     pad,
-    uniform_faces,
-    wall_resolving_faces,
 )
 from .ops import (
+    _broadcast,
+    _take,
+    cell_average,
+    cell_force_to_faces,
     cell_inner_product,
     divergence,
-    face_average,
     face_average_adjoint,
     face_gradient,
     laplacian,
+    neighbours,
+    outgoing_rate,
+    padded_gradient,
     wall_insulated,
 )
 from .poisson import FastDiagonalHelmholtz, fast_diagonal_helmholtz, fast_diagonal_poisson
-from .steady import solve_steady_state, with_inflow
+from .steady import with_inflow
 
 __all__ = [
     "DevelopedHeat",
@@ -113,7 +116,6 @@ __all__ = [
     "load_attribution",
     "load_thermal_record",
     "thermal_boundary",
-    "thermal_run_from_toml",
     "validate_developed_inputs",
     "validate_thermal_inputs",
     "write_thermal_record",
@@ -289,23 +291,6 @@ class ThermalProblem:
             return laplacian(zero, self.thermal_conditions)
 
 
-def _conduct(
-    temperature: Field,
-    heating: Field,
-    problem: ThermalProblem,
-    factorization: FastDiagonalHelmholtz,
-    lift: Field,
-) -> Field:
-    """Advance conduction and volumetric heating by one implicit step.
-
-    ``(I - dt alpha L_0) T' = T + dt (q / (rho_0 c_p) + alpha b)``, with ``q`` the
-    heat per unit volume and time in ``heating``.
-    """
-    dt, alpha = float(problem.flow.dt), problem.diffusivity
-    rhs = temperature.data + dt * (heating.data / problem.heat_capacity + alpha * lift.data)
-    return factorization.solve(temperature.replace_data(rhs))
-
-
 def _upwind_fluxes(
     temperature: Field,
     velocity: tuple[Field, Field, Field],
@@ -315,9 +300,9 @@ def _upwind_fluxes(
     """Return ``u_f T_up`` on the velocity faces; the transport term is minus their divergence.
 
     ``T_up`` is the temperature of the cell the face velocity comes from, or with
-    ``advection="van_leer"`` its limited face value (:func:`_limited`). The
-    flow's scalar conditions pad periodic axes by wrapping and walls by copying;
-    the copy is never used, since a wall face carries no advective flux. The
+    ``advection="van_leer"`` its limited face value (:func:`_limited`), from the
+    one array padded by the thermal conditions; the ghost of a wall is never
+    used, since a wall face carries no advective flux. The
     inlet face brings in the inlet temperature, or takes out the first cell's
     against a backflow. The outlet face takes out the last cell's; where the flow
     returns there it brings in ``reservoir``, the outlet's incoming temperature.
@@ -325,18 +310,18 @@ def _upwind_fluxes(
     reaches a returning face; it takes the last cell's temperature and reports the
     boundary invalid.
     """
-    scalar, opening = problem.flow.scalar_conditions, problem.flow.open_axis
+    scalar, opening, grid = problem.flow.scalar_conditions, problem.flow.open_axis, temperature.grid
     fluxes = []
     for axis, carrier in enumerate(velocity):
-        padded = pad(temperature.data, axis, scalar[axis], grid=temperature.grid)
-        lower, upper = (_sliced(padded, axis, start) for start in (0, 1))
-        if problem.advection == "van_leer":
-            lower, upper = _limited(temperature, axis, problem, lower, upper)
+        padded = pad(temperature.data, axis, problem.thermal_conditions[axis], grid=grid)
+        lower, upper = neighbours(padded, axis)
+        if problem.advection == "van_leer" and grid.shape[axis] > 1:
+            lower, upper = _limited(padded, axis, problem, lower, upper)
         flux = carrier.data * jnp.where(carrier.data >= 0.0, lower, upper)
         if axis != opening:
             fluxes.append(wall_insulated(carrier.replace_data(flux), axis, scalar[axis]))
             continue
-        ends = [(slice(None),) * axis + (end,) for end in (0, -1)]
+        ends = [_end(axis, end) for end in (0, -1)]
         inlet = jnp.asarray(problem.thermal_conditions[axis].lower, dtype=flux.dtype)
         entering = carrier.data[ends[0]] * jnp.where(
             carrier.data[ends[0]] >= 0.0, inlet, temperature.data[ends[0]]
@@ -349,26 +334,24 @@ def _upwind_fluxes(
     return tuple(fluxes)
 
 
-def _limited(temperature: Field, axis: int, problem: ThermalProblem, left, right):
+def _limited(padded, axis: int, problem: ThermalProblem, left, right):
     """Return each face's van Leer value seen from the cell on its left and on its right, on physical distances.
 
-    From a cell of width ``w`` the face value is ``T + (w/2) s`` toward the face, with ``s`` the van Leer mean
-    ``(a |b| + |a| b) / (|a| + |b|)`` of the face gradients on either side of the cell, zero where they differ in sign;
-    it is then held between the two cells the face lies between, which keeps it bounded on a stretched grid.
+    ``padded`` is the temperature padded by the axis's thermal condition. From a cell of width ``w`` the face
+    value is ``T + (w/2) s`` toward the face, with ``s`` the van Leer mean ``(a |b| + |a| b) / (|a| + |b|)`` of
+    the face gradients on either side of the cell, zero where they differ in sign; it is then held between
+    the two cells the face lies between, which keeps it bounded on a stretched grid.
     """
-    grid, condition = temperature.grid, problem.thermal_conditions[axis]
-    slopes, count = face_gradient(temperature, axis, condition).data, grid.shape[axis]
+    grid, condition = problem.flow.grid, problem.thermal_conditions[axis]
+    slopes, count = padded_gradient(padded, grid, axis, condition), grid.shape[axis]
     edges = (count - 1, 1) if condition.is_periodic else (0, count)  # faces -1 and n + 1: the wrap, or a copy
     outer = [jax.lax.slice_in_dim(slopes, index, index + 1, axis=axis) for index in edges]
-    extended = jnp.concatenate([outer[0], slopes, outer[1]], axis=axis)
-    before, at, after = (
-        jax.lax.slice_in_dim(extended, start, start + count + 1, axis=axis) for start in (0, 1, 2)
-    )
+    before, at = neighbours(jnp.concatenate([outer[0], slopes], axis=axis), axis)
+    after = jnp.concatenate([_take(slopes, axis, slice(1, None)), outer[1]], axis=axis)
     widths = np.asarray(grid.widths[axis])
     beside = (widths[-1], widths[0]) if condition.is_periodic else (widths[0], widths[-1])
-    shape = [-1 if position == axis else 1 for position in range(3)]
     left_width, right_width = (
-        jnp.asarray(np.reshape(values, shape), dtype=slopes.dtype)
+        _broadcast(values, axis, slopes.dtype)
         for values in (np.concatenate([[beside[0]], widths]), np.concatenate([widths, [beside[1]]]))
     )
 
@@ -380,26 +363,6 @@ def _limited(temperature: Field, axis: int, problem: ThermalProblem, left, right
     from_left = jnp.clip(left + 0.5 * left_width * van_leer(before, at), low, high)
     from_right = jnp.clip(right - 0.5 * right_width * van_leer(at, after), low, high)
     return from_left, from_right
-
-
-def _outgoing_rate(velocity: tuple[Field, Field, Field]) -> jnp.ndarray:
-    """Return each cell's outgoing volume flux over its volume, ``sum_f max(u_f . n_f, 0) A_f / V``.
-
-    ``dt`` times its maximum is the transport's Courant number. On a Cartesian
-    grid ``A_f / V`` is one over the cell's width along the face normal.
-    """
-    grid, total = velocity[0].grid, 0.0
-    for axis, carrier in enumerate(velocity):
-        lower, upper = (_sliced(carrier.data, axis, start) for start in (0, 1))
-        shape = [-1 if position == axis else 1 for position in range(3)]
-        widths = jnp.asarray(np.reshape(grid.widths[axis], shape), dtype=carrier.dtype)
-        total = total + (jnp.maximum(upper, 0.0) + jnp.maximum(-lower, 0.0)) / widths
-    return total
-
-
-def _sliced(data: jnp.ndarray, axis: int, start: int) -> jnp.ndarray:
-    """All but the last (``start`` 0) or the first (``start`` 1) entry along ``axis``."""
-    return jax.lax.slice_in_dim(data, start, data.shape[axis] - 1 + start, axis=axis)
 
 
 def _joule_heating(currents: tuple[Field, Field, Field], problem: ThermalProblem) -> Field:
@@ -435,13 +398,9 @@ def _buoyancy(temperature: Field, problem: ThermalProblem) -> tuple[Field, Field
     beta, gravity = float(problem.expansion_coefficient), problem.gravity
     if not (beta and any(gravity)):
         return None
-    scalar = problem.flow.scalar_conditions
     excess = -float(problem.flow.density) * beta * (temperature.data - float(problem.reference_temperature))
-    faces = (
-        face_average(temperature.replace_data(excess * g), axis, scalar[axis])
-        for axis, g in enumerate(gravity)
-    )
-    return tuple(wall_insulated(face, axis, scalar[axis]) for axis, face in enumerate(faces))
+    force = tuple(temperature.replace_data(excess * g) for g in gravity)
+    return cell_force_to_faces(force, problem.flow.scalar_conditions, zero_walls=True)
 
 
 class ThermalState(NamedTuple):
@@ -573,14 +532,12 @@ def validate_thermal_inputs(
     """
     if not (np.isfinite(divergence_tolerance) and divergence_tolerance >= 0.0):
         raise ValueError("divergence_tolerance must be nonnegative and finite")
-    if buoyancy_courant_limit is not None and not (
-        np.isfinite(buoyancy_courant_limit) and buoyancy_courant_limit > 0.0
+    for name, limit in (
+        ("buoyancy_courant_limit", buoyancy_courant_limit),
+        ("advective_cfl_limit", advective_cfl_limit),
     ):
-        raise ValueError("buoyancy_courant_limit must be positive and finite")
-    if advective_cfl_limit is not None and not (
-        np.isfinite(advective_cfl_limit) and advective_cfl_limit > 0.0
-    ):
-        raise ValueError("advective_cfl_limit must be positive and finite")
+        if limit is not None and not (np.isfinite(limit) and limit > 0.0):
+            raise ValueError(f"{name} must be positive and finite")
     advective_cfl_limit = _SCHEMES[problem.advection] if advective_cfl_limit is None else advective_cfl_limit
     flow, dtype = problem.flow, jnp.result_type(float)
     _check_fields(flow, state.velocity, [(state.temperature, "temperature"), (heat_source, "heat source")])
@@ -601,7 +558,7 @@ def validate_thermal_inputs(
                 f"buoyancy_courant {buoyant:.4g} exceeds buoyancy_courant_limit {buoyancy_courant_limit}"
             )
     if problem.advection != "off":
-        courant = float(flow.dt) * float(jnp.max(_outgoing_rate(state.velocity)))
+        courant = float(flow.dt) * float(jnp.max(outgoing_rate(state.velocity)))
         if courant > advective_cfl_limit:
             raise ValueError(
                 f"the Courant number {courant:.4g} exceeds advective_cfl_limit {advective_cfl_limit}"
@@ -615,7 +572,7 @@ def validate_thermal_inputs(
         if (
             axis is not None
             and problem.advection != "off"
-            and np.any(np.asarray(state.velocity[axis].data[(slice(None),) * axis + (-1,)]) < 0.0)
+            and np.any(np.asarray(state.velocity[axis].data[_end(axis, -1)]) < 0.0)
         ):
             raise ValueError("the flow returns through the outlet: use outlet_backflow='reservoir_flux'")
 
@@ -731,7 +688,7 @@ def build_thermal_step(
             storage,
             storage + out + carried - joule_power - external,
             jnp.max(jnp.abs(change / dt + transport - conducted - sources)),
-            dt * jnp.max(_outgoing_rate(velocity)) if upwind else jnp.zeros((), compute),
+            dt * jnp.max(outgoing_rate(velocity)) if upwind else jnp.zeros((), compute),
             beta * excess,
         )
         new = ThermalState(moved, heated, state.time + dt)
@@ -754,8 +711,13 @@ def advance_thermal(
     *,
     checkpoint: bool = True,
     backflow_temperature: float | jnp.ndarray | None = None,
+    diagnostics: int = 1,
 ) -> tuple[ThermalState, ThermalDiagnostics]:
     """Take ``steps`` steps of a prepared step as one compiled scan; return the end state and the history.
+
+    ``diagnostics`` is the stride of the history: the diagnostics of every ``diagnostics``-th step are kept
+    (the last step of each block), ``steps // diagnostics`` of them, and ``steps`` must be a multiple. The
+    default keeps every step's.
 
     ``backflow_temperature`` goes to every step, constant over the call as the
     heat source is. The carry is the state alone and only the scalar diagnostics are stacked, one
@@ -764,16 +726,23 @@ def advance_thermal(
     rather than storing its intermediates; a differentiated run still keeps one
     state per step.
     """
-    if steps < 1:
-        raise ValueError("steps must be positive")
+    if steps < 1 or diagnostics < 1 or steps % diagnostics:
+        raise ValueError("steps must be positive, a multiple of the diagnostics stride")
 
     options = {} if backflow_temperature is None else {"backflow_temperature": backflow_temperature}
 
     def single(carry: ThermalState, _) -> tuple[ThermalState, ThermalDiagnostics]:
         return thermal_step(carry, heat_source, **options)
 
-    body = jax.checkpoint(single) if checkpoint else single
-    return jax.lax.scan(body, state, xs=None, length=steps)
+    def block(carry: ThermalState, _) -> tuple[ThermalState, ThermalDiagnostics]:
+        if diagnostics > 1:
+            carry = jax.lax.scan(
+                lambda c, _: (single(c, _)[0], None), carry, xs=None, length=diagnostics - 1
+            )[0]
+        return single(carry, _)
+
+    body = jax.checkpoint(block) if checkpoint else block
+    return jax.lax.scan(body, state, xs=None, length=steps // diagnostics)
 
 
 _RECORD_SCHEMA, _RECORD_VERSION = "lmhdx.thermal.state", 1
@@ -980,6 +949,11 @@ def load_attribution(
     return LoadAttribution(imposed, delivered, conducted, stored, residual, last)
 
 
+def _end(axis: int, index: int) -> tuple:
+    """The index of the slab at ``index`` of ``axis``, a wall face (0 or -1) or a boundary cell."""
+    return (slice(None),) * axis + (index,)
+
+
 def _reservoir(problem: ThermalProblem, value, dtype) -> jnp.ndarray | None:
     """Return the outlet's incoming temperature over its face: a number broadcasts, an array must match."""
     if problem.outlet_backflow != "reservoir_flux":
@@ -1004,7 +978,7 @@ def _outlet_exchange(velocity, reservoir, problem: ThermalProblem, dtype) -> tup
     if axis is None:
         zero = jnp.zeros((), dtype)
         return zero, zero, zero, jnp.asarray(True)
-    end = (slice(None),) * axis + (-1,)
+    end = _end(axis, -1)
     normal = velocity[axis].data[end]
     area = jnp.asarray(problem.flow.grid.face_areas(axis)[end], dtype=normal.dtype)
     back = jnp.maximum(-normal, 0.0) * area
@@ -1018,7 +992,7 @@ def _carried_out(fluxes: tuple[Field, Field, Field], problem: ThermalProblem) ->
     """Return the enthalpy carried out through the outlet less what enters at the inlet and returning faces."""
     axis = problem.flow.open_axis
     flux, areas = fluxes[axis].data, problem.flow.grid.face_areas(axis)
-    ends = [(slice(None),) * axis + (end,) for end in (0, -1)]
+    ends = [_end(axis, end) for end in (0, -1)]
     leaving, entering = (jnp.sum(flux[end] * jnp.asarray(areas[end], dtype=flux.dtype)) for end in ends[::-1])
     return problem.heat_capacity * (leaving - entering)
 
@@ -1032,7 +1006,7 @@ def _heat_out(temperature: Field, problem: ThermalProblem) -> jnp.ndarray:
             continue
         gradient, areas = face_gradient(temperature, axis, condition).data, grid.face_areas(axis)
         for end, sign in ((0, 1.0), (-1, -1.0)):
-            slab = (slice(None),) * axis + (end,)
+            slab = _end(axis, end)
             area = jnp.asarray(areas[slab], dtype=temperature.dtype)
             out = out + sign * conductivity * jnp.sum(gradient[slab] * area)
     return out
@@ -1129,8 +1103,7 @@ def developed_heat(
     def per_length(data):
         return cell_inner_product(Field(data, _CELL, grid), Field(jnp.ones_like(data), _CELL, grid)) / length
 
-    carrier = velocity[axial].data
-    speed = 0.5 * (_sliced(carrier, axial, 0) + _sliced(carrier, axial, 1))
+    speed = cell_average(velocity[axial], axial).data
     sources = heat_source.data
     if problem.joule_heating:  # otherwise no current is needed
         sources = _joule_heating(face_currents(velocity, flow)[1], problem).data + sources
@@ -1238,20 +1211,18 @@ def validate_developed_inputs(
     if across > velocity_tolerance:
         raise ValueError(f"a transverse velocity of {across:.4g} exceeds velocity_tolerance")
     along = np.asarray(velocity[axial].data)
-    ends = [along[(slice(None),) * axial + (end,)] for end in (0, -1)]
+    ends = [along[_end(axial, end)] for end in (0, -1)]
     if float(np.max(np.abs(ends[1] - ends[0]))) > velocity_tolerance:
         raise ValueError("the axial velocity changes along the axis beyond velocity_tolerance")
     if float(np.min(along)) < -velocity_tolerance:
         raise ValueError("the axial flow reverses beyond velocity_tolerance")
-    flow_rate = float(
-        np.sum(grid.face_areas(axial)[(slice(None),) * axial + (0,)] * along[(slice(None),) * axial + (0,)])
-    )
+    flow_rate = float(np.sum(grid.face_areas(axial)[_end(axial, 0)] * along[_end(axial, 0)]))
     if not flow_rate > flow_rate_tolerance:
         raise ValueError(f"the flow rate {flow_rate:.4g} is not above flow_rate_tolerance")
 
 
 class ThermalRun(NamedTuple):
-    """A thermal run read by :func:`thermal_run_from_toml`: the problem, its start, and how to run and record it.
+    """A thermal run read by :func:`lmhdx.io.thermal_run_from_toml`: the problem, its start, and how to run and record it.
 
     ``provenance`` holds the run's other inputs, its heat source and held flow, kept in each record so that a
     resume can check them; ``limits`` the advective Courant and buoyancy limits each chunk's samples must meet
@@ -1273,169 +1244,3 @@ class ThermalRun(NamedTuple):
     provenance: dict
     limits: dict
     restart: dict | None
-
-
-_NUMBER, _VECTOR = "number", "array of three numbers"
-_TOML_KEYS = {
-    "document": dict.fromkeys(
-        ("case", "solver", "grid", "flow", "thermal", "run", "output", "restart"), "table"
-    ),
-    "case": {"name": "string", "units": "string"},
-    "solver": {"kind": "string"},
-    "grid": dict.fromkeys("xyz", "table"),
-    "axis": {"cells": "integer", "lower": _NUMBER, "upper": _NUMBER, "layer_thickness": _NUMBER},
-    "flow": {"conditions": "array", "advection": "string", "initial_velocity": "string"},
-    "thermal": {
-        "joule_heating": "boolean",
-        "advection": "string",
-        "hold_flow": "boolean",
-        "gravity": _VECTOR,
-    },
-    "wall": {"kind": "string", "lower": _NUMBER, "upper": _NUMBER},
-    "run": {"steps": "integer", "chunk": "integer"},
-    "output": {"directory": "string", "write_paraview": "boolean", "write_restart": "boolean"},
-    "restart": {"path": "string", "mode": "string"},
-}
-_TOML_KEYS["axis"]["cells_in_layer"] = "integer"
-_TOML_KEYS["flow"] |= dict.fromkeys(("dt", "density", "viscosity", "conductivity"), _NUMBER)
-_TOML_KEYS["flow"] |= dict.fromkeys(("magnetic_field", "forcing", "wall_conductance"), _VECTOR)
-_TOML_KEYS["thermal"] |= dict.fromkeys("xyz", "table") | dict.fromkeys(
-    ("specific_heat", "thermal_conductivity", "reference_temperature", "expansion_coefficient"), _NUMBER
-)
-_TOML_KEYS["thermal"] |= dict.fromkeys(("initial_temperature", "heat_source"), _NUMBER)
-_TOML_KEYS["run"] |= dict.fromkeys(
-    ("divergence_tolerance", "advective_cfl_limit", "buoyancy_courant_limit"), _NUMBER
-)
-_TOML_TYPES = {
-    "table": lambda value: isinstance(value, dict),
-    "array": lambda value: isinstance(value, list),
-    "string": lambda value: isinstance(value, str),
-    "boolean": lambda value: isinstance(value, bool),
-    "integer": lambda value: isinstance(value, int) and not isinstance(value, bool),
-    _NUMBER: lambda value: isinstance(value, (int, float)) and not isinstance(value, bool),
-    _VECTOR: lambda value: (
-        isinstance(value, list) and len(value) == 3 and all(map(_TOML_TYPES[_NUMBER], value))
-    ),
-}
-
-
-def _table(table, schema: str, where: str, required: tuple[str, ...] = ()) -> dict:
-    """Return a copy of ``table``, every key one ``schema`` knows, of its TOML type, and every ``required`` one."""
-    kinds = _TOML_KEYS[schema]
-    if not isinstance(table, dict):
-        raise ValueError(f"[{where}] must be a table")
-    unknown, missing = sorted(set(table) - set(kinds)), [key for key in required if key not in table]
-    if unknown:
-        raise ValueError(f"[{where}] has unknown keys {unknown}")
-    if missing:
-        raise ValueError(f"[{where}] lacks {missing}")
-    for key, value in table.items():
-        if not _TOML_TYPES[kinds[key]](value):
-            raise ValueError(f"[{where}] {key} must be a TOML {kinds[key]}, not {value!r}")
-    return {key: tuple(value) if kinds[key] == _VECTOR else value for key, value in table.items()}
-
-
-def thermal_run_from_toml(root: dict, base: str | Path = ".") -> ThermalRun:
-    """Read a thermal run from a parsed TOML document with ``[solver] kind = "thermal"``; ``base`` resolves paths.
-
-    The keys are the Python names. Every table, the document included, refuses an unknown or a missing key and
-    a value of the wrong TOML type (a count is an integer, a flag a boolean, neither converted), all before
-    the run is built. ``[grid]`` gives each axis as ``{cells, lower, upper}``, with ``layer_thickness`` (and
-    ``cells_in_layer``) for wall-resolving faces. ``[flow]`` holds :class:`lmhdx.core3d.ChannelProblem`'s
-    values, its ``conditions`` ``"periodic"`` or ``"wall"`` per axis (an inflow-outflow axis is not read from
-    TOML yet), and ``initial_velocity`` ``"rest"`` or ``"steady"``, the fully developed flow. ``[thermal]``
-    holds :class:`ThermalProblem`'s values, ``hold_flow``, a uniform ``initial_temperature`` and
-    ``heat_source``, and for each wall axis, and only those, a table ``[thermal.y]`` of
-    :func:`thermal_boundary`'s ``kind`` (``"temperature"`` or ``"heat_flux"``), ``lower`` and ``upper``.
-    ``[run]`` gives ``steps`` in compiled chunks of ``chunk``, each ending in a record and a frame, and the
-    limits of :func:`lmhdx.io.run_thermal`; ``[output]`` the ``directory`` and what to write; ``[restart]`` a
-    :func:`write_thermal_record` record's ``path`` and ``mode``: ``"resume"``, the default, continues the run
-    that wrote it, whose heat source and held flow must be these, and ``"import"`` starts from its state.
-    """
-    base, tables = Path(base), _table(root, "document", "top level")
-    required = {
-        "case": ("name", "units"),
-        "solver": ("kind",),
-        "grid": tuple("xyz"),
-        "flow": ("conditions", "dt"),
-    }
-    required |= {"thermal": ("specific_heat", "thermal_conductivity", "reference_temperature")}
-    required |= {"run": ("steps",), "output": ("directory",), "restart": ()}
-    case, solver, grid, flow, thermal, run, output, restart = (
-        _table(tables.get(name, {}), name, name, keys) for name, keys in required.items()
-    )
-    if solver["kind"] != "thermal":
-        raise ValueError('a thermal run needs [solver] kind = "thermal"')
-    faces = []
-    for axis in "xyz":
-        spec = _table(grid[axis], "axis", f"grid.{axis}", ("cells", "lower", "upper"))
-        ends = spec["cells"], spec["lower"], spec["upper"]
-        if "layer_thickness" not in spec and "cells_in_layer" in spec:
-            raise ValueError(f"[grid.{axis}] cells_in_layer needs layer_thickness")
-        faces.append(
-            uniform_faces(*ends)
-            if "layer_thickness" not in spec
-            else wall_resolving_faces(
-                *ends,
-                layer_thickness=spec["layer_thickness"],
-                cells_in_layer=spec.get("cells_in_layer", 4),
-                max_ratio=None,
-            )
-        )
-    kinds = {"periodic": BoundaryCondition(PERIODIC), "wall": BoundaryCondition(NEUMANN)}
-    conditions, start = flow.pop("conditions"), flow.pop("initial_velocity", "rest")
-    if len(conditions) != 3 or any(kind not in kinds for kind in conditions):
-        raise ValueError(
-            '[flow] conditions are three of "periodic" and "wall"; an open axis is not read from TOML yet'
-        )
-    if start not in ("rest", "steady"):
-        raise ValueError('[flow] initial_velocity is "rest" or "steady"')
-    hold_flow, temperature, source = (
-        thermal.pop(key, value)
-        for key, value in (("hold_flow", False), ("initial_temperature", 0.0), ("heat_source", 0.0))
-    )
-    boundaries = []
-    for axis, kind in zip("xyz", conditions):
-        if (axis in thermal) == (kind == "periodic"):
-            raise ValueError(f"[thermal.{axis}] is needed for a wall axis and refused for a periodic one")
-        if kind == "periodic":
-            boundaries.append(BoundaryCondition(PERIODIC))
-            continue
-        wall = _table(thermal.pop(axis), "wall", f"thermal.{axis}", ("kind",))
-        if wall["kind"] not in ("temperature", "heat_flux"):
-            raise ValueError(f'[thermal.{axis}] kind is "temperature" or "heat_flux"')
-        ends, k = (wall.get("lower", 0.0), wall.get("upper", 0.0)), thermal["thermal_conductivity"]
-        boundaries.append(thermal_boundary(wall["kind"], *ends, conductivity=k))
-    steps, chunk = run["steps"], run.get("chunk", run["steps"])
-    if steps < 1 or chunk < 1 or steps % chunk:
-        raise ValueError("[run] steps must be a positive multiple of chunk")
-    restart = {"mode": "resume", **restart} if restart else None
-    if restart is not None and ("path" not in restart or restart["mode"] not in ("resume", "import")):
-        raise ValueError('[restart] needs a path, and mode "resume" or "import"')
-    flow = ChannelProblem(Grid(*faces), tuple(kinds[kind] for kind in conditions), **flow)
-    problem = ThermalProblem(flow, tuple(boundaries), **thermal)
-    provenance = {"heat_source": float(source), "hold_flow": hold_flow}
-    if restart is not None:
-        resume = provenance if restart["mode"] == "resume" else None
-        state = load_thermal_record(base / restart["path"], problem, units=case["units"], run=resume)
-    else:
-        velocity = solve_steady_state(flow).velocity if start == "steady" else None
-        state = initial_thermal_state(problem, temperature, velocity)
-    limits = {key: run.get(f"{key}_limit") for key in ("advective_cfl", "buoyancy_courant")}
-    return ThermalRun(
-        case["name"],
-        case["units"],
-        problem,
-        state,
-        Field(jnp.full(flow.grid.shape, source, dtype=jnp.result_type(float)), _CELL, flow.grid),
-        hold_flow,
-        steps,
-        chunk,
-        float(run.get("divergence_tolerance", 1e-10)),
-        base / output["directory"],
-        output.get("write_paraview", True),
-        output.get("write_restart", True),
-        provenance,
-        limits,
-        restart,
-    )

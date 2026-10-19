@@ -139,7 +139,10 @@ it stops changing.
 conservative flux:
 - From a cell of width $w$ the face takes $T+\tfrac{w}{2}s$. Here $s$ is van
   Leer's mean $(a|b|+|a|b)/(|a|+|b|)$ of the face gradients on either side,
-  zero at an extremum.
+  zero at an extremum. The limiter zeroes the slope at a smooth extremum as well
+  as at a kink, so the reconstruction there is first order and the scheme's
+  order drops below second near smooth extrema. The orders quoted below are for
+  a profile without one.
 - The face value is held between the two cells it lies between, which keeps it
   bounded on a stretched grid. A linear temperature on the tanh-stretched test
   grid reads exactly.
@@ -285,10 +288,60 @@ picks its donor by the sign of each face velocity. A derivative is therefore
 one-sided only where a face velocity is exactly zero, or where the perturbation
 flips a face's sign; nothing is smoothed to hide it.
 
-**Memory.** `advance_thermal` keeps no field history; in reverse mode it keeps
-one state per step, so its memory grows with the number of steps. A restart
+**Memory.** `advance_thermal` keeps no field history. In reverse mode, with
+`checkpoint=True` (the default), it keeps one state per step and recomputes each
+step's intermediates, so the memory grows with the number of steps. A restart
 record and the command's chunks are not reverse-mode checkpoints and do not
 bound that memory; the command is not differentiated end to end.
+
+`diagnostics=n` keeps the scalars of every `n`-th step only (`steps` must be a
+multiple of `n`); the default keeps every step's. With `checkpoint=True` the
+block of `n` steps becomes the checkpoint: one state per block is stored, but a
+block's reverse pass holds the intermediates of all `n` of its steps. It trades
+the first memory for the second, the saving being largest near
+$n\approx\sqrt{\text{steps}}$. The steps it skips are neither kept nor checked,
+so `lmhdx case.toml`, which accepts a run on every step's diagnostics, stays at
+stride 1.
+
+**Checkpointing a long differentiated run.** Split the run into chunks and
+checkpoint across them: a `jax.checkpoint`-wrapped chunk stores only its start
+state in the forward pass and recomputes its steps in reverse, so the memory is
+one state per chunk plus one chunk's steps, not one state per step. Loop over
+the chunks with an outer `lax.scan`, so that a jitted objective compiles one
+copy of the chunk, not one per chunk.
+
+```python
+chunk = jax.checkpoint(lambda state: advance_thermal(thermal_step, state, heat, 100, diagnostics=100)[0])
+
+def run(state):  # 5000 steps
+    final, _ = jax.lax.scan(lambda s, _: (chunk(s), None), state, None, length=50)
+    return objective(final)
+
+gradient = jax.jit(jax.grad(run))(start)
+```
+
+The gradient is the plain run's to round-off
+(`test_the_checkpointing_recipe_has_the_plain_runs_gradient`). This is the same
+computation as `diagnostics=100` with `checkpoint=True` on the plain call; the
+loop spells out the chunks.
+
+Measured, as the compiled temporary memory of `jax.jit(jax.grad(objective))`
+(`.lower(start).compile().memory_analysis()`, 64-bit CPU, held flow, upwind),
+for 1600 steps on 32 x 16 x 16 cells, where one state is 0.06 MiB for the
+temperature alone:
+
+| Run | Compiled memory (MiB) |
+|---|---|
+| Plain, one scan of 1600 steps | 418 |
+| 160 chunks of 10 steps | 46 |
+| 40 chunks of 40 steps | 21 |
+| 10 chunks of 160 steps | 37 |
+
+The same 1600 steps with `diagnostics=10`, `40` and `160` on the plain call give
+the same 46, 21 and 37 MiB: the stride is the chunk. The minimum is near the
+square root of the step count, 40; either side of it, the stored states or one
+block's intermediates dominate. The figures are for this grid and step; they
+scale with the cells, and the ratio is what carries over.
 
 **Not included**
 - Conjugate wall conduction.
@@ -538,7 +591,8 @@ for problem in (thermal, dataclasses.replace(thermal, expansion_coefficient=0.02
 ## A run from TOML
 
 A thermal case runs from a TOML file, `lmhdx case.toml`. The keys are the Python
-argument names. Before the run is built, every table, the top level included,
+argument names, and `schema_version = 1` (the only version, and the default) opens
+the file. Before the run is built, every table, the top level included,
 refuses an unknown or missing key and a value of the wrong TOML type: a count is
 an integer and a flag a boolean, neither converted.
 - `[grid]`: each axis as `{cells, lower, upper}`, with `layer_thickness` and
@@ -556,6 +610,8 @@ an integer and a flag a boolean, neither converted.
 - `[restart]`: an optional record's `path`, and its `mode`.
 
 ```toml
+schema_version = 1
+
 [case]
 name = "heated_duct"
 units = "nondimensional"
@@ -619,7 +675,8 @@ provenance, so it can be imported but not resumed.
 - `accepted`;
 - the first rejected sample's step, reasons and Courant numbers;
 - the limits;
-- the last diagnostics;
+- the last diagnostics and `time`, the time they are at: on a rejection both belong to the rejected chunk
+  (its last sample and its end), while `steps` counts the accepted steps only;
 - the run's largest heat balance residual, Courant numbers and Boussinesq
   measure. No limit applies to the residual or the Boussinesq measure.
 

@@ -79,9 +79,9 @@ the two modules that every core change touches.
 
 ## Amendments after review (2026-10-15)
 
-From the review of #230–#241. Each adds to its decision, and says so where it narrows the text above.
+From the review of #230–#241. Each adds to its decision (sublabelled D31.1 to D31.3 where it amends D31), and says so where it narrows the text above.
 
-**D31, the open duct.** An inflow-outflow axis carries heat on a held flow
+**D31.1, the open duct.** An inflow-outflow axis carries heat on a held flow
 (step 5.3): the state keeps the steady velocity of `axial.solve_open_duct`, the
 step is built with `hold_flow=True`, and a held flow takes no buoyancy. This
 narrows the refusal of inflow-outflow problems above to an evolving flow, which
@@ -97,14 +97,14 @@ prescribed total (Danckwerts) flux, with the reservoir temperature given to each
 step as numerical input. The base outlet operator stays homogeneous Neumann, so
 the conduction inverse is unchanged.
 
-**D31, transport** (from the review of #234). Upwinding stays the default.
+**D31.2, transport** (from the review of #234). Upwinding stays the default.
 `advection="van_leer"` adds a van Leer-limited second-order face value, held
 between its two cells. Its Courant limit of 0.5 is a tested envelope, not a
 derived bound. Open, inlet and wall faces keep the first-order value, and the
 step stays first order in time. The face value is not affine in the
 temperature, so `load_attribution` accepts upwind or no transport only.
 
-**D31, dissipation and integration** (from the review of #230). Viscous
+**D31.3, dissipation and integration** (from the review of #230). Viscous
 heating stays out. With the Joule heat it makes up the hydraulic power of a
 developed duct with insulating walls. The Brinkman number `mu U^2 / (k dT)`,
 about `1e-8` for PbLi at 0.1 m/s and 100 K, scales only the viscous part; the

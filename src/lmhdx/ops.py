@@ -112,6 +112,10 @@ from .grid import CENTER, FACE, NEUMANN, BoundaryCondition, Field, Grid, pad
 
 __all__ = [
     "advective_step_limit",
+    "cell_force_to_faces",
+    "neighbours",
+    "outgoing_rate",
+    "padded_gradient",
     "axis_divergence",
     "cell_average",
     "cell_inner_product",
@@ -179,11 +183,16 @@ def face_gradient(field: Field, axis: int | str, condition: BoundaryCondition) -
     grid = field.grid
     index = grid.axis_index(axis)
     _require_cell_centred(field)
-    padded = pad(field.data, index, condition, grid=grid)
-    difference = _take(padded, index, slice(1, None)) - _take(padded, index, slice(None, -1))
-    factor = host_array(grid, _inverse_distances, index, condition, dtype=field.dtype)
     offset = tuple(FACE if position == index else CENTER for position in range(3))
-    return Field(difference * factor, offset, grid)
+    return Field(
+        padded_gradient(pad(field.data, index, condition, grid=grid), grid, index, condition), offset, grid
+    )
+
+
+def padded_gradient(padded: jnp.ndarray, grid: Grid, axis: int, condition: BoundaryCondition) -> jnp.ndarray:
+    """Difference an array already padded by ``condition`` along ``axis`` onto the faces normal to it."""
+    lower, upper = neighbours(padded, axis)
+    return (upper - lower) * host_array(grid, _inverse_distances, axis, condition, dtype=padded.dtype)
 
 
 def axis_divergence(face: Field, axis: int | str) -> Field:
@@ -417,6 +426,11 @@ def _take(data: jnp.ndarray, axis: int, selection: slice) -> jnp.ndarray:
     return data[(slice(None),) * axis + (selection,)]
 
 
+def neighbours(data: jnp.ndarray, axis: int) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """The lower and upper neighbour along ``axis``: all but the last entry, and all but the first."""
+    return _take(data, axis, slice(None, -1)), _take(data, axis, slice(1, None))
+
+
 def _shaped(values: np.ndarray, axis: int) -> np.ndarray:
     return values.reshape([-1 if position == axis else 1 for position in range(3)])
 
@@ -601,6 +615,32 @@ def advective_step_limit(velocity: tuple[Field, Field, Field]) -> jnp.ndarray:
         jnp.max(jnp.abs(field.data)) / float(np.min(grid.widths[axis])) for axis, field in enumerate(velocity)
     )
     return 1.0 / rate
+
+
+def outgoing_rate(velocity: tuple[Field, Field, Field]) -> jnp.ndarray:
+    """Return each cell's outgoing volume flux over its volume, ``sum_f max(u_f . n_f, 0) A_f / V``.
+
+    ``dt`` times its maximum is the transport's Courant number. On a Cartesian grid ``A_f / V`` is one over the
+    cell's width along the face normal.
+    """
+    grid, total = velocity[0].grid, 0.0
+    for axis, carrier in enumerate(velocity):
+        lower, upper = neighbours(carrier.data, axis)
+        widths = _broadcast(np.asarray(grid.widths[axis]), axis, carrier.dtype)
+        total = total + (jnp.maximum(upper, 0.0) + jnp.maximum(-lower, 0.0)) / widths
+    return total
+
+
+def cell_force_to_faces(
+    force: tuple[Field, Field, Field], conditions: tuple[BoundaryCondition, ...], *, zero_walls: bool = False
+) -> tuple[Field, Field, Field]:
+    """Carry a cell-centred force onto the velocity faces by :func:`face_average` per component, wrapping a
+    periodic axis and copying at a wall; ``zero_walls`` then zeroes the wall faces, where the velocity is not an
+    unknown."""
+    faces = tuple(face_average(component, axis, conditions[axis]) for axis, component in enumerate(force))
+    if zero_walls:
+        return tuple(wall_insulated(face, axis, conditions[axis]) for axis, face in enumerate(faces))
+    return faces
 
 
 def _component(

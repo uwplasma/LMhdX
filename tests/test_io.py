@@ -1017,7 +1017,8 @@ def test_a_thermal_state_opens_as_a_rectilinear_grid_in_vtk_order(tmp_path: Path
     import xml.etree.ElementTree as ElementTree
 
     from lmhdx.core3d import zero_velocity
-    from lmhdx.io import write_thermal_vtr
+    from lmhdx.io import write_vtr
+    from lmhdx.ops import cell_average
     from lmhdx.thermal import initial_thermal_state
 
     thermal = _thermal_duct(cells=(2, 3, 4))
@@ -1029,9 +1030,11 @@ def test_a_thermal_state_opens_as_a_rectilinear_grid_in_vtk_order(tmp_path: Path
         component.replace_data(jnp.asarray(np.random.default_rng(41 + axis).standard_normal(component.shape)))
         for axis, component in enumerate(rest)
     )
-    path = write_thermal_vtr(
-        thermal, initial_thermal_state(thermal, temperature, velocity), tmp_path / "frame"
+    state = initial_thermal_state(thermal, temperature, velocity)
+    centred = jnp.stack(
+        [cell_average(field, axis).data for axis, field in enumerate(state.velocity)], axis=-1
     )
+    path = write_vtr(tmp_path / "frame", grid.faces, temperature=state.temperature.data, velocity=centred)
     root = ElementTree.parse(path).getroot()
     assert (
         root.get("type") == "RectilinearGrid"
@@ -1127,7 +1130,8 @@ def test_a_thermal_run_stops_at_the_first_sample_past_a_limit(tmp_path: Path, li
     import json
 
     from lmhdx.cases import _load_toml
-    from lmhdx.thermal import load_thermal_record, thermal_run_from_toml
+    from lmhdx.io import thermal_run_from_toml
+    from lmhdx.thermal import load_thermal_record
 
     page = _page_toml().replace('kind = "heat_flux"\nupper = 1.0', 'kind = "temperature"')
     case = tmp_path / "case.toml"
@@ -1148,7 +1152,8 @@ def test_a_thermal_run_stops_at_the_first_sample_past_a_limit(tmp_path: Path, li
     run, rejected = thermal_run_from_toml(_load_toml(case), tmp_path), out / "heated_duct_000020_rejected.npz"
     with pytest.raises(ValueError, match="other inputs"):
         load_thermal_record(rejected, run.problem, units=run.units, run=run.provenance)
-    load_thermal_record(rejected, run.problem, units=run.units)
+    attempted = load_thermal_record(rejected, run.problem, units=run.units)
+    assert summary["time"] == float(attempted.time)  # `time` is the attempted chunk's, as `last` is
 
 
 def test_conduction_alone_is_not_held_to_an_advective_limit(tmp_path: Path):
@@ -1190,19 +1195,20 @@ def test_a_thermal_toml_refuses_what_it_cannot_run(tmp_path: Path, monkeypatch: 
     """Each named fault, before a steady flow is solved: an unknown table or key, a value of the wrong TOML type,
     a missing or malformed table, an orphan option, an unsupported boundary, an open axis, steps that are not a
     multiple of the chunk, and a record of another problem or, to resume, of a run with other inputs."""
-    import lmhdx.thermal
+    import lmhdx.steady
     from lmhdx.cases import _load_toml
-    from lmhdx.thermal import thermal_run_from_toml
+    from lmhdx.io import thermal_run_from_toml
 
     page = _page_toml()
     (tmp_path / "base.toml").write_text(page)
     assert cli.main([str(tmp_path / "base.toml")]) == 0
-    monkeypatch.setattr(lmhdx.thermal, "solve_steady_state", lambda flow: pytest.fail("solved a steady flow"))
+    monkeypatch.setattr(lmhdx.steady, "solve_steady_state", lambda flow: pytest.fail("solved a steady flow"))
     page = page.replace("dt = 2.0e-3", 'dt = 2.0e-3\ninitial_velocity = "steady"')
     restart = '\n[restart]\npath = "out/heated_duct_000020.npz"\n'
     changes = (
         ("heat_source = 0.5", "heat_source = 0.5\nconductivity_of_walls = 1.0", "unknown keys"),
         ("[run]", "[solvers]\nkind = 1\n\n[run]", r"\[top level\] has unknown keys \['solvers'\]"),
+        ("schema_version = 1", "schema_version = 2", "schema_version must be 1"),
         ("steps = 40", "steps = 40.5", "steps must be a TOML integer"),
         ("y = { cells = 8", "y = { cells = true", "cells must be a TOML integer"),
         ("heat_source = 0.5", 'heat_source = 0.5\nhold_flow = "false"', "hold_flow must be a TOML boolean"),
