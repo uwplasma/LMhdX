@@ -39,6 +39,7 @@ from .cases import (
     make_shercliff_case,
 )
 from .fully_developed import case_mesh, solve_fully_developed, solve_fully_developed_transient
+from .ops import cell_average
 
 
 @dataclass(frozen=True)
@@ -395,50 +396,35 @@ def _array_text(array: jnp.ndarray) -> str:
     return " ".join(f"{float(value):.12e}" for value in jnp.ravel(array))
 
 
-def _rectilinear_points(mesh: StructuredMesh) -> str:
-    return (
-        f"<Coordinates>\n"
-        f'<DataArray type="Float64" Name="X" format="ascii">{_array_text(mesh.x_faces)}</DataArray>\n'
-        f'<DataArray type="Float64" Name="Y" format="ascii">{_array_text(mesh.y_faces)}</DataArray>\n'
-        f'<DataArray type="Float64" Name="Z" format="ascii">{_array_text(mesh.z_faces)}</DataArray>\n'
-        f"</Coordinates>"
-    )
+def write_vtr(path: str | Path, faces, **cells) -> Path:
+    """Write named cell arrays as a ParaView rectilinear grid; returns ``path`` with the ``.vtr`` suffix.
 
+    ``faces`` is the three axes' face coordinates, and each array is ``(nx, ny, nz)`` or has a trailing
+    component axis of three; the cells are written with x varying fastest, as VTK orders them.
+    """
+    target = Path(path).with_suffix(".vtr")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    extent = " ".join(f"0 {np.size(axis) - 1}" for axis in faces)
 
-def _cell_data(solution: Solution) -> str:
-    fields = {
-        "u": solution.state.u,
-        "phi": solution.state.phi,
-        "jy": solution.state.jy,
-        "jz": solution.state.jz,
-        "lorentz_x": solution.state.lorentz_x,
-    }
-    arrays = []
-    for name, field in fields.items():
-        cell = field[None, :, :]
-        arrays.append(
-            f'<DataArray type="Float64" Name="{name}" format="ascii">{_array_text(cell)}</DataArray>'
+    def entry(name, data, extra=""):
+        return (
+            f'<DataArray type="Float64" Name="{name}"{extra} format="ascii">{_array_text(data)}</DataArray>'
         )
-    return "<CellData>\n" + "\n".join(arrays) + "\n</CellData>"
 
+    def cell(name, data):
+        data = np.asarray(data)
+        vector = data.ndim == 4
+        data = np.transpose(data, (2, 1, 0, 3) if vector else (2, 1, 0))
+        return entry(name, data, ' NumberOfComponents="3"' if vector else "")
 
-def write_vtr(solution: Solution, out_dir: str | Path) -> Path:
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / f"{solution.case_name}.vtr"
-    mesh = solution.mesh
-    content = (
-        '<?xml version="1.0"?>\n'
-        '<VTKFile type="RectilinearGrid" version="0.1" byte_order="LittleEndian">\n'
-        f'<RectilinearGrid WholeExtent="0 {mesh.nx} 0 {mesh.ny} 0 {mesh.nz}">\n'
-        f'<Piece Extent="0 {mesh.nx} 0 {mesh.ny} 0 {mesh.nz}">\n'
-        f"{_cell_data(solution)}\n"
-        f"{_rectilinear_points(mesh)}\n"
-        "</Piece>\n"
-        "</RectilinearGrid>\n"
-        "</VTKFile>\n"
+    target.write_text(
+        '<?xml version="1.0"?>\n<VTKFile type="RectilinearGrid" version="0.1" byte_order="LittleEndian">\n'
+        f'<RectilinearGrid WholeExtent="{extent}">\n<Piece Extent="{extent}">\n<CellData>\n'
+        + "\n".join(cell(name, data) for name, data in cells.items())
+        + "\n</CellData>\n<Coordinates>\n"
+        + "\n".join(entry(name, axis) for name, axis in zip("XYZ", faces))
+        + "\n</Coordinates>\n</Piece>\n</RectilinearGrid>\n</VTKFile>\n"
     )
-    target.write_text(content)
     return target
 
 
@@ -461,44 +447,12 @@ def write_pvd(entries: list[tuple[float, str]], out_dir: str | Path, name: str =
     return target
 
 
-def write_thermal_vtr(problem, state, path: str | Path) -> Path:
-    """Write a thermal state as a ParaView rectilinear grid: the temperature and the cell-centred velocity.
-
-    ``problem`` is a :class:`lmhdx.thermal.ThermalProblem` and ``state`` a
-    :class:`lmhdx.thermal.ThermalState`. The cells are written with x varying
-    fastest, as VTK orders them; the velocity is each component's mean over the
-    two faces of its cell. Returns the path written.
-    """
-    grid, target = problem.flow.grid, Path(path).with_suffix(".vtr")
-    target.parent.mkdir(parents=True, exist_ok=True)
-
-    def centred(data, axis):
-        data = np.moveaxis(np.asarray(data), axis, 0)
-        return np.moveaxis(0.5 * (data[:-1] + data[1:]), 0, axis)
-
-    velocity = np.stack([centred(field.data, axis) for axis, field in enumerate(state.velocity)], axis=-1)
-    temperature = np.transpose(np.asarray(state.temperature.data))
-    extent = " ".join(f"0 {count}" for count in grid.shape)
-    coordinates = "\n".join(
-        f'<DataArray type="Float64" Name="{name}" format="ascii">{_array_text(faces)}</DataArray>'
-        for name, faces in zip("XYZ", grid.faces)
-    )
-    content = (
-        '<?xml version="1.0"?>\n'
-        '<VTKFile type="RectilinearGrid" version="0.1" byte_order="LittleEndian">\n'
-        f'<RectilinearGrid WholeExtent="{extent}">\n<Piece Extent="{extent}">\n<CellData>\n'
-        f'<DataArray type="Float64" Name="temperature" format="ascii">{_array_text(temperature)}</DataArray>\n'
-        '<DataArray type="Float64" Name="velocity" NumberOfComponents="3" format="ascii">'
-        f"{_array_text(np.transpose(velocity, (2, 1, 0, 3)))}</DataArray>\n"
-        f"</CellData>\n<Coordinates>\n{coordinates}\n</Coordinates>\n</Piece>\n</RectilinearGrid>\n</VTKFile>\n"
-    )
-    target.write_text(content)
-    return target
-
-
 def write_paraview(solution: Solution, out_dir: str | Path) -> list[Path]:
-    paths = []
-    paths.append(write_vtr(solution, out_dir))
+    mesh, state = solution.mesh, solution.state
+    cells = {name: getattr(state, name)[None] for name in ("u", "phi", "jy", "jz", "lorentz_x")}
+    paths = [
+        write_vtr(Path(out_dir) / solution.case_name, (mesh.x_faces, mesh.y_faces, mesh.z_faces), **cells)
+    ]
     paths.append(write_pvd([(solution.state.time, paths[0].name)], out_dir, name=solution.case_name))
     return paths
 
@@ -1105,6 +1059,7 @@ def run_thermal(run) -> dict[str, object]:
     )
 
     problem, state, heat = run.problem, run.state, run.heat_source
+    grid = problem.flow.grid
     scheme = _SCHEMES[problem.advection]
     courant = run.limits["advective_cfl"] if problem.advection != "off" else None
     limits = {
@@ -1138,7 +1093,9 @@ def run_thermal(run) -> dict[str, object]:
         if run.write_restart:
             write_thermal_record(run.directory / label, problem, state, units=run.units, run=run.provenance)
         if run.write_paraview:
-            frames.append((float(state.time), write_thermal_vtr(problem, state, run.directory / label).name))
+            centred = [cell_average(field, axis).data for axis, field in enumerate(state.velocity)]
+            cells = {"temperature": state.temperature.data, "velocity": jnp.stack(centred, axis=-1)}
+            frames.append((float(state.time), write_vtr(run.directory / label, grid.faces, **cells).name))
     if frames:
         write_pvd(frames, run.directory, name=run.name if first == 0 else f"{run.name}_from_{first:06d}")
     history = jax.tree_util.tree_map(

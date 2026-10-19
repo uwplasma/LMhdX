@@ -1017,7 +1017,8 @@ def test_a_thermal_state_opens_as_a_rectilinear_grid_in_vtk_order(tmp_path: Path
     import xml.etree.ElementTree as ElementTree
 
     from lmhdx.core3d import zero_velocity
-    from lmhdx.io import write_thermal_vtr
+    from lmhdx.io import write_vtr
+    from lmhdx.ops import cell_average
     from lmhdx.thermal import initial_thermal_state
 
     thermal = _thermal_duct(cells=(2, 3, 4))
@@ -1029,9 +1030,11 @@ def test_a_thermal_state_opens_as_a_rectilinear_grid_in_vtk_order(tmp_path: Path
         component.replace_data(jnp.asarray(np.random.default_rng(41 + axis).standard_normal(component.shape)))
         for axis, component in enumerate(rest)
     )
-    path = write_thermal_vtr(
-        thermal, initial_thermal_state(thermal, temperature, velocity), tmp_path / "frame"
+    state = initial_thermal_state(thermal, temperature, velocity)
+    centred = jnp.stack(
+        [cell_average(field, axis).data for axis, field in enumerate(state.velocity)], axis=-1
     )
+    path = write_vtr(tmp_path / "frame", grid.faces, temperature=state.temperature.data, velocity=centred)
     root = ElementTree.parse(path).getroot()
     assert (
         root.get("type") == "RectilinearGrid"
