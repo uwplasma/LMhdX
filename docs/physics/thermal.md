@@ -538,7 +538,8 @@ for problem in (thermal, dataclasses.replace(thermal, expansion_coefficient=0.02
 ## A run from TOML
 
 A thermal case runs from a TOML file, `lmhdx case.toml`. The keys are the Python
-argument names. Before the run is built, every table, the top level included,
+argument names, and `schema_version = 1` (the only version, and the default) opens
+the file. Before the run is built, every table, the top level included,
 refuses an unknown or missing key and a value of the wrong TOML type: a count is
 an integer and a flag a boolean, neither converted.
 - `[grid]`: each axis as `{cells, lower, upper}`, with `layer_thickness` and
@@ -556,6 +557,8 @@ an integer and a flag a boolean, neither converted.
 - `[restart]`: an optional record's `path`, and its `mode`.
 
 ```toml
+schema_version = 1
+
 [case]
 name = "heated_duct"
 units = "nondimensional"

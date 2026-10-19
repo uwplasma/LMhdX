@@ -1122,11 +1122,184 @@ def run_thermal(run) -> dict[str, object]:
     return summary
 
 
+_TOML_TYPES = {
+    "table": dict,
+    "array": list,
+    "string": str,
+    "boolean": bool,
+    "integer": int,
+    "number": (int, float),
+}
+_TOML_SCHEMA = {  # each table's keys and TOML types, "name:type"; "vector" is an array of three numbers
+    "": "schema_version:integer case:table solver:table grid:table flow:table thermal:table run:table"
+    " output:table restart:table",
+    "case": "name:string units:string",
+    "solver": "kind:string",
+    "grid": "x:table y:table z:table",
+    "axis": "cells:integer lower:number upper:number layer_thickness:number cells_in_layer:integer",
+    "flow": "conditions:array advection:string initial_velocity:string dt:number density:number viscosity:number"
+    " conductivity:number magnetic_field:vector forcing:vector wall_conductance:vector",
+    "thermal": "joule_heating:boolean advection:string hold_flow:boolean gravity:vector x:table y:table z:table"
+    " specific_heat:number thermal_conductivity:number reference_temperature:number"
+    " expansion_coefficient:number initial_temperature:number heat_source:number",
+    "wall": "kind:string lower:number upper:number",
+    "run": "steps:integer chunk:integer divergence_tolerance:number advective_cfl_limit:number"
+    " buoyancy_courant_limit:number",
+    "output": "directory:string write_paraview:boolean write_restart:boolean",
+    "restart": "path:string mode:string",
+}
+
+
+def _toml_table(table, schema: str, where: str, required: str = "") -> dict:
+    """Return a copy of ``table`` with every key ``schema`` knows, of its TOML type, and every ``required`` one."""
+    kinds = dict(item.split(":") for item in _TOML_SCHEMA[schema].split())
+    if not isinstance(table, dict):
+        raise ValueError(f"[{where}] must be a table")
+    unknown, missing = sorted(set(table) - set(kinds)), [key for key in required.split() if key not in table]
+    if unknown or missing:
+        raise ValueError(f"[{where}] has unknown keys {unknown}" if unknown else f"[{where}] lacks {missing}")
+
+    def typed(kind, value):
+        if kind == "vector":
+            return (
+                isinstance(value, list) and len(value) == 3 and all(typed("number", item) for item in value)
+            )
+        return isinstance(value, _TOML_TYPES[kind]) and (kind == "boolean" or not isinstance(value, bool))
+
+    for key, value in table.items():
+        if not typed(kinds[key], value):
+            label = "array of three numbers" if kinds[key] == "vector" else kinds[key]
+            raise ValueError(f"[{where}] {key} must be a TOML {label}, not {value!r}")
+    return {key: tuple(value) if kinds[key] == "vector" else value for key, value in table.items()}
+
+
+def _toml_grid(table: dict):
+    """Build the :class:`lmhdx.grid.Grid` of ``[grid]``: each axis ``{cells, lower, upper}``, wall-resolving
+    with ``layer_thickness`` (and ``cells_in_layer``)."""
+    from .grid import Grid, uniform_faces, wall_resolving_faces
+
+    faces = []
+    for axis in "xyz":
+        spec = _toml_table(table[axis], "axis", f"grid.{axis}", "cells lower upper")
+        ends, layer = (spec["cells"], spec["lower"], spec["upper"]), spec.get("layer_thickness")
+        if layer is None and "cells_in_layer" in spec:
+            raise ValueError(f"[grid.{axis}] cells_in_layer needs layer_thickness")
+        faces.append(
+            uniform_faces(*ends)
+            if layer is None
+            else wall_resolving_faces(
+                *ends, layer_thickness=layer, cells_in_layer=spec.get("cells_in_layer", 4), max_ratio=None
+            )
+        )
+    return Grid(*faces)
+
+
+def _toml_flow(table: dict, grid):
+    """Build the :class:`lmhdx.core3d.ChannelProblem` of ``[flow]`` and its ``initial_velocity``: ``conditions``
+    are ``"periodic"`` or ``"wall"`` per axis (an inflow-outflow axis is not read from TOML yet)."""
+    from .core3d import ChannelProblem
+    from .grid import NEUMANN, PERIODIC
+    from .grid import BoundaryCondition as Boundary
+
+    kinds, table = {"periodic": PERIODIC, "wall": NEUMANN}, dict(table)
+    conditions, start = table.pop("conditions"), table.pop("initial_velocity", "rest")
+    if len(conditions) != 3 or any(kind not in kinds for kind in conditions):
+        raise ValueError(
+            '[flow] conditions are three of "periodic" and "wall"; an open axis is not read from TOML yet'
+        )
+    if start not in ("rest", "steady"):
+        raise ValueError('[flow] initial_velocity is "rest" or "steady"')
+    return (
+        ChannelProblem(grid, tuple(Boundary(kinds[kind]) for kind in conditions), **table),
+        conditions,
+        start,
+    )
+
+
+def thermal_run_from_toml(root: dict, base: str | Path = ".", *, version: int = 1):
+    """Read a thermal run from a parsed TOML document with ``[solver] kind = "thermal"``; ``base`` resolves paths.
+
+    The keys are the Python names. Every table, the document included, refuses an unknown or a missing key and
+    a value of the wrong TOML type (a count is an integer, a flag a boolean, neither converted), all before
+    the run is built. ``schema_version`` is 1, the only one, and may be left out. ``[grid]`` and ``[flow]`` are
+    read by :func:`_toml_grid` and :func:`_toml_flow`. ``[thermal]``
+    holds :class:`lmhdx.thermal.ThermalProblem`'s values, ``hold_flow``, a uniform ``initial_temperature`` and
+    ``heat_source``, and for each wall axis, and only those, a table ``[thermal.y]`` of
+    :func:`lmhdx.thermal.thermal_boundary`'s ``kind`` (``"temperature"`` or ``"heat_flux"``), ``lower`` and
+    ``upper``. ``[run]`` gives ``steps`` in compiled chunks of ``chunk``, each ending in a record and a frame,
+    and the limits of :func:`run_thermal`; ``[output]`` the ``directory`` and what to write; ``[restart]`` a
+    :func:`lmhdx.thermal.write_thermal_record` record's ``path`` and ``mode``: ``"resume"``, the default,
+    continues the run that wrote it, whose heat source and held flow must be these, and ``"import"`` starts
+    from its state.
+    """
+    from .grid import PERIODIC, Field
+    from .grid import BoundaryCondition as Boundary
+    from .steady import solve_steady_state
+    from .thermal import (
+        _CELL,
+        ThermalProblem,
+        ThermalRun,
+        initial_thermal_state,
+        load_thermal_record,
+        thermal_boundary,
+    )
+
+    base, tables = Path(base), _toml_table(root, "", "top level")
+    if tables.get("schema_version", version) != version:
+        raise ValueError(f"schema_version must be {version}")
+    required = {"case": "name units", "solver": "kind", "flow": "conditions dt", "run": "steps"}
+    required |= {"thermal": "specific_heat thermal_conductivity reference_temperature", "output": "directory"}
+    case, solver, flow, run, thermal, output, restart = (
+        _toml_table(tables.get(name, {}), name, name, keys)
+        for name, keys in (required | {"restart": ""}).items()
+    )
+    if solver["kind"] != "thermal":
+        raise ValueError('a thermal run needs [solver] kind = "thermal"')
+    flow, conditions, start = _toml_flow(
+        flow, _toml_grid(_toml_table(tables.get("grid", {}), "grid", "grid", "x y z"))
+    )
+    hold_flow, temperature, source = (
+        thermal.pop(key, value)
+        for key, value in (("hold_flow", False), ("initial_temperature", 0.0), ("heat_source", 0.0))
+    )
+    boundaries = []
+    for axis, kind in zip("xyz", conditions):
+        if (axis in thermal) == (kind == "periodic"):
+            raise ValueError(f"[thermal.{axis}] is needed for a wall axis and refused for a periodic one")
+        if kind == "periodic":
+            boundaries.append(Boundary(PERIODIC))
+            continue
+        wall = _toml_table(thermal.pop(axis), "wall", f"thermal.{axis}", "kind")
+        if wall["kind"] not in ("temperature", "heat_flux"):
+            raise ValueError(f'[thermal.{axis}] kind is "temperature" or "heat_flux"')
+        ends, k = (wall.get("lower", 0.0), wall.get("upper", 0.0)), thermal["thermal_conductivity"]
+        boundaries.append(thermal_boundary(wall["kind"], *ends, conductivity=k))
+    steps, chunk = run["steps"], run.get("chunk", run["steps"])
+    if steps < 1 or chunk < 1 or steps % chunk:
+        raise ValueError("[run] steps must be a positive multiple of chunk")
+    restart = {"mode": "resume", **restart} if restart else None
+    if restart is not None and ("path" not in restart or restart["mode"] not in ("resume", "import")):
+        raise ValueError('[restart] needs a path, and mode "resume" or "import"')
+    problem = ThermalProblem(flow, tuple(boundaries), **thermal)
+    provenance = {"heat_source": float(source), "hold_flow": hold_flow}
+    if restart is not None:
+        resume = provenance if restart["mode"] == "resume" else None
+        state = load_thermal_record(base / restart["path"], problem, units=case["units"], run=resume)
+    else:
+        velocity = solve_steady_state(flow).velocity if start == "steady" else None
+        state = initial_thermal_state(problem, temperature, velocity)
+    heat = Field(jnp.full(flow.grid.shape, source, dtype=jnp.result_type(float)), _CELL, flow.grid)
+    limits = {key: run.get(f"{key}_limit") for key in ("advective_cfl", "buoyancy_courant")}
+    return ThermalRun(
+        case["name"], case["units"], problem, state, heat, hold_flow, steps, chunk,
+        float(run.get("divergence_tolerance", 1e-10)), base / output["directory"],
+        output.get("write_paraview", True), output.get("write_restart", True), provenance, limits, restart,
+    )  # fmt: skip
+
+
 def run_from_toml(path: str | Path) -> dict[str, object]:
     root = _load_toml(path)
     if root.get("solver", {}).get("kind") == "thermal":
-        from .thermal import thermal_run_from_toml
-
         return run_thermal(thermal_run_from_toml(root, Path(path).resolve().parent))
     config = load_run_config(path)
     return _run_config(config)

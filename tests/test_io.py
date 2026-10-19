@@ -1130,7 +1130,8 @@ def test_a_thermal_run_stops_at_the_first_sample_past_a_limit(tmp_path: Path, li
     import json
 
     from lmhdx.cases import _load_toml
-    from lmhdx.thermal import load_thermal_record, thermal_run_from_toml
+    from lmhdx.io import thermal_run_from_toml
+    from lmhdx.thermal import load_thermal_record
 
     page = _page_toml().replace('kind = "heat_flux"\nupper = 1.0', 'kind = "temperature"')
     case = tmp_path / "case.toml"
@@ -1193,19 +1194,20 @@ def test_a_thermal_toml_refuses_what_it_cannot_run(tmp_path: Path, monkeypatch: 
     """Each named fault, before a steady flow is solved: an unknown table or key, a value of the wrong TOML type,
     a missing or malformed table, an orphan option, an unsupported boundary, an open axis, steps that are not a
     multiple of the chunk, and a record of another problem or, to resume, of a run with other inputs."""
-    import lmhdx.thermal
+    import lmhdx.steady
     from lmhdx.cases import _load_toml
-    from lmhdx.thermal import thermal_run_from_toml
+    from lmhdx.io import thermal_run_from_toml
 
     page = _page_toml()
     (tmp_path / "base.toml").write_text(page)
     assert cli.main([str(tmp_path / "base.toml")]) == 0
-    monkeypatch.setattr(lmhdx.thermal, "solve_steady_state", lambda flow: pytest.fail("solved a steady flow"))
+    monkeypatch.setattr(lmhdx.steady, "solve_steady_state", lambda flow: pytest.fail("solved a steady flow"))
     page = page.replace("dt = 2.0e-3", 'dt = 2.0e-3\ninitial_velocity = "steady"')
     restart = '\n[restart]\npath = "out/heated_duct_000020.npz"\n'
     changes = (
         ("heat_source = 0.5", "heat_source = 0.5\nconductivity_of_walls = 1.0", "unknown keys"),
         ("[run]", "[solvers]\nkind = 1\n\n[run]", r"\[top level\] has unknown keys \['solvers'\]"),
+        ("[case]", "schema_version = 2\n\n[case]", "schema_version must be 1"),
         ("steps = 40", "steps = 40.5", "steps must be a TOML integer"),
         ("y = { cells = 8", "y = { cells = true", "cells must be a TOML integer"),
         ("heat_source = 0.5", 'heat_source = 0.5\nhold_flow = "false"', "hold_flow must be a TOML boolean"),
