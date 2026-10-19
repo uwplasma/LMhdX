@@ -58,7 +58,7 @@ from .core3d import (
     zero_velocity,
 )
 from .grid import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid, uniform_faces
-from .ops import face_electromotive_force
+from .ops import face_electromotive_force, neighbours
 from .steady import (
     _certified,
     _face_weights,
@@ -505,9 +505,7 @@ def _balance(
         net, gross = 0.0, 0.0
         for axis, face in enumerate(fields):
             flux = face.data * jnp.asarray(grid.face_areas(axis))
-            lower, upper = (
-                jax.lax.slice_in_dim(flux, start, start + grid.shape[axis], axis=axis) for start in (0, 1)
-            )
+            lower, upper = neighbours(flux, axis)
             net, gross = net + upper - lower, gross + jnp.abs(upper) + jnp.abs(lower)
         return net, gross
 

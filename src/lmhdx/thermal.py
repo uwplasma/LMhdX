@@ -85,12 +85,18 @@ from .grid import (
     pad,
 )
 from .ops import (
+    _broadcast,
+    _take,
+    cell_average,
+    cell_force_to_faces,
     cell_inner_product,
     divergence,
-    face_average,
     face_average_adjoint,
     face_gradient,
     laplacian,
+    neighbours,
+    outgoing_rate,
+    padded_gradient,
     wall_insulated,
 )
 from .poisson import FastDiagonalHelmholtz, fast_diagonal_helmholtz, fast_diagonal_poisson
@@ -311,9 +317,9 @@ def _upwind_fluxes(
     """Return ``u_f T_up`` on the velocity faces; the transport term is minus their divergence.
 
     ``T_up`` is the temperature of the cell the face velocity comes from, or with
-    ``advection="van_leer"`` its limited face value (:func:`_limited`). The
-    flow's scalar conditions pad periodic axes by wrapping and walls by copying;
-    the copy is never used, since a wall face carries no advective flux. The
+    ``advection="van_leer"`` its limited face value (:func:`_limited`), from the
+    one array padded by the thermal conditions; the ghost of a wall is never
+    used, since a wall face carries no advective flux. The
     inlet face brings in the inlet temperature, or takes out the first cell's
     against a backflow. The outlet face takes out the last cell's; where the flow
     returns there it brings in ``reservoir``, the outlet's incoming temperature.
@@ -321,13 +327,13 @@ def _upwind_fluxes(
     reaches a returning face; it takes the last cell's temperature and reports the
     boundary invalid.
     """
-    scalar, opening = problem.flow.scalar_conditions, problem.flow.open_axis
+    scalar, opening, grid = problem.flow.scalar_conditions, problem.flow.open_axis, temperature.grid
     fluxes = []
     for axis, carrier in enumerate(velocity):
-        padded = pad(temperature.data, axis, scalar[axis], grid=temperature.grid)
-        lower, upper = (_sliced(padded, axis, start) for start in (0, 1))
-        if problem.advection == "van_leer":
-            lower, upper = _limited(temperature, axis, problem, lower, upper)
+        padded = pad(temperature.data, axis, problem.thermal_conditions[axis], grid=grid)
+        lower, upper = neighbours(padded, axis)
+        if problem.advection == "van_leer" and grid.shape[axis] > 1:
+            lower, upper = _limited(padded, axis, problem, lower, upper)
         flux = carrier.data * jnp.where(carrier.data >= 0.0, lower, upper)
         if axis != opening:
             fluxes.append(wall_insulated(carrier.replace_data(flux), axis, scalar[axis]))
@@ -345,26 +351,24 @@ def _upwind_fluxes(
     return tuple(fluxes)
 
 
-def _limited(temperature: Field, axis: int, problem: ThermalProblem, left, right):
+def _limited(padded, axis: int, problem: ThermalProblem, left, right):
     """Return each face's van Leer value seen from the cell on its left and on its right, on physical distances.
 
-    From a cell of width ``w`` the face value is ``T + (w/2) s`` toward the face, with ``s`` the van Leer mean
-    ``(a |b| + |a| b) / (|a| + |b|)`` of the face gradients on either side of the cell, zero where they differ in sign;
-    it is then held between the two cells the face lies between, which keeps it bounded on a stretched grid.
+    ``padded`` is the temperature padded by the axis's thermal condition. From a cell of width ``w`` the face
+    value is ``T + (w/2) s`` toward the face, with ``s`` the van Leer mean ``(a |b| + |a| b) / (|a| + |b|)`` of
+    the face gradients on either side of the cell, zero where they differ in sign; it is then held between
+    the two cells the face lies between, which keeps it bounded on a stretched grid.
     """
-    grid, condition = temperature.grid, problem.thermal_conditions[axis]
-    slopes, count = face_gradient(temperature, axis, condition).data, grid.shape[axis]
+    grid, condition = problem.flow.grid, problem.thermal_conditions[axis]
+    slopes, count = padded_gradient(padded, grid, axis, condition), grid.shape[axis]
     edges = (count - 1, 1) if condition.is_periodic else (0, count)  # faces -1 and n + 1: the wrap, or a copy
     outer = [jax.lax.slice_in_dim(slopes, index, index + 1, axis=axis) for index in edges]
-    extended = jnp.concatenate([outer[0], slopes, outer[1]], axis=axis)
-    before, at, after = (
-        jax.lax.slice_in_dim(extended, start, start + count + 1, axis=axis) for start in (0, 1, 2)
-    )
+    before, at = neighbours(jnp.concatenate([outer[0], slopes], axis=axis), axis)
+    after = jnp.concatenate([_take(slopes, axis, slice(1, None)), outer[1]], axis=axis)
     widths = np.asarray(grid.widths[axis])
     beside = (widths[-1], widths[0]) if condition.is_periodic else (widths[0], widths[-1])
-    shape = [-1 if position == axis else 1 for position in range(3)]
     left_width, right_width = (
-        jnp.asarray(np.reshape(values, shape), dtype=slopes.dtype)
+        _broadcast(values, axis, slopes.dtype)
         for values in (np.concatenate([[beside[0]], widths]), np.concatenate([widths, [beside[1]]]))
     )
 
@@ -376,26 +380,6 @@ def _limited(temperature: Field, axis: int, problem: ThermalProblem, left, right
     from_left = jnp.clip(left + 0.5 * left_width * van_leer(before, at), low, high)
     from_right = jnp.clip(right - 0.5 * right_width * van_leer(at, after), low, high)
     return from_left, from_right
-
-
-def _outgoing_rate(velocity: tuple[Field, Field, Field]) -> jnp.ndarray:
-    """Return each cell's outgoing volume flux over its volume, ``sum_f max(u_f . n_f, 0) A_f / V``.
-
-    ``dt`` times its maximum is the transport's Courant number. On a Cartesian
-    grid ``A_f / V`` is one over the cell's width along the face normal.
-    """
-    grid, total = velocity[0].grid, 0.0
-    for axis, carrier in enumerate(velocity):
-        lower, upper = (_sliced(carrier.data, axis, start) for start in (0, 1))
-        shape = [-1 if position == axis else 1 for position in range(3)]
-        widths = jnp.asarray(np.reshape(grid.widths[axis], shape), dtype=carrier.dtype)
-        total = total + (jnp.maximum(upper, 0.0) + jnp.maximum(-lower, 0.0)) / widths
-    return total
-
-
-def _sliced(data: jnp.ndarray, axis: int, start: int) -> jnp.ndarray:
-    """All but the last (``start`` 0) or the first (``start`` 1) entry along ``axis``."""
-    return jax.lax.slice_in_dim(data, start, data.shape[axis] - 1 + start, axis=axis)
 
 
 def _joule_heating(currents: tuple[Field, Field, Field], problem: ThermalProblem) -> Field:
@@ -431,13 +415,9 @@ def _buoyancy(temperature: Field, problem: ThermalProblem) -> tuple[Field, Field
     beta, gravity = float(problem.expansion_coefficient), problem.gravity
     if not (beta and any(gravity)):
         return None
-    scalar = problem.flow.scalar_conditions
     excess = -float(problem.flow.density) * beta * (temperature.data - float(problem.reference_temperature))
-    faces = (
-        face_average(temperature.replace_data(excess * g), axis, scalar[axis])
-        for axis, g in enumerate(gravity)
-    )
-    return tuple(wall_insulated(face, axis, scalar[axis]) for axis, face in enumerate(faces))
+    force = tuple(temperature.replace_data(excess * g) for g in gravity)
+    return cell_force_to_faces(force, problem.flow.scalar_conditions, zero_walls=True)
 
 
 class ThermalState(NamedTuple):
@@ -597,7 +577,7 @@ def validate_thermal_inputs(
                 f"buoyancy_courant {buoyant:.4g} exceeds buoyancy_courant_limit {buoyancy_courant_limit}"
             )
     if problem.advection != "off":
-        courant = float(flow.dt) * float(jnp.max(_outgoing_rate(state.velocity)))
+        courant = float(flow.dt) * float(jnp.max(outgoing_rate(state.velocity)))
         if courant > advective_cfl_limit:
             raise ValueError(
                 f"the Courant number {courant:.4g} exceeds advective_cfl_limit {advective_cfl_limit}"
@@ -727,7 +707,7 @@ def build_thermal_step(
             storage,
             storage + out + carried - joule_power - external,
             jnp.max(jnp.abs(change / dt + transport - conducted - sources)),
-            dt * jnp.max(_outgoing_rate(velocity)) if upwind else jnp.zeros((), compute),
+            dt * jnp.max(outgoing_rate(velocity)) if upwind else jnp.zeros((), compute),
             beta * excess,
         )
         new = ThermalState(moved, heated, state.time + dt)
@@ -1125,8 +1105,7 @@ def developed_heat(
     def per_length(data):
         return cell_inner_product(Field(data, _CELL, grid), Field(jnp.ones_like(data), _CELL, grid)) / length
 
-    carrier = velocity[axial].data
-    speed = 0.5 * (_sliced(carrier, axial, 0) + _sliced(carrier, axial, 1))
+    speed = cell_average(velocity[axial], axial).data
     sources = heat_source.data
     if problem.joule_heating:  # otherwise no current is needed
         sources = _joule_heating(face_currents(velocity, flow)[1], problem).data + sources

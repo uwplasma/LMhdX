@@ -106,8 +106,8 @@ from .grid import (
     wall_resolving_faces,
 )
 from .ops import (
+    cell_force_to_faces,
     divergence,
-    face_average,
     face_conductivity,
     face_current,
     face_electromotive_force,
@@ -541,8 +541,7 @@ def face_lorentz_force(
     current dotted with that velocity's electromotive force. The step, the
     steady residual and the energy budget all take the force from here.
     """
-    scalar = problem.scalar_conditions
-    return tuple(face_average(component, axis, scalar[axis]) for axis, component in enumerate(force))
+    return cell_force_to_faces(force, problem.scalar_conditions)
 
 
 def _closed_current(
