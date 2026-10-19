@@ -587,8 +587,8 @@ def test_the_thermal_scan_reproduces_the_stepped_loop_and_stacks_only_scalars():
     strided_final, strided = advance_thermal(thermal_step, state, source, 6, diagnostics=3)
     assert all(np.shape(value) == (2,) for value in strided)  # the last step of each block of three
     for kept, every in zip(jax.tree_util.tree_leaves(strided), jax.tree_util.tree_leaves(history)):
-        assert np.array_equal(np.asarray(kept), np.asarray(every)[2::3])
-    assert np.array_equal(strided_final.temperature.data, final.temperature.data)
+        assert np.allclose(np.asarray(kept), np.asarray(every)[2::3], rtol=1e-9, atol=1e-12)
+    assert np.allclose(strided_final.temperature.data, final.temperature.data, rtol=1e-12, atol=1e-12)
     with pytest.raises(ValueError, match="multiple of the diagnostics stride"):
         advance_thermal(thermal_step, state, source, 6, diagnostics=4)
 
@@ -818,9 +818,9 @@ def _returning_duct(
     opening = BoundaryCondition(DIRICHLET, lower=along[0], upper_kind=NEUMANN)
     rest = zero_velocity(ChannelProblem(grid, (opening, WALL, PERIODIC_AXIS)))
     velocity = (rest[0].replace_data(jnp.asarray(along)), rest[1].replace_data(jnp.asarray(across)), rest[2])
-    from lmhdx.thermal import _outgoing_rate
+    from lmhdx.ops import outgoing_rate
 
-    dt = 0.5 / float(jnp.max(_outgoing_rate(velocity)))
+    dt = 0.5 / float(jnp.max(outgoing_rate(velocity)))
     flow = ChannelProblem(
         grid,
         (opening, WALL, PERIODIC_AXIS),

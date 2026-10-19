@@ -1219,18 +1219,12 @@ def _toml_flow(table: dict, grid):
 def thermal_run_from_toml(root: dict, base: str | Path = ".", *, version: int = 1):
     """Read a thermal run from a parsed TOML document with ``[solver] kind = "thermal"``; ``base`` resolves paths.
 
-    The keys are the Python names. Every table, the document included, refuses an unknown or a missing key and
-    a value of the wrong TOML type (a count is an integer, a flag a boolean, neither converted), all before
-    the run is built. ``schema_version`` is 1, the only one, and may be left out. ``[grid]`` and ``[flow]`` are
-    read by :func:`_toml_grid` and :func:`_toml_flow`. ``[thermal]``
-    holds :class:`lmhdx.thermal.ThermalProblem`'s values, ``hold_flow``, a uniform ``initial_temperature`` and
-    ``heat_source``, and for each wall axis, and only those, a table ``[thermal.y]`` of
-    :func:`lmhdx.thermal.thermal_boundary`'s ``kind`` (``"temperature"`` or ``"heat_flux"``), ``lower`` and
-    ``upper``. ``[run]`` gives ``steps`` in compiled chunks of ``chunk``, each ending in a record and a frame,
-    and the limits of :func:`run_thermal`; ``[output]`` the ``directory`` and what to write; ``[restart]`` a
-    :func:`lmhdx.thermal.write_thermal_record` record's ``path`` and ``mode``: ``"resume"``, the default,
-    continues the run that wrote it, whose heat source and held flow must be these, and ``"import"`` starts
-    from its state.
+    The tables are those of ``docs/physics/thermal.md``, with the Python names as keys. Each refuses an unknown
+    or missing key and a value of the wrong TOML type (neither converted) before the run is built;
+    ``schema_version`` is 1, the only one, and may be left out. A wall axis, and only that, has a table
+    ``[thermal.y]`` for :func:`lmhdx.thermal.thermal_boundary`. ``[restart]`` is a record of
+    :func:`lmhdx.thermal.write_thermal_record`: ``"resume"``, the default, continues the run that wrote it,
+    ``"import"`` starts from its state.
     """
     from .grid import PERIODIC, Field
     from .grid import BoundaryCondition as Boundary

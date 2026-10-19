@@ -42,13 +42,13 @@ from lmhdx.ops import (
     face_interpolate,
     laplacian,
     momentum_advection,
+    outgoing_rate,
     staggered_laplacian,
 )
 from lmhdx.thermal import (
     ThermalProblem,
     _buoyancy,
     _joule_heating,
-    _outgoing_rate,
     _upwind_fluxes,
     thermal_boundary,
 )
@@ -984,7 +984,7 @@ def test_upwind_transport_conserves_heat_and_moves_a_constant_only_by_the_diverg
     absolute = float(cell_inner_product(transport.replace_data(jnp.abs(transport.data)), ones))
     assert abs(float(cell_inner_product(transport, ones))) <= 1e-13 * absolute
     constant = _transport(temperature.replace_data(jnp.full(STRETCHED.shape, 300.0)), velocity, problem)
-    scale = 300.0 * float(jnp.max(_outgoing_rate(velocity)))
+    scale = 300.0 * float(jnp.max(outgoing_rate(velocity)))
     assert float(jnp.max(jnp.abs(constant - 300.0 * divergence(velocity).data))) <= 1e-12 * scale
 
 
@@ -993,7 +993,7 @@ def test_upwind_transport_makes_no_new_extremum_at_courant_0_8():
     velocity = _carrier(problem, 10, solenoidal=True)
     start = np.random.default_rng(11).uniform(0.0, 1.0, STRETCHED.shape)
     temperature = Field(jnp.asarray(start), CELL, STRETCHED)
-    dt = 0.8 / float(jnp.max(_outgoing_rate(velocity)))
+    dt = 0.8 / float(jnp.max(outgoing_rate(velocity)))
     for _ in range(10):
         temperature = temperature.replace_data(
             temperature.data - dt * _transport(temperature, velocity, problem)
@@ -1016,9 +1016,9 @@ def test_the_van_leer_face_value_is_exact_for_a_linear_temperature_on_a_stretche
     temperature = Field(
         jnp.asarray(np.broadcast_to(2.0 + 3.0 * y[None, :, None], STRETCHED.shape)), CELL, STRETCHED
     )
-    padded = pad(temperature.data, 1, problem.flow.scalar_conditions[1], grid=STRETCHED)
+    padded = pad(temperature.data, 1, problem.thermal_conditions[1], grid=STRETCHED)
     left, right = padded[:, :-1, :], padded[:, 1:, :]
-    from_left, from_right = (np.asarray(value) for value in _limited(temperature, 1, problem, left, right))
+    from_left, from_right = (np.asarray(value) for value in _limited(padded, 1, problem, left, right))
     exact = np.broadcast_to(2.0 + 3.0 * np.asarray(STRETCHED.y_faces)[None, :, None], from_left.shape)
     inner = slice(2, -2)
     assert np.allclose(from_left[:, inner], exact[:, inner], rtol=1e-12, atol=0.0)
@@ -1046,7 +1046,7 @@ def test_van_leer_transport_conserves_heat_and_makes_no_new_extremum_at_courant_
     ones = temperature.replace_data(jnp.ones(grid.shape))
     absolute = float(cell_inner_product(transport.replace_data(jnp.abs(transport.data)), ones))
     assert abs(float(cell_inner_product(transport, ones))) <= 1e-13 * absolute
-    dt = 0.5 / float(jnp.max(_outgoing_rate(velocity)))
+    dt = 0.5 / float(jnp.max(outgoing_rate(velocity)))
     for _ in range(10):
         temperature = temperature.replace_data(
             temperature.data - dt * _transport(temperature, velocity, problem)
@@ -1091,9 +1091,8 @@ def test_the_limited_face_value_differentiates_where_it_is_smooth():
 
     @jax.jit
     def faces(data):
-        padded = pad(data, 1, problem.flow.scalar_conditions[1], grid=STRETCHED)
-        temperature = Field(data, CELL, STRETCHED)
-        return jnp.stack(_limited(temperature, 1, problem, padded[:, :-1, :], padded[:, 1:, :]))
+        padded = pad(data, 1, problem.thermal_conditions[1], grid=STRETCHED)
+        return jnp.stack(_limited(padded, 1, problem, padded[:, :-1, :], padded[:, 1:, :]))
 
     jacobian = jax.jacfwd(faces)(jnp.full(STRETCHED.shape, 3.0))
     assert bool(jnp.all(jnp.isfinite(jacobian)))
@@ -1116,8 +1115,8 @@ def test_the_outgoing_rate_counts_only_what_leaves_each_cell():
         leaving = np.maximum(flux[1:], 0.0) + np.maximum(-flux[:-1], 0.0)
         expected += np.moveaxis(leaving, 0, axis)
     expected /= STRETCHED.cell_volumes()
-    assert np.allclose(np.asarray(_outgoing_rate(velocity)), expected, rtol=1e-13, atol=0.0)
-    assert not np.any(np.asarray(_outgoing_rate(zero_velocity(problem.flow))))
+    assert np.allclose(np.asarray(outgoing_rate(velocity)), expected, rtol=1e-13, atol=0.0)
+    assert not np.any(np.asarray(outgoing_rate(zero_velocity(problem.flow))))
 
 
 def test_upwind_transport_converges_at_first_order():
