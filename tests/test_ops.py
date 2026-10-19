@@ -47,7 +47,6 @@ from lmhdx.ops import (
 from lmhdx.thermal import (
     ThermalProblem,
     _buoyancy,
-    _conduct,
     _joule_heating,
     _outgoing_rate,
     _upwind_fluxes,
@@ -745,8 +744,11 @@ def _thermal(grid: Grid, conditions, *, dt: float = 1.0e-2, k: float = 2.0) -> T
 
 def _advance_heat(problem: ThermalProblem, temperature: Field, heating: Field, steps: int = 1) -> Field:
     factorization, lift = problem.diffusion_factorization(), problem.boundary_lift()
-    for _ in range(steps):
-        temperature = _conduct(temperature, heating, problem, factorization, lift)
+    for _ in range(steps):  # (I - dt alpha L_0) T' = T + dt (q / (rho_0 c_p) + alpha b)
+        rhs = temperature.data + float(problem.flow.dt) * (
+            heating.data / problem.heat_capacity + problem.diffusivity * lift.data
+        )
+        temperature = factorization.solve(temperature.replace_data(rhs))
     return temperature
 
 

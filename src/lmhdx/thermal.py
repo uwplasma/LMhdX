@@ -291,23 +291,6 @@ class ThermalProblem:
             return laplacian(zero, self.thermal_conditions)
 
 
-def _conduct(
-    temperature: Field,
-    heating: Field,
-    problem: ThermalProblem,
-    factorization: FastDiagonalHelmholtz,
-    lift: Field,
-) -> Field:
-    """Advance conduction and volumetric heating by one implicit step.
-
-    ``(I - dt alpha L_0) T' = T + dt (q / (rho_0 c_p) + alpha b)``, with ``q`` the
-    heat per unit volume and time in ``heating``.
-    """
-    dt, alpha = float(problem.flow.dt), problem.diffusivity
-    rhs = temperature.data + dt * (heating.data / problem.heat_capacity + alpha * lift.data)
-    return factorization.solve(temperature.replace_data(rhs))
-
-
 def _upwind_fluxes(
     temperature: Field,
     velocity: tuple[Field, Field, Field],
@@ -338,7 +321,7 @@ def _upwind_fluxes(
         if axis != opening:
             fluxes.append(wall_insulated(carrier.replace_data(flux), axis, scalar[axis]))
             continue
-        ends = [(slice(None),) * axis + (end,) for end in (0, -1)]
+        ends = [_end(axis, end) for end in (0, -1)]
         inlet = jnp.asarray(problem.thermal_conditions[axis].lower, dtype=flux.dtype)
         entering = carrier.data[ends[0]] * jnp.where(
             carrier.data[ends[0]] >= 0.0, inlet, temperature.data[ends[0]]
@@ -549,14 +532,12 @@ def validate_thermal_inputs(
     """
     if not (np.isfinite(divergence_tolerance) and divergence_tolerance >= 0.0):
         raise ValueError("divergence_tolerance must be nonnegative and finite")
-    if buoyancy_courant_limit is not None and not (
-        np.isfinite(buoyancy_courant_limit) and buoyancy_courant_limit > 0.0
+    for name, limit in (
+        ("buoyancy_courant_limit", buoyancy_courant_limit),
+        ("advective_cfl_limit", advective_cfl_limit),
     ):
-        raise ValueError("buoyancy_courant_limit must be positive and finite")
-    if advective_cfl_limit is not None and not (
-        np.isfinite(advective_cfl_limit) and advective_cfl_limit > 0.0
-    ):
-        raise ValueError("advective_cfl_limit must be positive and finite")
+        if limit is not None and not (np.isfinite(limit) and limit > 0.0):
+            raise ValueError(f"{name} must be positive and finite")
     advective_cfl_limit = _SCHEMES[problem.advection] if advective_cfl_limit is None else advective_cfl_limit
     flow, dtype = problem.flow, jnp.result_type(float)
     _check_fields(flow, state.velocity, [(state.temperature, "temperature"), (heat_source, "heat source")])
@@ -591,7 +572,7 @@ def validate_thermal_inputs(
         if (
             axis is not None
             and problem.advection != "off"
-            and np.any(np.asarray(state.velocity[axis].data[(slice(None),) * axis + (-1,)]) < 0.0)
+            and np.any(np.asarray(state.velocity[axis].data[_end(axis, -1)]) < 0.0)
         ):
             raise ValueError("the flow returns through the outlet: use outlet_backflow='reservoir_flux'")
 
@@ -968,6 +949,11 @@ def load_attribution(
     return LoadAttribution(imposed, delivered, conducted, stored, residual, last)
 
 
+def _end(axis: int, index: int) -> tuple:
+    """The index of the slab at ``index`` of ``axis``, a wall face (0 or -1) or a boundary cell."""
+    return (slice(None),) * axis + (index,)
+
+
 def _reservoir(problem: ThermalProblem, value, dtype) -> jnp.ndarray | None:
     """Return the outlet's incoming temperature over its face: a number broadcasts, an array must match."""
     if problem.outlet_backflow != "reservoir_flux":
@@ -992,7 +978,7 @@ def _outlet_exchange(velocity, reservoir, problem: ThermalProblem, dtype) -> tup
     if axis is None:
         zero = jnp.zeros((), dtype)
         return zero, zero, zero, jnp.asarray(True)
-    end = (slice(None),) * axis + (-1,)
+    end = _end(axis, -1)
     normal = velocity[axis].data[end]
     area = jnp.asarray(problem.flow.grid.face_areas(axis)[end], dtype=normal.dtype)
     back = jnp.maximum(-normal, 0.0) * area
@@ -1006,7 +992,7 @@ def _carried_out(fluxes: tuple[Field, Field, Field], problem: ThermalProblem) ->
     """Return the enthalpy carried out through the outlet less what enters at the inlet and returning faces."""
     axis = problem.flow.open_axis
     flux, areas = fluxes[axis].data, problem.flow.grid.face_areas(axis)
-    ends = [(slice(None),) * axis + (end,) for end in (0, -1)]
+    ends = [_end(axis, end) for end in (0, -1)]
     leaving, entering = (jnp.sum(flux[end] * jnp.asarray(areas[end], dtype=flux.dtype)) for end in ends[::-1])
     return problem.heat_capacity * (leaving - entering)
 
@@ -1020,7 +1006,7 @@ def _heat_out(temperature: Field, problem: ThermalProblem) -> jnp.ndarray:
             continue
         gradient, areas = face_gradient(temperature, axis, condition).data, grid.face_areas(axis)
         for end, sign in ((0, 1.0), (-1, -1.0)):
-            slab = (slice(None),) * axis + (end,)
+            slab = _end(axis, end)
             area = jnp.asarray(areas[slab], dtype=temperature.dtype)
             out = out + sign * conductivity * jnp.sum(gradient[slab] * area)
     return out
@@ -1225,14 +1211,12 @@ def validate_developed_inputs(
     if across > velocity_tolerance:
         raise ValueError(f"a transverse velocity of {across:.4g} exceeds velocity_tolerance")
     along = np.asarray(velocity[axial].data)
-    ends = [along[(slice(None),) * axial + (end,)] for end in (0, -1)]
+    ends = [along[_end(axial, end)] for end in (0, -1)]
     if float(np.max(np.abs(ends[1] - ends[0]))) > velocity_tolerance:
         raise ValueError("the axial velocity changes along the axis beyond velocity_tolerance")
     if float(np.min(along)) < -velocity_tolerance:
         raise ValueError("the axial flow reverses beyond velocity_tolerance")
-    flow_rate = float(
-        np.sum(grid.face_areas(axial)[(slice(None),) * axial + (0,)] * along[(slice(None),) * axial + (0,)])
-    )
+    flow_rate = float(np.sum(grid.face_areas(axial)[_end(axial, 0)] * along[_end(axial, 0)]))
     if not flow_rate > flow_rate_tolerance:
         raise ValueError(f"the flow rate {flow_rate:.4g} is not above flow_rate_tolerance")
 
