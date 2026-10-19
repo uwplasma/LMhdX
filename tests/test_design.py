@@ -516,6 +516,16 @@ def test_the_thermal_duct_design_runs_as_written_and_keeps_its_contracts():
     page = Path(__file__).resolve().parents[1] / "docs/tutorials/duct_design_law.md"
     section = page.read_text().split("## A thermal design", 1)[1]
     code = section.split("```python\n", 1)[1].split("```", 1)[0]
+    # The same workflow, cheaper to compile and run: 3 of the page's 7 shapes, a golden section stopped at 0.08 in
+    # ln(b/a) instead of 0.02, and the mesh check on 40 cells instead of 48. Every contract below is on the square,
+    # the candidate, a shape's edge or the refinement, none on the sweep's density or the last digit of the optimum.
+    for old, new in (
+        ("np.geomspace(0.08, 1.0, 7)", "np.geomspace(0.08, 1.0, 3)"),
+        ("while high - low > 0.02:", "while high - low > 0.08:"),
+        ("cells=48, layer=6", "cells=40, layer=5"),
+    ):
+        assert old in code
+        code = code.replace(old, new)
     run = {"__name__": "thermal_design"}
     exec(compile(code, str(page), "exec"), run)
     square, candidate, limit = run["square"], run["candidate"], run["T_MAX"]

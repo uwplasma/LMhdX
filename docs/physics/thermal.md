@@ -289,6 +289,28 @@ flips a face's sign; nothing is smoothed to hide it.
 one state per step, so its memory grows with the number of steps. A restart
 record and the command's chunks are not reverse-mode checkpoints and do not
 bound that memory; the command is not differentiated end to end.
+`diagnostics=n` keeps the scalars of every `n`-th step only, as one state per
+block is then stored (`steps` must be a multiple of `n`); the default keeps
+every step's, as before.
+
+**Checkpointing a long differentiated run.** Split the run into chunks and
+checkpoint across them: a `jax.checkpoint`-wrapped chunk stores only its start
+state in the forward pass and recomputes its steps in reverse, so the memory is
+one state per chunk plus one chunk's steps, not one state per step.
+
+```python
+chunk = jax.checkpoint(lambda state: advance_thermal(thermal_step, state, heat, 100, diagnostics=100)[0])
+
+def run(state):
+    for _ in range(50):  # 5000 steps
+        state = chunk(state)
+    return objective(state)
+
+gradient = jax.grad(run)(start)
+```
+
+Choose the chunk near the square root of the step count. The result is the same
+as one scan of all the steps, to round-off.
 
 **Not included**
 - Conjugate wall conduction.

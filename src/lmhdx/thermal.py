@@ -730,8 +730,13 @@ def advance_thermal(
     *,
     checkpoint: bool = True,
     backflow_temperature: float | jnp.ndarray | None = None,
+    diagnostics: int = 1,
 ) -> tuple[ThermalState, ThermalDiagnostics]:
     """Take ``steps`` steps of a prepared step as one compiled scan; return the end state and the history.
+
+    ``diagnostics`` is the stride of the history: the diagnostics of every ``diagnostics``-th step are kept
+    (the last step of each block), ``steps // diagnostics`` of them, and ``steps`` must be a multiple. The
+    default keeps every step's.
 
     ``backflow_temperature`` goes to every step, constant over the call as the
     heat source is. The carry is the state alone and only the scalar diagnostics are stacked, one
@@ -740,16 +745,23 @@ def advance_thermal(
     rather than storing its intermediates; a differentiated run still keeps one
     state per step.
     """
-    if steps < 1:
-        raise ValueError("steps must be positive")
+    if steps < 1 or diagnostics < 1 or steps % diagnostics:
+        raise ValueError("steps must be positive, a multiple of the diagnostics stride")
 
     options = {} if backflow_temperature is None else {"backflow_temperature": backflow_temperature}
 
     def single(carry: ThermalState, _) -> tuple[ThermalState, ThermalDiagnostics]:
         return thermal_step(carry, heat_source, **options)
 
-    body = jax.checkpoint(single) if checkpoint else single
-    return jax.lax.scan(body, state, xs=None, length=steps)
+    def block(carry: ThermalState, _) -> tuple[ThermalState, ThermalDiagnostics]:
+        if diagnostics > 1:
+            carry = jax.lax.scan(
+                lambda c, _: (single(c, _)[0], None), carry, xs=None, length=diagnostics - 1
+            )[0]
+        return single(carry, _)
+
+    body = jax.checkpoint(block) if checkpoint else block
+    return jax.lax.scan(body, state, xs=None, length=steps // diagnostics)
 
 
 _RECORD_SCHEMA, _RECORD_VERSION = "lmhdx.thermal.state", 1

@@ -584,6 +584,13 @@ def test_the_thermal_scan_reproduces_the_stepped_loop_and_stacks_only_scalars():
     assert stacked and all(shape == (128,) for shape in stacked)
     with pytest.raises(ValueError, match="steps must be positive"):
         advance_thermal(thermal_step, state, source, 0)
+    strided_final, strided = advance_thermal(thermal_step, state, source, 6, diagnostics=3)
+    assert all(np.shape(value) == (2,) for value in strided)  # the last step of each block of three
+    for kept, every in zip(jax.tree_util.tree_leaves(strided), jax.tree_util.tree_leaves(history)):
+        assert np.array_equal(np.asarray(kept), np.asarray(every)[2::3])
+    assert np.array_equal(strided_final.temperature.data, final.temperature.data)
+    with pytest.raises(ValueError, match="multiple of the diagnostics stride"):
+        advance_thermal(thermal_step, state, source, 6, diagnostics=4)
 
 
 def test_new_values_reuse_the_compiled_run_and_a_new_problem_rebuilds():
