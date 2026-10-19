@@ -1047,7 +1047,8 @@ def run_thermal(run) -> dict[str, object]:
     ``{name}_from_{first:06d}.pvd`` from a restart, so a resume keeps the earlier series. The first rejected
     chunk stops the run and writes only ``{name}_{step:06d}_rejected.npz``, whose run provenance names the
     reasons, so it imports but does not resume. ``thermal_summary.json`` holds ``accepted``, the first rejected
-    sample (its step, reasons and Courant numbers), the limits, the last diagnostics and the extremes over the
+    sample (its step, reasons and Courant numbers), the limits, the last diagnostics
+    and the time they are at (the end of the rejected chunk on a rejection, otherwise of the run) and the extremes over the
     run of the ledger, the Courant numbers and the Boussinesq measure, which no limit applies to.
     """
     from .thermal import (
@@ -1112,7 +1113,7 @@ def run_thermal(run) -> dict[str, object]:
         "limits": limits,
         "restart": run.restart,
         "steps": done - first,
-        "time": float(accepted.time),
+        "time": float(state.time),
         "finite": bool(np.all(history.finite)),
         "last": last,
         "largest": {name: float(np.max(np.abs(getattr(history, name)))) for name in largest},

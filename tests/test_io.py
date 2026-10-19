@@ -1152,7 +1152,8 @@ def test_a_thermal_run_stops_at_the_first_sample_past_a_limit(tmp_path: Path, li
     run, rejected = thermal_run_from_toml(_load_toml(case), tmp_path), out / "heated_duct_000020_rejected.npz"
     with pytest.raises(ValueError, match="other inputs"):
         load_thermal_record(rejected, run.problem, units=run.units, run=run.provenance)
-    load_thermal_record(rejected, run.problem, units=run.units)
+    attempted = load_thermal_record(rejected, run.problem, units=run.units)
+    assert summary["time"] == float(attempted.time)  # `time` is the attempted chunk's, as `last` is
 
 
 def test_conduction_alone_is_not_held_to_an_advective_limit(tmp_path: Path):
