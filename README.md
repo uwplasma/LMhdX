@@ -166,6 +166,14 @@ python examples/fringe_duct_example.py
 
 ## Heat transfer
 
+![A liquid-metal layer heated from below, without a field and in a horizontal field](docs/_static/thermal_convection_3d.webp)
+
+*Liquid metal heated from below. Left: with no magnetic field the convection
+cells keep moving and changing shape. Right: a horizontal field (the arrow)
+leaves only straight rolls lined up with it, as seen in liquid-metal experiments
+(Burr & Müller 2002). Ra = 10⁴, Pr = 0.1, 64 × 64 × 32 cells; three minutes on a
+laptop GPU with `python scripts/make_showcase_figures.py --only convection`.*
+
 `lmhdx.thermal` adds temperature to the solver: heat conducts, is carried by the
 flow, is released by the electric currents (Joule heating), and can drive
 buoyant flow. Every step checks that the heat budget balances. The capability is
@@ -225,6 +233,20 @@ python scripts/make_showcase_figures.py --only onset
   rolls at onset, at his predicted width.
 - The time stepping is first order (c): halving the step roughly halves the
   error, so two runs are extrapolated to a zero step.
+
+### Fast jets cool a heated wall
+
+![Heated wall, floor and outlet temperatures of two ducts in 3-D as heat enters through one side wall, with the inlet velocity and the hottest wall temperature along the duct](docs/_static/thermal_heated_duct.webp)
+
+```console
+python scripts/make_showcase_figures.py --only heated-duct
+```
+
+- A duct in a strong field (Ha = 1000) is heated through one side wall. With
+  electrically conducting top and bottom walls (c = 0.05), fast jets form along
+  the side walls, 8 times the average speed, and carry the heat away: the
+  wall's hottest point heats up **25 % less** than with insulating walls.
+- The movie follows both ducts from a cold start to their steady state.
 
 ## Design with gradients
 

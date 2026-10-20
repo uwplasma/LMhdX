@@ -534,6 +534,18 @@ $x^+=10^{-3}$, and refining the mesh across or along the duct does not change it
 :align: center
 ```
 
+**A side-layer jet.** A square duct at Ha 1000 and $Pe=2000$, 24 half-widths
+long, takes in a unit flux through one side wall downstream of a cold inlet,
+without Joule heat. With conducting Hartmann walls ($c=0.05$) the side layers
+carry jets at 8.4 times the mean velocity along that wall, and its hottest point
+rises 25 % less above the inlet temperature than in the insulating duct. The
+hot strips left along its corners are where the jet meets the Hartmann layers.
+
+```{image} ../_static/thermal_heated_duct.webp
+:alt: Heated wall, floor and outlet temperatures of an insulating and a Hunt duct in 3-D as heat enters from one side wall
+:align: center
+```
+
 **Crediting a load.** A design that must remove a given duty is judged on what
 the duty itself does, not on the gross outlet enthalpy. Joule heat and a
 recirculating hot flow also raise the gross figure.
@@ -587,6 +599,19 @@ rise of $Ra_c$.
 
 ```{image} ../_static/thermal_magnetoconvection.webp
 :alt: Critical Rayleigh number against the Chandrasekhar number, the critical rolls at Q = 0 and 1000, and the error against the time step
+:align: center
+```
+
+At $Ra=10^4$ and $Pr=0.1$ a periodic $4\times4\times1$ layer (64 × 64 × 32
+cells, van Leer heat transport, limited momentum transport, Courant number at
+most 0.44) convects in cells that keep rearranging. A horizontal field of
+$Q=1000$ damps every motion that varies along it, and leaves steady rolls whose
+axes lie along the field, as in the NaK experiments of Burr & Müller (2002).
+`python scripts/make_showcase_figures.py --only convection` takes three minutes
+on a laptop GPU and about a quarter of an hour on its CPU.
+
+```{image} ../_static/thermal_convection_3d.webp
+:alt: A liquid-metal layer heated from below, without a field and in a horizontal field
 :align: center
 ```
 
