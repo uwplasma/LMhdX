@@ -344,7 +344,8 @@ block's intermediates dominate. The figures are for this grid and step; they
 scale with the cells, and the ratio is what carries over.
 
 **Not included**
-- Conjugate wall conduction.
+- Conjugate wall conduction in the thermal step. The conduction solve it needs
+  exists (below), but the step does not use it yet.
 - A flow that evolves in an open duct with the heat. There the flow is held.
 - Transport above second order. The open-duct results below use first-order
   upwinding and quote $Pe_h/2$, its numerical diffusivity over the physical one;
@@ -358,6 +359,45 @@ scale with the cells, and the ratio is what carries over.
 A closed domain with net heating has no steady temperature. The state returned
 is not a `cases.MHDState` or an archive-compatible `Solution`. The final
 electric fields come from `core3d.face_currents(state.velocity, flow)`.
+
+### Conduction through walls
+
+Plan step 5.4b builds conduction through solid walls, for the heated conducting
+duct of plan step 5.4. Its first part is the conduction solve; the thermal step
+does not use it yet.
+
+**The grid.** `conjugate_grid(grid, walls, k, rho_cp)` adds each transverse
+wall (`SolidWall`: a thickness, a cell count, and a constant `k` and
+`rho c_p`) to the grid as cells. It returns:
+- the extended grid;
+- the fluid's block of cells in it;
+- each cell's `k` and `rho c_p`.
+
+A corner cell lies in a wall of both transverse axes and takes their common
+material.
+
+**The solve.** `implicit_conduction(grid, conditions, k, rho_cp, dt)` solves
+one implicit step,
+
+$$
+V\,(c\,T - \Delta t\,\nabla\cdot(k\nabla T)) = V\,r ,
+$$
+
+with the face conductance the harmonic mean of its two half-cells,
+`G = A / (δ₁/k₁ + δ₂/k₂)`. This is the two resistances in series, so the
+heat that leaves one cell enters the next. The operator is symmetric and
+positive definite.
+
+**The preconditioner.** SOLVAX `pcg` solves the step, preconditioned by the
+existing fast-diagonal inverse at one `k` and one `c`, the volume means. Inside
+`jax.lax.custom_linear_solve`, the solution differentiates in `r`.
+
+**Measured.**
+- Two materials in series give the exact piecewise-linear profile.
+- One implicit step stores exactly the heat put in.
+- With the steel and PbLi of step 5.4 on a duct walled on all four sides, PCG
+  converges to 1e-11 in 7–9 iterations, on 6 or 24 fluid cells across and at
+  every `Δt` tried.
 
 ## The thermally fully developed duct
 

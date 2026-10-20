@@ -1208,3 +1208,106 @@ def test_the_buoyancy_force_pushes_a_hot_cell_against_gravity():
         dataclasses.replace(problem, gravity=(1.0, -2.0, 3.0))
     reference = _buoyancy(Field(jnp.ones(STRETCHED.shape), CELL, STRETCHED), problem)
     assert not any(np.any(np.asarray(force.data)) for force in reference)
+
+
+# Conduction through solid walls (plan step 5.4b, ADR 0009 D36): the extended grid and the PCG solve.
+
+STEEL = (
+    18.3,
+    4.27,
+)  # k and rho c_p of 316 steel at 573 K over the pinned PbLi's 20.4 and 1.867 (scaled by 1e-6)
+
+
+def _walled(cells: int = 6, wall_cells: int = 2, axial: int = 4):
+    from lmhdx.thermal import SolidWall, conjugate_grid
+
+    fluid = Grid(
+        uniform_faces(axial, 0.0, 2.0), uniform_faces(cells, -1.0, 1.0), uniform_faces(cells, -1.0, 1.0)
+    )
+    wall = SolidWall(0.087, wall_cells, *STEEL)
+    return conjugate_grid(fluid, ((None, None), (wall, wall), (wall, wall)), 20.4, 1.867)
+
+
+def test_two_materials_in_series_conduct_exactly():
+    """Steady conduction through steel, fluid and steel between two temperatures: the harmonic face conductance makes
+    the cell temperatures the exact piecewise-linear profile, the heat crossing each interface the same."""
+    from lmhdx.thermal import SolidWall, conjugate_grid, implicit_conduction
+
+    fluid = Grid(uniform_faces(1, 0.0, 1.0), uniform_faces(1, 0.0, 1.0), uniform_faces(8, -1.0, 1.0))
+    wall = SolidWall(0.5, 4, 3.0, 1.0)
+    grid, block, k, _ = conjugate_grid(fluid, ((None, None), (None, None), (wall, wall)), 1.0, 1.0)
+    conditions = (WRAP, WALL, thermal_boundary("temperature", 0.0, 1.0))
+    steady = implicit_conduction(grid, conditions, k, 1e-12, 1.0)  # no storage to speak of
+    temperature, _ = steady.solve(steady.lift(conditions))
+    z = 0.5 * (np.asarray(grid.faces[2])[1:] + np.asarray(grid.faces[2])[:-1])
+    flux = 1.0 / (2 * 0.5 / 3.0 + 2.0 / 1.0)  # in series: two walls and the fluid
+    exact = np.where(
+        z < -1.0,
+        flux * (z + 1.5) / 3.0,
+        np.where(z < 1.0, flux * (0.5 / 3.0 + z + 1.0), 1.0 - flux * (1.5 - z) / 3.0),
+    )
+    assert np.asarray(temperature)[0, 0] == pytest.approx(exact, abs=1e-9)
+    assert k[block].min() == k[block].max() == 1.0 and k[0, 0, 0] == 3.0
+
+
+def test_walled_conduction_is_symmetric_conserves_heat_and_converges_fast():
+    """On a duct walled on four sides with the benchmark's steel and PbLi, insulated outside: the operator is
+    symmetric, one implicit step stores exactly the heat put in, and the volume-mean preconditioner leaves few
+    iterations."""
+    from lmhdx.thermal import implicit_conduction
+
+    grid, block, k, c = _walled()
+    conduction = implicit_conduction(grid, (WRAP, WALL, WALL), k, c, 0.05)
+    rng = np.random.default_rng(54)
+    u, v = (jnp.asarray(rng.standard_normal(grid.shape)) for _ in range(2))
+    left, right = jnp.vdot(conduction.apply(u), v), jnp.vdot(u, conduction.apply(v))
+    assert float(left) == pytest.approx(float(right), rel=1e-12)
+    start, source = jnp.asarray(rng.standard_normal(grid.shape)), np.zeros(grid.shape)
+    source[block] = 1.0
+    after, iterations = conduction.solve(jnp.asarray(c) * start + 0.05 * jnp.asarray(source))
+    volumes = grid.cell_volumes()
+    stored = np.sum(volumes * c * (np.asarray(after) - np.asarray(start)))
+    assert stored == pytest.approx(0.05 * np.sum(volumes * source), rel=1e-9)
+    assert int(iterations) <= 30
+
+
+def test_uniform_conduction_is_the_fast_diagonal_inverse_and_differentiates():
+    """One material: the PCG solve is the fast-diagonal inverse itself (one iteration), and its gradient in the
+    right-hand side matches central differences."""
+    from lmhdx.poisson import fast_diagonal_helmholtz
+    from lmhdx.thermal import implicit_conduction
+
+    grid = STRETCHED
+    conditions = (WRAP, WALL, WALL)
+    conduction = implicit_conduction(grid, conditions, 2.0, 3.0, 0.01)
+    rhs = jnp.asarray(np.random.default_rng(5).standard_normal(grid.shape))
+    temperature, iterations = conduction.solve(rhs)
+    direct = fast_diagonal_helmholtz(grid, CELL, conditions, shift=3.0, coefficient=0.02).solve(
+        Field(rhs, CELL, grid)
+    )
+    assert np.asarray(temperature) == pytest.approx(np.asarray(direct.data), rel=1e-9, abs=1e-12)
+    assert int(iterations) <= 2
+    weights = jnp.asarray(np.random.default_rng(6).standard_normal(grid.shape))
+
+    def objective(scale):
+        return jnp.vdot(weights, conduction.solve(scale * rhs)[0])
+
+    gradient = float(jax.grad(objective)(1.0))
+    assert gradient == pytest.approx(float(objective(1.5) - objective(0.5)), rel=1e-8)
+
+
+def test_walls_build_the_extended_grid_and_refuse_mismatched_corners():
+    from lmhdx.thermal import SolidWall, conjugate_grid
+
+    grid, block, k, c = _walled(cells=6, wall_cells=2)
+    assert grid.shape == (4, 10, 10) and block[1] == slice(2, 8) and block[2] == slice(2, 8)
+    assert np.asarray(grid.faces[1])[0] == pytest.approx(-1.087) and np.asarray(grid.faces[2])[
+        -1
+    ] == pytest.approx(1.087)
+    assert np.all(k[block] == 20.4) and k[0, 0, 0] == STEEL[0] and c[0, 5, 0] == STEEL[1]
+    fluid = Grid(uniform_faces(2, 0.0, 1.0), uniform_faces(4, -1.0, 1.0), uniform_faces(4, -1.0, 1.0))
+    steel, copper = SolidWall(0.1, 1, *STEEL), SolidWall(0.1, 1, 400.0, 3.4)
+    with pytest.raises(ValueError, match="same material"):
+        conjugate_grid(fluid, ((None, None), (steel, steel), (copper, copper)), 1.0, 1.0)
+    with pytest.raises(ValueError, match="transverse"):
+        conjugate_grid(fluid, ((steel, None), (None, None), (None, None)), 1.0, 1.0)

@@ -63,6 +63,7 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 import numpy as np
+import solvax
 
 from .core3d import (
     ChannelProblem,
@@ -82,6 +83,7 @@ from .grid import (
     PERIODIC,
     BoundaryCondition,
     Field,
+    Grid,
     pad,
 )
 from .ops import (
@@ -92,6 +94,7 @@ from .ops import (
     cell_inner_product,
     divergence,
     face_average_adjoint,
+    face_conductivity,
     face_gradient,
     laplacian,
     neighbours,
@@ -104,14 +107,18 @@ from .steady import with_inflow
 
 __all__ = [
     "DevelopedHeat",
+    "ImplicitConduction",
     "LoadAttribution",
+    "SolidWall",
     "ThermalDiagnostics",
     "ThermalProblem",
     "ThermalRun",
     "ThermalState",
     "advance_thermal",
     "build_thermal_step",
+    "conjugate_grid",
     "developed_heat",
+    "implicit_conduction",
     "initial_thermal_state",
     "load_attribution",
     "load_thermal_record",
@@ -1219,6 +1226,156 @@ def validate_developed_inputs(
     flow_rate = float(np.sum(grid.face_areas(axial)[_end(axial, 0)] * along[_end(axial, 0)]))
     if not flow_rate > flow_rate_tolerance:
         raise ValueError(f"the flow rate {flow_rate:.4g} is not above flow_rate_tolerance")
+
+
+# Conduction through solid walls (plan step 5.4b, ADR 0009 D36, proposed).
+
+
+@dataclass(frozen=True)
+class SolidWall:
+    """One wall of a transverse axis: its thickness, its cells and its constant conductivity and ``rho c_p``."""
+
+    thickness: float
+    cells: int
+    conductivity: float
+    heat_capacity: float
+
+    def __post_init__(self) -> None:
+        if not (self.thickness > 0 and self.cells >= 1 and self.conductivity > 0 and self.heat_capacity > 0):
+            raise ValueError(
+                "a solid wall needs a positive thickness, cell count, conductivity and heat capacity"
+            )
+
+
+def conjugate_grid(grid: Grid, walls, conductivity: float, heat_capacity: float):
+    """Return the grid with its walls added as cells, the fluid's block in it, and each cell's ``k`` and ``rho c_p``.
+
+    ``walls`` gives each axis ``(lower, upper)``, each ``None`` or a :class:`SolidWall` in equal cells; the flow's
+    axis 0 takes none. A corner cell lies in a wall of each transverse axis and takes their material, which must
+    agree. The fluid's cells keep ``conductivity`` and ``heat_capacity``.
+    """
+    if walls[0] != (None, None):
+        raise ValueError("walls go on the transverse axes 1 and 2")
+    faces, block = [np.asarray(grid.faces[0])], [slice(None)]
+    for axis in (1, 2):
+        edges, (lower, upper) = np.asarray(grid.faces[axis]), walls[axis]
+        below = (
+            [] if lower is None else edges[0] - lower.thickness * (1.0 - np.arange(lower.cells) / lower.cells)
+        )
+        above = (
+            [] if upper is None else edges[-1] + upper.thickness * np.arange(1, upper.cells + 1) / upper.cells
+        )
+        faces.append(np.concatenate([below, edges, above]))
+        block.append(slice(len(below), len(below) + len(edges) - 1))
+    extended = Grid(*faces)
+    material = np.zeros(extended.shape + (2,))
+    material[...] = np.nan
+    material[tuple(block)] = (conductivity, heat_capacity)
+    for axis in (1, 2):
+        for wall, cells in zip(walls[axis], (slice(0, block[axis].start), slice(block[axis].stop, None))):
+            if wall is None:
+                continue
+            index = tuple(cells if position == axis else slice(None) for position in range(3))
+            values, taken = material[index], ~np.isnan(material[index][..., 0])
+            mismatch = taken & np.any(values != (wall.conductivity, wall.heat_capacity), axis=-1)
+            if np.any(mismatch):
+                raise ValueError("walls that meet at a corner must have the same material")
+            material[index] = (wall.conductivity, wall.heat_capacity)
+    return extended, tuple(block), material[..., 0], material[..., 1]
+
+
+@dataclass(frozen=True)
+class ImplicitConduction:
+    """``V (c T - dt div(k grad T)) = V r`` on a grid of cell-wise ``k`` and ``c = rho c_p``, solved by PCG.
+
+    The face conductance is the harmonic mean of its two half-cells, their resistances in series, so the heat that
+    leaves one cell across a face enters the other: ``G = A / (delta_1/k_1 + delta_2/k_2)``. The operator is
+    symmetric and, with ``c > 0``, positive definite. Its preconditioner is the fast-diagonal inverse of the same
+    operator at one ``k`` and one ``c``, the volume means (D5). ``conditions`` are the temperature's, homogeneous;
+    boundary data enter through :meth:`lift`.
+    """
+
+    grid: Grid
+    conditions: tuple[BoundaryCondition, BoundaryCondition, BoundaryCondition]
+    capacity: np.ndarray
+    faces: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]
+    dt: float
+    preconditioner: FastDiagonalHelmholtz
+    tolerance: float
+    max_steps: int = 200
+
+    def divergence(self, temperature: jnp.ndarray, conditions=None) -> jnp.ndarray:
+        """``div(k grad T)`` per unit volume, under ``conditions`` (the homogeneous ones by default)."""
+        conditions = self.conditions if conditions is None else conditions
+        field = Field(temperature, _CELL, self.grid)
+        fluxes = []
+        for axis in range(3):
+            gradient = face_gradient(field, axis, conditions[axis])
+            fluxes.append(gradient.replace_data(self.faces[axis] * gradient.data))
+        return divergence(tuple(fluxes)).data
+
+    def lift(self, conditions) -> jnp.ndarray:
+        """What the boundary data in ``conditions`` add to ``div(k grad T)``, per unit volume.
+
+        A heat-flux condition is stored as ``q/k`` (:func:`thermal_boundary`) and must be built with the
+        conductivity of the cell at that boundary.
+        """
+        with jax.ensure_compile_time_eval():
+            return self.divergence(jnp.zeros(self.grid.shape, dtype=jnp.result_type(float)), conditions)
+
+    def apply(self, temperature: jnp.ndarray) -> jnp.ndarray:
+        volumes = jnp.asarray(self.grid.cell_volumes(), temperature.dtype)
+        return volumes * (
+            jnp.asarray(self.capacity, temperature.dtype) * temperature
+            - self.dt * self.divergence(temperature)
+        )
+
+    def solve(self, rhs: jnp.ndarray, start: jnp.ndarray | None = None) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Return ``T`` with ``c T - dt div(k grad T) = rhs``, and the PCG iterations; NaN where it does not converge.
+
+        Differentiable in ``rhs``: the solve is a symmetric :func:`jax.lax.custom_linear_solve`.
+        """
+        volumes = jnp.asarray(self.grid.cell_volumes(), rhs.dtype)
+
+        def precondition(residual):
+            return self.preconditioner.solve(Field(residual / volumes, _CELL, self.grid)).data
+
+        def pcg(matvec, target):
+            result = solvax.pcg(
+                matvec, target, x0=start, precond=precondition, rtol=self.tolerance, max_steps=self.max_steps
+            )
+            failed = ~(result.converged & jnp.isfinite(result.residual_norm))
+            return jnp.where(failed, jnp.nan, result.x), result.iterations
+
+        return jax.lax.custom_linear_solve(self.apply, volumes * rhs, pcg, symmetric=True, has_aux=True)
+
+
+def implicit_conduction(
+    grid: Grid, conditions, conductivity, heat_capacity, dt: float, *, precision: str = "state"
+) -> ImplicitConduction:
+    """Build :class:`ImplicitConduction` on the host for cell-wise ``conductivity`` and ``heat_capacity`` arrays.
+
+    A face's conductance pads ``k`` evenly at a wall, so a boundary face takes its cell's ``k``.
+    """
+    homogeneous = tuple(condition.homogeneous() for condition in conditions)
+    k, c = (np.broadcast_to(np.asarray(value, float), grid.shape) for value in (conductivity, heat_capacity))
+    if np.any(k <= 0) or np.any(c <= 0):
+        raise ValueError("conductivity and heat capacity must be positive in every cell")
+    field = Field(jnp.asarray(k), _CELL, grid)
+    pads = tuple(BoundaryCondition(PERIODIC if c_.is_periodic else NEUMANN) for c_ in homogeneous)
+    faces = tuple(face_conductivity(field, axis, pads[axis]).data for axis in range(3))
+    weights = grid.cell_volumes() / np.sum(grid.cell_volumes())
+    reference = (float(np.sum(weights * c)), float(np.sum(weights * k)))
+    preconditioner = fast_diagonal_helmholtz(
+        grid,
+        _CELL,
+        homogeneous,
+        shift=reference[0],
+        coefficient=float(dt) * reference[1],
+        precision=precision,
+    )
+    tolerance = 1e-11 if jnp.result_type(float) == jnp.float64 else 1e-5
+    return ImplicitConduction(grid, homogeneous, c, faces, float(dt), preconditioner, tolerance)
 
 
 class ThermalRun(NamedTuple):
