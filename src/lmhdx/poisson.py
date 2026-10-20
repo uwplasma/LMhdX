@@ -61,6 +61,9 @@ from .grid import (
     uniform_faces,
 )
 from .ops import (
+    divergence,
+    face_conductivity,
+    face_gradient,
     foldable,
     laplacian,
     staggered_laplacian,
@@ -71,6 +74,7 @@ __all__ = [
     "FastDiagonalPoisson",
     "FastDiagonalPolarPoisson",
     "FastDiagonalThinWallPoisson",
+    "VariableHelmholtz",
     "assemble_axis_laplacian",
     "assemble_radial_laplacian",
     "assemble_staggered_axis_operator",
@@ -82,6 +86,7 @@ __all__ = [
     "fast_diagonal_polar_poisson",
     "fast_diagonal_thin_wall_poisson",
     "free_slice",
+    "variable_helmholtz",
 ]
 
 _SINGULAR_TOLERANCE = 1.0e-9
@@ -1354,7 +1359,9 @@ def fast_diagonal_helmholtz(
             )
         eigenvalues, eigenvectors = _eigh(0.5 * (symmetric + symmetric.T))
         vectors.append(eigenvectors)
-        values.append(eigenvalues)
+        # The Laplacian is negative semidefinite: a positive null mode is rounding, +3e-5 when probed in float32,
+        # and at a large coefficient it would turn the shifted operator indefinite.
+        values.append(np.minimum(eigenvalues, 0.0))
         scales.append(root)
         slices.append(selection)
     return FastDiagonalHelmholtz(
@@ -1386,6 +1393,118 @@ def _axis_weights(grid: Grid, axis: int, offset_value: float, condition: Boundar
         return np.concatenate(([wrap], 0.5 * (widths[:-1] + widths[1:]), [wrap]))
     ends = (0.5 * widths[0], 0.5 * widths[-1]) if condition.is_mixed else (widths[0], widths[-1])
     return np.concatenate(([ends[0]], 0.5 * (widths[:-1] + widths[1:]), [ends[1]]))
+
+
+_CELL = (CENTER, CENTER, CENTER)
+_PCG_TOLERANCE = {"float64": 1.0e-11, "float32": 1.0e-5}
+
+
+@dataclass(frozen=True)
+class VariableHelmholtz:
+    """``V (shift x - coefficient div(G grad x))`` on cell-wise coefficients, solved by SOLVAX ``pcg`` (plan D5).
+
+    ``G`` is each face's conductance, the harmonic mean of its two half cells (:func:`lmhdx.ops.face_conductivity`),
+    so what leaves one cell enters the next; a boundary face takes its cell's, which a Neumann datum, a gradient,
+    is multiplied by. With a positive ``shift`` the operator is symmetric positive definite. It is an implicit
+    conduction step through solid walls: ``shift`` the cells' ``rho c_p``, ``coefficient`` the time step.
+    ``conditions`` are homogeneous; boundary data enter through :meth:`lift`.
+    """
+
+    grid: Grid
+    conditions: tuple[BoundaryCondition, BoundaryCondition, BoundaryCondition]
+    shift: np.ndarray
+    coefficient: float
+    conductances: tuple[np.ndarray, np.ndarray, np.ndarray]
+    preconditioner: FastDiagonalHelmholtz
+    max_steps: int = 200
+
+    def face_fluxes(self, values: jnp.ndarray, conditions=None) -> tuple[Field, Field, Field]:
+        """``G grad x`` on the faces of each axis, under ``conditions``, the homogeneous ones by default."""
+        conditions = self.conditions if conditions is None else conditions
+        field, fluxes = Field(values, _CELL, self.grid), []
+        for axis in range(3):
+            gradient = face_gradient(field, axis, conditions[axis])
+            conductance = jnp.asarray(self.conductances[axis], values.dtype)
+            fluxes.append(gradient.replace_data(conductance * gradient.data))
+        return tuple(fluxes)
+
+    def divergence(self, values: jnp.ndarray, conditions=None) -> jnp.ndarray:
+        """``div(G grad x)`` per unit volume, under ``conditions``."""
+        return divergence(self.face_fluxes(values, conditions)).data
+
+    def lift(self, conditions) -> jnp.ndarray:
+        """What the boundary data of ``conditions``, of the operator's own kinds, add to :meth:`divergence`."""
+        if tuple(condition.homogeneous() for condition in conditions) != self.conditions:
+            raise ValueError("the lift's conditions must be of the operator's own kinds")
+        with jax.ensure_compile_time_eval():
+            return self.divergence(jnp.zeros(self.grid.shape, dtype=jnp.result_type(float)), conditions)
+
+    def apply(self, values: jnp.ndarray) -> jnp.ndarray:
+        """The operator, ``V (shift x - coefficient div(G grad x))``."""
+        volumes = jnp.asarray(self.grid.cell_volumes(), values.dtype)
+        shift = jnp.asarray(self.shift, values.dtype)
+        return volumes * (shift * values - self.coefficient * self.divergence(values))
+
+    def solve(self, rhs: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Return ``x`` with ``shift x - coefficient div(G grad x) = rhs``, and the PCG iterations; NaN unconverged.
+
+        PCG starts from zero and stops at 1e-11 of ``rhs`` in float64, 1e-5 in float32, so a time step solves for its
+        increment. Its tangent and adjoint solves, by a symmetric :func:`jax.lax.custom_linear_solve`, start from zero.
+        """
+        volumes = jnp.asarray(self.grid.cell_volumes(), rhs.dtype)
+        tolerance = _PCG_TOLERANCE[jnp.dtype(rhs.dtype).name]
+
+        def precondition(residual):
+            return self.preconditioner.solve(Field(residual / volumes, _CELL, self.grid)).data
+
+        def pcg(matvec, target):
+            result = solvax.pcg(
+                matvec, target, precond=precondition, rtol=tolerance, max_steps=self.max_steps
+            )
+            failed = ~(result.converged & jnp.isfinite(result.residual_norm))
+            return jnp.where(failed, jnp.nan, result.x), result.iterations
+
+        return jax.lax.custom_linear_solve(self.apply, volumes * rhs, pcg, symmetric=True, has_aux=True)
+
+
+def variable_helmholtz(
+    grid: Grid,
+    conditions: tuple[BoundaryCondition, BoundaryCondition, BoundaryCondition],
+    conductivity: float | np.ndarray,
+    shift: float | np.ndarray,
+    coefficient: float,
+    *,
+    precision: str = "state",
+    max_steps: int = 200,
+) -> VariableHelmholtz:
+    """Build :class:`VariableHelmholtz` on the host; ``conductivity`` and ``shift`` are numbers or cell arrays.
+
+    The preconditioner is the fast-diagonal inverse at their volume means, in ``precision``.
+    """
+    if grid.is_polar:
+        raise ValueError("a variable-coefficient solve needs a Cartesian grid")
+    k, s = (np.broadcast_to(np.asarray(value, dtype=float), grid.shape) for value in (conductivity, shift))
+    if not (np.all(np.isfinite(k) & (k > 0.0)) and np.all(np.isfinite(s) & (s > 0.0))):
+        raise ValueError("conductivity and shift must be positive and finite in every cell")
+    if not (np.isfinite(coefficient) and float(coefficient) > 0.0):
+        raise ValueError("coefficient must be positive and finite")
+    homogeneous = tuple(condition.homogeneous() for condition in conditions)
+    pads = tuple(BoundaryCondition(PERIODIC if c.is_periodic else NEUMANN) for c in homogeneous)
+    with jax.ensure_compile_time_eval():
+        field = Field(jnp.asarray(k), _CELL, grid)
+        conductances = tuple(np.asarray(face_conductivity(field, axis, pads[axis]).data) for axis in range(3))
+    weights = grid.cell_volumes() / np.sum(grid.cell_volumes())
+    preconditioner = fast_diagonal_helmholtz(
+        grid,
+        _CELL,
+        homogeneous,
+        shift=float(np.sum(weights * s)),
+        coefficient=float(coefficient) * float(np.sum(weights * k)),
+        precision=precision,
+    )
+    return VariableHelmholtz(
+        grid, homogeneous, s.copy(), float(coefficient), conductances, preconditioner, max_steps
+    )
 
 
 _PIPE_NAMES = ("PipeProblem", "flow_rate", "pipe_grid", "pipe_problem", "pipe_residual", "solve_pipe")

@@ -191,7 +191,8 @@ Thin conducting walls take much of the dissipation away from the fluid. In the
 developed duct at Ha 20 with $c = 0.05$ the walls dissipate 56 % of it, at
 Ha 100 76 %, and at Ha 20 with $c = 0.5$ 43 % (`energy_budget(...).wall` against
 `.joule`, unchanged from 24 to 48 cells). The fluid-only model leaves that heat
-out until conjugate walls arrive.
+out. So do solid walls (below): the benchmark they are built for has no Joule
+heat.
 
 **Buoyancy** is averaged onto the velocity faces as the Lorentz force is, and
 zeroed on wall faces. It is added before the division by density and the
@@ -350,7 +351,7 @@ scale with the cells, and the ratio is what carries over.
 - Transport above second order. The open-duct results below use first-order
   upwinding and quote $Pe_h/2$, its numerical diffusivity over the physical one;
   `advection="van_leer"` removes most of it.
-- Variable properties.
+- Temperature-dependent properties.
 - A steady solve of the coupled equations. The developed duct below is the one steady thermal solve, for a given flow.
 - An inflow-outflow axis read from TOML. A run from TOML (below) covers closed
   ducts; an open one runs from Python.
@@ -360,44 +361,47 @@ A closed domain with net heating has no steady temperature. The state returned
 is not a `cases.MHDState` or an archive-compatible `Solution`. The final
 electric fields come from `core3d.face_currents(state.velocity, flow)`.
 
-### Conduction through walls
+## Conduction through solid walls
 
-Plan step 5.4b builds conduction through solid walls, for the heated conducting
-duct of plan step 5.4. Its first part is the conduction solve; the thermal step
-does not use it yet.
+Plan step 5.4b builds conduction through solid walls for the heated duct of
+step 5.4 (ADR 0009 D36). This first part is the solve; the thermal step does
+not use it yet.
 
-**The grid.** `conjugate_grid(grid, walls, k, rho_cp)` adds each transverse
-wall (`SolidWall`: a thickness, a cell count, and a constant `k` and
-`rho c_p`) to the grid as cells. It returns:
-- the extended grid;
-- the fluid's block of cells in it;
-- each cell's `k` and `rho c_p`.
+**The grid.** `core3d.conjugate_grid(grid, walls)` adds a `core3d.SolidWall`
+(a thickness, a whole number of equal cells, a `thermal_conductivity` and a
+`heat_capacity` $\rho c_p$) at either end of the transverse axes 1 and 2. The
+`ConjugateGrid` it returns holds the extended grid, whose fluid block keeps the
+given faces exactly, the block's slices, and the walls, whose properties
+`cells(name, fluid_value)` spreads over every cell. A corner cell takes the
+nearer wall's material, the first axis's when equally near, as the corners of
+resolved electrical walls do.
 
-A corner cell lies in a wall of both transverse axes and takes their common
-material.
-
-**The solve.** `implicit_conduction(grid, conditions, k, rho_cp, dt)` solves
-one implicit step,
+**The solve.** `poisson.variable_helmholtz(grid, conditions, conductivity,
+shift, coefficient)` is $V\,(s\,x - \tau\,\nabla\cdot(k\nabla x))$ for cell-wise
+$k$ and $s$. A face's conductance is the harmonic mean of its half cells,
+$G = A/(\delta_1/k_1 + \delta_2/k_2)$, so the heat that leaves one cell enters the
+next; a boundary face takes its cell's $k$, which a heat flux there is built
+with (`thermal_boundary(..., conductivity=...)`). One implicit step solves for
+the increment $\delta = T^{n+1} - T^n$,
 
 $$
-V\,(c\,T - \Delta t\,\nabla\cdot(k\nabla T)) = V\,r ,
+\rho c_p\,\delta - \Delta t\,\nabla\cdot(k\nabla\delta)
+= \Delta t\,\bigl(q + \nabla\cdot(k\nabla T^n) + b\bigr),
 $$
 
-with the face conductance the harmonic mean of its two half-cells,
-`G = A / (δ₁/k₁ + δ₂/k₂)`. This is the two resistances in series, so the
-heat that leaves one cell enters the next. The operator is symmetric and
-positive definite.
+$b$ the boundary data's `lift`, so PCG's tolerance is the change's. SOLVAX
+`pcg` is preconditioned by the fast-diagonal inverse at the volume-mean $k$ and
+$s$, so the iterations are bounded by the coefficients' spread, not by the mesh
+or $\Delta t$. It differentiates through a symmetric `custom_linear_solve`.
 
-**The preconditioner.** SOLVAX `pcg` solves the step, preconditioned by the
-existing fast-diagonal inverse at one `k` and one `c`, the volume means. Inside
-`jax.lax.custom_linear_solve`, the solution differentiates in `r`.
-
-**Measured.**
-- Two materials in series give the exact piecewise-linear profile.
-- One implicit step stores exactly the heat put in.
-- With the steel and PbLi of step 5.4 on a duct walled on all four sides, PCG
-  converges to 1e-11 in 7–9 iterations, on 6 or 24 fluid cells across and at
-  every `Δt` tried.
+**Tested** (`tests/test_ops.py`): two materials in series, exact with the same
+flux through every face; steel brought into contact with fluid, the exact
+effusivity-weighted contact temperature at second order; the benchmark's steel
+and PbLi walled on four sides, symmetric, conservative, and under 10 PCG
+iterations on 6 and 24 cells across at $\Delta t$ 0.05 and 100. Probed in
+float32, an insulated axis's null eigenvalue came out $+3\times10^{-5}$, which
+turned every shifted fast-diagonal operator indefinite at a large $\Delta t\,k$;
+the eigenvalues are clamped to the Laplacian's sign.
 
 ## The thermally fully developed duct
 
