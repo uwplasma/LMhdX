@@ -4,7 +4,8 @@ Status: proposed 2026-10-14; accepted and implemented, merged as #266
 (`47319aa`), slimmed in #267 and released in 1.11.0. Amends D9 and the
 release-2.0 non-goals of `plan.md` Section 1, and restates Phase 5. What is
 implemented and what is still pending is in the last section, *Status after
-the merge*; the decisions below keep their proposal-time wording.
+the merge*; the decisions below keep their wording, except one marked
+correction to the D33 amendment (2026-10-19).
 
 Basis: `main` at `0f5d931`; a read of the `core3d`, `ops`, `grid` and `poisson`
 symbols the thermal step reuses (listed in the step 5.1 issue); the duct design
@@ -129,8 +130,9 @@ passive, whatever `g` is.
 against Hartmann flow between plates at `y = ±a` heated by equal uniform fluxes,
 with no volumetric heat: the external source is zero and Joule heating is off
 (`joule_heating=False`), as the classical reference has no internal heating.
-(The words "Joule heat included" stood here until 2026-10-19; the gate never
-included it.) With `s = y/a`, `Ha` on `a`, and
+*Correction (2026-10-19):* this amendment said "Joule heat included"; its test
+(`_plates` in `tests/test_steady.py`) has run with `joule_heating=False` since
+it was added. With `s = y/a`, `Ha` on `a`, and
 `F_H(s)` the integral from 0 of the mean-normalized Hartmann velocity
 `(1 - cosh(Ha s)/cosh Ha)/(1 - tanh(Ha)/Ha)`, the plates' own Nusselt number is
 `Nu = 4 / integral_0^1 F_H(s)^2 ds` with `D_h = 4a`. It runs from 140/17 at
@@ -144,8 +146,9 @@ temperatures and the heat balance stay valid.
 
 ## Status after the merge (2026-10-19)
 
-This section comes from the post-merge review of #266 and #267. The decisions
-above are not rewritten; this records where they stand. Four statuses are kept
+This section records where the decisions stand after the merge of #266 and
+#267. The decisions above are not rewritten, apart from the marked correction
+to the D33 amendment. Four statuses are kept
 apart:
 
 - *implemented*: in `main`, with tests;
@@ -180,8 +183,9 @@ Plan step 5.4 orders the first two.
 and the book's tables were never inspected. The evidence actually used:
 
 - **H1** (square duct, aspect ratio 0.5 and slug flow): checked against the
-  exact double-sine series, which uses no discrete operator. It converges at
-  second order (`tests/test_steady.py`, `docs/physics/thermal.md`).
+  exact double-sine series, which uses no discrete operator, at measured orders
+  1.92–1.99 (`docs/physics/thermal.md`). The test gates the square ducts at an
+  order above 1.5 and the aspect-0.5 duct at 64 cells (`tests/test_steady.py`).
 - **H2** (uniform flux on every wall): checked against 3.091. That is Shah &
   London's value as cited in the review of #240, a secondary citation.
   Richardson extrapolation gives 3.0873, 0.12 % lower.

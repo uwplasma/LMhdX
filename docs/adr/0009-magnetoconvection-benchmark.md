@@ -1,12 +1,13 @@
 # 0009 — Step 5.4: the heated conducting duct of Mistrangelo et al. (2025)
 
-Status: proposed 2026-10-19. It restates plan step 5.4 and amends two
-decisions of ADR 0008:
+Status: proposed 2026-10-19. It restates plan step 5.4 and amends:
 
-- D31: conjugate walls become a step;
-- D31.1: an inflow-outflow duct may evolve.
+- ADR 0008 D31: conjugate walls become a step;
+- ADR 0008 D31.1: an inflow-outflow duct may evolve;
+- plan D26: the outlet of an evolving duct is advective (D37);
+- plan D27 and validation row 6: this benchmark moves to row 19 (D35).
 
-It also implements D5's PCG fallback for walls that make the solve
+Its step 5.4b builds D5's PCG fallback for walls that make the solve
 non-separable.
 
 Basis:
@@ -17,7 +18,8 @@ Basis:
   covering all pages, Tables 1–5 and Figures 1–38 (page numbers below are the
   journal's);
 - a survey of what LMhdX supports for this case;
-- the post-merge thermal review's P2 and P3.
+- plan D27 and validation row 6, which already carry this benchmark's
+  uniform-field gradient (−0.0863, 1 %).
 
 ## The benchmark
 
@@ -71,7 +73,7 @@ Basis:
 
 - **The material properties.** Only references are given: Martelli et al.
   (2019) for PbLi, and a 1992 steel handbook.
-- Martelli's PbLi at 573 K gives `Ha` 233 and `Re` 3158, where the paper prints
+- Martelli's PbLi at 573 K gives `Ha` 233 and `Re` 3157, where the paper prints
   235 and 3220.
 - Its `ρc_p` of 1.867e6 J/(m³ K) gives a bulk rise of 10.1 K if the heated
   patch spans the full 50 mm outer width, and 9.3 K if it spans 46 mm. Figure
@@ -99,10 +101,11 @@ Basis:
    open axis and never applies the inlet profile. Only the steady
    `axial.solve_open_duct` carries it. Its Newton solve with inertia took 3.5 h
    at Ha 200, Re 40, and did not finish in 5.5 h at Ha 100, Re 33
-   (`numerics.md`).
+   (the ANL fringe on 70 × 32² cells; `docs/physics/numerics.md`).
 4. **A buoyant, inertial open flow.** The thermal step refuses buoyancy on a
    held flow and refuses an unheld open duct. Transient 3-D inertia is tested
-   only near Re 5.
+   only near Re 5. No test runs buoyancy with momentum transport on: every
+   buoyant fixture uses `advection="off"`.
 
 **What exists and carries over:**
 
@@ -110,7 +113,8 @@ Basis:
 - per-axis graded faces;
 - explicit central or limited momentum transport;
 - implicit viscosity and magnetic damping;
-- Boussinesq buoyancy in any direction;
+- Boussinesq buoyancy in any direction off a periodic axis, so far tested with
+  momentum transport off;
 - the thermal open axis with its backflow policies;
 - SOLVAX `pcg`, on the 0.19 floor.
 
@@ -129,11 +133,16 @@ Basis:
 - **The heat terms.** The comparison switches Joule heat off, as the reference
   equation does. LMhdX's energy verification with Joule heat on stays a
   separate check.
+- **Validation row 6.** D27 brought this benchmark into row 6, with 1 % on the
+  uniform-field gradient −0.0863. The paper prints no wall property, so 5.4a
+  uses that printed gradient to fix the wall's effective conductivity ratio.
+  Row 6's 1 % is then met by construction and is not evidence. Its Mistrangelo
+  part moves to row 19, and its ALEX B1 part stays in row 6.
 
 Reason: a gate needs a reference that is itself settled.
 
-**D36. Conducting walls become cells of an extended grid, for the potential and
-the temperature.**
+**D36. Conducting walls become cells of an extended grid, for the temperature
+and the potential.**
 
 *The grid.*
 
@@ -146,9 +155,10 @@ the temperature.**
 
 *The face coefficients.*
 
-- A face between two cells takes the harmonic mean of their coefficients. For
-  heat that is the shared conductance `G = A/(δ_f/k_f + δ_s/k_s)` across the
-  interface, so the two sides' fluxes cancel exactly.
+- A face between two cells takes the distance-weighted harmonic mean of their
+  coefficients: the two half-cells' resistances in series. For heat that is the
+  shared conductance `G = A/(δ_f/k_f + δ_s/k_s)` across the interface, so the
+  two sides' fluxes cancel exactly.
 - A contact resistance `R_c` fits into the same formula; the benchmark has
   none.
 
@@ -163,13 +173,20 @@ the temperature.**
 *The scope.*
 
 - The extended grid is opt-in.
-- Thin walls, one-axis resolved walls and the fluid-only thermal inverse keep
-  their separable paths and stay the default.
-- Wall Joule heat and the thermal capacity of a thin wall's electrical unknowns
-  are not included.
+- Thin walls, resolved walls (on one axis, or on two with one axial cell) and
+  the fluid-only thermal inverse keep their separable paths and stay the
+  default.
+- Wall Joule heat is not deposited (the reference has none), and thin walls
+  get no thermal cells.
 
-*Reason.* Steel and PbLi differ little here. The ratio of `σ` is about 1.3–1.6,
-of `k` about 0.9, and of `ρc_p` about 2.3. So a constant-coefficient
+*The order.* The temperature comes first. 5.4c needs only the thermal walls,
+because its held flow is the developed section that LMhdX solves today with
+both axes resolved. The potential on the extended grid is needed first by the
+evolving duct of 5.4e.
+
+*Reason.* Steel and PbLi differ little here. The ratio of `σ` is about 1.2
+(1.18 measured, 1.25 pinned in 5.4a), of `k` about 0.9, and of `ρc_p` about
+2.3. So a constant-coefficient
 preconditioner should leave few iterations, which 5.4b measures.
 
 *Rejected.*
@@ -189,6 +206,8 @@ preconditioner should leave few iterations, which 5.4b measures.
   - the thermal outlet's existing policies, with `"error"` the default.
 - **Buoyancy:** once the evolving duct passes its own gates, buoyancy is
   allowed on it. The refusal in `build_thermal_step` stays for a held flow.
+- **D26:** this replaces D26's outlet (a zero axial gradient and `p = 0`) for
+  an evolving duct. The steady open duct keeps D26's.
 - **What this is not:** a general energy-stable open boundary. A long outlet
   region and an outlet-length study are part of every comparison, as the paper
   recommends (p. 17).
@@ -201,17 +220,19 @@ fringe structures are inertial.
 - **The campaign** follows the repository's benchmark layout:
   - `src/lmhdx/data/benchmarks/specs/mistrangelo2025.toml`: the frozen
     specification;
-  - `src/lmhdx/data/benchmarks/references/`: the digitized curves, as CSV;
-  - `benchmarks/provenance.json`: the sources, with each curve's figure, axis
-    calibration and digitizer;
+  - `src/lmhdx/data/benchmarks/references/`: the digitized curves, with each
+    curve's figure and axis calibration. They ship in the wheel and count
+    against `wheel_bytes_max`;
+  - `benchmarks/provenance.json`: the sources and the benchmark's entry;
   - `validation/mistrangelo.py`: the observables as the paper defines them,
-    and the gate.
+    the digitizer and the gate.
   - Long runs, records and figures are release assets, not tracked files.
 - **The capabilities** go in `thermal`, `core3d` and `poisson`. No module is
   added: the count stays at D34's 16.
 - **Ratchets:** each pull request raises them by the measured amount it adds.
 - **Budget:** 5.4e is a campaign longer than an hour, so its issue records a
-  hypothesis, a budget and an exit (D12). The estimate is about 400 × 90² cells
+  hypothesis, a budget, the expected change in its diagnostics and an exit
+  (D12). The estimate is about 400 × 90² cells
   and 30,000–50,000 steps, which is hours on one GPU in mixed precision or about
   a day on the CPU in float64. 5.4b's iteration counts replace the estimate.
 
@@ -219,8 +240,8 @@ fringe structures are inertial.
 
 | Step | What | Exit |
 |:--|:--|:--|
-| 5.4a | The specification, frozen before new numerics (listed below) | The specification and data are committed. The 2-D developed section with resolved walls on both axes, which LMhdX supports today, is reported: its pressure gradient against −0.0863, and its jets against Figures 13 and 26. |
-| 5.4b | Walls as cells of an extended grid (D36): the potential first, then the temperature | Two-material steady conduction and transient storage against exact solutions. Interface fluxes cancel to rounding. Fluid-plus-wall energy and charge balance close. The 2-D section matches today's resolved-wall path. The thin-wall limit is recovered as `t_w → 0`. PCG iterations and cost are recorded. Directional derivatives are taken in the inputs the step accepts. |
+| 5.4a | The specification, frozen before new numerics (listed below) | The specification and data are committed. The 2-D developed section with resolved walls on both axes, which LMhdX supports today, is reported: its pressure gradient fixes the wall's effective conductivity ratio against −0.0863 (D35), and its jets are compared with Figures 13 and 26. |
+| 5.4b | Walls as cells of an extended grid (D36): the temperature first, then the potential | Two-material steady conduction and transient storage against exact solutions. Interface fluxes cancel to rounding. Fluid-plus-wall energy and charge balance close. The 2-D section matches today's resolved-wall path. The thin-wall limit is recovered as `t_w → 0` at a fixed wall conductance ratio `c = σ_w t_w/(σ a)` (today's `wall_conductance`). PCG iterations and cost are recorded. Directional derivatives are taken in the inputs the step accepts. |
 | 5.4c | A reduced Case 1, reported and not gated: the heated zone, −0.4 ≤ x ≤ 0.4 m, with the developed MHD flow held, conjugate walls and no buoyancy | Interface and outer-wall temperatures, bulk temperature and `Nu` are compared against Figures 9, 10, 17, 18 and 38. This measures what buoyancy and the fringe add. |
 | 5.4d | The evolving open duct (D37); then buoyancy on it | The steady limit matches `axial.solve_open_duct` (Stokes, and Re 10 at Ha 100). Mass and charge are conserved. A prescribed throughflow is held. The physical pressure drop and the heat ledger close. A coupled manufactured solution converges at its order. Backflow is handled. Outlet-location sensitivity is measured. Zero-buoyancy parity holds. |
 | 5.4e | Case 1, gated (D35): the full 3-D duct with the fringe, thick walls, inertia, buoyancy and heat | Every 5.4a observable lies within the gate declared before the run. That holds on two meshes and two outlet lengths. |
@@ -239,11 +260,13 @@ fringe structures are inertial.
   - the wall end-face conditions;
   - the reference levels of the potential and the pressure.
 - **Case 1's observables**, as the paper defines them: eqs. 6–8 and Figures
-  6–10, 12, 13 and 15–19.
-- **Case 2's observables:** Figures 23, 24, 26–29, 34, 35 and 37.
+  6–13, 15–19 and 38.
+- **Case 2's observables:** Figures 23, 24, 26–35, 37 and 38.
 - **The digitized curves**, each with its provenance.
 
 **The order:**
 
-- 5.4b and 5.4c come first, then 5.4d.
-- 5.4d may start once 5.4a is frozen.
+- 5.4a first; nothing new is built before it is frozen.
+- Then 5.4b, followed by 5.4c, which needs its walls. 5.4d may run in
+  parallel with them.
+- 5.4e needs 5.4b–5.4d, and 5.4f follows 5.4e.
