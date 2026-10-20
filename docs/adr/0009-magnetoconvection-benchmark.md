@@ -209,6 +209,7 @@ fringe structures are inertial.
   - Long runs, records and figures are release assets, not tracked files.
 - **The capabilities** go in `thermal`, `core3d` and `poisson`. No module is
   added: the count stays at D34's 16.
+- **The validation file cap** rises from 5 to 6, for `validation/mistrangelo.py`.
 - **Ratchets:** each pull request raises them by the measured amount it adds.
 - **Budget:** 5.4e is a campaign longer than an hour, so its issue records a
   hypothesis, a budget and an exit (D12). The estimate is about 400 × 90² cells

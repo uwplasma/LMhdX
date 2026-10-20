@@ -91,6 +91,7 @@ physics/thermal
 
 validation/index
 validation/freemhd
+validation/mistrangelo
 ```
 
 ```{toctree}
