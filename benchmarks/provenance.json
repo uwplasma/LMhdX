@@ -183,21 +183,23 @@
         "mistrangelo-2025",
         "martelli-2019",
         "matolich-1965",
-        "aries-ss316"
+        "aries-ss316",
+        "mistrangelo2025-case1",
+        "mistrangelo2025-case2"
       ],
+      "spec_path": "lmhdx/data/benchmarks/specs/mistrangelo2025.toml",
       "status": "specification-frozen",
       "tests": [
         "tests/test_steady.py::test_the_magnetoconvection_specification_reproduces_its_printed_numbers",
         "tests/test_steady.py::test_the_magnetoconvection_section_meets_the_printed_developed_gradient",
         "tests/test_steady.py::test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale",
+        "tests/test_steady.py::test_the_digitizer_reads_a_drawn_figure",
         "tests/test_steady.py::test_the_digitized_case_2_curves_confirm_its_inferred_velocity_and_flux"
       ],
       "tier": "C",
       "title": "Heated conducting square duct in a fringing field",
       "workflows": [
-        "validation/mistrangelo.py",
-        "src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json",
-        "src/lmhdx/data/benchmarks/references/mistrangelo2025-case2.json"
+        "validation/mistrangelo.py"
       ]
     }
   ],
@@ -248,7 +250,7 @@
       "doi": "10.1088/1741-4326/ae0800",
       "filename": "paper_references/mistrangelo2025/mistrangelo2025_nf65_116006.pdf",
       "id": "mistrangelo-2025",
-      "kind": "journal-article",
+      "kind": "article",
       "title": "A code-to-code benchmark for magneto-convection in a horizontal duct",
       "year": 2025
     },
@@ -256,7 +258,7 @@
       "availability": "external",
       "doi": "10.1016/j.fusengdes.2018.11.028",
       "id": "martelli-2019",
-      "kind": "journal-article",
+      "kind": "article",
       "title": "Literature review of lead-lithium thermophysical properties",
       "year": 2019
     },
@@ -274,6 +276,22 @@
       "kind": "web-database",
       "title": "ARIES/UCSD material properties: austenitic stainless steel (316)",
       "url": "https://qedfusion.org/LIB/PROPS/PANOS/ss.html"
+    },
+    {
+      "availability": "repository",
+      "id": "mistrangelo2025-case1",
+      "kind": "reference_data",
+      "path": "lmhdx/data/benchmarks/references/mistrangelo2025-case1.json",
+      "sha256": "c362124e36e2f50c537cb2f85a76eda4fee0f87b63d94b1a7864ae6b5a335d22",
+      "title": "Mistrangelo et al. 2025, Case 1: figures digitized by validation.mistrangelo"
+    },
+    {
+      "availability": "repository",
+      "id": "mistrangelo2025-case2",
+      "kind": "reference_data",
+      "path": "lmhdx/data/benchmarks/references/mistrangelo2025-case2.json",
+      "sha256": "6f982ef0c028696f82dbe0e7ec3d1f91e1aadd063bba516d707a905e5682dd90",
+      "title": "Mistrangelo et al. 2025, Case 2: figures digitized by validation.mistrangelo"
     }
   ]
 }

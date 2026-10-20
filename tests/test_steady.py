@@ -1563,11 +1563,11 @@ def test_a_heated_hunt_duct_balances_its_enthalpy():
 def test_the_magnetoconvection_specification_reproduces_its_printed_numbers():
     """The pinned PbLi gives Case 1's printed Ha, Re and Gr; Martelli's own values fall 0.8 %, 1.9 % and 4.0 % short
     (Gr goes as 1/nu^2); eq. 1 holds at its anchors; and the heated patch over the full outer width gives Fig. 17's
-    rise of about 10 K."""
+    rise of about 10 K. The recorded pinned values are what ``pinned_pbli`` derives."""
     from validation import mistrangelo
 
     record = mistrangelo.spec()
-    assert record["status"] == "frozen" and record["tolerances_frozen_before_production"]
+    assert record["status"] == "frozen" and mistrangelo.developed_gradient(record) == 0.0863
     case, a, b0 = record["cases"]["case1"], record["geometry"]["half_width_m"], record["field"]["peak_T"]
     u0, q, g = (
         case["mean_velocity_m_per_s"],
@@ -1590,6 +1590,8 @@ def test_the_magnetoconvection_specification_reproduces_its_printed_numbers():
 
     printed = np.array([case["hartmann"], case["reynolds"], case["grashof"]])
     assert groups(mistrangelo.pinned_pbli(record)) == pytest.approx(printed, rel=1e-12)
+    for name, value in record["properties"]["pbli_pinned"].items():
+        assert mistrangelo.pinned_pbli(record)[name] == pytest.approx(value, rel=1e-5)
     assert groups(record["properties"]["pbli"]) / printed - 1.0 == pytest.approx(
         [-0.0077, -0.0195, -0.0396], abs=5e-4
     )
@@ -1605,20 +1607,81 @@ def test_the_magnetoconvection_specification_reproduces_its_printed_numbers():
 
 def test_the_magnetoconvection_section_meets_the_printed_developed_gradient():
     """Case 1's developed section, steel resolved on both axes at the pinned ratio, on 48/6 cells: -dp/dx within
-    0.5 % of the printed -0.0863 (96/12 meets it to 1e-4), side jets near 2.8 u0 at |z| = 0.93 a."""
+    0.5 % of the printed -0.0863 (96/12 meets it to 1e-4); at y = 0 the side jets near 2.8 u0 at |z| = 0.93 a (the
+    paper: 0.0215 m, 0.935 a) and the core near 0.85 u0."""
     from validation import mistrangelo
 
-    ratio = mistrangelo.spec()["properties"]["steel"]["conductivity_ratio_pinned"]
-    flow = mistrangelo.section_flow(ratio, cells=48, cells_in_layer=6, wall_cells=6)
-    assert flow["gradient"] == pytest.approx(mistrangelo.DEVELOPED_GRADIENT, rel=5e-3)
-    peak = int(np.argmax(flow["u_over_u0"]))
-    assert 2.7 < flow["u_over_u0"][peak] < 2.9 and 0.92 < abs(flow["z"][peak]) < 0.94
+    record = mistrangelo.spec()
+    ratio = record["properties"]["steel"]["conductivity_ratio_pinned"]
+    flow = mistrangelo.section_flow(ratio, record=record, cells=48, cells_in_layer=6, wall_cells=6)
+    assert flow["gradient"] == pytest.approx(mistrangelo.developed_gradient(record), rel=5e-3)
+    assert 2.75 < flow["jet"] < 2.9 and 0.92 < flow["jet_z"] < 0.94 and 0.84 < flow["centre"] < 0.86
+
+
+def _check_reference_record(record):
+    """One digitized figure: its image hashed, both axes on their label lattice (three ticks at least, under 1 px),
+    curves ordered and visible, the band ordered and inside its window."""
+    assert len(record["sha256"]) == 64 and record["curves"]
+    for axis in ("x", "y"):
+        assert record["calibration"][axis]["misfit_px"] <= 1.0 and record["calibration"][axis]["ticks"] >= 3
+    for curve in record["curves"].values():
+        assert np.all(np.diff(curve["x"]) > 0) and curve["coverage"] >= 0.01
+    if "band" in record:
+        band = record["band"]
+        assert np.all(np.array(band["lower"]) <= np.array(band["upper"])) and min(band["codes"]) >= 1
+        if record["window"]:
+            assert record["window"][0] <= band["x"][0] and band["x"][-1] <= record["window"][1]
+
+
+def test_the_digitizer_reads_a_drawn_figure(tmp_path):
+    """A synthetic xmgrace-like figure: a frame with outward ticks, a solid green line, a dashed orange line and red
+    rings. The calibration, the lines and rings within 1.5 px, and the band closed over the dashes are recovered; a
+    wrong tick label is refused."""
+    import copy
+
+    from PIL import Image, ImageDraw
+
+    from validation import mistrangelo
+
+    image = Image.new("RGB", (400, 300), "white")
+    draw = ImageDraw.Draw(image)
+    left, right, top, bottom = 50, 350, 20, 250
+    draw.rectangle([left, top, right, bottom], outline="black", width=2)
+    for k in range(6):  # x from 0 to 5 by 1, y from 0 to 10 by 2
+        x_px, y_px = left + 60 * k, bottom - 46 * k
+        draw.line([x_px, bottom + 1, x_px, bottom + 12], fill="black", width=1)
+        draw.line([left - 12, y_px, left - 1, y_px], fill="black", width=1)
+    px = lambda x: left + 60 * x  # noqa: E731
+    py = lambda y: bottom - 23 * y  # noqa: E731
+    xs = np.linspace(0.2, 4.8, 200)
+    draw.line([(px(x), py(2 + x)) for x in xs], fill=(0, 255, 0), width=2)
+    for start in np.arange(0.2, 4.8, 0.25):  # 15 px on, 3 px off
+        dash = np.linspace(start, start + 0.2, 10)
+        draw.line([(px(x), py(2.5 + x)) for x in dash], fill=(255, 165, 0), width=2)
+    for x in np.arange(0.5, 4.6, 0.5):
+        draw.ellipse([px(x) - 3, py(1) - 3, px(x) + 3, py(1) + 3], outline=(255, 0, 0))
+    path = tmp_path / "x1.png"
+    image.save(path)
+    spec = dict(pdf_page=0, xref=1, x=((0, 50), (5, 350), 1), y=((0, 250), (10, 20), 2), quantity="synthetic",
+                agree=("OF_KIT", "FLUENT_UK"), cite="drawn", circles=True)  # fmt: skip
+    record = mistrangelo.digitize(path, 0, {0: spec})
+    _check_reference_record(record)
+    pixel = record["per_pixel"][1]  # aliased 2-px lines: half a pixel off centre, and a half-pixel staircase
+    green, orange = record["curves"]["OF_KIT"], record["curves"]["FLUENT_UK"]
+    for curve, offset in ((green, 2.0), (orange, 2.5), (record["curves"]["analytical"], None)):
+        error = np.array(curve["y"]) - (offset + np.array(curve["x"]) if offset else 1.0)
+        assert np.max(np.abs(error)) <= 1.5 * pixel and abs(np.mean(error)) <= pixel
+    assert orange["coverage"] < 0.95 and record["band"]["codes"].count(2) > 0.9 * len(record["band"]["codes"])
+    wrong = copy.deepcopy(spec)
+    wrong["y"] = ((0, 250), (12, 20), 2)
+    with pytest.raises(ValueError, match="lattice"):
+        mistrangelo.digitize(path, 0, {0: wrong})
 
 
 def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale():
-    """The reference curves, read from the paper's figures: each axis fits its major ticks within 1 px, each band is
-    ordered, and Fig. 8's slope over |x| < 0.4 m is the printed -0.0855 in sigma u0 B0^2 with the pinned PbLi; the
-    figures also confirm the inferred heated width and L = a."""
+    """The reference curves, read from the paper's figures: each record as ``_check_reference_record``, and Fig. 8's
+    slope over |x| < 0.4 m is the printed -0.0855 in sigma u0 B0^2 (with the pinned PbLi; Martelli's sigma is 0.4 %
+    away, which the figure cannot tell apart); the figures also confirm the inferred heated width and L = a."""
     import json
 
     from validation import mistrangelo
@@ -1626,15 +1689,7 @@ def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressu
     figures = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES.read_text())["figures"]}
     assert sorted(figures) == sorted(mistrangelo.FIGURES)
     for record in figures.values():
-        assert len(record["sha256"]) == 64 and record["curves"]
-        for axis in ("x", "y"):
-            assert (
-                record["calibration"][axis]["misfit_px"] <= 1.0 and record["calibration"][axis]["ticks"] >= 2
-            )
-        for curve in record["curves"].values():
-            assert np.all(np.diff(curve["x"]) > 0)
-        if "band" in record:
-            assert np.all(np.array(record["band"]["lower"]) <= np.array(record["band"]["upper"]))
+        _check_reference_record(record)
     record, case = mistrangelo.spec(), mistrangelo.spec()["cases"]["case1"]
     band = figures[8]["band"]
     x, middle = np.array(band["x"]), (np.array(band["lower"]) + np.array(band["upper"])) / 2
@@ -1643,13 +1698,13 @@ def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressu
     scale *= record["field"]["peak_T"] ** 2
     assert np.polyfit(x[inside], middle[inside], 1)[0] / scale == pytest.approx(-0.0855, rel=0.01)
     # Fig. 17's outlet bulk temperature is the specification's energy balance (the full outer width heated), and
-    # Fig. 38's temperatures give Fig. 18's Nu with L = a, both within 2 px.
-    pbli, a, wall = (
-        mistrangelo.pinned_pbli(record),
-        record["geometry"]["half_width_m"],
+    # Fig. 38's temperatures give Fig. 18's Nu with L = a (L = 2a would double it), both within 2 px.
+    pbli, a = mistrangelo.pinned_pbli(record), record["geometry"]["half_width_m"]
+    q, u0, wall = (
+        case["heat_flux_W_per_m2"],
+        case["mean_velocity_m_per_s"],
         record["geometry"]["wall_thickness_m"],
     )
-    q, u0 = case["heat_flux_W_per_m2"], case["mean_velocity_m_per_s"]
     rise = (
         q
         * 2.0
@@ -1672,8 +1727,9 @@ def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressu
 
 
 def test_the_digitized_case_2_curves_confirm_its_inferred_velocity_and_flux():
-    """Case 2's figures, calibrated within 1 px: Fig. 30's slope is the developed -0.0863 sigma u0 B0^2 at the inferred
-    u0 = 0.01 m/s, and Fig. 34's outlet bulk temperature is the energy balance at the inferred 10 W/cm^2."""
+    """Case 2's figures, each as ``_check_reference_record``: Fig. 30's slope is the developed -0.0863 sigma u0 B0^2 at
+    the inferred u0 = 0.01 m/s, and the top of Fig. 34's outlet band, the codes that close the balance (FLUENT_UK's
+    plateau sits 4.5 K lower), is the energy balance at the inferred 10 W/cm^2, within 2 px."""
     import json
 
     from validation import mistrangelo
@@ -1681,8 +1737,7 @@ def test_the_digitized_case_2_curves_confirm_its_inferred_velocity_and_flux():
     figures = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES_CASE2.read_text())["figures"]}
     assert sorted(figures) == sorted(mistrangelo.FIGURES_CASE2)
     for record in figures.values():
-        assert max(record["calibration"][axis]["misfit_px"] for axis in ("x", "y")) <= 1.0
-        assert np.all(np.array(record["band"]["lower"]) <= np.array(record["band"]["upper"]))
+        _check_reference_record(record)
     record = mistrangelo.spec()
     case, pbli, a = (
         record["cases"]["case2"],
@@ -1694,12 +1749,10 @@ def test_the_digitized_case_2_curves_confirm_its_inferred_velocity_and_flux():
     x, middle = np.array(band["x"]), (np.array(band["lower"]) + np.array(band["upper"])) / 2
     scale = pbli["electrical_conductivity_S_per_m"] * u0 * record["field"]["peak_T"] ** 2
     slope = np.polyfit(x[np.abs(x) < 0.4], middle[np.abs(x) < 0.4], 1)[0]
-    assert slope / scale == pytest.approx(-mistrangelo.DEVELOPED_GRADIENT, rel=0.015)
+    assert slope / scale == pytest.approx(-mistrangelo.developed_gradient(record), rel=0.015)
     width = 2.0 * (a + record["geometry"]["wall_thickness_m"])
     rise = q * width * 0.6 / (pbli["density_kg_per_m3"] * pbli["heat_capacity_J_per_kg_K"] * u0 * 4.0 * a**2)
     band, pixel = figures[34]["band"], figures[34]["per_pixel"][1]
-    x, lower, upper = (np.array(band[k]) for k in ("x", "lower", "upper"))
+    x, upper = np.array(band["x"]), np.array(band["upper"])
     plateau = (x > 0.5) & (x < 0.9)  # Case 2's mixing settles the bulk temperature by x = 0.5 m
-    assert np.all(lower[plateau] - 2 * pixel <= 300.0 + rise) and np.all(
-        300.0 + rise <= upper[plateau] + 2 * pixel
-    )
+    assert np.max(np.abs(upper[plateau] - 300.0 - rise)) <= 2 * pixel
