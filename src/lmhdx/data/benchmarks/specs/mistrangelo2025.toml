@@ -3,12 +3,19 @@ id = "M1-magnetoconvection-horizontal-duct"
 title = "Heated conducting square duct in a fringing field, Mistrangelo et al. 2025 (plan step 5.4, ADR 0009)"
 status = "frozen"
 frozen_on = "2026-10-20"
-tolerances_frozen_before_production = true
+# The specification is frozen; Case 1's gate (ADR 0009 D35) is declared before step 5.4e and is not here yet.
+tolerances_frozen_before_production = false
 runtime_lane = "external-data"
 source_ids = ["mistrangelo-2025"]
 comparison = "code to code: six codes, no experiment; every profile in figures only"
-# Page, table, figure and equation numbers are the journal's. "printed" values are quoted; "inferred" values are
-# deduced here, each with its reason; "pinned" values are chosen to reproduce printed numbers.
+# Page, table, figure and equation numbers are the journal's (the PDF's page less one). "printed" values are quoted;
+# "inferred" values are deduced here, each with its reason; "pinned" values are chosen to reproduce printed numbers.
+
+[sources]
+mistrangelo-2025 = "C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006, doi:10.1088/1741-4326/ae0800"
+martelli-2019 = "D. Martelli, A. Venturini and M. Utili, Fusion Eng. Des. 138 (2019) 183-195, doi:10.1016/j.fusengdes.2018.11.028"
+matolich-1965 = "J. Matolich Jr., Thermal conductivity and electrical resistivity of Type 316 stainless steel from 0 to 1800 F, NASA CR-54151 (1965)"
+aries-ss316 = "ARIES/UCSD material properties, austenitic stainless steel (316), https://qedfusion.org/LIB/PROPS/PANOS/ss.html"
 
 [geometry]
 kind = "square_duct"
@@ -16,9 +23,9 @@ half_width_m = 0.023  # printed, p. 2: the half-width along the field
 wall_thickness_m = 0.002  # printed, p. 2; stainless steel on all four sides
 x_comparison_min_m = -1.0  # printed, p. 5: where the field begins to rise
 x_field_uniform_max_m = 0.4  # printed, p. 2
-flow_direction = "+x"
-field_direction = "y"
-gravity_direction = "-z"
+flow_direction = "+x"  # printed, Fig. 1
+field_direction = "y"  # printed, Figs. 1 and 2
+gravity_direction = "-z"  # inferred: the bottom wall z = -a is heated from below (pp. 2, 5)
 heated_wall = "z = -a, a side wall parallel to the field (p. 5)"
 
 [field]
@@ -30,9 +37,9 @@ components = "B_y only, as printed; its curl is nonzero in the fringe, which the
 
 [heating]
 surface = "outer surface of the bottom wall, z = -a - t_w"  # printed, p. 2
-x_min_m = -0.3
-x_max_m = 0.3
-width = "full outer width, 2a + 2t_w = 0.050 m"  # inferred: Martelli's rho c_p then gives Fig. 17's 10.1 K rise
+x_min_m = -0.3  # printed, p. 2
+x_max_m = 0.3  # printed, p. 2
+width = "full outer width, 2a + 2t_w = 0.050 m"  # inferred: Martelli's rho c_p then gives the printed exit bulk temperature
 other_outer_surfaces = "adiabatic and electrically insulating"  # printed, p. 3
 inlet_temperature_C = 300.0  # printed, Table 4
 reference_temperature_C = 300.0  # printed, p. 3: buoyancy and properties
@@ -40,21 +47,30 @@ energy_sources = "none: no Joule, viscous or volumetric heat (eq. 4)"
 
 [cases.case1]
 hartmann = 235.0  # printed, Table 1; Ha = B0 a sqrt(sigma / (rho nu))
-reynolds = 3220.0  # printed; Re = a u0 / nu
-grashof = 1.42e7  # printed; Gr = g beta (q'' a / k) a^3 / nu^2
+reynolds = 3220.0  # printed, Table 1; Re = a u0 / nu
+grashof = 1.42e7  # printed, Table 1; Gr = g beta (q'' a / k) a^3 / nu^2
+richardson = 1.37  # printed, Table 1; Ri/N 0.0796 (p. 3)
 mean_velocity_m_per_s = 0.03  # printed, Fig. 2
 heat_flux_W_per_m2 = 4.0e4  # printed, Fig. 2: 4 W/cm^2
-regime = "steady and laminar in the uniform field and the heated zone; unsteady at the magnet's entrance and exit"
+regime = "steady and laminar in the uniform field and the heated zone; unsteady at the magnet's entrance and exit (pp. 7-9)"
 role = "gated (ADR 0009 D35)"
 
 [cases.case2]
-hartmann = 235.0
-reynolds = 1073.0
-grashof = 3.55e7
+hartmann = 235.0  # printed, Table 1
+reynolds = 1073.0  # printed, Table 1
+grashof = 3.55e7  # printed, Table 1
+richardson = 30.8  # printed, Table 1; Ri/N 0.596 (p. 3)
 mean_velocity_m_per_s = 0.01  # inferred: the ratio of the printed Re, 3.0009
 heat_flux_W_per_m2 = 1.0e5  # inferred: the ratio of the printed Gr, 2.5; the bulk rise of Fig. 34 agrees
 regime = "time-dependent: rolls about the field's axis, fluctuations up to 30 K (pp. 12-15)"
 role = "reported (ADR 0009 D35)"
+
+[printed]
+pressure_gradient_codes = -0.0855  # p. 8, Case 1, in sigma u0 B0^2 (inferred unit: Fig. 8)
+pressure_gradient_analytical = -0.0863  # p. 8: the analytical developed flow; its wall model is not stated
+nusselt_asymptote_case1 = 2.45  # p. 10, toward x = 0.3 m
+bulk_exit_temperature_case1_C = 310.0  # p. 10: "about"
+side_jet_z_m = 0.0215  # p. 12: the side layers' maximum velocity in almost developed flow
 
 [properties.pbli]
 # Martelli, Venturini & Utili 2019, Table 1, at 573 K: the paper's ref. [10] at its T0.
@@ -65,22 +81,28 @@ thermal_conductivity_W_per_m_K = 20.4
 dynamic_viscosity_Pa_s = 2.15e-3
 electrical_conductivity_S_per_m = 8.84e5
 expansion_coefficient_per_K = 1.21e-4
-# Pinned to the printed Ha, Re and Gr of Case 1 with rho, c_p and k kept: mu moves -1.95 %, sigma -0.42 %, beta +0.11 %.
 # Martelli's own values give Ha 233.2, Re 3157 and Gr 1.364e7.
-pinned = ["dynamic_viscosity_Pa_s", "electrical_conductivity_S_per_m", "expansion_coefficient_per_K"]
+
+[properties.pbli_pinned]
+# Pinned: Case 1's printed Ha, Re and Gr with Martelli's rho, c_p and k kept (validation.mistrangelo.pinned_pbli).
+# mu moves -2.0 %, sigma -0.4 %, beta +0.1 %.
+dynamic_viscosity_Pa_s = 2.10814e-3
+electrical_conductivity_S_per_m = 8.80319e5
+expansion_coefficient_per_K = 1.21134e-4
 
 [properties.steel]
 # The paper cites a 1992 steel handbook (ref. [11]) and prints no value or grade; a 316-type steel at 573 K.
 source_ids = ["matolich-1965", "aries-ss316"]
-electrical_conductivity_S_per_m = 1.0417e6  # Matolich 1965, Table 3: 96.0 microhm cm at 572 F, interpolated
-thermal_conductivity_W_per_m_K = 18.3  # Matolich 1965, Table 3: 10.57 Btu/(h ft F) at 572 F (ARIES: 17.9)
+electrical_conductivity_S_per_m = 1.0417e6  # interpolated to 572 F from Matolich's smoothed Table 3: 96.0 microhm cm
+thermal_conductivity_W_per_m_K = 18.3  # interpolated likewise: 10.57 Btu/(h ft F) (ARIES: 17.9)
 heat_capacity_J_per_kg_K = 544.0  # ARIES/UCSD table, 500-600 K interpolated
-density_kg_per_m3 = 7850.0  # 7960 at room temperature (ARIES), less the volumetric expansion to 573 K
-# Pinned: the developed section reproduces the printed analytical gradient -0.0863 (p. 8) at this ratio over the
-# pinned PbLi conductivity, 1.0966e6 S/m, 5.3 % above Matolich (validation.mistrangelo.infer_wall_ratio; 96/12 cells
-# with 10 wall cells, 1.24714 on 72/9). The steel's rho c_p moves only the start-up transient of a steady case.
+density_kg_per_m3 = 7850.0  # ARIES's 7.96 g/cm^3 less the volumetric expansion to 573 K; its table lists 8238 at 300 K
+# Pinned: the effective conductivity ratio, over the pinned PbLi, at which the resolved-wall developed section reproduces
+# the printed analytical gradient -0.0863 (validation.mistrangelo.infer_wall_ratio on PIN_MESH, 96/12 cells with 10 wall
+# cells; 1.24714 on 72/9). It is 5.3 % above Matolich's 1.1833 and absorbs any difference between the paper's
+# unstated analytical wall model and resolved 2 mm walls as well as the material. The steel's rho c_p moves only the
+# start-up transient of a steady case.
 conductivity_ratio_pinned = 1.24571
-pinned = ["conductivity_ratio_pinned"]
 
 [gravity]
 acceleration_m_per_s2 = 9.81  # inferred: not printed
@@ -91,13 +113,14 @@ bulk_temperature = "eq. 6: integral(u T dA) / integral(u dA) of the time-average
 nusselt = "eq. 7: h = q'' / (T_w - T_b), T_w at y = 0 on the interface z = -a; Nu = h L / k with L = a (inferred: Figs. 18, 38)"
 transverse_energy = "eq. 8: integral(v^2 + w^2 dA) / (A u0^2) of the time-averaged components"
 pressure_gradient = "printed -0.0855 (codes) and -0.0863 (analytical developed flow), in sigma u0 B0^2 (inferred: Fig. 8)"
-case1_figures = [6, 7, 8, 9, 10, 12, 13, 15, 16, 17, 18, 19, 38]
-case2_figures = [23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37]
+case1_figures = [6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19, 38]
+case2_figures = [23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37, 38]
 
 [unspecified]
 items = [
   "the wall end-face conditions at the inlet and outlet",
-  "the reference levels of the potential and the pressure (offsets removed for some codes, pp. 12-14)",
+  "the reference levels of the potential and the pressure (offsets removed for some codes, p. 14)",
   "the inlet profile and domain length, left to each code (Table 4)",
+  "the analytical developed flow's wall model (thin-wall or resolved)",
   "Pr and g, not printed",
 ]
