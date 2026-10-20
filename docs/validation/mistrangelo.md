@@ -131,7 +131,8 @@ Figures 6–13, read by `validation.mistrangelo.digitize`.
 - **Calibration.**
   - Two labelled anchors per axis label the detected ticks.
   - Every tick inside the frame must land on the axis's label lattice, and at
-    least three must. A wrong anchor value or a missed tick is an error.
+    least three ticks must. A tick on a frame line counts only where it lands
+    on the lattice. A wrong anchor value is an error.
   - The map is the least-squares fit to those ticks. Every axis fits within
     0.4 px.
 - **Curves.** Each code is picked out by its colour: one value per pixel
@@ -164,16 +165,16 @@ Figures 6–13, read by `validation.mistrangelo.digitize`.
 
 **Two checks.**
 - **The pressure scale.** Figure 8's band slope over |x| < 0.4 m is
-  −568.6 Pa/m. The printed −0.0855, taken in σu₀B₀² with the pinned PbLi,
-  gives −564.5 Pa/m, 0.7 % apart.
+  −568.8 Pa/m. The printed −0.0855, taken in σu₀B₀² with the pinned PbLi,
+  gives −564.5 Pa/m, 0.8 % apart.
   - This confirms the σu₀B₀² scale (`tests/test_steady.py`, within 1 %).
   - It cannot tell the pinned σ from Martelli's, which is 0.4 % away
     (−566.9 Pa/m).
 - **The developed section against Figure 13's analytical solution.**
-  - In the core (|z| < 15 mm) the 96-cell section lies within 1.9 px of the
+  - In the core (|z| < 15 mm) the 96-cell section lies within 1.8 px of the
     markers, 0.8 px (0.7 %) low on average.
   - On the steep flanks of the jets, one value per column is a poor trace.
-  - The section's jets are 0.0841 m/s. The codes' band peaks at 0.0849 on the
+  - The section's jets are 0.0841 m/s. The codes' band peaks at 0.0850 on the
     heated side and 0.0821 on the other, at x = 0, where buoyancy makes them
     unequal.
   - At x = −0.3 m (Figure 12), only 0.1 m into the uniform field, the codes'
