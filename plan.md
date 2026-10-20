@@ -1361,30 +1361,32 @@ on a held flow (5.3) and a limited second-order face value
 - evolving open-duct flow, with or without buoyancy;
 - higher-order time integration;
 - conjugate walls;
-- variable properties.
+- variable properties;
+- polar thermal transport (the pipe, open as #273).
 
-The step table below is the history of how this was built. The table
-here is the current claim; ADR 0008's last section is the matching record.
+The capability table below is the current claim, and ADR 0008's last section
+is the matching record. The step table after it records how 5.1–5.3 and 5.6
+were built and what 5.4–5.5 still need.
 
 The statuses are:
 
 - *implemented*: in `main` with tests;
-- *verified*: against an exact or independent reference;
+- *verified*: against an exact or independent reference, at a measured order;
 - *compared*: code to code;
 - *validated*: against experiment.
 
-None of these is yet compared or validated.
+No Phase 5 capability is yet compared or validated.
 
 | Capability | Status | Evidence | Boundary of the claim |
 |---|---|---|---|
 | Fluid heat equation: implicit conduction, upwind transport, Joule and external heat (5.1) | verified | conduction at second order, upwind at first, measured; Joule integral equal to `energy_budget(...).joule` within 1e-11; ledger at its rounding floor; manufactured advection–diffusion | constant properties; fluid only |
 | Limited transport, `advection="van_leer"` (D31.2) | verified, steady | face value at order 1.95 and 1.98 on the open duct's plug flow; gradients against central differences on the buoyant duct | coupled step first order in time; Courant limit 0.5 is a tested envelope; not affine, so no load attribution |
-| Boussinesq buoyancy (5.1e, D32) | verified | `β = 0` matches `step`; first order in dt; Bénard onset at the critical Rayleigh number | research-stage, outside the 2.0 gates; refused along a periodic axis while `β > 0` and on an evolving open duct |
+| Boussinesq buoyancy (5.1e, D32) | verified | `β = 0` matches `step`; first order in dt; Bénard onset at the critical Rayleigh number | research-stage, outside the 2.0 gates; gravity along a periodic axis refused while `β > 0`; no buoyancy on an open duct (a held flow refuses it, an evolving one is refused outright); tested with momentum transport off only |
 | Developed duct (5.2, D33) | verified | H1 against the exact double-sine series (square, aspect 0.5, slug flow) at second order; H2 against 3.091 as cited (secondary); Hartmann plates against their closed form | Shah & London's tables not inspected; uniform wall temperature (#272) and the pipe (#273) open |
-| Open duct on a held flow (5.3, D31.1) | verified | inlet, outlet, Joule, source and storage balance to 1e-6; the reservoir derivative lives on returning faces only | held flow only; a returning outlet face needs a reservoir temperature or is refused |
+| Open duct on a held flow (5.3, D31.1) | verified | the exact plug-flow profile at first order (upwind; 1.95 and 1.98 with van Leer); a manufactured returning-outlet solution at first order; inlet, outlet, Joule, wall heat and storage balance to 1e-6 on the heated Hunt duct; the reservoir derivative lives on returning faces only | held flow only; a returning outlet face needs a reservoir temperature or is refused |
 | Load attribution | implemented | the credited load balances to 1e-12; the delivered fraction within 0.03 of the exact steady value on one mesh | upwind or no transport; the load must not move the flow |
 | Runs from TOML, restart, VTK, CLI acceptance (5.6) | implemented | restart bit for bit through `lmhdx case.toml`; VTK XML layout checked by parsing it | closed ducts only (open ducts run from Python); acceptance checks the declared numerical policies, not engineering limits; no test opens ParaView |
-| Thermal design (5.5) | screening study | duct-optimization Stage 3 (#271, open) | as stated in 5.5 |
+| Thermal design (5.5) | pending (#271 records it as a screening study) | duct-optimization Stage 3 | as #271 states it |
 | Conjugate walls, evolving open coupling, Mistrangelo et al. 2025 | pending | — | 5.4a–5.4d |
 
 **Derivatives** (validation row 20). A prepared step (`build_thermal_step`) is
@@ -1399,10 +1401,11 @@ input:
 | reservoir temperature | open duct on a held flow | central differences within 1e-8 (upwind) and 1e-7 (van Leer) |
 | field scale, through the steady velocity | `developed_heat` after `solve_steady_state` | central differences within 1e-5 (`dNu`) |
 | heat source and axial gradient `γ` | `developed_heat` | stated in `docs/physics/thermal.md`, not yet tested |
-| conductivity, heat capacity, `σ`, `β`, `dt`, geometry, boundary data | rebuild only | not differentiable through a prepared step: rebuild `thermal_boundary` and the step |
+| velocity (initial, or the held flow) | `advance_thermal`, in the state | supported, not yet tested |
+| conductivity, heat capacity, `σ`, `β`, `g`, `T_r`, the magnetic field, density, viscosity, `dt`, geometry, boundary data | rebuild only | not differentiable through a prepared step: rebuild the problem and the step (and `thermal_boundary` when `k` or a flux changes, since a flux is stored as `q/k`) |
 
 **Size.** The 2026-10-19 log row's remaining target, about 1,100 lines in
-`thermal.py`, is retired (post-merge review, N6). A thermal change is judged on:
+`thermal.py`, is retired. A thermal change is judged on:
 
 - total package size;
 - duplication;
@@ -1429,7 +1432,7 @@ thermal physics unless a better boundary is shown.
 | 5.4c | Evolving open-duct momentum and temperature. First qualify the inlet lift, pressure, velocity and open-boundary conventions in time, then couple the temperature. A reservoir's data are kept distinct from an artificial outlet | zero-buoyancy parity with the held flow; mass and charge conservation; prescribed throughflow; a physical pressure drop; the heat ledger; manufactured coupled accuracy; recirculation and backflow; outlet-location sensitivity |
 | 5.4d | Matched comparison on 5.4a's specification, with 5.4b and 5.4c. 5.4b and 5.4c may proceed in parallel once 5.4a is frozen | compares wall and interface temperatures, mixed-cup temperature, heat flux or Nu as the reference defines them, velocity, pressure and currents. Mesh, time step, solver tolerance, domain length and averaging window are checked against a stated rule fixed before the run. Raw and averaged results are kept. Agreement with another code is reported apart from validation against measurement |
 | 5.5 | First thermal design: replace the mean-velocity bound of the duct design law (3b.3) with 5.2's peak wall temperature or Nusselt number; minimise hydraulic power subject to heat removal, temperature, throughput and geometry constraints; distinguish fixed-flow from fixed-pump-power comparisons | feasible candidate confirmed on a finer mesh |
-| 5.6 **done** (#259, #260, #262) | Thermal runs read from TOML, restart from a versioned record of the staggered velocity, temperature and time, and write ParaView output, as the isothermal paths do; explicit schema, version and units (review of #239) | a TOML-driven thermal run restarts bit for bit and opens in ParaView. *Met as:* the restart bit for bit, through `lmhdx case.toml`; the VTK XML layout checked by parsing it, x varying fastest. No test opens it in ParaView. *Current interfaces (after #267):* `lmhdx.io.thermal_run_from_toml` reads the TOML and checks `schema_version = 1` (`docs/reference/cli.md`); `io.run_thermal` accepts every sample on the host (finite, a valid outlet, within the scheme's Courant limit and any configured buoyancy limit), and a rejected run stops at its first failing sample with a record that imports but does not resume; `io.write_vtr` is the one rectilinear writer; `thermal.write_thermal_record` and `load_thermal_record` write and read the versioned record with its provenance (`docs/how_to/restart_and_output.md`). Parsing the XML is the verification; opening the file in ParaView is not tested |
+| 5.6 **done** (#259, #260, #262) | Thermal runs read from TOML, restart from a versioned record of the staggered velocity, temperature and time, and write ParaView output, as the isothermal paths do; explicit schema, version and units (review of #239) | a TOML-driven thermal run restarts bit for bit and opens in ParaView. *Met as:* the restart bit for bit, through `lmhdx case.toml`; the VTK XML layout checked by parsing it, x varying fastest. No test opens it in ParaView. *Current interfaces (after #267):* `lmhdx.io.thermal_run_from_toml` reads a parsed TOML document and checks `schema_version = 1` (`docs/reference/cli.md`); `io.run_thermal` accepts every sample on the host (finite, a valid outlet, within the scheme's Courant limit and any configured buoyancy limit), and a rejected run stops after the chunk holding its first failing sample, reports that sample, and writes the chunk's end state as a record that imports but does not resume; `io.write_vtr` is the one rectilinear writer; `thermal.write_thermal_record` and `load_thermal_record` write and read the versioned record with its provenance (`docs/how_to/restart_and_output.md`). Parsing the XML is the verification; opening the file in ParaView is not tested |
 
 Effort: estimated per step in the step 5.1 issue.
 
@@ -1489,9 +1492,11 @@ stack, no Q2D trims below a profiled 10 %, no thermal or device work before
 
 ### Order of work from 2026-09-22
 
-*Historical.* Its thermal and device embargo (D21) was met when 1.10b (#166)
-and 1.9c (#163) merged. Phase 5 is merged (#266, #267), and its current
-work is the status table and steps 5.4–5.5 in Phase 5.
+Its thermal and device embargo (D21) is lifted: 1.10b (#166) and 1.9c (#163)
+have merged. Phase 5's steps 5.1–5.3 and 5.6 are merged (#266, #267); its
+current work is the status table and steps 5.4–5.5 in Phase 5. The rest of
+this block stands, and so does Section 9's limit on open PRs outside Phases
+1, 2 and 4 (D21) until 4.6 lands.
 
 Decided with the owner on 2026-09-22: the name stays LMX, 1.9c comes before
 1.9b, and G4 is restated (ADR 0006). The critical path is now 1.9c → 1.9d →
@@ -1539,10 +1544,10 @@ Everything else still waits (D21): no thermal or device work before 1.10b and
 | 15 | Q2D Tithof flow | α 0.064, β 1 | Re_c 7.60, q_c 0.465 | 2 % | 3.2 |
 | 16 | Q2D cross-code | 256², identical initial data | GeophysicalFlows.jl / Dedalus | 1e-3 | 3.3 |
 | 17 | Fully developed design | Hartmann, Shercliff, Hunt | analytic response, synthetic recovery | 1e-6; finer mesh | 3b |
-| 18a | Thermal limits, rectangular duct and plates (implemented) | H1: square, aspect 0.5, slug flow; H2: square; Hartmann plates at Ha 0, 10 and slug flow, Nu on the plates' means with D_h = 4a | H1: exact double-sine series; H2: Shah & London's 3.091 as cited in the review of #240 (secondary); plates: closed form | 0.5 % | 5.2 |
+| 18a | Thermal limits, rectangular duct and plates (verified) | H1: square, aspect 0.5, square slug flow; H2: square; Hartmann plates at Ha 0, 10 and slug flow, the plates' own Nu (their wall temperature, not the four-wall mean), D_h = 4a | H1: exact double-sine series; H2: Shah & London's 3.091 as cited in the review of #240 (secondary); plates: closed form | 0.5 % | 5.2 |
 | 18b | Thermal limits, pipe and uniform wall temperature (pending) | pipe H and T (Nu 48/11, 3.66); rectangular duct under uniform wall temperature | exact and Shah & London; #272, #273 open | 0.5 % | 5.2 |
 | 19 | Heated conducting duct | Ha 235 | Mistrangelo 2025 (code to code) | 5.4d's gates, declared before the run | 5.4 |
-| 20 | Derivatives | each path's dynamic inputs; for thermal ones, Phase 5's input matrix (properties, time step, geometry and boundary data rebuild the step) | FD sweeps, Taylor, duality | 1e-6 fp64; 1e-5 for the thermal transient | 1.7, 3.1, 3b, 5.1g, 6.3 |
+| 20 | Derivatives | each path's dynamic inputs; for thermal ones, Phase 5's input matrix (properties, time step, geometry and boundary data rebuild the step) | FD sweeps, Taylor, duality | 1e-6 fp64; 1e-5 for the thermal paths (transient and developed duct) | 1.7, 3.1, 3b, 5.1g, 5.2, 5.3, 6.3 |
 | 21 | Performance | 3-D 64³–256³; Q2D 512²–2048²; matmul precision recorded | JSON + figure | G4/G5 | 2.1, 2.5 |
 | 22 | Hunt, conducting Hartmann walls | Ha 500–5000, c 0.01 | Smolentsev 2015 Table I (A2) | 0.3 % | 1.3b |
 | 23 | KIT MEKKA pipe entry | Ha 2000, N 200, c 0.071 thick wall | Bühler, Brinkmann & Mistrangelo 2020 (digitised) | stated uncertainty | 4.5 |
@@ -1703,8 +1708,9 @@ Process: pyOpenSci README guide · JOSS review criteria · Google small CLs · D
    evidence, not checkout bases.
 10. **Read Section 2.5 and the latest "Order of work" block (2026-09-22) first.** The next
     unblocked step is there; a step outside it needs the D21 exception stated
-    in the issue. For thermal work, read Phase 5's current-status table
-    instead; the block's thermal embargo is historical.
+    in the issue. For thermal work, read Phase 5's current-status table as
+    well; the block's thermal and device embargo is lifted, and Section 9's
+    open-PR limit still applies.
 11. **Speed and derivative claims** quote Section 2.5's protocol: warm forward,
     gradient, ratio, iterations and cold compile, before and after, on named
     hardware with the host load; run the JAX 0.6.2 floor stack locally before
