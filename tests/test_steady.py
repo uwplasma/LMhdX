@@ -1429,6 +1429,15 @@ def test_the_uniform_wall_temperature_nusselt_number_differentiates_through_the_
     assert gradient > 0.0 and min(errors) < 1e-5, (gradient, errors)
 
 
+def test_the_spectral_nusselt_reference_meets_the_exact_series():
+    """``validation.shercliff.developed_nusselt``, the reference of the MHD Nusselt campaign (docs, not a gate):
+    at Ha 0 it gives the H1 double-sine series and H2's 3.08738 (Wang; the package's Richardson value), on 32 points."""
+    from validation.shercliff import developed_nusselt
+
+    assert developed_nusselt(0.0, 32) == pytest.approx(_h1_nusselt(1.0, 1.0), rel=1e-7)
+    assert developed_nusselt(0.0, 32, heating="H2") == pytest.approx(3.08738, rel=1e-5)
+
+
 def test_the_uniform_wall_temperature_refuses_an_ill_posed_duct():
     """No wall at a temperature, walls at different temperatures, or a wall taking in heat: not the T condition."""
     from lmhdx.thermal import developed_wall_temperature, thermal_boundary

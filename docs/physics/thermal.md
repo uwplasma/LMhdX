@@ -516,10 +516,51 @@ pipe forms its currents in `lmhdx.pipe`, not in the core.
 The 3.65679 is a radial Chebyshev solve of the same eigenproblem across the
 diameter.
 
+**An MHD Nusselt campaign.** This compares Shercliff's square duct (insulating
+walls, field along $y$, no Joule heat) with an independent spectral solve and
+with a published analysis. It is a documentation record, not a CI gate.
+`validation.shercliff.developed_nusselt(Ha, points, heating=...)` solves the
+temperature by Chebyshev collocation on the same nodes as that module's
+velocity, and shares no operator with the package. LMhdX runs on the 128-cell
+meshes of `duct_problem`; Ha is on the half-width $a$, and $D_h=2a$.
+
+| Ha | H1: LMhdX / spectral | H2: LMhdX / spectral | T: LMhdX |
+|--:|:--|:--|--:|
+| 1 | 3.6360 / 3.6352 | 3.1098 / 3.1091 | 2.9971 |
+| 10 | 4.5249 / 4.5221 | 3.8006 / 3.7985 | 3.6034 |
+| 31.6 | 5.3983 / 5.3972 | 4.4921 / 4.4912 | 4.1307 |
+| 100 | 6.0633 / 6.0616 | 5.0594 / 5.0577 | 4.4842 |
+| 316 | 6.4877 / 6.4892 | 5.4381 / 5.4390 | 4.6840 |
+
+LMhdX and the spectral solve agree within 0.06 % throughout. The 128-cell value
+at Ha 100 is converged to 0.02 % (128 against 192 cells). All three numbers climb
+toward their slug-flow limits, 7.114, 6 and $\pi^2/2=4.935$, as the core
+flattens. The side layers, of thickness $\propto Ha^{-1/2}$, keep the
+approach slow.
+
+The published comparison is Bluck, Wolfendale & Marquis (2015), an analytical
+series for the same duct. Their square-duct curves in Figs. 4 (H1) and 6 (H2)
+were read from the vector paths of the accepted manuscript, calibrated on the
+figures' own tick marks. Read this way, the H1 curve's plateau is 3.6068, their
+tabulated Ha 0 value.
+- **H1**, with Ha read on the half-width: within 0.03 % of the spectral value at
+  Ha 1 and 0.07 % at Ha 10, falling to 0.19 % low at Ha 31.6, 0.49 % at 100 and
+  1.2 % at 316.
+- **H2** matches only with Ha read on the hydraulic diameter $2a$, as their
+  definition states: 0.17 % low at an equivalent Ha 0.5, then 0.22 %, 0.43 %,
+  1.0 % and 2.0 % low at 5, 15.8, 50 and 158.
+- Their two figures therefore cannot share one Ha convention. Both curves fall
+  below the reference as Ha grows. The authors note that their series' hyperbolic
+  terms overflow double precision at large Ha, and regroup them through
+  logarithms; the error left there is not quantified.
+
+The comparison anchors LMhdX at low and moderate Ha, against both. Above Ha
+≈ 30 the independent spectral solve, not the published series, is the
+reference.
+
 Not covered:
-- an MHD duct against a published $Nu$, for example a square insulating duct
-  near Ha 100 (Tao & Ni 2013; Smolentsev et al.). That is a documentation
-  campaign to come, not a CI gate.
+- other wall conductances and aspect ratios against a published $Nu$, for
+  example Hunt's duct (Bluck & Wolfendale 2017).
 
 ## An open duct
 
