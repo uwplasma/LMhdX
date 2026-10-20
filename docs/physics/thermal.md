@@ -435,14 +435,30 @@ uniform slug:
 
 The H2 gate exercises the heat-flux path the design workflow uses. Its 3.091 is
 Shah & London's (1978), as cited in the review of #240; Richardson extrapolation
-gives 3.0873, 0.12 % below. The H1 numbers' comparison with the book's tables
-waits for the book.
+gives 3.0873, 0.12 % below. The H1 numbers sit on Shah & London's polynomial fit
+of the rectangular-duct H1 number, with its coefficients as the `ht` library
+implements them; the comparison with the book's tables waits for the book.
 The aspect-0.5 duct is gated at 64 cells; the square ducts carry the
 refinement study.
 
 A transverse field flattens the core. On 32 cells with Joule heat off, the H1
 Nusselt number of the square duct rises from 3.62 at Ha 0 to 4.56 at Ha 10 and
 5.35 at Ha 30, toward the slug value of 7.09.
+
+```{image} ../_static/thermal_developed_duct.webp
+:alt: Velocity and temperature of an H1 square duct at Ha 0 and 100 in 3-D, Nusselt numbers against aspect ratio and Hartmann number, and mesh convergence
+:align: center
+```
+
+`python scripts/make_showcase_figures.py --only developed` draws the
+comparison wider than the tests gate it:
+- rectangular H1 ducts from aspect ratio 1 to 1/8 within 0.35 % of the series,
+  with 32 cells across the short side;
+- the square duct on the meshes of `duct_problem` (48 cells, layers resolved)
+  from Ha 0 to 1000, still 6 % short of slug flow at Ha 1000;
+- the plates of the next paragraph carrying the package's own steady Hartmann
+  flow rather than its cell means, within 0.2 % of the closed form from Ha 1 to
+  1000 on 128 layer-resolving cells, and at second order on uniform cells.
 
 **An MHD reference.** Hartmann flow between plates at $y=\pm a$, each taking
 in a uniform heat flux with no source and no Joule heat, has
@@ -502,6 +518,22 @@ not for a Nusselt number.
 A plug flow carrying a uniform source converges to its exact steady profile at
 first order, 0.81 and then 0.91, at $Pe_h/2$ of 0.16, 0.08 and 0.04.
 
+**The thermal entrance.** Plates each taking in a uniform flux downstream of an
+inlet at temperature 0, carrying the developed Hartmann flow held in an open
+duct with van Leer transport, have a local Nusselt number that the Graetz
+eigen-expansion gives when axial conduction is left out. The expansion is
+computed in the figure script on 4,000 finite volumes; for slug flow it has the
+closed form $Nu=4/\left(1/3-(2/\pi^2)\sum_n e^{-16n^2\pi^2x^+}/n^2\right)$.
+At $Pe=400$, 64 cells across and 135 along, LMhdX follows it within 1.3 % past
+$x^+=10^{-3}$ and 0.3 % past $10^{-2}$ at Ha 0, 10 and 50. Nearer the inlet the
+difference is axial conduction: at $Pe=1600$ it falls from 1.3 % to 0.14 % at
+$x^+=10^{-3}$, and refining the mesh across or along the duct does not change it.
+
+```{image} ../_static/thermal_entrance.webp
+:alt: Temperature above the bulk in 3-D, local Nusselt number along heated Hartmann plates against the Graetz expansion, and its error
+:align: center
+```
+
 **Crediting a load.** A design that must remove a given duty is judged on what
 the duty itself does, not on the gross outlet enthalpy. Joule heat and a
 recirculating hot flow also raise the gross figure.
@@ -533,6 +565,30 @@ diffusion, at $Pe_h/2 = 0.08$. A conductive fluid ($\lambda=0.5$) stays coolest 
 79 % of its load through the inlet. A field's Joule heat multiplies the gross
 outlet enthalpy, from 7.9 to 32.8 as the flow doubles, but adds nothing to the
 load's credit.
+
+## Buoyant convection
+
+A layer between rigid isothermal plates heated from below becomes unstable at
+$Ra_c=1707.76$, and a vertical field delays the onset (Chandrasekhar 1961,
+Ch. IV). `python scripts/make_showcase_figures.py --only onset` measures the
+growth rate of the critical roll just below and above Chandrasekhar's critical
+Rayleigh number, at his critical wavenumber, for $Q=Ha^2$ from 0 to 1000, at two
+time steps $\Delta t_0=0.05/(Q+Ra_c^{1/2})$ and $\Delta t_0/2$. The rate comes
+from power iteration on the time stepper: the perturbation of the conducting
+state is scaled back to $10^{-6}$ every half time unit, and the rate settles to
+five digits by the third rescaling. A perturbation left to decay toward
+$10^{-10}$ instead meets a floor of round-off from the hydrostatic balance on
+the layer-resolving mesh, and its rate near onset then depends on that noise.
+The reference is his eigenproblem solved by Chebyshev collocation in the figure
+script, which reproduces his tabulated values for $Q\le100$ (as quoted by
+Basak & Kumar 2015) within 0.01 %. The onset converges at first order in the
+step; extrapolated, it lands within 0.9 % of the reference over the tenfold
+rise of $Ra_c$.
+
+```{image} ../_static/thermal_magnetoconvection.webp
+:alt: Critical Rayleigh number against the Chandrasekhar number, the critical rolls at Q = 0 and 1000, and the error against the time step
+:align: center
+```
 
 ## A worked example
 

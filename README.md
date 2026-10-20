@@ -27,8 +27,9 @@ Reusable solvers and implicit derivatives come from
 *Decaying quasi-2D MHD turbulence with Hartmann-layer friction — 256², 3,000 steps, about 20 s on a laptop CPU with `python scripts/make_showcase_figures.py --only q2d`.*
 
 Scope: fully developed duct and pipe flows are validated; three-dimensional
-convective transport, the fringe in the inertialess limit, the ALEX benchmarks
-and multi-device execution are research stage (see [What is validated, what is research](#what-is-validated-what-is-research)).
+convective transport, [heat transfer](#heat-transfer), the fringe in the
+inertialess limit, the ALEX benchmarks and multi-device execution are research
+stage (see [What is validated, what is research](#what-is-validated-what-is-research)).
 
 ## Installation
 
@@ -163,6 +164,68 @@ python examples/fringe_duct_example.py
   [fringe tutorial](https://lmhdx.readthedocs.io/en/latest/tutorials/fringing.html)
   walks through it.
 
+## Heat transfer
+
+`lmhdx.thermal` adds temperature to the solver: heat conducts, is carried by the
+flow, is released by the electric currents (Joule heating), and can drive
+buoyant flow. Every step checks that the heat budget balances. The capability is
+research stage ([Heat transport](https://lmhdx.readthedocs.io/en/latest/physics/thermal.html));
+each figure below checks it against a known answer.
+
+How to read the numbers: **Nu**, the Nusselt number, measures how well the flow
+carries heat away from a wall (higher means better cooling); **Ha** measures the
+magnetic field's strength, and **Q = Ha²**; **Pe** compares the heat carried by
+the flow with the heat conducted.
+
+### Heat transfer along a long duct
+
+![Velocity and temperature of a square duct at Ha 0 and 100 in 3-D, Nusselt numbers against aspect ratio and Hartmann number, and mesh convergence](docs/_static/thermal_developed_duct.webp)
+
+```console
+python scripts/make_showcase_figures.py --only developed
+```
+
+- **Duct shape (c):** for rectangular ducts of every aspect ratio, Nu is within
+  **0.35 %** of the exact solution and on the Shah & London (1978) handbook fit.
+- **Magnetic field (a, b, d):** the field flattens the velocity profile, which
+  raises Nu toward the limit of a perfectly flat ("slug") flow. Between two
+  plates LMhdX follows the exact formula within **0.2 %** from Ha 1 to 1000.
+- **Accuracy (e):** halving the cell size cuts the error fourfold (second order).
+
+### Heat transfer near the inlet
+
+![Temperature above the bulk in 3-D, local Nusselt number along heated plates against the classic Graetz solution, and the difference](docs/_static/thermal_entrance.webp)
+
+```console
+python scripts/make_showcase_figures.py --only entrance
+```
+
+- Cold fluid enters between two heated plates. Nu starts high at the inlet and
+  settles to its long-duct value. LMhdX follows the classic Graetz solution
+  within **1.3 %** past x⁺ = 10⁻³ and **0.3 %** further downstream, with and
+  without a field.
+- The gap right at the inlet is real physics: heat conducting back against the
+  flow, which the classic solution ignores. At four times the Péclet number it
+  shrinks ninefold.
+
+### When does a magnetic field stop convection?
+
+![Critical Rayleigh number against the field strength, the critical rolls at Q = 0 and 1000, and the error against the time step](docs/_static/thermal_magnetoconvection.webp)
+
+```console
+python scripts/make_showcase_figures.py --only onset
+```
+
+- A fluid layer heated from below starts to convect once the heating, measured
+  by the Rayleigh number, passes a critical value. A vertical field raises that
+  value (Chandrasekhar 1961). LMhdX reproduces its tenfold rise from Q = 0 to
+  1000 within **0.9 %**.
+- The reference curve comes from solving Chandrasekhar's equations in the
+  script; it matches his published table within 0.01 %. Panel (b) shows the
+  rolls at onset, at his predicted width.
+- The time stepping is first order (c): halving the step roughly halves the
+  error, so two runs are extrapolated to a zero step.
+
 ## Design with gradients
 
 ```python
@@ -266,7 +329,12 @@ PCIe. Correct, not yet faster — the numbers are in
   boundedness but not validated against a reference flow, the fringe is gated
   in the inertialess limit only, the open pipe misses its station-wise
   ALEX B1 tolerance, the ALEX B1/B2 benchmarks are open, and
-  multi-device execution is not yet established. The
+  multi-device execution is not yet established. Heat transport
+  (`lmhdx.thermal`) is gated on the developed duct's H1 Nusselt numbers against
+  exact series (within 0.5 % on 64 cells, at second order), its H2 number against
+  Shah & London's 3.091, heated Hartmann plates against their closed form, a heat
+  ledger closed at every step, and the Bénard onset within 4 % of 1707.76; the
+  other comparisons under [Heat transfer](#heat-transfer) are reported. The
   [validation matrix](https://lmhdx.readthedocs.io/en/latest/validation/index.html)
   and the [plan](plan.md) state each gate.
 
@@ -278,6 +346,7 @@ PCIe. Correct, not yet faster — the numbers are in
 | [`validation/pipe.py`](validation/pipe.py) spectral solve | Pipe flow rates, insulating and conducting walls, Ha 0 → 100 | independent of the package; 0.04 – 0.43 % |
 | Analytic Hartmann, Shercliff, Hunt and Poiseuille | Profiles and flow rates in every limit that has a closed form | `python examples/hartmann_example.py` |
 | FreeMHD (OpenFOAM `epotFoam`), pinned [`freemhd_install`](https://github.com/rogeriojorge/freemhd_install) image, B2 case | Both codes run the frozen B2 inputs weekly ([`validation/freemhd.py`](validation/freemhd.py)); LMhdX through the inertialess core-flow model | executions gated; the cross-code pressure comparison is reported, not gated — **not** a production result |
+| Exact series, Shah & London (1978), the Graetz expansion, Chandrasekhar (1961) | Developed and entrance Nusselt numbers, magnetoconvection onset ([Heat transfer](#heat-transfer)) | 0.2 – 1.3 %; reported, with a subset gated in the tests |
 | ALEX B1 pipe and B2 square duct experiments | Fringing-field pressure drop | production acceptance **open**; specs and digitised references are frozen in [`src/lmhdx/data/benchmarks`](src/lmhdx/data/benchmarks) |
 
 The [validation record](https://lmhdx.readthedocs.io/en/latest/validation/index.html)

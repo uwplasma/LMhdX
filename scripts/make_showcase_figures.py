@@ -1,15 +1,20 @@
 """Regenerate the README gallery assets from the public LMhdX API.
 
-Run ``python scripts/make_showcase_figures.py`` (CPU, about three minutes).
-Outputs go to ``docs/_static``: a 256^2 quasi-2D turbulence animation and
-poster, a Hunt-duct Hartmann-number sweep, and the validation ladder of the
-staggered core against the spectral reference. Sizes are kept under the
-documented Git media budget; production-resolution movies are release assets.
+Run ``python scripts/make_showcase_figures.py``. Outputs go to ``docs/_static``:
+a 256^2 quasi-2D turbulence animation and poster, a Hunt-duct Hartmann-number
+sweep, the validation ladder of the staggered core against the spectral
+reference, the pipe, and three heat-transfer benchmarks against the literature
+(developed Nusselt numbers, the thermal entrance, magnetoconvection onset). The
+duct, pipe and Q2D figures take about three minutes on a laptop CPU, the thermal
+benchmarks about eight; their small solves are pinned to the CPU, where they run
+faster than on a GPU. Sizes are kept under the documented Git media budget;
+production-resolution movies are release assets.
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 from pathlib import Path
 
@@ -21,9 +26,32 @@ from PIL import Image
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.colors import Normalize  # noqa: E402
 
 import lmhdx  # noqa: E402
+from lmhdx.axial import open_duct  # noqa: E402
+from lmhdx.core3d import ChannelProblem, duct_problem, zero_velocity  # noqa: E402
+from lmhdx.grid import (  # noqa: E402
+    CENTER,
+    NEUMANN,
+    PERIODIC,
+    BoundaryCondition,
+    Field,
+    Grid,
+    uniform_faces,
+    wall_resolving_faces,
+)
 from lmhdx.io import extract_midplane_profile  # noqa: E402
+from lmhdx.steady import solve_steady_state  # noqa: E402
+from lmhdx.thermal import (  # noqa: E402
+    ThermalProblem,
+    advance_thermal,
+    build_thermal_step,
+    developed_heat,
+    initial_thermal_state,
+    thermal_boundary,
+    validate_thermal_inputs,
+)
 
 STATIC = Path(__file__).resolve().parents[1] / "docs" / "_static"
 
@@ -347,6 +375,529 @@ def pipe_sweep(hartmann_numbers: tuple[float, ...] = (0.0, 20.0, 100.0, 400.0)) 
     _save_webp(fig, STATIC / "pipe_flow.webp")
 
 
+# Heat transfer (lmhdx.thermal): three benchmarks against exact solutions and the literature.
+# Journal style: STIX type, ticks inside boxed axes, panel letters. The series colors pass a check for
+# color-vision deficiency on adjacent pairs; exact and published references are drawn in ink.
+SERIES, INK, MUTED = ("#2a78d6", "#eb6834", "#1baf7a"), "#1a1a1a", "#6b6a66"
+OPEN = {"mfc": "white", "mew": 1.6}  # open markers for LMhdX over a reference line
+ROW = {"right": 0.985, "top": 0.9, "bottom": 0.14}  # a row of three panels
+PAPER = {
+    "font.family": "STIXGeneral",
+    "mathtext.fontset": "stix",
+    "font.size": 10.5,
+    "axes.titlesize": 10.5,
+    "legend.fontsize": 9,
+    "legend.frameon": False,
+    **{f"{a}tick.direction": "in" for a in "xy"},
+    **{f"{a}tick.minor.visible": True for a in "xy"},
+    "xtick.top": True,
+    "ytick.right": True,
+}
+_WRAP = BoundaryCondition(PERIODIC)
+# Chandrasekhar (1961), rigid plates, as tabulated by Basak & Kumar (2015), Table I: (Q, Ra_c).
+CHANDRASEKHAR_TABLE = ((0.0, 1707.8), (10.0, 1945.9), (50.0, 2802.1), (100.0, 3757.4))
+
+
+def thermal_developed() -> None:
+    """Developed Nusselt numbers against exact series, Shah & London's fit and the Hartmann closed form."""
+    lmhdx.enable_x64()
+    aspects, counts = np.array([1.0, 0.75, 0.5, 1 / 3, 0.25, 1 / 6, 0.125]), np.array([8, 16, 32, 64])
+    duct_fields = np.array([0.0, 1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0])
+    plate_fields = np.array([1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 300.0, 1000.0])
+
+    def nusselt(flow, slug=False):
+        return float(_h1(flow, slug)[0].nusselt)
+
+    with jax.default_device(jax.devices("cpu")[0]):  # small sections: the CPU beats a GPU's launch latency
+        rectangles = np.array([nusselt(_rectangle(32, aspect)) for aspect in aspects])
+        squares = {hartmann: _h1(duct_problem(hartmann=hartmann, cells=48)) for hartmann in duct_fields}
+        plates = np.array([_heated_plates(128, hartmann) for hartmann in plate_fields])
+        errors = {
+            "Square H1, Poiseuille": [nusselt(_rectangle(n)) / _h1_series(1, 1) - 1 for n in counts],
+            "Square H1, slug": [nusselt(_rectangle(n), True) / _h1_series(1, 1, True) - 1 for n in counts],
+            "Plates, Ha = 10": [_heated_plates(n, 10.0, False) / _plate_nusselt(10.0) - 1 for n in counts],
+        }
+    square = np.array([float(result.nusselt) for result, _ in squares.values()])
+    worst = np.max(np.abs(rectangles / [_h1_series(1.0, aspect) for aspect in aspects] - 1.0))
+    print(f"developed: rectangles within {worst:.2%} of the series; square H1 Nu {np.round(square, 3)}")
+    relative = np.round(plates / _plate_nusselt(plate_fields) - 1, 4)
+    print(f"developed: plates against the closed form {relative}")
+
+    with plt.rc_context(PAPER):
+        fig = plt.figure(figsize=(13.2, 8.4))
+        outer = fig.add_gridspec(2, 1, hspace=0.3, left=0.05, right=0.985, top=0.95, bottom=0.075)
+        top = outer[0].subgridspec(1, 3, width_ratios=[1.0, 1.0, 1.05], wspace=0.18)
+        bottom = outer[1].subgridspec(1, 2, width_ratios=[1.25, 1.0], wspace=0.22)
+        views = {0.0: "H1 square duct, no field", 100.0: "The same duct at Ha = 100"}
+        labels = (r"$y/a$  (along $\mathbf{B}$)", "$z/a$", r"$u/\bar{u}$")
+        for index, (hartmann, title) in enumerate(views.items()):
+            result, velocity = squares[hartmann]
+            theta, u = np.asarray(result.temperature.data)[0], np.asarray(velocity[0].data)[0]
+            axis = _axes_3d(fig, top[index], labels, (26, -60))
+            mesh = np.meshgrid(*result.temperature.grid.centers[1:], indexing="ij")
+            _paint(axis, *mesh, u / np.mean(u), plt.get_cmap("inferno")(theta / np.min(theta)))
+            axis.set(zlim=(0.0, 2.2), zticks=[0, 1, 2])
+            axis.set_title(f"{title}:  $Nu_{{H1}}$ = {float(result.nusselt):.2f}", pad=0)
+            _panel(axis, "ab"[index])
+        label = r"Height: axial velocity $u/\bar{u}$.   Color: temperature $(T_w - T)/(T_w - T_{center})$."
+        _colorbar(fig, (0.14, 0.535, 0.36, 0.012), "inferno", Normalize(0.0, 1.0), label)
+
+        axis = fig.add_subplot(top[2])
+        alpha = np.linspace(0.02, 1.0, 200)
+        exact, fit = [_h1_series(1.0, a) for a in alpha], _shah_london_h1(alpha)
+        axis.plot(alpha, exact, color=INK, lw=1.4, label="Exact double-sine series")
+        axis.plot(alpha, fit, "--", color=SERIES[1], lw=1.4, label="Shah & London (1978) fit")
+        axis.plot(aspects, rectangles, "o", color=SERIES[0], ms=6.5, label="LMhdX", **OPEN)
+        axis.axhline(140.0 / 17.0, color=MUTED, lw=0.8, ls=":")
+        axis.text(0.5, 140 / 17 + 0.08, "Parallel plates, 140/17", ha="center", color=MUTED, size=9)
+        axis.set(xlim=(0, 1.02), ylim=(3.2, 8.75), xlabel="Aspect ratio $b/a$", ylabel="$Nu_{H1}$")
+        axis.set_title(f"Rectangular ducts, 32 cells across $b$: within {100 * worst:.2f} % of exact")
+        axis.legend(loc="center right", bbox_to_anchor=(1.0, 0.6))
+        _panel(axis, "c")
+
+        axis = fig.add_subplot(bottom[0])
+        line = np.logspace(-1, 3.3, 300)
+        axis.semilogx(line, _plate_nusselt(line), color=INK, lw=1.4, label="Hartmann plates, closed form")
+        axis.semilogx(plate_fields, plates, "s", color=SERIES[1], label="Hartmann plates, LMhdX", **OPEN)
+        axis.semilogx(duct_fields[1:], square[1:], "o-", color=SERIES[0], label="Square duct, LMhdX", **OPEN)
+        for value, text in (
+            (140 / 17, "Plates, Ha → 0: 140/17"),
+            (12.0, "Plates, slug flow: 12"),
+            (_h1_series(1.0, 1.0), "Square, Ha → 0: 3.608"),
+            (_h1_series(1.0, 1.0, True), "Square, slug flow: 7.114"),
+        ):
+            offset, align = (0.1, "bottom") if "slug" in text else (-0.1, "top")
+            axis.axhline(value, color=MUTED, lw=0.8, ls=":")
+            axis.text(0.115, value + offset, text, color=MUTED, size=8.5, va=align)
+        axis.set(xlim=(0.1, 2000), ylim=(2.8, 13.2), xlabel="Hartmann number Ha")
+        axis.set_ylabel(r"Nu   (uniform heat flux along the duct, $D_h$-based)")
+        axis.set_title("A transverse field flattens the core and raises Nu toward slug flow")
+        axis.legend(loc="lower right", bbox_to_anchor=(1.0, 0.1))
+        _panel(axis, "d")
+
+        axis = fig.add_subplot(bottom[1])
+        for (label, values), marker, color in zip(errors.items(), "o^s", (SERIES[0], SERIES[2], SERIES[1])):
+            axis.loglog(counts, np.abs(values), marker + "-", color=color, label=label, **OPEN)
+        axis.loglog([7.0, 80.0], 0.3 * (np.array([7.0, 80.0]) / 10.0) ** -2.0, "--", color=INK, lw=1.0)
+        axis.text(25, 0.3 * 2.5**-2 * 1.3, "Second order", rotation=-31, size=9, color=INK)
+        axis.set_xticks(counts, [str(count) for count in counts])
+        axis.set_xticks([], minor=True)
+        axis.set(xlabel="Cells across the duct", ylabel="Relative error in Nu")
+        axis.set_title("Mesh convergence against the exact values")
+        axis.legend(loc="lower left")
+        _panel(axis, "e")
+        _save_webp(fig, STATIC / "thermal_developed_duct.webp", dpi=110, palette=True)
+
+
+def thermal_entrance(hartmann_numbers: tuple[float, ...] = (0.0, 10.0, 50.0)) -> None:
+    """The thermal entrance of heated Hartmann plates, an open duct against the Graetz eigen-expansion."""
+    lmhdx.enable_x64()
+    with jax.default_device(jax.devices("cpu")[0]):
+        cases = {hartmann: _entrance(hartmann) for hartmann in hartmann_numbers}
+        long = _entrance(0.0, peclet=1600.0, extent=0.03)  # the expansion leaves out axial conduction
+    errors = {ha: (xplus, nusselt / _graetz(ha, xplus) - 1) for ha, (xplus, nusselt, *_) in cases.items()}
+    for hartmann, (xplus, error) in errors.items():
+        within = [f"{np.max(np.abs(error[xplus > start])):.2%} past x+ = {start:g}" for start in (1e-3, 1e-2)]
+        print(f"entrance Ha {hartmann:g}: within {', '.join(within)}")
+
+    with plt.rc_context(PAPER):
+        fig = plt.figure(figsize=(13.2, 4.3))
+        grid = fig.add_gridspec(1, 3, width_ratios=[1.15, 1.2, 0.9], wspace=0.28, left=0.02, **ROW)
+        xplus, _, theta, y = cases[10.0]
+        keep = (xplus >= 2e-4) & (xplus <= 0.06)
+        labels = (r"$\log_{10} x^+$", "$y/a$", r"$k(T - T_b)/(q\,a)$")
+        axis = _axes_3d(fig, grid[0], labels, (24, -122), ((-3, -2), (-1, 0, 1)))
+        colors = plt.get_cmap("RdBu_r")(0.5 + 0.5 * theta[keep] / np.max(np.abs(theta[keep])))
+        _paint(axis, *np.meshgrid(np.log10(xplus[keep]), y, indexing="ij"), theta[keep], colors)
+        axis.set_title("Temperature above the bulk, Ha = 10", pad=0)
+        _panel(axis, "a")
+
+        axis = fig.add_subplot(grid[1])
+        line = np.logspace(-4.3, -0.9, 300)
+        for color, marker, (hartmann, (xplus, nusselt, *_)) in zip(SERIES, "os^", cases.items()):
+            axis.semilogx(line, _graetz(hartmann, line), color=color, lw=1.4)
+            axis.semilogx(xplus[3::6], nusselt[3::6], marker, color=color, label=f"Ha = {hartmann:g}", **OPEN)
+        axis.semilogx(line, _graetz(np.inf, line), "--", color=INK, lw=1.1, label="Slug flow, Ha → ∞")
+        axis.semilogx([], [], color=MUTED, lw=1.4, label="Eigen-expansion (lines)")
+        axis.semilogx([], [], "o", color=MUTED, label="LMhdX open duct (symbols)", **OPEN)
+        axis.set(xlim=(1.5e-4, 0.12), ylim=(6, 42), xlabel=r"$x^+ = x/(D_h\,Pe)$", ylabel="Local $Nu_x$")
+        axis.set_title("Thermal entrance of heated Hartmann plates")
+        axis.legend(loc="upper right")
+        _panel(axis, "b")
+
+        axis = fig.add_subplot(grid[2])
+        for color, (hartmann, (xplus, error)) in zip(SERIES, errors.items()):
+            axis.semilogx(xplus, 100 * error, color=color, label=f"Ha = {hartmann:g}")
+        error = 100 * (long[1] / _graetz(0.0, long[0]) - 1)
+        axis.semilogx(long[0], error, "--", color=SERIES[0], label="Ha = 0, Pe = 1600")
+        axis.axhline(0.0, color=MUTED, lw=0.8)
+        axis.set(xlim=(2e-4, 0.12), ylim=(-1, 4), xlabel="$x^+$", ylabel="$Nu_x$ against the expansion (%)")
+        axis.set_title("Pe = 400 unless marked: axial conduction")
+        axis.legend(loc="upper right")
+        _panel(axis, "c")
+        _save_webp(fig, STATIC / "thermal_entrance.webp", dpi=110, palette=True)
+
+
+def thermal_onset(chandrasekhar_numbers: tuple[float, ...] = (0.0, 10.0, 100.0, 300.0, 1000.0)) -> None:
+    """Rayleigh-Benard onset in a vertical field against Chandrasekhar's eigenproblem."""
+    lmhdx.enable_x64()
+    curve = np.array([(q, *_chandrasekhar_onset(q)) for q in np.concatenate(([0.0], np.logspace(0, 5, 31)))])
+    rows, modes = [], {}
+    with jax.default_device(jax.devices("cpu")[0]):
+        for q in chandrasekhar_numbers:
+            exact, k = _chandrasekhar_onset(q)
+            coarse, onsets = 0.05 / (q + np.sqrt(exact)), []  # resolves 1/Q and the buoyancy time
+            for dt in (coarse, coarse / 2.0):
+                (below, _), (above, modes[q]) = (_onset_growth(f * exact, dt, q, k) for f in (0.97, 1.03))
+                onsets.append(0.97 * exact - below * 0.06 * exact / (above - below))
+            onsets.append(2.0 * onsets[1] - onsets[0])  # first order in dt
+            rows.append((q, exact, k, *onsets))
+            print(f"onset Q {q:g}: Ra_c {exact:.1f}; LMhdX at dt, dt/2, Richardson {np.round(onsets, 1)}")
+    rows = np.array(rows)
+
+    with plt.rc_context(PAPER):
+        fig = plt.figure(figsize=(13.2, 4.4))
+        outer = fig.add_gridspec(1, 3, width_ratios=[1.15, 1.1, 0.95], wspace=0.3, left=0.06, **ROW)
+        axis = fig.add_subplot(outer[0])
+        axis.plot(curve[:, 0], curve[:, 1], color=INK, lw=1.4, label="Chandrasekhar eigenproblem")
+        strong = np.logspace(1.5, 5, 50)
+        axis.plot(strong, np.pi**2 * strong, "--", color=MUTED, lw=1, label=r"$\pi^2 Q$, strong-field limit")
+        table = np.transpose(CHANDRASEKHAR_TABLE)
+        axis.plot(*table, "D", color=INK, mfc="none", ms=8, label="Chandrasekhar (1961) table")
+        axis.plot(rows[:, 0], rows[:, 5], "o", color=SERIES[0], label=r"LMhdX, extrapolated in $\Delta t$")
+        axis.set_xscale("symlog", linthresh=1.0, linscale=0.35)
+        axis.set_yscale("log")
+        axis.set(xlim=(0, 1.2e5), ylim=(1.2e3, 2e6), xlabel="Chandrasekhar number $Q = Ha^2$")
+        axis.set_ylabel("Critical Rayleigh number $Ra_c$")
+        worst = np.max(np.abs(rows[:, 5] / rows[:, 1] - 1.0))
+        axis.set_title(f"A vertical field delays convection: LMhdX within {100 * worst:.1f} %")
+        axis.legend(loc="upper left")
+        _panel(axis, "a")
+
+        inner = outer[1].subgridspec(2, 1, hspace=0.42)
+        for row, q in enumerate((chandrasekhar_numbers[0], chandrasekhar_numbers[-1])):
+            axis = fig.add_subplot(inner[row])
+            _draw_roll(axis, modes[q], width=4.0)
+            exact = rows[list(rows[:, 0]).index(q)]
+            title = f"Critical roll at Q = {q:g}:  $a_c$ = {exact[2]:.2f},  $Ra_c$ = {exact[1]:,.0f}"
+            axis.set_title(title, fontsize=10)
+            axis.set_xlabel("$x/d$" if row else "")
+            if not row:
+                axis.set_xticklabels([])
+                axis.text(-0.13, 1.08, "(b)", transform=axis.transAxes, fontsize=12, fontweight="bold")
+
+        axis = fig.add_subplot(outer[2])
+        steps = (r"$\Delta t_0$", r"$\Delta t_0/2$", r"Richardson in $\Delta t$")
+        for color, column, marker, label in zip(SERIES[::-1], (3, 4, 5), "s^o", steps):
+            values = 100 * (rows[:, column] / rows[:, 1] - 1)
+            axis.plot(rows[:, 0], values, marker + "-", color=color, label=label, **OPEN)
+        axis.axhline(0.0, color=MUTED, lw=0.8)
+        axis.set_xscale("symlog", linthresh=10.0, linscale=0.35)
+        axis.set(xlim=(0, 1500), xlabel="$Q$", ylabel="$Ra_c$ against the eigenproblem (%)")
+        axis.set_title(r"First order in the time step, $\Delta t_0 = 0.05/(Q + Ra_c^{1/2})$")
+        axis.legend(loc="center right", bbox_to_anchor=(1.0, 0.6))
+        _panel(axis, "c")
+        _save_webp(fig, STATIC / "thermal_magnetoconvection.webp", dpi=110, palette=True)
+
+
+def _h1_series(a: float, b: float, slug: bool = False, terms: int = 801) -> float:
+    """Nu of the H1 duct ``[-a, a] x [-b, b]`` by double sine series (both fields solve Poisson)."""
+    m, n = np.arange(1, terms, 2)[:, None], np.arange(1, terms, 2)[None, :]
+    eigen = (m * np.pi / (2.0 * a)) ** 2 + (n * np.pi / (2.0 * b)) ** 2
+    weight = 256.0 * a * b / (m**2 * n**2 * np.pi**4)
+    first, perimeter, diameter = np.sum(weight / eigen), 4.0 * (a + b), 4.0 * a * b / (a + b)
+    if slug:
+        return 16.0 * a**2 * b**2 * diameter / (perimeter * first)
+    return first**2 * diameter / (perimeter * np.sum(weight / eigen**3))
+
+
+def _shah_london_h1(alpha: np.ndarray) -> np.ndarray:
+    """Shah & London's (1978) fit of the rectangular-duct H1 Nusselt number, short over long side ``alpha``.
+
+    The coefficients are those of the ``ht`` library's ``Nu_laminar_rectangular_Shan_London``.
+    """
+    return 8.235 * np.polyval([-0.1861, 1.0578, -2.4765, 3.0853, -2.0421, 1.0], alpha)
+
+
+def _plate_nusselt(hartmann):
+    """Uniformly heated Hartmann plates, ``D_h = 4a``: the closed form, 140/17 at Ha 0 and 12 as Ha grows."""
+    ha = np.maximum(np.asarray(hartmann, dtype=float), 1e-3)
+    tanh, sech = np.tanh(ha), 1.0 / np.cosh(np.minimum(ha, 300.0))
+    value = 4.0 * (1.0 - tanh / ha) ** 2 / (1 / 3 - 2 / ha**2 - sech**2 / (2 * ha**2) + 2.5 * tanh / ha**3)
+    return np.where(ha > 1e-2, value, 140.0 / 17.0)
+
+
+def _developed_flow(grid, hartmann: float = 0.0, periodic_span: bool = False):
+    wall = BoundaryCondition(NEUMANN)
+    conditions = (_WRAP, wall, _WRAP if periodic_span else wall)
+    return ChannelProblem(grid, conditions, magnetic_field=(0.0, hartmann, 0.0), forcing=(1.0, 0.0, 0.0))
+
+
+def _rectangle(cells: int, aspect: float = 1.0):
+    """A duct ``[-1, 1] x [-aspect, aspect]`` with ``cells`` uniform cells across its short side."""
+    across = (uniform_faces(round(cells / aspect), -1.0, 1.0), uniform_faces(cells, -aspect, aspect))
+    return _developed_flow(Grid(uniform_faces(1, 0.0, 1.0), *across))
+
+
+def _h1(flow, slug: bool = False):
+    """The developed H1 duct on ``flow``'s steady velocity, or a uniform one: a peripherally uniform wall
+    temperature rising at a unit gradient along the duct, without Joule heat."""
+    if slug:
+        rest = zero_velocity(flow)
+        velocity = (rest[0].replace_data(jnp.ones_like(rest[0].data)), *rest[1:])
+    else:
+        velocity = solve_steady_state(flow, pseudo_step=1.0e3, linear_restart=600).velocity
+    wall = thermal_boundary("temperature")
+    thermal = ThermalProblem(flow, (_WRAP, wall, wall), 1.0, 1.0, 0.0, joule_heating=False)
+    zero = Field(jnp.zeros(flow.grid.shape), (CENTER,) * 3, flow.grid)
+    return developed_heat(thermal, velocity, zero, axial_gradient=1.0), velocity
+
+
+def _heated_plates(cells: int, hartmann: float, stretched: bool = True) -> float:
+    """Plates at ``y = +-a`` each taking in a unit flux, carrying LMhdX's own steady Hartmann flow."""
+    across = (
+        wall_resolving_faces(cells, -1.0, 1.0, layer_thickness=1 / hartmann, cells_in_layer=6, max_ratio=None)
+        if stretched
+        else uniform_faces(cells, -1.0, 1.0)
+    )
+    grid = Grid(uniform_faces(1, 0.0, 1.0), across, uniform_faces(1, 0.0, 1.0))
+    # Periodic along z for the Hartmann profile; then the same velocity between insulated z ends one cell
+    # apart, since the developed duct has a single periodic axis.
+    solved = solve_steady_state(_developed_flow(grid, hartmann, periodic_span=True)).velocity
+    flow = _developed_flow(grid)
+    plates, ends = (thermal_boundary("heat_flux", q, q, conductivity=1.0) for q in (-1.0, 0.0))
+    thermal = ThermalProblem(flow, (_WRAP, plates, ends), 1.0, 1.0, 0.0, joule_heating=False)
+    rest = zero_velocity(flow)
+    velocity = (rest[0].replace_data(solved[0].data), *rest[1:])
+    result = developed_heat(thermal, velocity, Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid))
+    return 4.0 / float(result.peak_wall_temperature - result.bulk_temperature)  # q = k = 1, D_h = 4a
+
+
+def _graetz(hartmann: float, xplus: np.ndarray, cells: int = 4000, modes: int = 120) -> np.ndarray:
+    """Local Nu of plates each taking in a uniform flux from ``x = 0``, without axial conduction.
+
+    ``f theta_xi = theta_eta,eta`` with ``xi = alpha x/(U a^2) = 16 x+`` and ``f`` the mean-normalized
+    velocity: Poiseuille at Ha 0, Hartmann, or slug at Ha inf, where the series is the closed form
+    ``4 / (1/3 - (2/pi^2) sum exp(-16 n^2 pi^2 x+)/n^2)``. The developed part ``xi + phi(eta)`` and the
+    modes of ``Y'' + lambda f Y = 0``, ``Y' = 0`` at the plates, a symmetric tridiagonal eigenproblem on fine
+    finite volumes. ``Nu = 4/(theta_w - theta_b)`` with ``D_h = 4a``.
+    """
+    from scipy.linalg import eigh_tridiagonal
+
+    def profile(eta):
+        if hartmann == 0.0:
+            return 1.5 * (1.0 - eta**2)
+        if np.isinf(hartmann):
+            return np.ones_like(eta)
+        return (1.0 - np.cosh(hartmann * eta) / np.cosh(hartmann)) / (1.0 - np.tanh(hartmann) / hartmann)
+
+    width = 2.0 / cells
+    eta = -1.0 + width * (np.arange(cells) + 0.5)
+    diagonal, scale = np.full(cells, 2.0 / width**2), 1.0 / np.sqrt(profile(eta))
+    diagonal[[0, -1]] = 1.0 / width**2
+    off = -scale[:-1] * scale[1:] / width**2
+    rates, vectors = eigh_tridiagonal(diagonal * scale**2, off, select="i", select_range=(1, modes))
+    shapes = vectors * scale[:, None]
+    fine = np.linspace(-1.0, 1.0, 200001)
+    weight = profile(fine)
+    slope = -1.0 + np.concatenate(([0.0], np.cumsum(0.5 * (weight[1:] + weight[:-1]) * np.diff(fine))))
+    phi = np.concatenate(([0.0], np.cumsum(0.5 * (slope[1:] + slope[:-1]) * np.diff(fine))))
+    phi -= np.trapezoid(weight * phi, fine) / np.trapezoid(weight, fine)
+    weighted = profile(eta)[:, None] * shapes
+    start = np.interp(eta, fine, phi)[:, None]
+    amplitudes = -np.sum(weighted * start, axis=0) / np.sum(weighted * shapes, axis=0)
+    decay = np.exp(-rates * 16.0 * np.asarray(xplus)[:, None])
+    return 4.0 / (phi[-1] + np.sum(amplitudes * shapes[-1] * decay, axis=1))
+
+
+def _entrance(hartmann: float, peclet: float = 400.0, cells: int = 64, extent: float = 0.12):
+    """Plates heated from an inlet at T = 0, carrying LMhdX's developed Hartmann flow held in an open duct.
+
+    Mean velocity, half gap and rho c_p are one, so ``k = 4/Pe``. Returns x+, the local Nu,
+    ``k(T - T_b)/(q a)`` and the cell centres across the gap.
+    """
+    conductivity, length = 4.0 / peclet, extent * 4.0 * peclet
+    widths = [0.04]
+    while sum(widths) < length:
+        widths.append(1.04 * widths[-1])
+    axial = np.concatenate(([0.0], np.cumsum(widths))) * length / sum(widths)
+    layer = 1.0 / hartmann if hartmann > 10.0 else 0.1
+    across = wall_resolving_faces(cells, -1.0, 1.0, layer_thickness=layer, cells_in_layer=6, max_ratio=None)
+    grid = Grid(axial, across, uniform_faces(1, 0.0, 1.0))
+    walls = (thermal_boundary("heat_flux", -1.0, -1.0, conductivity=conductivity), _WRAP)
+    end = 1.5 * length + 3.0 / conductivity  # the transit and three diffusion times across the gap
+    temperature, inlet = _held_heat(grid, hartmann, walls, conductivity, end)
+    temperature, heights, speed = temperature[:, :, 0], np.diff(across), inlet[:, 0]
+    bulk = temperature @ (speed * heights) / np.sum(speed * heights)
+    wall = 0.5 * (temperature[:, 0] + temperature[:, -1]) + 0.25 * (heights[0] + heights[-1]) / conductivity
+    xplus = 0.5 * (axial[1:] + axial[:-1]) / (4.0 * peclet)
+    nusselt = 4.0 / (conductivity * (wall - bulk))
+    return xplus, nusselt, conductivity * (temperature - bulk[:, None]), grid.centers[1]
+
+
+def _held_heat(grid, hartmann, walls, k, end):
+    """Carry heat from a cold inlet on LMhdX's developed profile, mean velocity one, held in an open duct.
+
+    The field is along y; ``walls`` are the thermal conditions of the two transverse axes and ``k`` the
+    conductivity. Van Leer transport; Joule heat left out, so the walls' flux is the only heat. Returns the
+    temperature at time ``end`` and the inlet profile.
+    """
+    wall = BoundaryCondition(NEUMANN)
+    conditions = (_WRAP, wall, _WRAP if walls[1].is_periodic else wall)
+    duct = ChannelProblem(grid, conditions, magnetic_field=(0, hartmann, 0))
+    flow = open_duct(duct, float(np.sum(grid.face_areas(0)[0])))
+    inlet = np.asarray(flow.conditions[0].lower)
+    rest = zero_velocity(flow)
+    velocity = (rest[0].replace_data(jnp.broadcast_to(jnp.asarray(inlet)[None], rest[0].shape)), *rest[1:])
+    inflow = thermal_boundary("temperature", 0.0, upper_kind="heat_flux", conductivity=k)
+    dt = 0.45 * float(np.min(np.diff(grid.faces[0])) / inlet.max())  # van Leer's Courant limit is 0.5
+    flow = dataclasses.replace(flow, dt=dt)
+    thermal = ThermalProblem(flow, (inflow, *walls), 1.0, k, 0.0, joule_heating=False, advection="van_leer")
+    state = initial_thermal_state(thermal, 0.0, velocity)
+    heat = Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid)
+    validate_thermal_inputs(thermal, state, heat, divergence_tolerance=1e-12)
+    step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+    run = jax.jit(lambda start: advance_thermal(step, start, heat, round(end / dt), checkpoint=False))
+    state, history = run(state)
+    if not bool(history.finite.all()):
+        raise RuntimeError("the held-flow heat run lost finiteness")
+    storage = abs(float(history.storage_rate[-1])) / float(history.advective_heat_out[-1])
+    print(f"held flow Ha {hartmann:g}: {grid.shape} cells, final storage/outflow {storage:.1e}")
+    return np.asarray(state.temperature.data), inlet
+
+
+def _marginal_rayleigh(wavenumber: float, chandrasekhar: float, count: int = 48) -> float:
+    """Stationary onset between rigid isothermal plates in a vertical field (Chandrasekhar 1961, Ch. IV).
+
+    ``[(D^2 - a^2)^2 - Q D^2] W = Ra a^2 Theta`` and ``(D^2 - a^2) Theta = -W`` with ``W = DW = Theta = 0`` at
+    ``z = +-1/2``, by Chebyshev collocation: the smallest real Ra of the generalized eigenproblem.
+    """
+    from scipy.linalg import eig
+
+    nodes = np.cos(np.pi * np.arange(count + 1) / count)
+    weights = np.hstack([2.0, np.ones(count - 1), 2.0]) * (-1.0) ** np.arange(count + 1)
+    derivative = np.outer(weights, 1.0 / weights) / (nodes[:, None] - nodes[None, :] + np.eye(count + 1))
+    derivative = 2.0 * (derivative - np.diag(derivative.sum(axis=1)))  # on [-1/2, 1/2]
+    identity, second = np.eye(count + 1), derivative @ derivative
+    helmholtz = second - wavenumber**2 * identity
+    dirichlet, source = helmholtz.copy(), -identity
+    dirichlet[[0, -1]], source[[0, -1]] = identity[[0, -1]], 0.0
+    left = helmholtz @ helmholtz - chandrasekhar * second
+    right = wavenumber**2 * np.linalg.solve(dirichlet, source)
+    ends = ((0, identity[0]), (1, derivative[0]), (count - 1, derivative[-1]), (count, identity[-1]))
+    for row, condition in ends:
+        left[row], right[row] = condition, 0.0
+    values = eig(left, right, right=False)
+    values = values[np.isfinite(values)]
+    real = values[(np.abs(values.imag) <= 1e-6 * np.abs(values.real)) & (values.real > 0)]
+    return float(np.min(real.real))
+
+
+def _chandrasekhar_onset(chandrasekhar: float) -> tuple[float, float]:
+    """The critical Rayleigh number and wavenumber, the marginal curve's minimum."""
+    from scipy.optimize import minimize_scalar
+
+    guess = (np.pi**4 * chandrasekhar / 2.0) ** (1.0 / 6.0) if chandrasekhar > 100.0 else 3.1
+    bounds = (0.6 * guess, 1.8 * guess)
+    result = minimize_scalar(_marginal_rayleigh, bounds=bounds, args=(chandrasekhar,), method="bounded")
+    return float(result.fun), float(result.x)
+
+
+def _onset_growth(rayleigh: float, dt: float, chandrasekhar: float, wavenumber: float) -> tuple[float, dict]:
+    """The critical roll's growth rate in ``kappa/d^2`` with ``d = nu = kappa = 1``, and its shape.
+
+    Power iteration on the time stepper: the perturbation of the conducting state starts at 1e-6, linear, and
+    is scaled back to that size every half time unit, far above the solver's round-off in the hydrostatic
+    balance; the rate is that of the last of four. The field ``sigma B^2 = Q`` is vertical.
+    """
+    hartmann = np.sqrt(chandrasekhar)
+    height = (  # at Q >= 100 the mesh resolves the Hartmann layers
+        wall_resolving_faces(32, 0.0, 1.0, layer_thickness=1 / hartmann, cells_in_layer=5, max_ratio=None)
+        if chandrasekhar >= 100.0
+        else uniform_faces(32, 0.0, 1.0)
+    )
+    grid = Grid(uniform_faces(24, 0.0, 2.0 * np.pi / wavenumber), uniform_faces(1, 0.0, 1.0), height)
+    conditions = (_WRAP, _WRAP, BoundaryCondition(NEUMANN))
+    flow = ChannelProblem(grid, conditions, magnetic_field=(0.0, 0.0, hartmann), dt=dt)
+    plates, buoyancy = thermal_boundary("temperature", 1.0, 0.0), {"gravity": (0.0, 0.0, -rayleigh)}
+    buoyancy["expansion_coefficient"] = 1.0
+    thermal = ThermalProblem(flow, (_WRAP, _WRAP, plates), 1.0, 1.0, 0.0, **buoyancy)
+    x, z = np.asarray(grid.centers[0])[:, None, None], np.asarray(grid.centers[2])[None, None, :]
+    base = jnp.asarray(np.broadcast_to(1.0 - z, grid.shape))
+    state = initial_thermal_state(thermal, base + 1e-6 * np.cos(wavenumber * x) * np.sin(np.pi * z))
+    size = float(jnp.linalg.norm(state.temperature.data - base))
+    step = build_thermal_step(thermal, dtype=jnp.float64)
+    heat = state.temperature.replace_data(jnp.zeros(grid.shape))
+    run = jax.jit(lambda start: advance_thermal(step, start, heat, round(0.5 / dt), checkpoint=False))
+    for _ in range(4):  # converged to five digits by the third
+        state, _ = run(state)
+        perturbation = state.temperature.data - base
+        grown = float(jnp.linalg.norm(perturbation)) / size
+        velocity = tuple(component.replace_data(component.data / grown) for component in state.velocity)
+        state = state._replace(
+            velocity=velocity, temperature=state.temperature.replace_data(base + perturbation / grown)
+        )
+    u, w = (np.asarray(state.velocity[c].data)[:, 0, :] for c in (0, 2))
+    mode = {
+        "x": np.asarray(grid.faces[0]),
+        "z": np.asarray(grid.faces[2]),
+        "theta": np.asarray(perturbation)[:, 0, :],
+        "u": 0.5 * (u[:-1] + u[1:]),  # at the cell centres
+        "w": 0.5 * (w[:, :-1] + w[:, 1:]),
+    }
+    return float(np.log(grown) / 0.5), mode
+
+
+def _draw_roll(axis, mode: dict, width: float) -> None:
+    """The roll's temperature and streamlines, tiled periodically to ``width``."""
+    copies = int(np.ceil(width / mode["x"][-1]))
+    theta, u, w = (np.tile(mode[name], (copies, 1)) for name in ("theta", "u", "w"))
+    period = mode["x"][-1]
+    x = np.concatenate([mode["x"][:-1] + k * period for k in range(copies)] + [[copies * period]])
+    axis.pcolormesh(x, mode["z"], theta.T / np.max(np.abs(theta)), cmap="RdBu_r", vmin=-1, vmax=1)
+    heights, centres = 0.5 * (mode["z"][1:] + mode["z"][:-1]), 0.5 * (x[1:] + x[:-1])
+    even = np.linspace(heights[0], heights[-1], 40)  # streamplot needs an even grid
+    u, w = (np.array([np.interp(even, heights, column) for column in field]) for field in (u, w))
+    axis.streamplot(centres, even, u.T, w.T, color=INK, linewidth=0.6, density=0.9, arrowsize=0.6)
+    axis.set(xlim=(0, width), ylim=(0, 1), yticks=[0, 1], ylabel="$z/d$", aspect="equal")
+
+
+def _panel(axis, letter: str) -> None:
+    """A journal-style panel letter at the top left."""
+    style = {"transform": axis.transAxes, "fontsize": 12, "fontweight": "bold"}
+    if hasattr(axis, "text2D"):
+        axis.text2D(0.0, 0.97, f"({letter})", **style)
+    else:
+        axis.text(-0.02, 1.03, f"({letter})", ha="right", **style)
+
+
+def _axes_3d(fig, spec, labels, view, ticks=((-1, 0, 1), (-1, 0, 1))):
+    """3-D axes on a light box, with the vertical label upright whichever side the view puts it on."""
+    axis = fig.add_subplot(spec, projection="3d")
+    axis.zaxis.set_rotate_label(False)
+    axis.set(xlabel=labels[0], ylabel=labels[1], xticks=ticks[0], yticks=ticks[1])
+    axis.set_zlabel(labels[2], rotation=90, labelpad=2)
+    axis.view_init(*view)
+    axis.tick_params(pad=-1)
+    for pane in (axis.xaxis.pane, axis.yaxis.pane, axis.zaxis.pane):
+        pane.set(facecolor=(0.97, 0.97, 0.96, 1.0), edgecolor="0.8")
+    return axis
+
+
+def _paint(axis, x, y, z, colors) -> None:
+    """One colored quad per cell: ``x, y, z`` are the corner grids, ``colors`` one RGBA per quad."""
+    style = {"rstride": 1, "cstride": 1, "linewidth": 0, "antialiased": False, "shade": False}
+    axis.plot_surface(x, y, z, facecolors=colors, **style)
+
+
+def _colorbar(fig, rect, cmap, norm, label: str, ticks=None) -> None:
+    mappable = plt.cm.ScalarMappable(norm, cmap)
+    bar = fig.colorbar(mappable, cax=fig.add_axes(rect), orientation="horizontal", ticks=ticks)
+    bar.set_label(label, fontsize=9.5)
+    bar.ax.tick_params(labelsize=8.5, direction="out", top=False)
+    bar.ax.minorticks_off()
+
+
 RESULTS = Path(__file__).resolve().parents[1] / "benchmarks" / "results"
 
 
@@ -443,20 +994,29 @@ def benchmark_scaling() -> None:
     _save_webp(fig, STATIC / "device_scaling.webp", dpi=100)
 
 
-def _save_webp(fig: plt.Figure, path: Path, dpi: int = 120) -> None:
+def _save_webp(fig: plt.Figure, path: Path, dpi: int = 120, palette: bool = False) -> None:
     png = path.with_suffix(".png")
     fig.savefig(png, dpi=dpi)
-    Image.open(png).convert("RGB").save(path, quality=82, method=6)
+    image = Image.open(png).convert("RGB")
+    if palette:
+        # 256 colors, losslessly: a colormap has 256. Median cut keeps a near-white apart from the page.
+        image = image.quantize(256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+        image.save(path, lossless=True, quality=100, method=6)
+    else:
+        image.save(path, quality=82, method=6)
     png.unlink()
     plt.close(fig)
     print(f"wrote {path.name}: {path.stat().st_size / 1024:.0f} KiB")
+
+
+THERMAL = {"developed": thermal_developed, "entrance": thermal_entrance, "onset": thermal_onset}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--only",
-        choices=("q2d", "hunt", "ladder", "pipe", "scaling"),
+        choices=("q2d", "hunt", "ladder", "pipe", "scaling", *THERMAL),
         help="Regenerate one asset group.",
     )
     args = parser.parse_args()
@@ -469,6 +1029,9 @@ def main() -> None:
         validation_ladder()
     if args.only in (None, "pipe"):
         pipe_sweep()
+    for name, figure in THERMAL.items():
+        if args.only in (None, name):
+            figure()
     if args.only == "scaling":
         benchmark_scaling()
 
