@@ -7,8 +7,9 @@ cells on both transverse axes, which LMhdX supports today. The paper's developed
 ``sigma u0 B0^2`` (p. 8), then fixes the wall's conductivity ratio (:func:`infer_wall_ratio`). The ratio is
 pinned in the specification, beside the measured value it differs from by 5.3 %.
 
-``python -m validation.mistrangelo`` prints the check on three meshes. ``python -m validation.mistrangelo digitize
-DIR`` rewrites the reference curves from the paper's figure images in ``DIR`` (:func:`write_references`).
+``python -m validation.mistrangelo`` prints the check on three meshes, and at Matolich's measured ratio.
+``python -m validation.mistrangelo digitize DIR`` rewrites the reference curves from the paper's figure images in
+``DIR`` (:func:`write_references`).
 """
 
 from __future__ import annotations
@@ -32,8 +33,10 @@ from lmhdx.grid import PERIODIC, BoundaryCondition, Grid, uniform_faces, wall_re
 from lmhdx.steady import solve_steady_state
 
 __all__ = [
+    "PIN_MESH",
     "REFERENCES",
     "SPEC",
+    "developed_gradient",
     "developed_section",
     "digitize",
     "field",
@@ -46,13 +49,18 @@ __all__ = [
 
 _DATA = Path(__file__).resolve().parents[1] / "src" / "lmhdx" / "data" / "benchmarks"
 SPEC = _DATA / "specs" / "mistrangelo2025.toml"
-DEVELOPED_GRADIENT = 0.0863  # printed, p. 8: the analytical developed flow, -dp/dx in sigma u0 B0^2
+PIN_MESH = {"cells": 96, "cells_in_layer": 12, "wall_cells": 10}  # the mesh the wall's ratio is pinned on
 _WALL = BoundaryCondition("neumann")
 
 
 def spec() -> dict:
     """The frozen specification."""
-    return tomllib.loads(SPEC.read_text())
+    return tomllib.loads(SPEC.read_text(encoding="utf-8"))
+
+
+def developed_gradient(record: dict | None = None) -> float:
+    """The printed analytical developed gradient, as ``-dp/dx`` in ``sigma u0 B0^2`` (p. 8): 0.0863."""
+    return -(record or spec())["printed"]["pressure_gradient_analytical"]
 
 
 def field(x, record: dict | None = None):
@@ -65,7 +73,7 @@ def pinned_pbli(record: dict | None = None) -> dict:
     """Martelli's PbLi with ``mu``, ``sigma`` and ``beta`` set to reproduce Case 1's printed Ha, Re and Gr.
 
     ``rho``, ``c_p`` and ``k`` are kept. With ``nu = a u0 / Re``: ``sigma = rho nu (Ha / (B0 a))^2`` and
-    ``beta = Gr k nu^2 / (g q'' a^4)``.
+    ``beta = Gr k nu^2 / (g q'' a^4)``. The specification records the result as ``[properties.pbli_pinned]``.
     """
     record = record or spec()
     pbli, case = dict(record["properties"]["pbli"]), record["cases"]["case1"]
@@ -109,33 +117,69 @@ def developed_section(
         (BoundaryCondition(PERIODIC), _WALL, _WALL),
         magnetic_field=(0.0, ha, 0.0),
         forcing=(1.0, 0.0, 0.0),
+        dt=1.0,
         wall_layers=(None, (layer, layer), (layer, layer)),
     )
 
 
-def section_flow(ratio: float, **mesh) -> dict:
+def _peak(z, u) -> tuple[float, float]:
+    """The maximum of ``u(z)`` and where it is: the parabola through the largest sample and its two neighbours."""
+    i = int(np.clip(np.argmax(u), 1, len(u) - 2))
+    c2, c1, c0 = np.polyfit(z[i - 1 : i + 2], u[i - 1 : i + 2], 2)
+    at = -c1 / (2.0 * c2)
+    return float(np.polyval((c2, c1, c0), at)), float(at)
+
+
+def section_flow(ratio: float, *, record: dict | None = None, **mesh) -> dict:
     """The developed section's ``-dp/dx`` in ``sigma u0 B0^2``, and its profile ``u/u0`` along ``z`` at ``y = 0``.
 
-    In the section's units ``sigma u0 B0^2`` is ``u0 Ha^2``, so the gradient is ``1 / (u0 Ha^2)``.
+    In the section's units ``sigma u0 B0^2`` is ``u0 Ha^2``, so the gradient is ``1 / (u0 Ha^2)``. The profile at
+    ``y = 0`` is ``a + b y^2`` through the two rows nearest the midplane on each side, averaged across it; the jets'
+    height and position are the parabola through each side's largest sample and its neighbours.
     """
-    record = mesh.pop("record", None) or spec()
+    record = record or spec()
     problem = developed_section(ratio, record=record, **mesh)
-    velocity = solve_steady_state(problem).velocity[0].data[0]
+    velocity = np.asarray(solve_steady_state(problem).velocity[0].data[0])
     ha = record["cases"]["case1"]["hartmann"]
-    mean = float(channel_flow_rate(problem, velocity)) / 4.0
-    y, z = (0.5 * (np.asarray(f)[1:] + np.asarray(f)[:-1]) for f in problem.grid.faces[1:])
-    middle = int(np.argmin(np.abs(y)))
-    return {"gradient": 1.0 / (mean * ha**2), "z": z, "u_over_u0": np.asarray(velocity)[middle] / mean}
+    across, along = (np.asarray(f) for f in problem.grid.faces[1:])
+    mean = float(channel_flow_rate(problem, velocity)) / float(np.ptp(across) * np.ptp(along))
+    y, z = 0.5 * (across[1:] + across[:-1]), 0.5 * (along[1:] + along[:-1])
+    (j1, j2), (k1, k2) = (
+        np.argsort(np.where(y > 0, y, np.inf))[:2],
+        np.argsort(np.where(y < 0, -y, np.inf))[:2],
+    )
+    inner, outer = 0.5 * (velocity[j1] + velocity[k1]), 0.5 * (velocity[j2] + velocity[k2])
+    line = (inner * y[j2] ** 2 - outer * y[j1] ** 2) / (y[j2] ** 2 - y[j1] ** 2) / mean
+    jets = [_peak(z[side], line[side]) for side in (z < 0, z > 0)]
+    return {
+        "gradient": 1.0 / (mean * ha**2),
+        "z": z,
+        "u_over_u0": line,
+        "centre": float(np.interp(0.0, z, line)),
+        "jet": float(np.mean([height for height, _ in jets])),
+        "jet_z": float(np.mean([abs(at) for _, at in jets])),
+    }
 
 
-def infer_wall_ratio(start: tuple[float, float] = (1.18, 1.30), steps: int = 3, **mesh) -> float:
-    """The wall's conductivity ratio at which the section reproduces the printed -0.0863, by the secant method.
+def infer_wall_ratio(
+    start: tuple[float, float] = (1.18, 1.30), steps: int = 4, tolerance: float = 1e-10, record=None, **mesh
+) -> float:
+    """The wall's effective conductivity ratio at which the section meets the printed -0.0863, by the secant method.
 
-    The gradient is close to linear in the ratio (0.0826, 0.0892 and 0.0974 at 1.18, 1.30 and 1.45 on 72/9).
+    On ``PIN_MESH`` unless another mesh is given. The gradient is close to linear in the ratio, about 0.055 per
+    unit on 72/9.
     """
-    (a, b), residual = start, lambda r: section_flow(r, **mesh)["gradient"] - DEVELOPED_GRADIENT
-    fa, fb = residual(a), residual(b)
+    record, mesh = record or spec(), mesh or PIN_MESH
+    target = developed_gradient(record)
+
+    def residual(ratio):
+        return section_flow(ratio, record=record, **mesh)["gradient"] - target
+
+    (a, b), fa = start, residual(start[0])
+    fb = residual(b)
     for _ in range(steps):
+        if abs(fb) < tolerance or fb == fa:
+            break
         a, fa, b = b, fb, b - fb * (b - a) / (fb - fa)
         fb = residual(b)
     return float(b)
@@ -359,12 +403,15 @@ def main() -> None:
         print(write_references(Path(sys.argv[2])))
         return
     record = spec()
-    ratio = record["properties"]["steel"]["conductivity_ratio_pinned"]
+    ratio, target = record["properties"]["steel"]["conductivity_ratio_pinned"], developed_gradient(record)
     for cells, layer, walls in ((48, 6, 6), (72, 9, 8), (96, 12, 10)):
-        flow = section_flow(ratio, cells=cells, cells_in_layer=layer, wall_cells=walls)
-        u = flow["u_over_u0"]
-        print(f"{cells}/{layer}, {walls} wall cells: -dp/dx {flow['gradient']:.5f} (printed {DEVELOPED_GRADIENT}); "
-              f"jet {u.max():.3f} u0 at |z|/a {abs(flow['z'][np.argmax(u)]):.3f}; centre {np.interp(0.0, flow['z'], u):.4f} u0")  # fmt: skip
+        flow = section_flow(ratio, record=record, cells=cells, cells_in_layer=layer, wall_cells=walls)
+        print(f"{cells}/{layer}, {walls} wall cells: -dp/dx {flow['gradient']:.5f} (printed {target}); "
+              f"jet {flow['jet']:.3f} u0 at |z|/a {flow['jet_z']:.4f}; centre {flow['centre']:.4f} u0")  # fmt: skip
+    measured = record["properties"]["steel"]["electrical_conductivity_S_per_m"]
+    measured /= pinned_pbli(record)["electrical_conductivity_S_per_m"]
+    flow = section_flow(measured, record=record, **PIN_MESH)
+    print(f"Matolich's ratio {measured:.4f} on 96/12: -dp/dx {flow['gradient']:.5f}")
 
 
 if __name__ == "__main__":

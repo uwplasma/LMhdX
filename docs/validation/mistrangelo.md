@@ -20,63 +20,95 @@ The paper prints no material properties, so two choices carry the comparison.
   3220 and 1.42e7.
 - The codes' figures carry the printed groups, so `μ`, `σ` and `β` are pinned to
   reproduce them, with `ρ`, `c_p` and `k` kept:
-  - `μ` moves −1.95 %;
-  - `σ` moves −0.42 %;
-  - `β` moves +0.11 %.
+  - `μ` moves −2.0 %;
+  - `σ` moves −0.4 %;
+  - `β` moves +0.1 %.
 
-  That `β` stays within 0.11 % of Martelli's suggests the codes used these
+  That `β` stays within 0.1 % of Martelli's suggests the codes used these
   properties with a slightly lower viscosity.
 - With the heated patch spanning the full 50 mm outer width, the bulk rises
-  10.12 K, as Figure 17 reads. A 46 mm patch would give 9.31 K.
+  10.12 K, which matches the printed exit temperature of about 310 °C (p. 10). A
+  46 mm patch would give 9.31 K.
 
 **Steel.**
-- The paper names neither a grade nor a value. Matolich (1965) measured a
-  316 steel at 572 °F (300 °C): a resistivity of 96.0 µΩ cm and a conductivity
-  of 18.3 W/(m K). That is 1.042e6 S/m, or 1.18 times the pinned PbLi.
-- The developed section below needs a ratio of 1.246 to reproduce the paper's
-  analytical gradient. That is 1.097e6 S/m, 5.3 % higher, and it is the
-  pinned value. The wall conductance ratio is then
-  `c = σ_w t_w / (σ a) = 0.108`.
+- The paper names neither a grade nor a value. Interpolated to 572 °F (300 °C)
+  from Matolich's (1965) smoothed Table 3 for a 316 steel (400 and 600 °F):
+  - the resistivity is 96.0 µΩ cm, so the electrical conductivity is
+    1.042e6 S/m, 1.183 times the pinned PbLi;
+  - the thermal conductivity is 18.3 W/(m K).
+- The developed section below reproduces the paper's analytical gradient at an
+  effective conductivity ratio of 1.246, and that is the pinned value. It is
+  1.097e6 S/m, 5.3 % above Matolich's.
+  - The paper does not say whether its analytical solution models the wall as
+    thin or as resolved. The 5.3 % therefore absorbs any model difference as
+    well as the material.
+  - The wall conductance ratio is then `c = σ_w t_w / (σ a) = 0.108`.
 - The steel's `ρ c_p` matters only in the start-up transient of a steady case.
-  It is 7850 × 544 J/(m³ K), from the ARIES table.
+  It is 7850 × 544 J/(m³ K):
+  - the density is ARIES's 7.96 g/cm³ less the expansion to 573 K (its table
+    lists 8238 kg/m³ at 300 K);
+  - the heat capacity is from the ARIES table.
 
 **Inferred elsewhere:**
 - Case 2's 10 W/cm² and 0.01 m/s, from the ratios of Gr and Re;
 - `L = a` in `Nu`;
 - `g = 9.81 m/s²`.
 
-**Left unspecified by the paper:** the conditions on the wall's end faces, the
-reference levels of the potential and the pressure, and the inlet profile and
-domain length, which each code chose for itself.
+**Left unspecified by the paper:**
+- the conditions on the wall's end faces;
+- the reference levels of the potential and the pressure;
+- the inlet profile and domain length, which each code chose for itself;
+- the wall model of the analytical solution.
+
+**No gate yet.** The specification is frozen, but Case 1's gate (ADR 0009
+D35) is declared before step 5.4e, so
+`tolerances_frozen_before_production` is false.
 
 ## The first check: Case 1's developed section
 
 In the uniform field the flow is developed. `validation.mistrangelo` solves it
 on a section one cell long, with the steel resolved in cells on both transverse
-axes, at Ha 235 (`python -m validation.mistrangelo`):
+axes, at Ha 235 (`python -m validation.mistrangelo`).
+
+**How the profile is read.**
+- The profile at `y = 0` is fitted as `a + b y²` through the two rows nearest
+  the midplane on each side, since an even cell count has no row on it.
+- Each jet's height and position come from the parabola through its largest
+  sample and that sample's two neighbours.
 
 | Cells (fluid / layer / wall) | −dp/dx in σu₀B₀² | Side jet | Centre |
 |:--|--:|:--|--:|
-| 48 / 6 / 6 | 0.08599 | 2.798 u₀ at \|z\| = 0.927 a | 0.8469 u₀ |
-| 72 / 9 / 8 | 0.08622 | 2.796 u₀ at 0.930 a | 0.8490 u₀ |
-| 96 / 12 / 10 | 0.08630 | 2.794 u₀ at 0.931 a | 0.8497 u₀ |
+| 48 / 6 / 6 | 0.08599 | 2.826 u₀ at \|z\| = 0.928 a | 0.8469 u₀ |
+| 72 / 9 / 8 | 0.08622 | 2.810 u₀ at 0.929 a | 0.8490 u₀ |
+| 96 / 12 / 10 | 0.08630 | 2.803 u₀ at 0.929 a | 0.8497 u₀ |
 
-**The pressure gradient.**
-- The pinned ratio makes 96/12 meet the printed 0.0863, so the gradient is
-  not an independent check here.
-- What it does show: the coarser meshes converge to it, and the codes' own
-  0.0855 is 0.9 % below.
-- At the measured steel ratio of 1.18 the section gives 0.0826, 4.3 % below.
-- The gradient is close to linear in the ratio, at about 0.056 per unit.
+**The pressure gradient is not an independent check here.**
+- The pinned ratio makes 96/12 meet the printed 0.0863 by construction.
+- The coarser meshes converge to it.
+- The codes' own value, 0.0855, is 0.9 % lower.
+- At Matolich's measured ratio, 1.183, the 96/12 section gives 0.0828, 4.1 %
+  below.
+- On 72/9 the gradient moves about 0.055 per unit of the ratio.
+- The paper's −0.0863 was validation row 6's 1 % check. With the ratio fitted
+  to it, that check is met by construction. Its Mistrangelo part moves to
+  row 19 (ADR 0009 D35).
 
-**The profile is the independent check.** Figure 13 reads a core of about
-0.857 u₀ and side jets of about 2.7–2.8 u₀ at |z| ≈ 0.935 a. The section gives
-0.850 u₀ and 2.79 u₀ at 0.931 a. A digitized comparison follows with the
-reference curves.
+**The jets are the independent part.**
+- Once the gradient is fixed, the core follows from it: the Hartmann walls'
+  current balance gives about `K(1 + c + 1/Ha)/(c + 1/Ha) = 0.853` with
+  `c = 0.108`, and the section gives 0.850.
+- The jets' height and position are new information:
+  - the paper puts the side layers' velocity maximum at |z| = 0.0215 m,
+    0.935 a (p. 12);
+  - Figure 13 reads about 2.8 u₀ there;
+  - the section converges to about 2.80 u₀ at 0.929 a.
+- A digitized comparison follows with the reference curves.
 
 `tests/test_steady.py` checks:
-- the specification's printed groups and its anchors;
-- the 48/6 section's gradient, within 0.5 % of 0.0863.
+- the specification's printed groups and anchors, and its recorded pinned
+  values;
+- the 48/6 section's gradient, within 0.5 % of 0.0863;
+- its jets and core.
 
 ## Reference curves (Case 1, part 1)
 
@@ -132,7 +164,8 @@ sources in `benchmarks/provenance.json`.
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
   doi:10.1088/1741-4326/ae0800.
-- A. Martelli, A. Venturini and M. Utili, Fusion Eng. Des. 138 (2019) 183–195.
+- D. Martelli, A. Venturini and M. Utili, Fusion Eng. Des. 138 (2019) 183–195,
+  doi:10.1016/j.fusengdes.2018.11.028.
 - J. Matolich Jr., *Thermal conductivity and electrical resistivity of Type 316
   stainless steel from 0 to 1800 F*, NASA CR-54151, Battelle Memorial Institute
   (1965).

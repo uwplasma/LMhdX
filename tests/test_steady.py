@@ -1563,11 +1563,11 @@ def test_a_heated_hunt_duct_balances_its_enthalpy():
 def test_the_magnetoconvection_specification_reproduces_its_printed_numbers():
     """The pinned PbLi gives Case 1's printed Ha, Re and Gr; Martelli's own values fall 0.8 %, 1.9 % and 4.0 % short
     (Gr goes as 1/nu^2); eq. 1 holds at its anchors; and the heated patch over the full outer width gives Fig. 17's
-    rise of about 10 K."""
+    rise of about 10 K. The recorded pinned values are what ``pinned_pbli`` derives."""
     from validation import mistrangelo
 
     record = mistrangelo.spec()
-    assert record["status"] == "frozen" and record["tolerances_frozen_before_production"]
+    assert record["status"] == "frozen" and mistrangelo.developed_gradient(record) == 0.0863
     case, a, b0 = record["cases"]["case1"], record["geometry"]["half_width_m"], record["field"]["peak_T"]
     u0, q, g = (
         case["mean_velocity_m_per_s"],
@@ -1590,6 +1590,8 @@ def test_the_magnetoconvection_specification_reproduces_its_printed_numbers():
 
     printed = np.array([case["hartmann"], case["reynolds"], case["grashof"]])
     assert groups(mistrangelo.pinned_pbli(record)) == pytest.approx(printed, rel=1e-12)
+    for name, value in record["properties"]["pbli_pinned"].items():
+        assert mistrangelo.pinned_pbli(record)[name] == pytest.approx(value, rel=1e-5)
     assert groups(record["properties"]["pbli"]) / printed - 1.0 == pytest.approx(
         [-0.0077, -0.0195, -0.0396], abs=5e-4
     )
@@ -1605,14 +1607,15 @@ def test_the_magnetoconvection_specification_reproduces_its_printed_numbers():
 
 def test_the_magnetoconvection_section_meets_the_printed_developed_gradient():
     """Case 1's developed section, steel resolved on both axes at the pinned ratio, on 48/6 cells: -dp/dx within
-    0.5 % of the printed -0.0863 (96/12 meets it to 1e-4), side jets near 2.8 u0 at |z| = 0.93 a."""
+    0.5 % of the printed -0.0863 (96/12 meets it to 1e-4); at y = 0 the side jets near 2.8 u0 at |z| = 0.93 a (the
+    paper: 0.0215 m, 0.935 a) and the core near 0.85 u0."""
     from validation import mistrangelo
 
-    ratio = mistrangelo.spec()["properties"]["steel"]["conductivity_ratio_pinned"]
-    flow = mistrangelo.section_flow(ratio, cells=48, cells_in_layer=6, wall_cells=6)
-    assert flow["gradient"] == pytest.approx(mistrangelo.DEVELOPED_GRADIENT, rel=5e-3)
-    peak = int(np.argmax(flow["u_over_u0"]))
-    assert 2.7 < flow["u_over_u0"][peak] < 2.9 and 0.92 < abs(flow["z"][peak]) < 0.94
+    record = mistrangelo.spec()
+    ratio = record["properties"]["steel"]["conductivity_ratio_pinned"]
+    flow = mistrangelo.section_flow(ratio, record=record, cells=48, cells_in_layer=6, wall_cells=6)
+    assert flow["gradient"] == pytest.approx(mistrangelo.developed_gradient(record), rel=5e-3)
+    assert 2.75 < flow["jet"] < 2.9 and 0.92 < flow["jet_z"] < 0.94 and 0.84 < flow["centre"] < 0.86
 
 
 def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale():
