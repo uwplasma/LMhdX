@@ -747,13 +747,48 @@ Downstream the model falls faster than the measurement: at $x=-1$, 0, 1 and 2
 it gives 0.0159, 0.0054, 0.0023 and $-0.0001$ against 0.0185, 0.0155, 0.0125
 and 0.0085, close to the locally fully developed $0.026\,b^2$. **Row 6 is
 therefore not met at its frozen station-wise tolerance**; it is met on the
-integrated excess and on the upstream gradient. The likeliest cause of the
-downstream gap is inertia, which this solve leaves out: the local interaction
-parameter $N b(x)^2$ falls from 10700 to 600 at $x=1$ and to 40 at $x=4$, while
-$Re=Ha^2/N\approx4100$, far beyond the Newton solve of the duct above. Other
-candidates, named and not tested: the table's resolution of the field near the
-pole edge (its own uncertainty is 0.03 in $b$), the finite wall thickness, and
-the field's three-dimensional components, which $B_y(x)$ alone omits.
+integrated excess and on the upstream gradient. Those numbers score the **area-mean** pressure of each section. A pressure tap
+reads the wall, and behind a fringe the pressure is not uniform across the
+section (the transverse differences of plan rows 24 and 27). Reading the same
+solutions at the wall (`lmhdx.pipe.wall_pressure_gradient`, the outermost cell,
+all Ha 6600, $48\times64\times76$) gives weighted RMS / $L_\infty$ of
+2.43 / 5.08 for the section mean, 1.79 / 3.82 for the wall ring average,
+3.11 / 6.60 at the walls normal to the field ($\theta=0,\pi$) and
+**0.86 / 1.39 at the walls parallel to the field** ($\theta=\pm\pi/2$), inside
+the frozen 1 and 2; the stations are 0.0264, 0.0263, 0.0260, 0.0250, 0.0228,
+0.0193, 0.0180, 0.0167, 0.0138, 0.0097, 0.0059, 0.0027, 0.0009, 0.0002, 0, 0
+from $x=-15$ to 10. The packaged table does not record where ALEX put its taps,
+so this is a statement about the observable, not a tuned parameter: the model
+reproduces the data if they are side-wall taps and not if they are section means
+or Hartmann-wall taps; the original report (scanned) must settle which. The
+inertia reading above was therefore not needed to explain the shape (the draft
+Newton solve showed inertia is about $30\times$ too small in any case).
+
+Sensitivity of the station-wise shape (Ha 1600, $32\times48\times41$, measured;
+RMS / $L_\infty$ in uncertainties; "upstream" is the model's mean gradient for
+$x<-10$, measured 0.0250):
+
+| variation | upstream | section mean | side wall |
+|---|---|---|---|
+| baseline (monotone cubic, $c=0.027$) | 0.0272 | 2.36 / 4.89 | 0.79 / 1.21 |
+| linear interpolation | 0.0272 | 2.35 / 4.90 | 0.80 / 1.23 |
+| cubic spline | 0.0271 | 2.35 / 4.91 | 0.77 / 1.23 |
+| $b+0.03$ (the table's uncertainty) | 0.0270 | 2.41 / 4.56 | 0.63 / 1.01 |
+| $b-0.03$ | 0.0256 | 2.35 / 5.19 | 1.01 / 1.77 |
+| ramp shifted $+0.5$ | 0.0272 | 2.07 / 4.25 | 0.51 / 0.98 |
+| ramp shifted $-0.5$ | 0.0272 | 2.71 / 5.75 | 1.17 / 2.05 |
+| $c=0.020$ | 0.0205 | 2.72 / 5.47 | 2.15 / 3.68 |
+| $c=0.035$ | 0.0347 | 3.72 / 6.09 | 2.50 / 4.74 |
+| $c=0.054$ | 0.0520 | 8.61 / 13.47 | 7.77 / 13.43 |
+
+The interpolant (monotone cubic, linear, spline) moves nothing (RMS 0.77 to 0.80
+at the side wall), and the table's 0.03 uncertainty and a half-radius shift of
+the ramp move the side-wall score between 0.51 and 1.17, never the section
+mean's 2.1 to 2.7. The wall conductance is fixed by the upstream gradient: the
+data (0.0250 $\pm$ 0.002) admit $c$ of about 0.025 to 0.029, and $c=0.020$ or
+0.035 miss it by 18 % and 39 %. None of these closes the gap for the section
+mean; the observable does. Not tested here (they need `axial.py`, held by
+another lane): a finite-thickness wall, the field's $B_x$ component, inertia.
 
 ### The varying-field preconditioner (2b.4)
 
