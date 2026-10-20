@@ -1613,3 +1613,31 @@ def test_the_magnetoconvection_section_meets_the_printed_developed_gradient():
     assert flow["gradient"] == pytest.approx(mistrangelo.DEVELOPED_GRADIENT, rel=5e-3)
     peak = int(np.argmax(flow["u_over_u0"]))
     assert 2.7 < flow["u_over_u0"][peak] < 2.9 and 0.92 < abs(flow["z"][peak]) < 0.94
+
+
+def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale():
+    """The reference curves, read from the paper's figures: each axis fits its major ticks within 1 px, each band is
+    ordered, and Fig. 8's slope over |x| < 0.4 m is the printed -0.0855 in sigma u0 B0^2 with the pinned PbLi."""
+    import json
+
+    from validation import mistrangelo
+
+    figures = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES.read_text())["figures"]}
+    assert sorted(figures) == sorted(mistrangelo.FIGURES)
+    for record in figures.values():
+        assert len(record["sha256"]) == 64 and record["curves"]
+        for axis in ("x", "y"):
+            assert (
+                record["calibration"][axis]["misfit_px"] <= 1.0 and record["calibration"][axis]["ticks"] >= 2
+            )
+        for curve in record["curves"].values():
+            assert np.all(np.diff(curve["x"]) > 0)
+        if "band" in record:
+            assert np.all(np.array(record["band"]["lower"]) <= np.array(record["band"]["upper"]))
+    record, case = mistrangelo.spec(), mistrangelo.spec()["cases"]["case1"]
+    band = figures[8]["band"]
+    x, middle = np.array(band["x"]), (np.array(band["lower"]) + np.array(band["upper"])) / 2
+    inside = np.abs(x) < 0.4
+    scale = mistrangelo.pinned_pbli(record)["electrical_conductivity_S_per_m"] * case["mean_velocity_m_per_s"]
+    scale *= record["field"]["peak_T"] ** 2
+    assert np.polyfit(x[inside], middle[inside], 1)[0] / scale == pytest.approx(-0.0855, rel=0.01)
