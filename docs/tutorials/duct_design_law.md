@@ -106,7 +106,10 @@ power? There are two versions of that question:
 - **a fixed duty per channel**;
 - **a fixed flux on the first wall**, which a plasma sets.
 
-They favour different shapes, so both are computed below.
+They favour different shapes, so both are computed below. This page screens
+shapes at one fixed area. The design law's own optimization over area and
+aspect, with the flow set by the heat, is the study's
+[Stage 3](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/blob/d1bec55/results/stage3-thermal/README.md); see the record below.
 
 **The specification** is illustrative. None of these values is an engineering
 requirement.
@@ -559,3 +562,12 @@ carries
 [results.json](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-results.json),
 the [figures](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-figures.zip)
 and the [tables](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-tables.zip).
+
+The thermal design of plan step 5.5 is the study's
+[Stage 3](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/blob/d1bec55/results/stage3-thermal/README.md), on Case P:
+- **At a fixed 1.5 kW duty,** Stage 2's design is the thermal optimum to 0.1 %.
+  It needs 7.2 times its velocity bound to carry the heat.
+- **At a fixed first-wall flux,** the optimum is squarer, b/a 0.28 against
+  0.15. Stage 2's design costs 21 % more per metre of first wall.
+
+It reproduces bit for bit on LMhdX 1.11.0.
