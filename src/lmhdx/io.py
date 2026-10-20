@@ -1060,7 +1060,7 @@ def run_thermal(run) -> dict[str, object]:
     )
 
     problem, state, heat = run.problem, run.state, run.heat_source
-    grid = problem.flow.grid
+    grid = problem.thermal_grid
     scheme = _SCHEMES[problem.advection]
     courant = run.limits["advective_cfl"] if problem.advection != "off" else None
     limits = {
@@ -1094,7 +1094,10 @@ def run_thermal(run) -> dict[str, object]:
         if run.write_restart:
             write_thermal_record(run.directory / label, problem, state, units=run.units, run=run.provenance)
         if run.write_paraview:
-            centred = [cell_average(field, axis).data for axis, field in enumerate(state.velocity)]
+            centred = [
+                problem.on_thermal_grid(cell_average(field, axis).data)  # zero in any solid wall
+                for axis, field in enumerate(state.velocity)
+            ]
             cells = {"temperature": state.temperature.data, "velocity": jnp.stack(centred, axis=-1)}
             frames.append((float(state.time), write_vtr(run.directory / label, grid.faces, **cells).name))
     if frames:
@@ -1116,7 +1119,8 @@ def run_thermal(run) -> dict[str, object]:
         "time": float(state.time),
         "finite": bool(np.all(history.finite)),
         "last": last,
-        "largest": {name: float(np.max(np.abs(getattr(history, name)))) for name in largest},
+        "largest": {name: float(np.max(np.abs(getattr(history, name)))) for name in largest}
+        | {"conduction_iterations": int(np.max(history.conduction_iterations))},
     }
     run.directory.mkdir(parents=True, exist_ok=True)
     (run.directory / "thermal_summary.json").write_text(json.dumps(summary, indent=2) + "\n")

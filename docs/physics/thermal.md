@@ -248,11 +248,13 @@ At the outlet, `outlet_outflow_rate` and `outlet_backflow_rate` are the volume
 rates leaving and returning, and `outlet_backflow_enthalpy_in` is the
 enthalpy the return brings in. `backflow_boundary_valid` is separate from
 `finite`.
-It closes to its rounding floor, which is about $\varepsilon\,\rho_0 c_p\sum V\,|T|/\Delta t$
+It closes to its rounding floor (with solid walls, to PCG's tolerance, relative
+to the step's change), which is about $\varepsilon\,\rho_0 c_p\sum V\,|T|/\Delta t$
 for temperatures stored in kelvin. The other diagnostics are:
 - `heat_solve_residual`: the largest local residual of the temperature equation;
 - `mass_residual` and `charge_residual`;
 - `advective_cfl`;
+- `conduction_iterations`, with solid walls;
 - `boussinesq_measure`.
 
 `finite` only says every value is a number. A run is accepted by checking
@@ -274,7 +276,7 @@ failing value is not repaired by clipping.
   their electrical dissipation kept outside the fluid. Resolved `wall_layers`
   widen only the electric solve: the temperature lives on the fluid cells
   alone, with the fluid's conductivity, and its conditions apply at the fluid's
-  wall faces.
+  wall faces, unless `walls=` adds thermal walls of the same cells (below).
 
 **Precision.** The `dtype` given to `build_thermal_step` must be the core's
 compute dtype: float64 after `lmhdx.enable_x64()`, else float32. Set it before
@@ -345,8 +347,10 @@ block's intermediates dominate. The figures are for this grid and step; they
 scale with the cells, and the ratio is what carries over.
 
 **Not included**
-- Conjugate wall conduction in the thermal step. The conduction solve it needs
-  exists (below), but the step does not use it yet.
+- Solid walls in the electric solve. A thermal wall (below) conducts heat only;
+  the potential keeps the flow's own walls. A thin electrical wall takes no
+  thermal cells (ADR 0009 D36).
+- Solid walls read from TOML, and in the developed duct below.
 - A flow that evolves in an open duct with the heat. There the flow is held.
 - Transport above second order. The open-duct results below use first-order
   upwinding and quote $Pe_h/2$, its numerical diffusivity over the physical one;
@@ -364,8 +368,7 @@ electric fields come from `core3d.face_currents(state.velocity, flow)`.
 ## Conduction through solid walls
 
 Plan step 5.4b builds conduction through solid walls for the heated duct of
-step 5.4 (ADR 0009 D36). This first part is the solve; the thermal step does
-not use it yet.
+step 5.4 (ADR 0009 D36): a conduction solve, and the thermal step on it.
 
 **The grid.** `core3d.conjugate_grid(grid, walls)` adds a `core3d.SolidWall`
 (a thickness, a whole number of equal cells, a `thermal_conductivity` and a
@@ -402,6 +405,30 @@ iterations on 6 and 24 cells across at $\Delta t$ 0.05 and 100. Probed in
 float32, an insulated axis's null eigenvalue came out $+3\times10^{-5}$, which
 turned every shifted fast-diagonal operator indefinite at a large $\Delta t\,k$;
 the eigenvalues are clamped to the Laplacian's sign.
+
+**In the thermal step.** `ThermalProblem(..., walls=...)` takes a `SolidWall`
+or `None` for each end of the wall-bounded axes 1 and 2. The temperature and
+the heat source then live on `problem.thermal_grid`, `problem.fluid_block`
+picks out the fluid's cells, and `problem.on_thermal_grid` pads fluid data onto
+it. The `thermal_conditions` hold on the outer surface, an inlet profile
+included: a heat flux there is built with the `k` of each boundary cell, an
+array where fluid and wall cells meet the surface. The walls' end faces take
+the axis-0 conditions, so an inflow-outflow axis holds them at the inlet
+temperature and insulates them at the outlet. The walls carry no flow, and
+Joule heat is deposited in the fluid only. Each step solves for its increment,
+as above. The ledger covers the fluid and its walls: storage and sensible heat
+weigh each cell by its own $\rho c_p$, the conduction out is the solve's own
+flux through the outer surface, and `conduction_iterations` reports the PCG
+iterations, zero without walls. The extremes span every cell; the Boussinesq
+measure and the buoyancy Courant number are the fluid's.
+
+**Tested** (`tests/test_timeloop.py`): a held flow through a duct walled on
+four sides and heated through its outer bottom closes every step's ledger, at
+300 K, to 1e-10 of its largest term, its sensible heat growing by the storage;
+walls of the fluid's own material, of unequal cells, reproduce the separable
+step on the extended grid to 1e-10, upwind and van Leer; a moving walled flow
+steps exactly as `core3d.step`, and a hot wall cell leaves its buoyancy alone;
+and the run differentiates in its heat source and its start.
 
 ## The thermally fully developed duct
 
@@ -609,12 +636,12 @@ flow = ChannelProblem(
     grid, (periodic, wall, wall), magnetic_field=(0.0, 10.0, 0.0), forcing=(1.0, 0.0, 0.0), dt=2.0e-3
 )
 k = 0.05
-walls = (
+conditions = (
     periodic,
     thermal_boundary("heat_flux", conductivity=k),  # adiabatic side walls
     thermal_boundary("heat_flux", 0.0, 1.0, conductivity=k),  # the top wall takes out a unit flux
 )
-thermal = ThermalProblem(flow, walls, specific_heat=1.0, thermal_conductivity=k, reference_temperature=0.0)
+thermal = ThermalProblem(flow, conditions, specific_heat=1.0, thermal_conductivity=k, reference_temperature=0.0)
 heat = Field(jnp.full(grid.shape, 0.5), (CENTER,) * 3, grid)
 
 for problem in (thermal, dataclasses.replace(thermal, expansion_coefficient=0.02, gravity=(0.0, 0.0, -1.0))):
