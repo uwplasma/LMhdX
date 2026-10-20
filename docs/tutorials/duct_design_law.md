@@ -570,13 +570,26 @@ The thermal design of plan step 5.5 is the study's forced-convection screening,
 - **At a fixed first-wall flux,** the optimum is squarer, b/a 0.28 against
   0.15. Stage 2's design costs 21 % more per metre of first wall.
 
-Its finer-mesh check passes. Three things stay open:
-- one of its gates failed: the fixed-flux optimum's stationarity, 1.8e-6 against 1e-6;
-- the open-duct check is at one axial resolution and reports the hottest cell;
-- no common-flow comparison has been made.
+Its finer-mesh check passes. One of its gates failed and stays open: the
+fixed-flux optimum's stationarity, 1.8e-6 against 1e-6.
+
+A follow-up,
+[Stage 3 v2](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/blob/stage3-v2/results/stage3-v2/README.md),
+closes the other two open items, with every gate passing:
+- **The open duct, refined.** On 12, 24 and 48 axial cells, at least 99.96 % of
+  the heat is delivered. The hottest face of the heated wall extrapolates to
+  624.936 ± 0.003 K (fixed duty) and 624.952 ± 0.001 K (fixed flux), within
+  625 K. It stays below the developed screening along the whole duct.
+- **A common feasible flow.** At a fixed duty, Stage 2's design costs the same
+  as the optimum (ratio 0.9997). At a fixed flux and equal flow per metre of
+  first wall, it costs 26 % more.
 
 It reproduces bit for bit on LMhdX 1.11.0. The release
 [stage3-v1](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/tag/stage3-v1) carries
 [results.json](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-results.json),
 the [figures](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-figures.zip)
 and the [figure data](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-figure-data.zip).
+The release
+[stage3-v2](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/tag/stage3-v2) carries v2's
+[results.json](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage3-v2/stage3-v2-results.json)
+and [figures](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage3-v2/stage3-v2-figures.zip).
