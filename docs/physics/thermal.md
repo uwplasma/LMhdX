@@ -261,8 +261,8 @@ failing value is not repaired by clipping.
 ## Supported envelope
 
 **Geometry**
-- Cartesian grids, with periodic axes and closed no-slip walls. Polar grids are
-  refused when the problem is built.
+- Cartesian grids, with periodic axes and closed no-slip walls. A polar grid
+  serves the developed pipe only (below); a time step refuses it.
 - An inflow-outflow duct carries its heat on a held flow:
   - pass the steady velocity of `axial.solve_open_duct` in the state;
   - build the step with `hold_flow=True`;
@@ -500,8 +500,23 @@ exact eigenfunctions of the cell-centred Dirichlet Laplacian, which is why that
 row is exact. The plates carry the cell means of the analytical velocity, with
 the plates' own $D_h=4a$; their references are one-dimensional Chebyshev solves.
 
+**The pipe.** On the polar grid of `lmhdx.pipe`, both developed solves use the
+polar Poisson factorization. The azimuth wraps and the face on the axis has no
+area, so the wall is the outer radius alone, and $D_h=2R$. The flow is
+`solve_pipe`'s, placed on the axial faces; Joule heat is refused there, since a
+pipe forms its currents in `lmhdx.pipe`, not in the core.
+
+| Pipe | Exact | 16 / 32 / 64 radial cells | Order |
+|:--|--:|:--|:--|
+| uniform flux, Poiseuille | 48/11 = 4.36364 | +0.28 % / +0.071 % / +0.018 % | 2.0 |
+| uniform flux, slug | 8 | −0.39 % / −0.098 % / −0.024 % | 2.0 |
+| one wall temperature, Poiseuille | 3.65679 | +0.077 % / +0.019 % / +0.0049 % | 2.0 |
+| one wall temperature, slug | $j_{0,1}^2=5.78319$ | −0.12 % / −0.031 % / −0.0077 % | 2.0 |
+
+The 3.65679 is a radial Chebyshev solve of the same eigenproblem across the
+diameter.
+
 Not covered:
-- the pipe;
 - an MHD duct against a published $Nu$, for example a square insulating duct
   near Ha 100 (Tao & Ni 2013; Smolentsev et al.). That is a documentation
   campaign to come, not a CI gate.
