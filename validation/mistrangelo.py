@@ -185,12 +185,15 @@ def infer_wall_ratio(
     return float(b)
 
 
-# The reference curves (plan step 5.4a, part 2). The paper's figures are xmgrace plots embedded as raster images;
-# each is read from its image (page and xref in the PDF, SHA-256 recorded) by colour, one value per pixel column.
-# The axes are calibrated on the major ticks drawn outside the frame, two labelled anchors per axis snapped to them.
+# The reference curves (plan step 5.4a). The paper's figures are xmgrace plots embedded as raster images, extracted
+# with ``pymupdf`` (``Document.extract_image(xref)``) as ``x<xref>.png`` or ``.jpeg``; each record carries the image's
+# SHA-256. A figure is read by colour, one value per pixel column. Each axis is calibrated on the major ticks drawn
+# outside the frame: two labelled anchors label the detected ticks, every tick inside the frame must land on the axis's
+# label lattice (``step`` apart; decades on a log axis), and the map is their least-squares fit.
 
 REFERENCES = _DATA / "references" / "mistrangelo2025-case1.json"
 SIX = ("FLUENT_CIEMAT", "FLUENT_UK", "CFX", "OF_ORNL", "OF_KIT", "COMSOL")
+DASH = 15  # px: gaps in one code's curve up to a dash period are closed before the band is taken
 # Each colour as (hue window in degrees, saturation window, value window); black is unsaturated and dark.
 COLOURS = {
     "FLUENT_CIEMAT": ((0, 360), (0.0, 0.35), (0.0, 0.30)),
@@ -207,19 +210,21 @@ STATIONS = {  # Fig. 11, OF_KIT at five stations, in its own colours
     "x=0.6": ((292, 330), (0.4, 1.0), (0.25, 1.0)),
     "x=1": ((340, 25), (0.12, 0.35), (0.55, 0.92)),
 }
-# Figure: page, xref, x anchors, y anchors (value, approximate pixel), the quantity, the codes the paper says agree
-# (the band is their union) and where it says so. Options: "log" (y in decades), "circles" (the analytical
-# solution's red markers split from CFX by shape), "rows" (pixel rows excluded from black: a dotted zero line).
+# Figure: the PDF page (the journal's is one less), xref, each axis as two (value, approximate pixel) anchors and the
+# label step, the quantity, the codes the paper says agree (the band is their spread) with where it says so ("as
+# read" where it does not), and the x window of the band. Options: "log" (y in decades), "colours", "omit" (codes not
+# separable, with the reason), "circles" (the analytical solution's red rings split from CFX by shape), "rows" (pixel
+# rows excluded from black: a dotted zero line).
 # fmt: off
 FIGURES = {
-    6: dict(page=8, xref=176, x=((-1.5, 85), (1.5, 730)), y=((310, 97), (300, 457)), quantity="T [C] on y = z = 0 against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 8"),
-    7: dict(page=9, xref=201, x=((-1.5, 84), (1.5, 693)), y=((0.07, 7), (0.02, 434)), quantity="u [m/s] on y = z = 0 against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 8"),
-    8: dict(page=9, xref=203, x=((-1.5, 79.5), (1.5, 692)), y=((1000, 7), (250, 327)), quantity="p [Pa] on y = z = 0 against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 8"),
-    9: dict(page=9, xref=205, x=((-0.025, 83), (0.025, 720.5)), y=((303, 56), (300, 390)), quantity="T [C] at x = -0.3 m, y = 0 against z [m]", agree=("FLUENT_UK", "CFX", "OF_KIT", "COMSOL"), cite="p. 8"),
-    10: dict(page=9, xref=207, x=((-0.025, 84), (0.025, 720.5)), y=((325, 8), (300, 420)), quantity="T [C] at x = 0, y = 0 against z [m]", agree=SIX[:1] + SIX[2:], cite="p. 8"),
-    11: dict(page=10, xref=235, x=((-0.025, 83), (0.025, 720.5)), y=((330, 8), (300, 454)), quantity="T [C] in the fluid at y = 0 against z [m], OF_KIT at five stations", agree=(), cite="p. 9", colours=STATIONS),
-    12: dict(page=10, xref=237, x=((-0.025, 87), (0.025, 722)), y=((0.1, 7), (0.0, 451)), quantity="u [m/s] at x = -0.3 m, y = 0 against z [m]", agree=("FLUENT_CIEMAT", "OF_ORNL", "OF_KIT", "COMSOL"), cite="p. 9"),
-    13: dict(page=10, xref=239, x=((-0.025, 88), (0.025, 722)), y=((0.1, 7), (0.0, 451)), quantity="u [m/s] at x = 0, y = 0 against z [m]", agree=("FLUENT_CIEMAT", "OF_ORNL", "OF_KIT", "COMSOL", "analytical"), cite="p. 9", circles=True),
+    6: dict(pdf_page=8, xref=176, x=((-1.5, 85), (1.5, 730), 0.5), y=((310, 97), (300, 457), 2.5), quantity="T [C] on y = z = 0 against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 7: good agreement for -0.75 < x < 0.8 m; FLUENT_UK deviates", window=(-0.75, 0.8)),
+    7: dict(pdf_page=9, xref=201, x=((-1.5, 84), (1.5, 693), 0.5), y=((0.07, 7), (0.02, 434), 0.01), quantity="u [m/s] on y = z = 0 against x [m]", agree=SIX[:1] + SIX[2:], cite="as read, in Fig. 6's window (p. 7); FLUENT_UK's core velocity deviates (p. 8)", window=(-0.75, 0.8)),
+    8: dict(pdf_page=9, xref=203, x=((-1.5, 79.5), (1.5, 692), 0.5), y=((1000, 7), (250, 327), 250), quantity="p [Pa] on y = z = 0 against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 8: all agree but FLUENT_UK"),
+    9: dict(pdf_page=9, xref=205, x=((-0.025, 83), (0.025, 720.5), 0.01), y=((303, 56), (300, 390), 1), quantity="T [C] at x = -0.3 m, y = 0 against z [m]", agree=("FLUENT_UK", "CFX", "OF_KIT", "COMSOL"), cite="p. 8: OF_ORNL and FLUENT_CIEMAT deviate, their axial resolution"),
+    10: dict(pdf_page=9, xref=207, x=((-0.025, 84), (0.025, 720.5), 0.01), y=((325, 8), (300, 420), 5), quantity="T [C] at x = 0, y = 0 against z [m]", agree=SIX[:1] + SIX[2:], cite="as read: FLUENT_UK lower"),
+    11: dict(pdf_page=10, xref=235, x=((-0.025, 83), (0.025, 720.5), 0.01), y=((330, 8), (300, 454), 5), quantity="T [C] in the fluid at y = 0 against z [m], OF_KIT at five stations", agree=(), cite="p. 8 (text), p. 9 (caption)", colours=STATIONS),
+    12: dict(pdf_page=10, xref=237, x=((-0.025, 87), (0.025, 722), 0.01), y=((0.1, 7), (0.0, 451), 0.02), quantity="u [m/s] at x = -0.3 m, y = 0 against z [m]", agree=("FLUENT_CIEMAT", "OF_ORNL", "OF_KIT", "COMSOL"), cite="as read: FLUENT_UK and CFX deviate, as p. 9 says of Fig. 13"),
+    13: dict(pdf_page=10, xref=239, x=((-0.025, 88), (0.025, 722), 0.01), y=((0.1, 7), (0.0, 451), 0.02), quantity="u [m/s] at x = 0, y = 0 against z [m]", agree=("FLUENT_CIEMAT", "OF_ORNL", "OF_KIT", "COMSOL", "analytical"), cite="p. 9: the analytical solution agrees with FLUENT_CIEMAT, OF_KIT, OF_ORNL and COMSOL", circles=True, omit={"CFX": "not separable from the analytical solution's red markers"}),
 }
 # fmt: on
 
@@ -242,15 +247,15 @@ def _frame(a):
     return int(rows.min()), int(rows.max()), int(cols.min()), int(cols.max())
 
 
-def _ticks(a, frame, axis):
-    """Major tick positions, the longest runs dark within 13 px outside the bottom or the left frame line."""
+def _ticks(a, frame, axis, dark=0.45):
+    """Major tick positions, the longest runs darker than ``dark`` within 13 px outside the bottom or left frame line."""
     top, bottom, left, right = frame
-    dark = a.max(2) < 0.45
+    darker = a.max(2) < dark
     lo = max(top - 2, 0)
     length = (
-        dark[bottom + 1 : bottom + 14, left - 2 : right + 3].sum(0)
+        darker[bottom + 1 : bottom + 14, left - 2 : right + 3].sum(0)
         if axis == "x"
-        else dark[lo : bottom + 3, left - 13 : left].sum(1)
+        else darker[lo : bottom + 3, left - 13 : left].sum(1)
     )
     on = np.append(length >= 0.75 * length.max(), False)
     edges = np.diff(np.concatenate([[0], on.astype(int)]))
@@ -258,20 +263,32 @@ def _ticks(a, frame, axis):
     return (starts + ends - 1) / 2.0 + (left - 2 if axis == "x" else lo)
 
 
-def _calibration(anchors, ticks, log=False):
-    """Snap two (value, approximate pixel) anchors to the detected ticks; the map and the other ticks' misfit."""
-    (v0, p0), (v1, p1) = ((np.log10(v) if log and v > 0 else v, p) for v, p in anchors)
+def _calibration(axis, ticks, ends, log=False):
+    """The axis's map, fitted to every major tick inside the frame on its label lattice.
+
+    The two (value, approximate pixel) anchors are snapped to detected ticks and label the others; a tick inside the
+    frame that does not land within a quarter step of the lattice, or fewer than three that do, is an error, so a
+    wrong anchor value or a missed tick fails here.
+    """
+    (v0, p0), (v1, p1), step = axis
+    if log:
+        if min(v0, v1) <= 0:
+            raise ValueError("a log axis needs positive anchors")
+        v0, v1 = np.log10(v0), np.log10(v1)
     q0, q1 = (float(ticks[np.argmin(np.abs(ticks - p))]) for p in (p0, p1))
     if max(abs(q0 - p0), abs(q1 - p1)) > 4.0:
         raise ValueError(f"no tick within 4 px of {p0} or {p1}: {ticks}")
-    step = abs(q1 - q0) / max(1, round(abs(q1 - q0) / np.median(np.diff(np.sort(ticks)))))
-    misfit = [abs((t - q0) / step - round((t - q0) / step)) * step for t in ticks]
-    on = [m for m in misfit if m < 0.25 * step]
-    return (v0, q0, (v1 - v0) / (q1 - q0)), {
-        "anchors": [[v0, q0], [v1, q1]],
-        "ticks": len(on),
-        "misfit_px": max(on),
-    }
+    slope = (v1 - v0) / (q1 - q0)
+    inside = np.array([t for t in ticks if min(abs(t - e) for e in ends) > 2.0])
+    labels = v0 + slope * (inside - q0)
+    lattice = np.round(labels / step) * step
+    on = np.abs(labels - lattice) <= 0.25 * step
+    if on.sum() < 3 or not on.all():
+        raise ValueError(f"ticks inside the frame off the {step} lattice or too few: {inside}, {labels}")
+    fit = np.polyfit(inside, lattice, 1)
+    misfit = float(np.max(np.abs(np.polyval(fit, inside) - lattice)) / abs(fit[0]))
+    found = {"anchors": [[v0, q0], [v1, q1]], "step": step, "ticks": int(on.sum()), "misfit_px": misfit}
+    return (float(fit[1]), float(fit[0])), found
 
 
 def _masks(a, colours, frame, legend, relax=0.0):
@@ -297,18 +314,8 @@ def _legend(a, frame):
 
     def longest(m):
         padded = np.pad(m.astype(int), ((0, 0), (1, 1)))
-        return np.array(
-            [
-                max(
-                    [0]
-                    + [
-                        e - s
-                        for s, e in zip(np.flatnonzero(np.diff(r) == 1), np.flatnonzero(np.diff(r) == -1))
-                    ]
-                )
-                for r in padded
-            ]
-        )
+        steps = (np.diff(r) for r in padded)
+        return np.array([max([0, *(np.flatnonzero(d == -1) - np.flatnonzero(d == 1))]) for d in steps])
 
     rows, cols = np.flatnonzero(longest(dark) > 80), np.flatnonzero(longest(dark.T) > 40)
     if len(rows) < 2 or len(cols) < 2:
@@ -325,69 +332,100 @@ def _circles(mask):
     for k, sl in enumerate(ndimage.find_objects(labels), start=1):
         part = labels[sl] == k
         h, w = part.shape
-        if (
-            4 <= h <= 10
-            and 4 <= w <= 10
-            and part.sum() < 0.75 * h * w
-            and ndimage.binary_fill_holes(part).sum() > part.sum()
-        ):
-            rings[sl] |= part
+        if 4 <= h <= 10 and 4 <= w <= 10 and part.sum() < 0.75 * h * w:
+            if ndimage.binary_fill_holes(part).sum() > part.sum():
+                rings[sl] |= part
     return rings, mask & ~rings
 
 
-def digitize(image: Path, figure: int) -> dict:
+def _curve(mask, gap=0):
+    """The median row of ``mask`` in each column, with gaps up to ``gap`` columns closed by linear interpolation."""
+    cols = np.flatnonzero(mask.any(0))
+    rows = np.array([np.median(np.flatnonzero(mask[:, c])) for c in cols])
+    if gap < 2 or len(cols) < 2:
+        return cols, rows
+    full = np.arange(cols[0], cols[-1] + 1)
+    after = np.clip(np.searchsorted(cols, full), 1, len(cols) - 1)
+    keep = np.isin(full, cols) | (cols[after] - cols[after - 1] <= gap)
+    return full[keep], np.interp(full[keep], cols, rows)
+
+
+def _sample(points, *arrays):
+    """Every ``ceil(n / points)``-th entry and the last, at five significant figures."""
+    n = len(arrays[0])
+    index = np.unique(np.r_[np.arange(0, n, max(1, int(np.ceil(n / points)))), n - 1]) if n else np.arange(0)
+    return [[float(f"{v:.5g}") for v in np.asarray(arr)[index]] for arr in arrays]
+
+
+def digitize(image: Path, figure: int, table: dict | None = None) -> dict:
     """One figure's curves, each the median row per pixel column, and the band of the codes that agree."""
     from PIL import Image
 
-    spec_, data = FIGURES[figure], Path(image).read_bytes()
+    spec_, data = (table or FIGURES)[figure], Path(image).read_bytes()
     a = np.asarray(Image.open(image).convert("RGB")).astype(float) / 255.0
+    jpeg = Path(image).suffix.lower() in (".jpg", ".jpeg")  # JPEG washes thin lines and ticks out
     frame = _frame(a)
     legend = _legend(a, frame)
-    (x0, px0, sx), cx = _calibration(spec_["x"], _ticks(a, frame, "x"))
-    (y0, py0, sy), cy = _calibration(spec_["y"], _ticks(a, frame, "y"), spec_.get("log", False))
-    relax = 0.1 if Path(image).suffix.lower() in (".jpg", ".jpeg") else 0.0  # JPEG washes thin lines out
-    masks = _masks(a, spec_.get("colours", COLOURS), frame, legend, relax)
+    log = spec_.get("log", False)
+    dark = 0.6 if jpeg else 0.45
+    (x0, sx), cx = _calibration(spec_["x"], _ticks(a, frame, "x", dark), frame[2:])
+    (y0, sy), cy = _calibration(spec_["y"], _ticks(a, frame, "y", dark), frame[:2], log)
+    masks = _masks(a, spec_.get("colours", COLOURS), frame, legend, 0.1 if jpeg else 0.0)
     if spec_.get("circles"):
         masks["analytical"], masks["CFX"] = _circles(masks["CFX"])
-    for name in masks:
-        if "rows" in spec_ and name == "FLUENT_CIEMAT":
-            masks[name][slice(*spec_["rows"])] = False
+    if "rows" in spec_:
+        masks["FLUENT_CIEMAT"][slice(*spec_["rows"])] = False
+    omitted = dict(spec_.get("omit", {}))
 
     def values(cols, rows):
-        y = y0 + sy * (rows - py0)
-        return x0 + sx * (cols - px0), (10.0**y if spec_.get("log") else y)
-
-    def sample(x, *ys, points):
-        stride = max(1, int(np.ceil(len(x) / points)))
-        return [[float(f"{v:.5g}") for v in arr[::stride]] for arr in (x, *ys)]
+        y = y0 + sy * np.asarray(rows, float)
+        return x0 + sx * np.asarray(cols, float), (10.0**y if log else y)
 
     curves = {}
     for name, mask in masks.items():
-        cols = np.flatnonzero(mask.any(0))
-        rows = np.array([np.median(np.flatnonzero(mask[:, c])) for c in cols])
-        x, y = values(cols, rows)
-        curves[name] = dict(
-            zip(("x", "y"), sample(x, y, points=60)), coverage=round(len(cols) / (frame[3] - frame[2]), 3)
-        )
-    record = {"figure": figure, "quantity": spec_["quantity"], "page": spec_["page"], "xref": spec_["xref"],
+        if name in omitted:
+            continue
+        cols, rows = _curve(mask)
+        coverage = round(len(cols) / (frame[3] - frame[2]), 3)
+        if coverage < 0.01:
+            omitted[name] = "not visible: under 1 % of the columns"
+            continue
+        curves[name] = dict(zip(("x", "y"), _sample(60, *values(cols, rows))), coverage=coverage)
+    record = {"figure": figure, "quantity": spec_["quantity"], "pdf_page": spec_["pdf_page"], "xref": spec_["xref"],
               "sha256": hashlib.sha256(data).hexdigest(), "pixels": list(a.shape[:2]), "frame": list(frame),
               "legend": None if legend is None else [int(v) for v in legend], "calibration": {"x": cx, "y": cy},
-              "per_pixel": [abs(sx), abs(sy)], "agree": list(spec_["agree"]), "agree_source": spec_["cite"], "curves": curves}  # fmt: skip
-    if spec_["agree"]:
-        union = np.any([masks[name] for name in spec_["agree"]], axis=0)
-        cols = np.flatnonzero(union.any(0))
-        lower = np.array([np.flatnonzero(union[:, c]).max() for c in cols], float)
-        upper = np.array([np.flatnonzero(union[:, c]).min() for c in cols], float)
+              "y_scale": "log10" if log else "linear", "per_pixel": [abs(sx), abs(sy)], "agree": list(spec_["agree"]),
+              "agree_source": spec_["cite"], "window": spec_.get("window"), "omitted": omitted, "curves": curves}  # fmt: skip
+    agree = [name for name in spec_["agree"] if name in curves]
+    if agree:
+        rows = {}
+        for name in agree:
+            for col, row in zip(*_curve(masks[name], DASH)):
+                rows.setdefault(int(col), []).append(row)
+        cols = np.array(sorted(rows))
+        if spec_.get("window"):
+            x = values(cols, np.zeros(len(cols)))[0]
+            cols = cols[(x >= spec_["window"][0]) & (x <= spec_["window"][1])]
+        lower = [max(rows[c]) for c in cols]  # rows grow downward: the largest row is the lowest value
+        upper = [min(rows[c]) for c in cols]
         x, lo = values(cols, lower)
-        record["band"] = dict(zip(("x", "lower", "upper"), sample(x, lo, values(cols, upper)[1], points=100)))
+        band = _sample(100, x, lo, values(cols, upper)[1], [len(rows[c]) for c in cols])
+        record["band"] = dict(zip(("x", "lower", "upper", "codes"), band))
     return record
 
 
+def _image(images: Path, xref: int) -> Path:
+    found = sorted(Path(images).glob(f"x{xref}.*"))
+    if len(found) != 1:
+        raise FileNotFoundError(f"need exactly one image x{xref}.* in {images}, found {found}")
+    return found[0]
+
+
 def write_references(images: Path) -> Path:
-    """Digitize every figure from ``images`` (named ``x<xref>.png``, extracted from the PDF) into REFERENCES."""
+    """Digitize every figure from ``images`` (``x<xref>.png`` or ``.jpeg``, from the PDF) into REFERENCES."""
     figures = []
     for figure, spec_ in FIGURES.items():
-        record = digitize(next(Path(images).glob(f"x{spec_['xref']}.*")), figure)
+        record = digitize(_image(images, spec_["xref"]), figure)
         curves, band = record.pop("curves"), record.pop("band", None)
         lines = [f"  {json.dumps(name)}: {json.dumps(curve)}" for name, curve in curves.items()]
         tail = f',\n "band": {json.dumps(band)}' if band else ""

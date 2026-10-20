@@ -110,28 +110,50 @@ axes, at Ha 235 (`python -m validation.mistrangelo`).
 - the 48/6 section's gradient, within 0.5 % of 0.0863;
 - its jets and core.
 
-## Reference curves (Case 1, part 1)
+## Reference curves (Case 1)
 
 `src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json` holds
-Figures 6–13, read by `validation.mistrangelo.digitize`. The figures are
-xmgrace plots, embedded in the PDF as images; each record carries the image's
-page, xref and SHA-256.
+Figures 6–13, read by `validation.mistrangelo.digitize`.
+
+- The figures are xmgrace plots embedded in the PDF as images.
+- They are extracted with `pymupdf` (`Document.extract_image(xref)`).
+  `python -m validation.mistrangelo digitize DIR` regenerates the file from
+  them byte for byte.
+- Each record carries:
+  - the image's PDF page (the journal's is one less), xref and SHA-256;
+  - the axis calibration;
+  - whether the y axis is logarithmic (`y_scale`);
+  - the codes it omits, and why.
 
 **How a figure is read.**
-- The plot frame, its legend and its major ticks are found in the image.
-- Two labelled ticks per axis anchor the scale. The other ticks fit within
-  0.67 px.
-- Each code is picked out by its colour: one value per pixel column, the
-  median of that colour's pixels, sampled to 60 points.
-- In Figure 13, the analytical solution's open red circles are split from
-  CFX's red line by their shape.
+- **Frame and ticks.** The plot frame, its legend and the major ticks outside
+  the frame are found in the image.
+- **Calibration.**
+  - Two labelled anchors per axis label the detected ticks.
+  - Every tick inside the frame must land on the axis's label lattice, and at
+    least three must. A wrong anchor value or a missed tick is an error.
+  - The map is the least-squares fit to those ticks. Every axis fits within
+    0.4 px.
+- **Curves.** Each code is picked out by its colour: one value per pixel
+  column, the median of that colour's pixels, sampled to 60 points.
+  - A curve that covers under 1 % of the columns is omitted, as hidden.
+  - In Figure 13, the analytical solution's open red circles are split from the
+    rest of the red by shape. CFX's line cannot be separated from the markers,
+    so it is omitted there.
+  - The analytical solution has no samples at the jets' peaks: its markers
+    merge with the lines there.
 
 **What each record holds.**
-- **A band:** the union of the codes that the paper says agree, with the page
-  where it says so. This is what a gate can use.
-- **The curves:** each code's own curve, where it is visible. Where the
-  curves coincide, the one drawn on top hides the rest, so FLUENT_CIEMAT's
-  black is seldom visible. Each curve records its coverage.
+- **A band.** The spread of the codes that the paper says agree, with the page
+  where it says so, or "as read" where it does not.
+  - Each code's curve has its gaps of up to 15 px (a dash period) closed
+    before the spread is taken.
+  - The band records how many codes it spans at each sample.
+  - Where the paper limits the agreement, as in Figure 6 (−0.75 < x < 0.8 m,
+    p. 7), the band keeps to that window. This is what a gate can use.
+- **The curves.** Each code's own curve where it is visible. Where curves
+  coincide, the one drawn on top hides the rest, so FLUENT_CIEMAT's black is
+  seldom visible.
 
 **The uncertainty is about 2 px:**
 
@@ -140,25 +162,31 @@ page, xref and SHA-256.
 | Figure 6 | 0.0047 m | 0.028 K |
 | Figure 12 | 7.9e-5 m | 2.3e-4 m/s |
 
-Figures 7 and 13 give the same point, the axis at x = 0, 0.4 % apart.
-
-**Two independent checks.**
-- **The pressure scale.** Figure 8's slope over |x| < 0.4 m is −567.7 Pa/m.
-  The printed −0.0855, taken in σu₀B₀² with the pinned PbLi, gives
-  −564.5 Pa/m. They agree to 0.6 %, which confirms both the scale and the
-  pinned σ (`tests/test_steady.py`, within 1 %).
+**Two checks.**
+- **The pressure scale.** Figure 8's band slope over |x| < 0.4 m is
+  −568.6 Pa/m. The printed −0.0855, taken in σu₀B₀² with the pinned PbLi,
+  gives −564.5 Pa/m, 0.7 % apart.
+  - This confirms the σu₀B₀² scale (`tests/test_steady.py`, within 1 %).
+  - It cannot tell the pinned σ from Martelli's, which is 0.4 % away
+    (−566.9 Pa/m).
 - **The developed section against Figure 13's analytical solution.**
-  - In the core (|z| < 15 mm) the 96-cell section lies within 1.8 px of the
-    markers, 1.1 px (0.9 %) low on average.
-  - On the steep flanks of the jets, one value per column is a poor trace,
-    and the difference grows to about 10 px.
-  - The jets themselves are 0.0838 m/s. The codes' are 0.0854 and 0.0829 at
-    x = 0, where buoyancy makes them unequal.
-  - At x = −0.3 m (Figure 12), only 0.1 m into the uniform field, the
-    codes' jets are 0.081 m/s: the flow there is still developing.
+  - In the core (|z| < 15 mm) the 96-cell section lies within 1.9 px of the
+    markers, 0.8 px (0.7 %) low on average.
+  - On the steep flanks of the jets, one value per column is a poor trace.
+  - The section's jets are 0.0841 m/s. The codes' band peaks at 0.0849 on the
+    heated side and 0.0821 on the other, at x = 0, where buoyancy makes them
+    unequal.
+  - At x = −0.3 m (Figure 12), only 0.1 m into the uniform field, the codes'
+    jets are 0.081 m/s: the flow there is still developing.
 
-Figures 15–19 and 38, and Case 2's, follow in later parts, along with the
-sources in `benchmarks/provenance.json`.
+`tests/test_steady.py` has two tests here:
+- `_check_reference_record` checks every record;
+- a synthetic figure runs the digitizer itself in CI. It is a drawn frame with
+  ticks, a solid and a dashed line and rings, and a wrong tick label must be
+  refused.
+
+Figures 15–19 and 38, and Case 2's, follow in later parts, with the sources in
+`benchmarks/provenance.json`.
 
 ## Sources
 

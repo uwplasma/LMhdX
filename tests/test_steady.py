@@ -1618,9 +1618,70 @@ def test_the_magnetoconvection_section_meets_the_printed_developed_gradient():
     assert 2.75 < flow["jet"] < 2.9 and 0.92 < flow["jet_z"] < 0.94 and 0.84 < flow["centre"] < 0.86
 
 
+def _check_reference_record(record):
+    """One digitized figure: its image hashed, both axes on their label lattice (three ticks at least, under 1 px),
+    curves ordered and visible, the band ordered and inside its window."""
+    assert len(record["sha256"]) == 64 and record["curves"]
+    for axis in ("x", "y"):
+        assert record["calibration"][axis]["misfit_px"] <= 1.0 and record["calibration"][axis]["ticks"] >= 3
+    for curve in record["curves"].values():
+        assert np.all(np.diff(curve["x"]) > 0) and curve["coverage"] >= 0.01
+    if "band" in record:
+        band = record["band"]
+        assert np.all(np.array(band["lower"]) <= np.array(band["upper"])) and min(band["codes"]) >= 1
+        if record["window"]:
+            assert record["window"][0] <= band["x"][0] and band["x"][-1] <= record["window"][1]
+
+
+def test_the_digitizer_reads_a_drawn_figure(tmp_path):
+    """A synthetic xmgrace-like figure: a frame with outward ticks, a solid green line, a dashed orange line and red
+    rings. The calibration, the lines and rings within 1.5 px, and the band closed over the dashes are recovered; a
+    wrong tick label is refused."""
+    import copy
+
+    from PIL import Image, ImageDraw
+
+    from validation import mistrangelo
+
+    image = Image.new("RGB", (400, 300), "white")
+    draw = ImageDraw.Draw(image)
+    left, right, top, bottom = 50, 350, 20, 250
+    draw.rectangle([left, top, right, bottom], outline="black", width=2)
+    for k in range(6):  # x from 0 to 5 by 1, y from 0 to 10 by 2
+        x_px, y_px = left + 60 * k, bottom - 46 * k
+        draw.line([x_px, bottom + 1, x_px, bottom + 12], fill="black", width=1)
+        draw.line([left - 12, y_px, left - 1, y_px], fill="black", width=1)
+    px = lambda x: left + 60 * x  # noqa: E731
+    py = lambda y: bottom - 23 * y  # noqa: E731
+    xs = np.linspace(0.2, 4.8, 200)
+    draw.line([(px(x), py(2 + x)) for x in xs], fill=(0, 255, 0), width=2)
+    for start in np.arange(0.2, 4.8, 0.25):  # 15 px on, 3 px off
+        dash = np.linspace(start, start + 0.2, 10)
+        draw.line([(px(x), py(2.5 + x)) for x in dash], fill=(255, 165, 0), width=2)
+    for x in np.arange(0.5, 4.6, 0.5):
+        draw.ellipse([px(x) - 3, py(1) - 3, px(x) + 3, py(1) + 3], outline=(255, 0, 0))
+    path = tmp_path / "x1.png"
+    image.save(path)
+    spec = dict(pdf_page=0, xref=1, x=((0, 50), (5, 350), 1), y=((0, 250), (10, 20), 2), quantity="synthetic",
+                agree=("OF_KIT", "FLUENT_UK"), cite="drawn", circles=True)  # fmt: skip
+    record = mistrangelo.digitize(path, 0, {0: spec})
+    _check_reference_record(record)
+    pixel = record["per_pixel"][1]  # aliased 2-px lines: half a pixel off centre, and a half-pixel staircase
+    green, orange = record["curves"]["OF_KIT"], record["curves"]["FLUENT_UK"]
+    for curve, offset in ((green, 2.0), (orange, 2.5), (record["curves"]["analytical"], None)):
+        error = np.array(curve["y"]) - (offset + np.array(curve["x"]) if offset else 1.0)
+        assert np.max(np.abs(error)) <= 1.5 * pixel and abs(np.mean(error)) <= pixel
+    assert orange["coverage"] < 0.95 and record["band"]["codes"].count(2) > 0.9 * len(record["band"]["codes"])
+    wrong = copy.deepcopy(spec)
+    wrong["y"] = ((0, 250), (12, 20), 2)
+    with pytest.raises(ValueError, match="lattice"):
+        mistrangelo.digitize(path, 0, {0: wrong})
+
+
 def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale():
-    """The reference curves, read from the paper's figures: each axis fits its major ticks within 1 px, each band is
-    ordered, and Fig. 8's slope over |x| < 0.4 m is the printed -0.0855 in sigma u0 B0^2 with the pinned PbLi."""
+    """The reference curves, read from the paper's figures: each record as ``_check_reference_record``, and Fig. 8's
+    slope over |x| < 0.4 m is the printed -0.0855 in sigma u0 B0^2 (with the pinned PbLi; Martelli's sigma is 0.4 %
+    away, which the figure cannot tell apart)."""
     import json
 
     from validation import mistrangelo
@@ -1628,15 +1689,7 @@ def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressu
     figures = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES.read_text())["figures"]}
     assert sorted(figures) == sorted(mistrangelo.FIGURES)
     for record in figures.values():
-        assert len(record["sha256"]) == 64 and record["curves"]
-        for axis in ("x", "y"):
-            assert (
-                record["calibration"][axis]["misfit_px"] <= 1.0 and record["calibration"][axis]["ticks"] >= 2
-            )
-        for curve in record["curves"].values():
-            assert np.all(np.diff(curve["x"]) > 0)
-        if "band" in record:
-            assert np.all(np.array(record["band"]["lower"]) <= np.array(record["band"]["upper"]))
+        _check_reference_record(record)
     record, case = mistrangelo.spec(), mistrangelo.spec()["cases"]["case1"]
     band = figures[8]["band"]
     x, middle = np.array(band["x"]), (np.array(band["lower"]) + np.array(band["upper"])) / 2
