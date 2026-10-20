@@ -563,12 +563,17 @@ carries
 the [figures](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-figures.zip)
 and the [tables](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-tables.zip).
 
-The thermal design of plan step 5.5 is the study's
+The thermal design of plan step 5.5 is the study's forced-convection screening,
 [Stage 3](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/blob/stage3-v1/results/stage3-thermal/README.md), on Case P:
 - **At a fixed 1.5 kW duty,** Stage 2's design is the thermal optimum to 0.1 %.
   It needs 7.2 times its velocity bound to carry the heat.
 - **At a fixed first-wall flux,** the optimum is squarer, b/a 0.28 against
   0.15. Stage 2's design costs 21 % more per metre of first wall.
+
+Its finer-mesh check passes. Three things stay open:
+- one of its gates failed: the fixed-flux optimum's stationarity, 1.8e-6 against 1e-6;
+- the open-duct check is at one axial resolution and reports the hottest cell;
+- no common-flow comparison has been made.
 
 It reproduces bit for bit on LMhdX 1.11.0. The release
 [stage3-v1](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/tag/stage3-v1) carries
