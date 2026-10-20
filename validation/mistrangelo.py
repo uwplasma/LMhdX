@@ -7,8 +7,9 @@ cells on both transverse axes, which LMhdX supports today. The paper's developed
 ``sigma u0 B0^2`` (p. 8), then fixes the wall's conductivity ratio (:func:`infer_wall_ratio`). The ratio is
 pinned in the specification, beside the measured value it differs from by 5.3 %.
 
-``python -m validation.mistrangelo`` prints the check on three meshes. ``python -m validation.mistrangelo digitize
-DIR`` rewrites the reference curves from the paper's figure images in ``DIR`` (:func:`write_references`).
+``python -m validation.mistrangelo`` prints the check on three meshes, and at Matolich's measured ratio.
+``python -m validation.mistrangelo digitize DIR`` rewrites the reference curves from the paper's figure images in
+``DIR`` (:func:`write_references`).
 """
 
 from __future__ import annotations
@@ -32,8 +33,10 @@ from lmhdx.grid import PERIODIC, BoundaryCondition, Grid, uniform_faces, wall_re
 from lmhdx.steady import solve_steady_state
 
 __all__ = [
+    "PIN_MESH",
     "REFERENCES",
     "SPEC",
+    "developed_gradient",
     "developed_section",
     "digitize",
     "field",
@@ -46,13 +49,18 @@ __all__ = [
 
 _DATA = Path(__file__).resolve().parents[1] / "src" / "lmhdx" / "data" / "benchmarks"
 SPEC = _DATA / "specs" / "mistrangelo2025.toml"
-DEVELOPED_GRADIENT = 0.0863  # printed, p. 8: the analytical developed flow, -dp/dx in sigma u0 B0^2
+PIN_MESH = {"cells": 96, "cells_in_layer": 12, "wall_cells": 10}  # the mesh the wall's ratio is pinned on
 _WALL = BoundaryCondition("neumann")
 
 
 def spec() -> dict:
     """The frozen specification."""
-    return tomllib.loads(SPEC.read_text())
+    return tomllib.loads(SPEC.read_text(encoding="utf-8"))
+
+
+def developed_gradient(record: dict | None = None) -> float:
+    """The printed analytical developed gradient, as ``-dp/dx`` in ``sigma u0 B0^2`` (p. 8): 0.0863."""
+    return -(record or spec())["printed"]["pressure_gradient_analytical"]
 
 
 def field(x, record: dict | None = None):
@@ -65,7 +73,7 @@ def pinned_pbli(record: dict | None = None) -> dict:
     """Martelli's PbLi with ``mu``, ``sigma`` and ``beta`` set to reproduce Case 1's printed Ha, Re and Gr.
 
     ``rho``, ``c_p`` and ``k`` are kept. With ``nu = a u0 / Re``: ``sigma = rho nu (Ha / (B0 a))^2`` and
-    ``beta = Gr k nu^2 / (g q'' a^4)``.
+    ``beta = Gr k nu^2 / (g q'' a^4)``. The specification records the result as ``[properties.pbli_pinned]``.
     """
     record = record or spec()
     pbli, case = dict(record["properties"]["pbli"]), record["cases"]["case1"]
@@ -109,44 +117,83 @@ def developed_section(
         (BoundaryCondition(PERIODIC), _WALL, _WALL),
         magnetic_field=(0.0, ha, 0.0),
         forcing=(1.0, 0.0, 0.0),
+        dt=1.0,
         wall_layers=(None, (layer, layer), (layer, layer)),
     )
 
 
-def section_flow(ratio: float, **mesh) -> dict:
+def _peak(z, u) -> tuple[float, float]:
+    """The maximum of ``u(z)`` and where it is: the parabola through the largest sample and its two neighbours."""
+    i = int(np.clip(np.argmax(u), 1, len(u) - 2))
+    c2, c1, c0 = np.polyfit(z[i - 1 : i + 2], u[i - 1 : i + 2], 2)
+    at = -c1 / (2.0 * c2)
+    return float(np.polyval((c2, c1, c0), at)), float(at)
+
+
+def section_flow(ratio: float, *, record: dict | None = None, **mesh) -> dict:
     """The developed section's ``-dp/dx`` in ``sigma u0 B0^2``, and its profile ``u/u0`` along ``z`` at ``y = 0``.
 
-    In the section's units ``sigma u0 B0^2`` is ``u0 Ha^2``, so the gradient is ``1 / (u0 Ha^2)``.
+    In the section's units ``sigma u0 B0^2`` is ``u0 Ha^2``, so the gradient is ``1 / (u0 Ha^2)``. The profile at
+    ``y = 0`` is ``a + b y^2`` through the two rows nearest the midplane on each side, averaged across it; the jets'
+    height and position are the parabola through each side's largest sample and its neighbours.
     """
-    record = mesh.pop("record", None) or spec()
+    record = record or spec()
     problem = developed_section(ratio, record=record, **mesh)
-    velocity = solve_steady_state(problem).velocity[0].data[0]
+    velocity = np.asarray(solve_steady_state(problem).velocity[0].data[0])
     ha = record["cases"]["case1"]["hartmann"]
-    mean = float(channel_flow_rate(problem, velocity)) / 4.0
-    y, z = (0.5 * (np.asarray(f)[1:] + np.asarray(f)[:-1]) for f in problem.grid.faces[1:])
-    middle = int(np.argmin(np.abs(y)))
-    return {"gradient": 1.0 / (mean * ha**2), "z": z, "u_over_u0": np.asarray(velocity)[middle] / mean}
+    across, along = (np.asarray(f) for f in problem.grid.faces[1:])
+    mean = float(channel_flow_rate(problem, velocity)) / float(np.ptp(across) * np.ptp(along))
+    y, z = 0.5 * (across[1:] + across[:-1]), 0.5 * (along[1:] + along[:-1])
+    (j1, j2), (k1, k2) = (
+        np.argsort(np.where(y > 0, y, np.inf))[:2],
+        np.argsort(np.where(y < 0, -y, np.inf))[:2],
+    )
+    inner, outer = 0.5 * (velocity[j1] + velocity[k1]), 0.5 * (velocity[j2] + velocity[k2])
+    line = (inner * y[j2] ** 2 - outer * y[j1] ** 2) / (y[j2] ** 2 - y[j1] ** 2) / mean
+    jets = [_peak(z[side], line[side]) for side in (z < 0, z > 0)]
+    return {
+        "gradient": 1.0 / (mean * ha**2),
+        "z": z,
+        "u_over_u0": line,
+        "centre": float(np.interp(0.0, z, line)),
+        "jet": float(np.mean([height for height, _ in jets])),
+        "jet_z": float(np.mean([abs(at) for _, at in jets])),
+    }
 
 
-def infer_wall_ratio(start: tuple[float, float] = (1.18, 1.30), steps: int = 3, **mesh) -> float:
-    """The wall's conductivity ratio at which the section reproduces the printed -0.0863, by the secant method.
+def infer_wall_ratio(
+    start: tuple[float, float] = (1.18, 1.30), steps: int = 4, tolerance: float = 1e-10, record=None, **mesh
+) -> float:
+    """The wall's effective conductivity ratio at which the section meets the printed -0.0863, by the secant method.
 
-    The gradient is close to linear in the ratio (0.0826, 0.0892 and 0.0974 at 1.18, 1.30 and 1.45 on 72/9).
+    On ``PIN_MESH`` unless another mesh is given. The gradient is close to linear in the ratio, about 0.055 per
+    unit on 72/9.
     """
-    (a, b), residual = start, lambda r: section_flow(r, **mesh)["gradient"] - DEVELOPED_GRADIENT
-    fa, fb = residual(a), residual(b)
+    record, mesh = record or spec(), mesh or PIN_MESH
+    target = developed_gradient(record)
+
+    def residual(ratio):
+        return section_flow(ratio, record=record, **mesh)["gradient"] - target
+
+    (a, b), fa = start, residual(start[0])
+    fb = residual(b)
     for _ in range(steps):
+        if abs(fb) < tolerance or fb == fa:
+            break
         a, fa, b = b, fb, b - fb * (b - a) / (fb - fa)
         fb = residual(b)
     return float(b)
 
 
-# The reference curves (plan step 5.4a, part 2). The paper's figures are xmgrace plots embedded as raster images;
-# each is read from its image (page and xref in the PDF, SHA-256 recorded) by colour, one value per pixel column.
-# The axes are calibrated on the major ticks drawn outside the frame, two labelled anchors per axis snapped to them.
+# The reference curves (plan step 5.4a). The paper's figures are xmgrace plots embedded as raster images, extracted
+# with ``pymupdf`` (``Document.extract_image(xref)``) as ``x<xref>.png`` or ``.jpeg``; each record carries the image's
+# SHA-256. A figure is read by colour, one value per pixel column. Each axis is calibrated on the major ticks drawn
+# outside the frame: two labelled anchors label the detected ticks, every tick inside the frame must land on the axis's
+# label lattice (``step`` apart; decades on a log axis), and the map is their least-squares fit.
 
 REFERENCES = _DATA / "references" / "mistrangelo2025-case1.json"
 SIX = ("FLUENT_CIEMAT", "FLUENT_UK", "CFX", "OF_ORNL", "OF_KIT", "COMSOL")
+DASH = 15  # px: gaps in one code's curve up to a dash period are closed before the band is taken
 # Each colour as (hue window in degrees, saturation window, value window); black is unsaturated and dark.
 COLOURS = {
     "FLUENT_CIEMAT": ((0, 360), (0.0, 0.35), (0.0, 0.30)),
@@ -164,26 +211,27 @@ STATIONS = {  # Fig. 11, OF_KIT at five stations, in its own colours
     "x=1": ((340, 25), (0.12, 0.35), (0.55, 0.92)),
 }
 PAIRS = {"T_w": ((200, 265), (0.3, 1.0), (0.25, 1.0)), "T_b": ((75, 160), (0.3, 1.0), (0.25, 1.0))}  # Fig. 38
-# Figure: page, xref, x anchors, y anchors (value, approximate pixel), the quantity, the codes the paper says agree
-# (the band is their union) and where it says so. Options: "log" (y in decades), "circles" (the analytical
-# solution's red markers split from CFX by shape), "rows" (pixel rows excluded from black: a dotted zero line),
-# "branches" (two curves per colour, named lower then upper).
+# Figure: the PDF page (the journal's is one less), xref, each axis as two (value, approximate pixel) anchors and the
+# label step, the quantity, the codes the paper says agree (the band is their spread) with where it says so ("as
+# read" where it does not), and the x window of the band. Options: "log" (y in decades), "colours", "omit" (codes not
+# separable, with the reason), "circles" (the analytical solution's red rings split from CFX by shape), "rows" (pixel
+# rows excluded from black: a dotted zero line), "branches" (two curves per colour, named lower then upper).
 # fmt: off
 FIGURES = {
-    6: dict(page=8, xref=176, x=((-1.5, 85), (1.5, 730)), y=((310, 97), (300, 457)), quantity="T [C] on y = z = 0 against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 8"),
-    7: dict(page=9, xref=201, x=((-1.5, 84), (1.5, 693)), y=((0.07, 7), (0.02, 434)), quantity="u [m/s] on y = z = 0 against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 8"),
-    8: dict(page=9, xref=203, x=((-1.5, 79.5), (1.5, 692)), y=((1000, 7), (250, 327)), quantity="p [Pa] on y = z = 0 against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 8"),
-    9: dict(page=9, xref=205, x=((-0.025, 83), (0.025, 720.5)), y=((303, 56), (300, 390)), quantity="T [C] at x = -0.3 m, y = 0 against z [m]", agree=("FLUENT_UK", "CFX", "OF_KIT", "COMSOL"), cite="p. 8"),
-    10: dict(page=9, xref=207, x=((-0.025, 84), (0.025, 720.5)), y=((325, 8), (300, 420)), quantity="T [C] at x = 0, y = 0 against z [m]", agree=SIX[:1] + SIX[2:], cite="p. 8"),
-    11: dict(page=10, xref=235, x=((-0.025, 83), (0.025, 720.5)), y=((330, 8), (300, 454)), quantity="T [C] in the fluid at y = 0 against z [m], OF_KIT at five stations", agree=(), cite="p. 9", colours=STATIONS),
-    12: dict(page=10, xref=237, x=((-0.025, 87), (0.025, 722)), y=((0.1, 7), (0.0, 451)), quantity="u [m/s] at x = -0.3 m, y = 0 against z [m]", agree=("FLUENT_CIEMAT", "OF_ORNL", "OF_KIT", "COMSOL"), cite="p. 9"),
-    13: dict(page=10, xref=239, x=((-0.025, 88), (0.025, 722)), y=((0.1, 7), (0.0, 451)), quantity="u [m/s] at x = 0, y = 0 against z [m]", agree=("FLUENT_CIEMAT", "OF_ORNL", "OF_KIT", "COMSOL", "analytical"), cite="p. 9", circles=True),
-    15: dict(page=11, xref=275, x=((-1.5, 95), (1.5, 731)), y=((0, 22), (-400, 446)), quantity="phi [uV] at y = 0 on the interface z = -0.023 m against x [m]", agree=SIX, cite="p. 10: most of the data fits well together"),
-    16: dict(page=11, xref=277, x=((-0.025, 86), (0.025, 722)), y=((400, 7), (-400, 452.5)), quantity="phi [uV] at x = y = 0 against z [m]", agree=SIX[:1] + SIX[2:], cite="p. 10: FLUENT_UK deviates slightly", rows=(226, 234)),
-    17: dict(page=11, xref=279, x=((-1.5, 87.5), (1.5, 731)), y=((312.5, 7), (300, 454)), quantity="bulk T [C], eq. 6, against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 10: FLUENT_UK non-physical"),
-    18: dict(page=12, xref=309, x=((-0.3, 83), (0.3, 730)), y=((20, 8), (0, 468)), quantity="Nu, eq. 7, against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 10: FLUENT_UK as in the previous figures; Nu -> 2.45"),
-    19: dict(page=12, xref=311, x=((-1.25, 68), (1.25, 726)), y=((1e-3, 33), (1e-7, 461.5)), quantity="E_t, eq. 8, against x [m]", agree=("FLUENT_CIEMAT", "OF_ORNL", "OF_KIT"), cite="as read: FLUENT_UK as in the previous figures (p. 10), CFX lower, its diffusion (p. 16); COMSOL not shown", log=True),
-    38: dict(page=17, xref=486, x=((-1, 88.5), (1, 777)), y=((400, 44.5), (300, 481)), quantity="T_w at y = 0, z = -0.023 m and T_b [C] against x [m], OF_KIT, both cases (case1 dashed, below)", agree=(), cite="p. 15", colours=PAIRS, branches=("case1", "case2")),
+    6: dict(pdf_page=8, xref=176, x=((-1.5, 85), (1.5, 730), 0.5), y=((310, 97), (300, 457), 2.5), quantity="T [C] on y = z = 0 against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 7: good agreement for -0.75 < x < 0.8 m; FLUENT_UK deviates", window=(-0.75, 0.8)),
+    7: dict(pdf_page=9, xref=201, x=((-1.5, 84), (1.5, 693), 0.5), y=((0.07, 7), (0.02, 434), 0.01), quantity="u [m/s] on y = z = 0 against x [m]", agree=SIX[:1] + SIX[2:], cite="as read, in Fig. 6's window (p. 7); FLUENT_UK's core velocity deviates (p. 8)", window=(-0.75, 0.8)),
+    8: dict(pdf_page=9, xref=203, x=((-1.5, 79.5), (1.5, 692), 0.5), y=((1000, 7), (250, 327), 250), quantity="p [Pa] on y = z = 0 against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 8: all agree but FLUENT_UK"),
+    9: dict(pdf_page=9, xref=205, x=((-0.025, 83), (0.025, 720.5), 0.01), y=((303, 56), (300, 390), 1), quantity="T [C] at x = -0.3 m, y = 0 against z [m]", agree=("FLUENT_UK", "CFX", "OF_KIT", "COMSOL"), cite="p. 8: OF_ORNL and FLUENT_CIEMAT deviate, their axial resolution"),
+    10: dict(pdf_page=9, xref=207, x=((-0.025, 84), (0.025, 720.5), 0.01), y=((325, 8), (300, 420), 5), quantity="T [C] at x = 0, y = 0 against z [m]", agree=SIX[:1] + SIX[2:], cite="as read: FLUENT_UK lower"),
+    11: dict(pdf_page=10, xref=235, x=((-0.025, 83), (0.025, 720.5), 0.01), y=((330, 8), (300, 454), 5), quantity="T [C] in the fluid at y = 0 against z [m], OF_KIT at five stations", agree=(), cite="p. 8 (text), p. 9 (caption)", colours=STATIONS),
+    12: dict(pdf_page=10, xref=237, x=((-0.025, 87), (0.025, 722), 0.01), y=((0.1, 7), (0.0, 451), 0.02), quantity="u [m/s] at x = -0.3 m, y = 0 against z [m]", agree=("FLUENT_CIEMAT", "OF_ORNL", "OF_KIT", "COMSOL"), cite="as read: FLUENT_UK and CFX deviate, as p. 9 says of Fig. 13"),
+    13: dict(pdf_page=10, xref=239, x=((-0.025, 88), (0.025, 722), 0.01), y=((0.1, 7), (0.0, 451), 0.02), quantity="u [m/s] at x = 0, y = 0 against z [m]", agree=("FLUENT_CIEMAT", "OF_ORNL", "OF_KIT", "COMSOL", "analytical"), cite="p. 9: the analytical solution agrees with FLUENT_CIEMAT, OF_KIT, OF_ORNL and COMSOL", circles=True, omit={"CFX": "not separable from the analytical solution's red markers"}),
+    15: dict(pdf_page=11, xref=275, x=((-1.5, 95), (1.5, 731), 0.5), y=((0, 22), (-400, 446), 100), quantity="phi [uV] at y = 0 on the interface z = -0.023 m against x [m]", agree=SIX, cite="p. 10: most of the data fits well together"),
+    16: dict(pdf_page=11, xref=277, x=((-0.025, 86), (0.025, 722), 0.01), y=((400, 7), (-400, 452.5), 200), quantity="phi [uV] at x = y = 0 against z [m]", agree=SIX[:1] + SIX[2:], cite="p. 10: a slight deviation for FLUENT_UK", rows=(226, 234)),
+    17: dict(pdf_page=11, xref=279, x=((-1.5, 87.5), (1.5, 731), 0.5), y=((312.5, 7), (300, 454), 2.5), quantity="bulk T [C], eq. 6, against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 10: FLUENT_UK non-physical"),
+    18: dict(pdf_page=12, xref=309, x=((-0.3, 83), (0.3, 730), 0.1), y=((20, 8), (0, 468), 5), quantity="Nu, eq. 7, against x [m]", agree=SIX[:1] + SIX[2:], cite="as read: FLUENT_UK, as p. 10 says of Fig. 16; Nu -> 2.45 printed (p. 10)"),
+    19: dict(pdf_page=12, xref=311, x=((-1.25, 68), (1.25, 726), 0.5), y=((1e-3, 33), (1e-7, 461.5), 1), quantity="E_t, eq. 8, against x [m]", agree=("FLUENT_CIEMAT", "OF_ORNL", "OF_KIT"), cite="as read: FLUENT_UK as in the previous figures (p. 10); CFX lower, its diffusion (p. 16)", log=True, omit={"COMSOL": "not shown: its caption excludes it"}),
+    38: dict(pdf_page=17, xref=486, x=((-1, 88.5), (1, 777), 0.5), y=((400, 44.5), (300, 481), 20), quantity="T_w at y = 0, z = -0.023 m and T_b [C] against x [m], OF_KIT, both cases (case1 dashed, below)", agree=(), cite="p. 16", colours=PAIRS, branches=("case1", "case2")),
 }
 # fmt: on
 
@@ -206,15 +254,15 @@ def _frame(a):
     return int(rows.min()), int(rows.max()), int(cols.min()), int(cols.max())
 
 
-def _ticks(a, frame, axis):
-    """Major tick positions, the longest runs dark within 13 px outside the bottom or the left frame line."""
+def _ticks(a, frame, axis, dark=0.45):
+    """Major tick positions, the longest runs darker than ``dark`` within 13 px outside the bottom or left frame line."""
     top, bottom, left, right = frame
-    dark = a.max(2) < 0.45
+    darker = a.max(2) < dark
     lo = max(top - 2, 0)
     length = (
-        dark[bottom + 1 : bottom + 14, left - 2 : right + 3].sum(0)
+        darker[bottom + 1 : bottom + 14, left - 2 : right + 3].sum(0)
         if axis == "x"
-        else dark[lo : bottom + 3, left - 13 : left].sum(1)
+        else darker[lo : bottom + 3, left - 13 : left].sum(1)
     )
     on = np.append(length >= 0.75 * length.max(), False)
     edges = np.diff(np.concatenate([[0], on.astype(int)]))
@@ -222,20 +270,32 @@ def _ticks(a, frame, axis):
     return (starts + ends - 1) / 2.0 + (left - 2 if axis == "x" else lo)
 
 
-def _calibration(anchors, ticks, log=False):
-    """Snap two (value, approximate pixel) anchors to the detected ticks; the map and the other ticks' misfit."""
-    (v0, p0), (v1, p1) = ((np.log10(v) if log and v > 0 else v, p) for v, p in anchors)
+def _calibration(axis, ticks, ends, log=False):
+    """The axis's map, fitted to every major tick inside the frame on its label lattice.
+
+    The two (value, approximate pixel) anchors are snapped to detected ticks and label the others; a tick inside the
+    frame that does not land within a quarter step of the lattice, or fewer than three that do, is an error, so a
+    wrong anchor value or a missed tick fails here.
+    """
+    (v0, p0), (v1, p1), step = axis
+    if log:
+        if min(v0, v1) <= 0:
+            raise ValueError("a log axis needs positive anchors")
+        v0, v1 = np.log10(v0), np.log10(v1)
     q0, q1 = (float(ticks[np.argmin(np.abs(ticks - p))]) for p in (p0, p1))
     if max(abs(q0 - p0), abs(q1 - p1)) > 4.0:
         raise ValueError(f"no tick within 4 px of {p0} or {p1}: {ticks}")
-    step = abs(q1 - q0) / max(1, round(abs(q1 - q0) / np.median(np.diff(np.sort(ticks)))))
-    misfit = [abs((t - q0) / step - round((t - q0) / step)) * step for t in ticks]
-    on = [m for m in misfit if m < 0.25 * step]
-    return (v0, q0, (v1 - v0) / (q1 - q0)), {
-        "anchors": [[v0, q0], [v1, q1]],
-        "ticks": len(on),
-        "misfit_px": max(on),
-    }
+    slope = (v1 - v0) / (q1 - q0)
+    inside = np.array([t for t in ticks if min(abs(t - e) for e in ends) > 2.0])
+    labels = v0 + slope * (inside - q0)
+    lattice = np.round(labels / step) * step
+    on = np.abs(labels - lattice) <= 0.25 * step
+    if on.sum() < 3 or not on.all():
+        raise ValueError(f"ticks inside the frame off the {step} lattice or too few: {inside}, {labels}")
+    fit = np.polyfit(inside, lattice, 1)
+    misfit = float(np.max(np.abs(np.polyval(fit, inside) - lattice)) / abs(fit[0]))
+    found = {"anchors": [[v0, q0], [v1, q1]], "step": step, "ticks": int(on.sum()), "misfit_px": misfit}
+    return (float(fit[1]), float(fit[0])), found
 
 
 def _masks(a, colours, frame, legend, relax=0.0):
@@ -261,18 +321,8 @@ def _legend(a, frame):
 
     def longest(m):
         padded = np.pad(m.astype(int), ((0, 0), (1, 1)))
-        return np.array(
-            [
-                max(
-                    [0]
-                    + [
-                        e - s
-                        for s, e in zip(np.flatnonzero(np.diff(r) == 1), np.flatnonzero(np.diff(r) == -1))
-                    ]
-                )
-                for r in padded
-            ]
-        )
+        steps = (np.diff(r) for r in padded)
+        return np.array([max([0, *(np.flatnonzero(d == -1) - np.flatnonzero(d == 1))]) for d in steps])
 
     rows, cols = np.flatnonzero(longest(dark) > 80), np.flatnonzero(longest(dark.T) > 40)
     if len(rows) < 2 or len(cols) < 2:
@@ -289,13 +339,9 @@ def _circles(mask):
     for k, sl in enumerate(ndimage.find_objects(labels), start=1):
         part = labels[sl] == k
         h, w = part.shape
-        if (
-            4 <= h <= 10
-            and 4 <= w <= 10
-            and part.sum() < 0.75 * h * w
-            and ndimage.binary_fill_holes(part).sum() > part.sum()
-        ):
-            rings[sl] |= part
+        if 4 <= h <= 10 and 4 <= w <= 10 and part.sum() < 0.75 * h * w:
+            if ndimage.binary_fill_holes(part).sum() > part.sum():
+                rings[sl] |= part
     return rings, mask & ~rings
 
 
@@ -324,62 +370,97 @@ def _branches(mask):
     return low, high
 
 
-def digitize(image: Path, figure: int) -> dict:
+def _curve(mask, gap=0):
+    """The median row of ``mask`` in each column, with gaps up to ``gap`` columns closed by linear interpolation."""
+    cols = np.flatnonzero(mask.any(0))
+    rows = np.array([np.median(np.flatnonzero(mask[:, c])) for c in cols])
+    if gap < 2 or len(cols) < 2:
+        return cols, rows
+    full = np.arange(cols[0], cols[-1] + 1)
+    after = np.clip(np.searchsorted(cols, full), 1, len(cols) - 1)
+    keep = np.isin(full, cols) | (cols[after] - cols[after - 1] <= gap)
+    return full[keep], np.interp(full[keep], cols, rows)
+
+
+def _sample(points, *arrays):
+    """Every ``ceil(n / points)``-th entry and the last, at five significant figures."""
+    n = len(arrays[0])
+    index = np.unique(np.r_[np.arange(0, n, max(1, int(np.ceil(n / points)))), n - 1]) if n else np.arange(0)
+    return [[float(f"{v:.5g}") for v in np.asarray(arr)[index]] for arr in arrays]
+
+
+def digitize(image: Path, figure: int, table: dict | None = None) -> dict:
     """One figure's curves, each the median row per pixel column, and the band of the codes that agree."""
     from PIL import Image
 
-    spec_, data = FIGURES[figure], Path(image).read_bytes()
+    spec_, data = (table or FIGURES)[figure], Path(image).read_bytes()
     a = np.asarray(Image.open(image).convert("RGB")).astype(float) / 255.0
+    jpeg = Path(image).suffix.lower() in (".jpg", ".jpeg")  # JPEG washes thin lines and ticks out
     frame = _frame(a)
     legend = _legend(a, frame)
-    (x0, px0, sx), cx = _calibration(spec_["x"], _ticks(a, frame, "x"))
-    (y0, py0, sy), cy = _calibration(spec_["y"], _ticks(a, frame, "y"), spec_.get("log", False))
-    relax = 0.1 if Path(image).suffix.lower() in (".jpg", ".jpeg") else 0.0  # JPEG washes thin lines out
-    masks = _masks(a, spec_.get("colours", COLOURS), frame, legend, relax)
+    log = spec_.get("log", False)
+    dark = 0.6 if jpeg else 0.45
+    (x0, sx), cx = _calibration(spec_["x"], _ticks(a, frame, "x", dark), frame[2:])
+    (y0, sy), cy = _calibration(spec_["y"], _ticks(a, frame, "y", dark), frame[:2], log)
+    masks = _masks(a, spec_.get("colours", COLOURS), frame, legend, 0.1 if jpeg else 0.0)
     if spec_.get("circles"):
         masks["analytical"], masks["CFX"] = _circles(masks["CFX"])
     for name in list(masks) if spec_.get("branches") else ():
         low, high = _branches(masks.pop(name))
         masks[f"{name} {spec_['branches'][0]}"], masks[f"{name} {spec_['branches'][1]}"] = low, high
-    for name in masks:
-        if "rows" in spec_ and name == "FLUENT_CIEMAT":
-            masks[name][slice(*spec_["rows"])] = False
+    if "rows" in spec_:
+        masks["FLUENT_CIEMAT"][slice(*spec_["rows"])] = False
+    omitted = dict(spec_.get("omit", {}))
 
     def values(cols, rows):
-        y = y0 + sy * (rows - py0)
-        return x0 + sx * (cols - px0), (10.0**y if spec_.get("log") else y)
-
-    def sample(x, *ys, points):
-        stride = max(1, int(np.ceil(len(x) / points)))
-        return [[float(f"{v:.5g}") for v in arr[::stride]] for arr in (x, *ys)]
+        y = y0 + sy * np.asarray(rows, float)
+        return x0 + sx * np.asarray(cols, float), (10.0**y if log else y)
 
     curves = {}
     for name, mask in masks.items():
-        cols = np.flatnonzero(mask.any(0))
-        rows = np.array([np.median(np.flatnonzero(mask[:, c])) for c in cols])
-        x, y = values(cols, rows)
-        curves[name] = dict(
-            zip(("x", "y"), sample(x, y, points=60)), coverage=round(len(cols) / (frame[3] - frame[2]), 3)
-        )
-    record = {"figure": figure, "quantity": spec_["quantity"], "page": spec_["page"], "xref": spec_["xref"],
+        if name in omitted:
+            continue
+        cols, rows = _curve(mask)
+        coverage = round(len(cols) / (frame[3] - frame[2]), 3)
+        if coverage < 0.01:
+            omitted[name] = "not visible: under 1 % of the columns"
+            continue
+        curves[name] = dict(zip(("x", "y"), _sample(60, *values(cols, rows))), coverage=coverage)
+    record = {"figure": figure, "quantity": spec_["quantity"], "pdf_page": spec_["pdf_page"], "xref": spec_["xref"],
               "sha256": hashlib.sha256(data).hexdigest(), "pixels": list(a.shape[:2]), "frame": list(frame),
               "legend": None if legend is None else [int(v) for v in legend], "calibration": {"x": cx, "y": cy},
-              "per_pixel": [abs(sx), abs(sy)], "agree": list(spec_["agree"]), "agree_source": spec_["cite"], "curves": curves}  # fmt: skip
-    if spec_["agree"]:
-        union = np.any([masks[name] for name in spec_["agree"]], axis=0)
-        cols = np.flatnonzero(union.any(0))
-        lower = np.array([np.flatnonzero(union[:, c]).max() for c in cols], float)
-        upper = np.array([np.flatnonzero(union[:, c]).min() for c in cols], float)
+              "y_scale": "log10" if log else "linear", "per_pixel": [abs(sx), abs(sy)], "agree": list(spec_["agree"]),
+              "agree_source": spec_["cite"], "window": spec_.get("window"), "omitted": omitted, "curves": curves}  # fmt: skip
+    agree = [name for name in spec_["agree"] if name in curves]
+    if agree:
+        rows = {}
+        for name in agree:
+            for col, row in zip(*_curve(masks[name], DASH)):
+                rows.setdefault(int(col), []).append(row)
+        cols = np.array(sorted(rows))
+        if spec_.get("window"):
+            x = values(cols, np.zeros(len(cols)))[0]
+            cols = cols[(x >= spec_["window"][0]) & (x <= spec_["window"][1])]
+        lower = [max(rows[c]) for c in cols]  # rows grow downward: the largest row is the lowest value
+        upper = [min(rows[c]) for c in cols]
         x, lo = values(cols, lower)
-        record["band"] = dict(zip(("x", "lower", "upper"), sample(x, lo, values(cols, upper)[1], points=100)))
+        band = _sample(100, x, lo, values(cols, upper)[1], [len(rows[c]) for c in cols])
+        record["band"] = dict(zip(("x", "lower", "upper", "codes"), band))
     return record
 
 
+def _image(images: Path, xref: int) -> Path:
+    found = sorted(Path(images).glob(f"x{xref}.*"))
+    if len(found) != 1:
+        raise FileNotFoundError(f"need exactly one image x{xref}.* in {images}, found {found}")
+    return found[0]
+
+
 def write_references(images: Path) -> Path:
-    """Digitize every figure from ``images`` (named ``x<xref>.png``, extracted from the PDF) into REFERENCES."""
+    """Digitize every figure from ``images`` (``x<xref>.png`` or ``.jpeg``, from the PDF) into REFERENCES."""
     figures = []
     for figure, spec_ in FIGURES.items():
-        record = digitize(next(Path(images).glob(f"x{spec_['xref']}.*")), figure)
+        record = digitize(_image(images, spec_["xref"]), figure)
         curves, band = record.pop("curves"), record.pop("band", None)
         lines = [f"  {json.dumps(name)}: {json.dumps(curve)}" for name, curve in curves.items()]
         tail = f',\n "band": {json.dumps(band)}' if band else ""
@@ -395,12 +476,15 @@ def main() -> None:
         print(write_references(Path(sys.argv[2])))
         return
     record = spec()
-    ratio = record["properties"]["steel"]["conductivity_ratio_pinned"]
+    ratio, target = record["properties"]["steel"]["conductivity_ratio_pinned"], developed_gradient(record)
     for cells, layer, walls in ((48, 6, 6), (72, 9, 8), (96, 12, 10)):
-        flow = section_flow(ratio, cells=cells, cells_in_layer=layer, wall_cells=walls)
-        u = flow["u_over_u0"]
-        print(f"{cells}/{layer}, {walls} wall cells: -dp/dx {flow['gradient']:.5f} (printed {DEVELOPED_GRADIENT}); "
-              f"jet {u.max():.3f} u0 at |z|/a {abs(flow['z'][np.argmax(u)]):.3f}; centre {np.interp(0.0, flow['z'], u):.4f} u0")  # fmt: skip
+        flow = section_flow(ratio, record=record, cells=cells, cells_in_layer=layer, wall_cells=walls)
+        print(f"{cells}/{layer}, {walls} wall cells: -dp/dx {flow['gradient']:.5f} (printed {target}); "
+              f"jet {flow['jet']:.3f} u0 at |z|/a {flow['jet_z']:.4f}; centre {flow['centre']:.4f} u0")  # fmt: skip
+    measured = record["properties"]["steel"]["electrical_conductivity_S_per_m"]
+    measured /= pinned_pbli(record)["electrical_conductivity_S_per_m"]
+    flow = section_flow(measured, record=record, **PIN_MESH)
+    print(f"Matolich's ratio {measured:.4f} on 96/12: -dp/dx {flow['gradient']:.5f}")
 
 
 if __name__ == "__main__":
