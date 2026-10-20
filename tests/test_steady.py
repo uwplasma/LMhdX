@@ -1669,3 +1669,37 @@ def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressu
     band, pixel = figures[18]["band"], figures[18]["per_pixel"][1]
     lower, upper = (np.interp(0.29, band["x"], band[k]) for k in ("lower", "upper"))
     assert lower - 2 * pixel <= nusselt <= upper + 2 * pixel
+
+
+def test_the_digitized_case_2_curves_confirm_its_inferred_velocity_and_flux():
+    """Case 2's figures, calibrated within 1 px: Fig. 30's slope is the developed -0.0863 sigma u0 B0^2 at the inferred
+    u0 = 0.01 m/s, and Fig. 34's outlet bulk temperature is the energy balance at the inferred 10 W/cm^2."""
+    import json
+
+    from validation import mistrangelo
+
+    figures = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES_CASE2.read_text())["figures"]}
+    assert sorted(figures) == sorted(mistrangelo.FIGURES_CASE2)
+    for record in figures.values():
+        assert max(record["calibration"][axis]["misfit_px"] for axis in ("x", "y")) <= 1.0
+        assert np.all(np.array(record["band"]["lower"]) <= np.array(record["band"]["upper"]))
+    record = mistrangelo.spec()
+    case, pbli, a = (
+        record["cases"]["case2"],
+        mistrangelo.pinned_pbli(record),
+        record["geometry"]["half_width_m"],
+    )
+    u0, q = case["mean_velocity_m_per_s"], case["heat_flux_W_per_m2"]
+    band = figures[30]["band"]
+    x, middle = np.array(band["x"]), (np.array(band["lower"]) + np.array(band["upper"])) / 2
+    scale = pbli["electrical_conductivity_S_per_m"] * u0 * record["field"]["peak_T"] ** 2
+    slope = np.polyfit(x[np.abs(x) < 0.4], middle[np.abs(x) < 0.4], 1)[0]
+    assert slope / scale == pytest.approx(-mistrangelo.DEVELOPED_GRADIENT, rel=0.015)
+    width = 2.0 * (a + record["geometry"]["wall_thickness_m"])
+    rise = q * width * 0.6 / (pbli["density_kg_per_m3"] * pbli["heat_capacity_J_per_kg_K"] * u0 * 4.0 * a**2)
+    band, pixel = figures[34]["band"], figures[34]["per_pixel"][1]
+    x, lower, upper = (np.array(band[k]) for k in ("x", "lower", "upper"))
+    plateau = (x > 0.5) & (x < 0.9)  # Case 2's mixing settles the bulk temperature by x = 0.5 m
+    assert np.all(lower[plateau] - 2 * pixel <= 300.0 + rise) and np.all(
+        300.0 + rise <= upper[plateau] + 2 * pixel
+    )

@@ -139,8 +139,45 @@ Figures 7 and 13 give the same point, the axis at x = 0, 0.4 % apart.
 The printed "Nu → 2.45" (p. 10) is about 4 % above both of these numbers. It
 is recorded as printed and not used as a gate.
 
-Case 2's curves follow in a later part. The sources are in
-`benchmarks/provenance.json`.
+## Reference curves (Case 2)
+
+`src/lmhdx/data/benchmarks/references/mistrangelo2025-case2.json` holds
+Case 2's Figures 23, 24, 26–35 and 37, read the same way:
+
+- every axis fits its ticks within 0.86 px;
+- Figure 35's axis spans seven decades;
+- Figure 26's analytical markers are split from CFX.
+
+**The bands.** Case 2 is reported, not gated (ADR 0009 D35), and its bands
+follow the paper's verdicts:
+
+| Figure | Excluded from the band | Reason (page) |
+|:--|:--|:--|
+| 23, 24 | CFX, OF_ORNL | CFX differs; OF_ORNL fluctuates (p. 13) |
+| 26, 27 | CFX | (p. 13) |
+| 28 | all but COMSOL and OF_KIT | only COMSOL and OF_KIT fit well together (p. 13) |
+| 31, 32 | FLUENT_CIEMAT, FLUENT_UK | their curves are instantaneous (p. 14) |
+| 34 | OF_ORNL, COMSOL | unphysical fluctuations (p. 14) |
+
+**My readings, not the paper's:**
+- Figure 29 excludes CFX. The text says that all codes predict the thicker
+  thermal layer, but CFX's wall is 20 K hotter.
+- Figure 33 excludes CFX for its offset, although the text reports good
+  agreement.
+- Figures 35 and 37 keep FLUENT_CIEMAT, FLUENT_UK and OF_KIT. CFX differs, and
+  OF_ORNL's and COMSOL's bulk temperatures fluctuate (p. 15).
+
+**The two inferred inputs, confirmed by the figures:**
+- **The velocity, 0.01 m/s.** Figure 30's slope over |x| < 0.4 m is
+  −191.0 Pa/m. The developed −0.0863 σu₀B₀² at that velocity gives
+  −189.9 Pa/m, 0.6 % apart. The slope scales with u₀ alone, so this fixes it.
+- **The flux, 10 W/cm².** Figure 34's outlet bulk temperature reaches
+  375.86 °C. The energy balance at this flux and velocity gives 375.93 °C.
+  FLUENT_UK's lower curve sets the band's lower edge.
+
+`tests/test_steady.py` checks both, with the calibrations.
+
+The sources are in `benchmarks/provenance.json`.
 
 ## Sources
 

@@ -168,6 +168,7 @@
         "conjugate_comparison": false,
         "developed_section": true,
         "reference_curves_case1": true,
+        "reference_curves_case2": true,
         "specification_frozen": true
       },
       "id": "M1-magnetoconvection-horizontal-duct",
@@ -188,13 +189,15 @@
       "tests": [
         "tests/test_steady.py::test_the_magnetoconvection_specification_reproduces_its_printed_numbers",
         "tests/test_steady.py::test_the_magnetoconvection_section_meets_the_printed_developed_gradient",
-        "tests/test_steady.py::test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale"
+        "tests/test_steady.py::test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale",
+        "tests/test_steady.py::test_the_digitized_case_2_curves_confirm_its_inferred_velocity_and_flux"
       ],
       "tier": "C",
       "title": "Heated conducting square duct in a fringing field",
       "workflows": [
         "validation/mistrangelo.py",
-        "src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json"
+        "src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json",
+        "src/lmhdx/data/benchmarks/references/mistrangelo2025-case2.json"
       ]
     }
   ],

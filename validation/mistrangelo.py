@@ -33,6 +33,7 @@ from lmhdx.steady import solve_steady_state
 
 __all__ = [
     "REFERENCES",
+    "REFERENCES_CASE2",
     "SPEC",
     "developed_section",
     "digitize",
@@ -146,6 +147,7 @@ def infer_wall_ratio(start: tuple[float, float] = (1.18, 1.30), steps: int = 3, 
 # The axes are calibrated on the major ticks drawn outside the frame, two labelled anchors per axis snapped to them.
 
 REFERENCES = _DATA / "references" / "mistrangelo2025-case1.json"
+REFERENCES_CASE2 = _DATA / "references" / "mistrangelo2025-case2.json"
 SIX = ("FLUENT_CIEMAT", "FLUENT_UK", "CFX", "OF_ORNL", "OF_KIT", "COMSOL")
 # Each colour as (hue window in degrees, saturation window, value window); black is unsaturated and dark.
 COLOURS = {
@@ -184,6 +186,22 @@ FIGURES = {
     18: dict(page=12, xref=309, x=((-0.3, 83), (0.3, 730)), y=((20, 8), (0, 468)), quantity="Nu, eq. 7, against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 10: FLUENT_UK as in the previous figures; Nu -> 2.45"),
     19: dict(page=12, xref=311, x=((-1.25, 68), (1.25, 726)), y=((1e-3, 33), (1e-7, 461.5)), quantity="E_t, eq. 8, against x [m]", agree=("FLUENT_CIEMAT", "OF_ORNL", "OF_KIT"), cite="as read: FLUENT_UK as in the previous figures (p. 10), CFX lower, its diffusion (p. 16); COMSOL not shown", log=True),
     38: dict(page=17, xref=486, x=((-1, 88.5), (1, 777)), y=((400, 44.5), (300, 481)), quantity="T_w at y = 0, z = -0.023 m and T_b [C] against x [m], OF_KIT, both cases (case1 dashed, below)", agree=(), cite="p. 15", colours=PAIRS, branches=("case1", "case2")),
+}
+ALL_BUT = {code: tuple(c for c in SIX if c != code) for code in SIX}
+FIGURES_CASE2 = {
+    23: dict(page=14, xref=368, x=((-1.5, 84), (1.5, 691)), y=((0.025, 7.5), (0.005, 434)), quantity="u [m/s] on y = z = 0 against x [m]", agree=("FLUENT_CIEMAT", "FLUENT_UK", "OF_KIT", "COMSOL"), cite="p. 13: CFX differs; OF_ORNL's fluctuations, numerical problems"),
+    24: dict(page=14, xref=370, x=((-1.5, 81), (1.5, 692.5)), y=((375, 43), (285, 428.5)), quantity="T [C] on y = z = 0 against x [m]", agree=("FLUENT_CIEMAT", "FLUENT_UK", "OF_KIT", "COMSOL"), cite="p. 13: CFX's steeper rise; OF_ORNL's fluctuations"),
+    26: dict(page=14, xref=374, x=((-0.025, 84.5), (0.025, 683)), y=((0.03, 7), (0.0, 427)), quantity="u [m/s] at x = -0.3 m, y = 0 against z [m]", agree=ALL_BUT["CFX"] + ("analytical",), cite="p. 13: all but CFX reproduce the analytical solution", circles=True),
+    27: dict(page=14, xref=376, x=((-0.025, 84), (0.025, 684)), y=((0.04, 6), (0.0, 427)), quantity="u [m/s] at x = 0, y = 0 against z [m]", agree=ALL_BUT["CFX"], cite="p. 13: CFX's different profile in the heated zone"),
+    28: dict(page=15, xref=408, x=((-0.025, 80.5), (0.025, 682)), y=((310, 7), (300, 390)), quantity="T [C] at x = -0.3 m, y = 0 against z [m]", agree=("OF_KIT", "COMSOL"), cite="p. 13: COMSOL and OF_KIT fit well together"),
+    29: dict(page=15, xref=410, x=((-0.025, 78.5), (0.025, 681.5)), y=((420, 7), (300, 429)), quantity="T [C] at x = 0, y = 0 against z [m]", agree=ALL_BUT["CFX"], cite="p. 13: all predict the thicker layer; CFX's steeper rise, as read"),
+    30: dict(page=15, xref=412, x=((-1.5, 81), (1.5, 692)), y=((300, 7), (0, 422)), quantity="p [Pa] on y = z = 0 against x [m], FLUENT_CIEMAT and CFX offsets removed", agree=SIX, cite="p. 14"),
+    31: dict(page=15, xref=414, x=((-1.5, 90), (1.5, 693)), y=((20, 6), (-120, 414)), quantity="phi [uV] at y = 0 on z = -0.023 m against x [m]", agree=("CFX", "OF_ORNL", "OF_KIT", "COMSOL"), cite="p. 14: FLUENT's curves are instantaneous"),
+    32: dict(page=15, xref=416, x=((-1.5, 83), (1.5, 693)), y=((120, 15), (-20, 427)), quantity="phi [uV] at y = 0 on z = 0.023 m against x [m]", agree=("CFX", "OF_ORNL", "OF_KIT", "COMSOL"), cite="p. 14: FLUENT's curves are instantaneous"),
+    33: dict(page=16, xref=451, x=((-0.025, 82), (0.025, 683)), y=((150, 7), (-150, 427)), quantity="phi [uV] at x = y = 0 against z [m]", agree=ALL_BUT["CFX"], cite="p. 14: good agreement; CFX offset, as read", rows=(214, 221)),
+    34: dict(page=16, xref=453, x=((-1, 86), (1, 700)), y=((380, 7), (300, 432)), quantity="bulk T [C], eq. 6, against x [m]", agree=("FLUENT_CIEMAT", "FLUENT_UK", "CFX", "OF_KIT"), cite="p. 14: OF_ORNL and COMSOL unphysical"),
+    35: dict(page=16, xref=455, x=((-0.5, 284), (1, 723)), y=((1e-1, 12), (1e-8, 504)), quantity="E_t, eq. 8, against x [m]", agree=("FLUENT_CIEMAT", "FLUENT_UK", "OF_KIT"), cite="p. 15: CFX differs; OF_ORNL and COMSOL unphysical", log=True),
+    37: dict(page=17, xref=484, x=((-0.3, 79), (0.3, 769)), y=((20, 9), (0, 496)), quantity="Nu, eq. 7, against x [m]", agree=("FLUENT_CIEMAT", "FLUENT_UK", "OF_KIT"), cite="as read: CFX differs and OF_ORNL's and COMSOL's bulk temperatures fluctuate (p. 15)"),
 }
 # fmt: on
 
@@ -324,11 +342,11 @@ def _branches(mask):
     return low, high
 
 
-def digitize(image: Path, figure: int) -> dict:
+def digitize(image: Path, figure: int, table: dict | None = None) -> dict:
     """One figure's curves, each the median row per pixel column, and the band of the codes that agree."""
     from PIL import Image
 
-    spec_, data = FIGURES[figure], Path(image).read_bytes()
+    spec_, data = (table or FIGURES)[figure], Path(image).read_bytes()
     a = np.asarray(Image.open(image).convert("RGB")).astype(float) / 255.0
     frame = _frame(a)
     legend = _legend(a, frame)
@@ -375,19 +393,19 @@ def digitize(image: Path, figure: int) -> dict:
     return record
 
 
-def write_references(images: Path) -> Path:
-    """Digitize every figure from ``images`` (named ``x<xref>.png``, extracted from the PDF) into REFERENCES."""
-    figures = []
-    for figure, spec_ in FIGURES.items():
-        record = digitize(next(Path(images).glob(f"x{spec_['xref']}.*")), figure)
-        curves, band = record.pop("curves"), record.pop("band", None)
-        lines = [f"  {json.dumps(name)}: {json.dumps(curve)}" for name, curve in curves.items()]
-        tail = f',\n "band": {json.dumps(band)}' if band else ""
-        figures.append(json.dumps(record)[:-1] + ', "curves": {\n' + ",\n".join(lines) + "}" + tail + "}")
-    REFERENCES.write_text(
-        '{"source_id": "mistrangelo-2025", "case": "case1", "figures": [\n' + ",\n".join(figures) + "\n]}\n"
-    )
-    return REFERENCES
+def write_references(images: Path) -> tuple[Path, Path]:
+    """Digitize every figure from ``images`` (``x<xref>.png`` or ``.jpeg``, from the PDF) into the two files."""
+    for case, table, path in (("case1", FIGURES, REFERENCES), ("case2", FIGURES_CASE2, REFERENCES_CASE2)):
+        figures = []
+        for figure, spec_ in table.items():
+            record = digitize(next(Path(images).glob(f"x{spec_['xref']}.*")), figure, table)
+            curves, band = record.pop("curves"), record.pop("band", None)
+            lines = [f"  {json.dumps(name)}: {json.dumps(curve)}" for name, curve in curves.items()]
+            tail = f',\n "band": {json.dumps(band)}' if band else ""
+            figures.append(json.dumps(record)[:-1] + ', "curves": {\n' + ",\n".join(lines) + "}" + tail + "}")
+        head = f'{{"source_id": "mistrangelo-2025", "case": "{case}", "figures": [\n'
+        path.write_text(head + ",\n".join(figures) + "\n]}\n")
+    return REFERENCES, REFERENCES_CASE2
 
 
 def main() -> None:
