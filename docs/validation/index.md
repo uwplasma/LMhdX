@@ -13,7 +13,7 @@ validation result.
 | Locally fully developed station sum in a varying field (`validation.open_axis`) | 3-D open duct in a monotone 20 % ramp against the fully developed gradient integrated at the local field, at Ha 50 and 200, refined across and along the duct | square duct within 1 % up to γ√Ha ≈ 0.2, the design-law duct within 0.35 % up to 2; no collapse on γ√Ha across Ha ([duct design law](../tutorials/duct_design_law.md)) |
 | Pipe through a fringe, inlet and outlet (`lmhdx.axial.solve_open_pipe`) | operator symmetry, energy identity, mass and charge to round-off, adjoint, ALEX B1 on refined meshes | Stokes limit; ALEX B1 upstream gradient and integrated excess (−3.3 %) met, station-wise tolerance not met ([numerics](../physics/numerics.md)) |
 | Inertialess core-flow model (`lmhdx.coreflow`) | Walker's thin-wall limits at second order, symmetry, adjoint, ANL excess against TM-228 | ANL excess within 0.19 % of TM-228; ALEX B2 against experiment open (plan 4.3) |
-| Periodic Q2D | analytical decay, energy identity, spectral incompressibility, spatial refinement, CPU/GPU parity | verified for the documented SM82 model and numerical gates |
+| Periodic Q2D | analytical decay, energy identity, spectral incompressibility, spatial refinement, CPU/GPU parity | verified for the documented SM82 model and numerical gates; Tithof et al. 2017 critical Re within 1.2 % (row 15), vortex-lattice C in 3–7 only for Re_α ≥ 28 (row 13), see [Q2D anchors](q2d.md) |
 
 For 2-D cases, `validation_summary` reports convergence, current continuity,
 gauge, interface, flow, and profile metrics. `hartmann_validation` compares
@@ -144,9 +144,21 @@ together) and for the core-flow model (cross-section 10², 20², 40² and axial
 spacing 0.2, 0.1, 0.05 on x ∈ [−10, 6]). In every row the analytic or published
 value lies inside the fine mesh's GCI band, and the convergence is monotone.
 Table I and the pipe show the formal second order. The core-flow excess shows
-1.63, below its trapezoidal second order. The likely cause, not isolated, is the
-1/B floor at 1000 that starts between nodes. Its Richardson value is 1.1e-4
-from TM-228's three-digit 0.0178, whose own rounding is 2.8e-3.
+1.63, below its trapezoidal second order. The cause is not the 1/B floor, which
+`tests/test_coreflow.py` rules out: raising the cap on 1/B from 10³ to 10⁶ moves
+the excess by 1.3×10⁻⁵ (relative) on the coarse mesh and 8×10⁻⁶ on the fine one,
+and the floor starts at x = 2.9, outside the window [−6, 2] in which the excess is
+read. The joint sequence refines two directions with errors of opposite sign.
+Refining the cross-section alone (10², 20², 40² at 161 stations) gives order 2.05
+from above and GCI 6.8×10⁻⁴; refining the axis alone (81, 161, 321 stations at
+20²) gives 1.97 from below and GCI 2.0×10⁻⁴. Both are second order, and they
+partly cancel in the joint sequence, so three joint meshes fit a spurious 1.63.
+The separable Richardson value, V(20², 161) corrected in each direction, is
+0.017805, against 0.017798 from the joint sequence: 4×10⁻⁴ apart, inside the
+joint GCI of 8.3×10⁻⁴, and 2.8×10⁻⁴ from TM-228's three-digit 0.0178. No
+interpolation of the floor was added, since it would not change the order or the
+value. Use the separable pair, not the joint order, to judge this row's
+asymptotic range.
 
 Three meshes fit the order exactly, so they cannot by themselves show that a
 sequence is in the asymptotic range. Here the evidence for that is the observed
@@ -157,6 +169,52 @@ order lying at the scheme's formal order. Not in this table:
 - the 3-D fringe of rows 7 and 24, which has two meshes per Hartmann number
   (128² and 192², or 192² and 256²) and so has no observed order;
 - row 8's manufactured solution on stretched meshes.
+
+## Ni et al. 2007, Part I: the published tables
+
+Ni, Munipalli, Huang, Morley and Abdou (J. Comput. Phys. 227, 174, 2007), whose
+consistent and conservative current scheme FreeMHD adopts, validate it on fully
+developed ducts. `tests/test_table_i.py` runs the cases LMhdX can reproduce. Their
+meshes are collocated and the stretching is not published, so the comparison is
+between two schemes that both conserve charge, at the same layer resolution; it
+is a band, not an exact target.
+
+**Table 2: Shercliff's duct** (insulating walls), pressure gradient chosen so the
+exact mass flow rate is 4, meshes of 38², 46² and 62² cells (4, 8 and 16 cells across
+2/Ha and 2/√Ha, 30 in the core). LMhdX meshes use `wall_resolving_faces` with the
+same counts; the reference is the spectral solve of `validation.shercliff`.
+Errors of the flow rate:
+
+| Ha | 38² LMhdX / Ni | 46² LMhdX / Ni | 62² LMhdX / Ni |
+|---|---|---|---|
+| 50 | 2.63 % / 3.38 % | 0.77 % / 0.89 % | 0.35 % / 0.27 % |
+| 500 | 2.58 % / 3.56 % | 1.07 % / 1.10 % | 0.86 % / 0.47 % |
+| 1000 | 2.63 % / 3.38 % | 1.25 % / 0.98 % | 1.08 % / 0.37 % |
+
+LMhdX is below Ni's error on the coarsest mesh, within 1.4× on the middle one
+and within 2.9× on the finest, so Ni's scheme is not matched on the finest mesh
+at Ha 500 and 1000. The test gates the monotone decrease and those bands. The
+errors do not fall at the formal rate here because the core keeps 30 cells while the layers are
+refined, as Ni's do ("the grid number in the core flow does not increase with
+Hartmann number"); Ni's Table 1, the L1 and L2 orders of the velocity field
+(L1 1.87, 1.83, 1.82 and L2 1.86, 1.83, 1.81 at Ha 50, 500, 1000), is not reproduced, since it needs the exact
+profile on the mesh and the meshes differ. The flow-rate errors above are the
+comparable quantity.
+
+**Tables 3 and 4: Hunt's duct** (Hartmann walls conducting, insulating sides),
+Ha 300 with c 0.1 and Ha 500 with c 0.05, flow rate 4, quoted as the analytic
+pressure gradient times Re: 5854.302 and 9531.4475. The spectral solve gives
+5857.20 and 9535.10 (converged to 10⁻⁵ at 80 points), +4.9×10⁻⁴ and +4.2×10⁻⁴ from
+Ni's analytic values. That is the size of the 3-D errors Ni reports against them
+(0.016–0.075 %), so part of Ni's "error" is the reference. The test gates the
+agreement at 4.5×10⁻⁴ ± 2×10⁻⁴.
+
+**Not reproduced:** Ni's 3-D pressure gradient errors of 0.06 % on a 31×47×47-node
+mesh. LMhdX's fully developed solve at 46² cells is 0.7–0.9 % low in the
+pressure gradient (flow rate high) at Ha 300, c 0.1, and second order (1.55 %,
+0.70 %, 0.32 % on 32², 48², 72²); at second order, 0.06 % is reached near 170² cells.
+Ni's mesh is unspecified, so whether it clusters differently or the 3-D run
+benefits from cancellation is not known.
 
 ## Test gates
 
