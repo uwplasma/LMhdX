@@ -198,11 +198,14 @@ fringe structures are inertial.
 
 **D38. Where it lives and what it costs.**
 
-- **The campaign** goes in `validation/`:
-  - `validation/mistrangelo.py`: the specification, the observables as the
-    paper defines them, and the gate;
-  - `validation/data/mistrangelo2025/`: digitized curves as CSV, each with its
-    figure, axis calibration and digitizer recorded.
+- **The campaign** follows the repository's benchmark layout:
+  - `src/lmhdx/data/benchmarks/specs/mistrangelo2025.toml`: the frozen
+    specification;
+  - `src/lmhdx/data/benchmarks/references/`: the digitized curves, as CSV;
+  - `benchmarks/provenance.json`: the sources, with each curve's figure, axis
+    calibration and digitizer;
+  - `validation/mistrangelo.py`: the observables as the paper defines them,
+    and the gate.
   - Long runs, records and figures are release assets, not tracked files.
 - **The capabilities** go in `thermal`, `core3d` and `poisson`. No module is
   added: the count stays at D34's 16.
