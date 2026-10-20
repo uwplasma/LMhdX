@@ -1324,6 +1324,126 @@ def test_heated_hartmann_plates_reach_the_analytical_nusselt_number(hartmann):
 # Review corrections, part 5b: the reduction's guards, an undefined Nu and physical temperatures (D33).
 
 
+# The uniform wall temperature, the T condition: the smallest eigenvalue of the section.
+
+# Nu_T of the square duct from an independent Chebyshev collocation of the same eigenproblem, n = 24 to 48,
+# extrapolated at its observed order 2.0. Shah & London (1978) list 2.976.
+_SQUARE_T = 2.97753
+
+
+def _plate_t_nusselt(hartmann: float, count: int = 96) -> float:
+    """``Nu_T = 4 Lambda`` of plates at ``y = +-a`` held at one temperature, ``D_h = 4a``: ``-phi'' = Lambda f phi``
+    by Chebyshev collocation on the interior nodes, with no discrete operator of the package."""
+    from scipy.linalg import eig
+
+    nodes = np.cos(np.pi * np.arange(count + 1) / count)
+    weights = np.hstack([2.0, np.ones(count - 1), 2.0]) * (-1.0) ** np.arange(count + 1)
+    derivative = np.outer(weights, 1.0 / weights) / (nodes[:, None] - nodes[None, :] + np.eye(count + 1))
+    derivative -= np.diag(derivative.sum(axis=1))
+    second, eta = (derivative @ derivative)[1:-1, 1:-1], nodes[1:-1]
+    if hartmann == 0.0:
+        profile = 1.5 * (1.0 - eta**2)
+    else:
+        profile = (1.0 - np.cosh(hartmann * eta) / np.cosh(hartmann)) / (1.0 - np.tanh(hartmann) / hartmann)
+    values = eig(-second, np.diag(profile), right=False)
+    return 4.0 * float(np.min(values[np.isfinite(values) & (values.real > 0.0)].real))
+
+
+def test_the_uniform_wall_temperature_nusselt_number_meets_its_exact_and_spectral_values():
+    """The T condition. Slug flow: the sampled sines are exact discrete eigenfunctions of the cell-centred
+    Dirichlet Laplacian, so ``Nu_T = (8/h^2) sin^2(pi h/4)`` to 1e-12, pi^2/2 as h -> 0; the decay rate is
+    ``Lambda alpha/u_mean`` and the profile's bulk is one. The square duct on the package's own Poiseuille flow
+    converges at second order to the Chebyshev value 2.97753; its Richardson value is within 1e-4 of it, and
+    within 0.1 % of Shah & London's 2.976. Compiled whole, it equals the eager result.
+    """
+    from lmhdx.thermal import developed_wall_temperature
+
+    square = []
+    for cells in (16, 32, 64):
+        thermal = _developed_duct(cells)
+        slug = developed_wall_temperature(thermal, _uniform_flow(thermal))
+        width = 2.0 / cells
+        assert float(slug.nusselt) == pytest.approx(
+            8.0 / width**2 * np.sin(np.pi * width / 4.0) ** 2, rel=1e-12
+        )
+        assert float(slug.decay_rate) == pytest.approx(
+            float(slug.eigenvalue) * thermal.diffusivity, rel=1e-13
+        )
+        volumes = np.asarray(thermal.flow.grid.cell_volumes())
+        assert float(np.sum(volumes * slug.temperature.data) / np.sum(volumes)) == pytest.approx(
+            1.0, rel=1e-13
+        )
+        result = developed_wall_temperature(thermal, solve_steady_state(thermal.flow).velocity)
+        assert float(result.eigen_residual) < 1e-9
+        square.append(float(result.nusselt))
+        if cells == 16:
+            velocity = _uniform_flow(thermal)
+            jitted = jax.jit(lambda flow: developed_wall_temperature(thermal, flow).nusselt)(velocity)
+            assert float(jitted) == pytest.approx(float(slug.nusselt), rel=1e-14)
+    coarse, middle, fine = square
+    order = np.log2((coarse - middle) / (middle - fine))
+    extrapolated = fine + (fine - middle) / (2.0**order - 1.0)
+    assert 1.8 < order < 2.2 and abs(fine / _SQUARE_T - 1.0) < 5e-4, square
+    assert abs(extrapolated / _SQUARE_T - 1.0) < 1e-4 and abs(extrapolated / 2.976 - 1.0) < 1e-3, extrapolated
+
+
+@pytest.mark.parametrize("hartmann", [0.0, 10.0], ids=["poiseuille", "hartmann-10"])
+def test_plates_at_one_wall_temperature_reach_the_spectral_nusselt_number(hartmann):
+    """Plates held at one temperature, insulated ends one cell apart, carrying the cell means of the analytical
+    Hartmann velocity: ``4 Lambda`` converges at second order to the Chebyshev value (7.54070 at Ha 0)."""
+    from lmhdx.thermal import developed_wall_temperature, thermal_boundary
+
+    errors = []
+    for cells in (32, 64, 128):
+        thermal, velocity = _plates(cells, hartmann)
+        conditions = (_WRAP, thermal_boundary("temperature"), thermal.thermal_conditions[2])
+        held = dataclasses.replace(thermal, thermal_conditions=conditions)
+        errors.append(
+            abs(
+                4.0
+                * float(developed_wall_temperature(held, velocity).eigenvalue)
+                / _plate_t_nusselt(hartmann)
+                - 1
+            )
+        )
+    orders = np.log2(np.divide(errors[:-1], errors[1:]))
+    assert errors[1] < 1e-3 and np.all(orders > 1.8), (errors, orders)
+
+
+def test_the_uniform_wall_temperature_nusselt_number_differentiates_through_the_flow():
+    """d Nu_T / d(field scale) through the steady solve's implicit derivative and the Rayleigh quotient, which
+    needs no derivative of the inverse iteration, against central differences."""
+    from lmhdx.thermal import developed_wall_temperature
+
+    thermal = _developed_duct(16, hartmann=10.0)
+
+    def nusselt(scale):
+        velocity = solve_steady_state(thermal.flow, field_scale=scale).velocity
+        return developed_wall_temperature(thermal, velocity).nusselt
+
+    gradient = float(jax.grad(nusselt)(1.0))
+    errors = [
+        abs(gradient - float(nusselt(1.0 + h) - nusselt(1.0 - h)) / (2.0 * h)) / abs(gradient)
+        for h in (1e-3, 1e-4)
+    ]
+    assert gradient > 0.0 and min(errors) < 1e-5, (gradient, errors)
+
+
+def test_the_uniform_wall_temperature_refuses_an_ill_posed_duct():
+    """No wall at a temperature, walls at different temperatures, or a wall taking in heat: not the T condition."""
+    from lmhdx.thermal import developed_wall_temperature, thermal_boundary
+
+    thermal = _developed_duct(8)
+    velocity, held = _uniform_flow(thermal), thermal_boundary("temperature")
+    for conditions, message in (
+        ((_WRAP, thermal_boundary("heat_flux", conductivity=1.0), _WALL), "at least one wall"),
+        ((_WRAP, thermal_boundary("temperature", 0.0, 1.0), held), "one temperature"),
+        ((_WRAP, held, thermal_boundary("heat_flux", -1.0, 0.0, conductivity=1.0)), "adiabatic"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            developed_wall_temperature(dataclasses.replace(thermal, thermal_conditions=conditions), velocity)
+
+
 def test_developed_inputs_are_checked_against_the_reduction():
     """D03: one axial cell; a single throughflow above a volume-rate tolerance; no transverse or reversed velocity
     beyond a speed; and a flow that stops gives NaN rather than a division by zero."""

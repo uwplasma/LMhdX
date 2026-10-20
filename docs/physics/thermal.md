@@ -468,9 +468,39 @@ its discrete answer is exactly $12/(1+h^2/2)$. The public four-wall
 `nusselt` of that fixture averages in the insulated ends, and is a different
 number.
 
+**The uniform wall temperature.** With every wall held at one temperature, the
+T condition, the excess over the wall decays along the duct in a fixed shape,
+$T-T_w=\theta\,e^{-\lambda x}$. Without axial conduction or internal heat,
+$\theta$ is the eigenfunction of $-L(\theta)=\Lambda f\theta$ with the smallest
+eigenvalue, $f=u/\bar u$. `developed_wall_temperature(problem, velocity)` finds
+it by inverse iteration with the same fast-diagonal factorization, and returns:
+- the decay rate $\lambda=\Lambda\alpha/\bar u$;
+- the profile scaled to a unit bulk excess, $(T-T_w)/(T_b-T_w)$;
+- $Nu_T=\Lambda D_hA/P_w$, which is $\Lambda D_h^2/4$ when every wall is held, with
+  the wall flux averaged over the held perimeter $P_w$.
+
+$\Lambda$ is the Rayleigh quotient of the converged $\theta$. The quotient is
+stationary at an eigenfunction, so its derivative in the velocity needs none of
+the iteration's; the gradient through the steady solve's field scale meets
+central differences to 1e-5. A heat-flux wall must be adiabatic, and sources
+and Joule heat are left out, since the T condition has none.
+
+| Duct | Reference | 16 / 32 / 64 cells | Order |
+|:--|--:|:--|:--|
+| square, slug flow | $\pi^2/2=4.93480$; discretely $(8/h^2)\sin^2(\pi h/4)$ | exact to 3e-16 at each | — |
+| square | 2.97753 | +0.63 % / +0.16 % / +0.040 % | 1.97 |
+| plates, Poiseuille (32 / 64 / 128) | 7.54070 | −4.6e‑4 / −1.1e‑4 / −2.9e‑5 | 2.0 |
+| plates, Ha 10 (32 / 64 / 128) | 8.96255 | −6.5e‑4 / −1.6e‑4 / −4.1e‑5 | 2.0 |
+
+The square duct's reference is a Chebyshev collocation of the same
+eigenproblem, extrapolated from 40, 48 and 56 nodes at its observed order 2.0.
+The package's own Richardson value, 2.97749, agrees with it to 1.5e-5. Shah &
+London (1978) list 2.976, 0.05 % below both. The sampled sines of slug flow are
+exact eigenfunctions of the cell-centred Dirichlet Laplacian, which is why that
+row is exact. The plates carry the cell means of the analytical velocity, with
+the plates' own $D_h=4a$; their references are one-dimensional Chebyshev solves.
+
 Not covered:
-- the uniform-wall-temperature condition, an eigenvalue problem ($Nu_T = 2.976$
-  for the square duct);
 - the pipe;
 - an MHD duct against a published $Nu$, for example a square insulating duct
   near Ha 100 (Tao & Ni 2013; Smolentsev et al.). That is a documentation
