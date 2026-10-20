@@ -162,6 +162,40 @@
       "workflows": [
         "validation/freemhd.py"
       ]
+    },
+    {
+      "acceptance": {
+        "conjugate_comparison": false,
+        "developed_section": true,
+        "reference_curves_case1": true,
+        "specification_frozen": true
+      },
+      "id": "M1-magnetoconvection-horizontal-duct",
+      "primary_observables": [
+        "developed pressure gradient",
+        "velocity profiles",
+        "wall and bulk temperature",
+        "Nusselt number"
+      ],
+      "runtime_lane": "external-data",
+      "source_ids": [
+        "mistrangelo-2025",
+        "martelli-2019",
+        "matolich-1965",
+        "aries-ss316"
+      ],
+      "status": "specification-frozen",
+      "tests": [
+        "tests/test_steady.py::test_the_magnetoconvection_specification_reproduces_its_printed_numbers",
+        "tests/test_steady.py::test_the_magnetoconvection_section_meets_the_printed_developed_gradient",
+        "tests/test_steady.py::test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale"
+      ],
+      "tier": "C",
+      "title": "Heated conducting square duct in a fringing field",
+      "workflows": [
+        "validation/mistrangelo.py",
+        "src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json"
+      ]
     }
   ],
   "schema_version": 1,
@@ -205,6 +239,38 @@
       "id": "freemhd",
       "kind": "software",
       "title": "FreeMHD"
+    },
+    {
+      "availability": "open-access",
+      "doi": "10.1088/1741-4326/ae0800",
+      "filename": "paper_references/mistrangelo2025/mistrangelo2025_nf65_116006.pdf",
+      "id": "mistrangelo-2025",
+      "kind": "journal-article",
+      "title": "A code-to-code benchmark for magneto-convection in a horizontal duct",
+      "year": 2025
+    },
+    {
+      "availability": "external",
+      "doi": "10.1016/j.fusengdes.2018.11.028",
+      "id": "martelli-2019",
+      "kind": "journal-article",
+      "title": "Literature review of lead-lithium thermophysical properties",
+      "year": 2019
+    },
+    {
+      "availability": "open-access",
+      "id": "matolich-1965",
+      "kind": "report",
+      "title": "Thermal conductivity and electrical resistivity of Type 316 stainless steel from 0 to 1800 F (NASA CR-54151)",
+      "url": "https://ntrs.nasa.gov/citations/19650024830",
+      "year": 1965
+    },
+    {
+      "availability": "open-access",
+      "id": "aries-ss316",
+      "kind": "web-database",
+      "title": "ARIES/UCSD material properties: austenitic stainless steel (316)",
+      "url": "https://qedfusion.org/LIB/PROPS/PANOS/ss.html"
     }
   ]
 }

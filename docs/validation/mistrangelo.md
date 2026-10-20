@@ -78,10 +78,10 @@ reference curves.
 - the specification's printed groups and its anchors;
 - the 48/6 section's gradient, within 0.5 % of 0.0863.
 
-## Reference curves (Case 1, part 1)
+## Reference curves (Case 1)
 
 `src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json` holds
-Figures 6–13, read by `validation.mistrangelo.digitize`. The figures are
+Figures 6–13, 15–19 and 38, read by `validation.mistrangelo.digitize`. The figures are
 xmgrace plots, embedded in the PDF as images; each record carries the image's
 page, xref and SHA-256.
 
@@ -93,6 +93,9 @@ page, xref and SHA-256.
   median of that colour's pixels, sampled to 60 points.
 - In Figure 13, the analytical solution's open red circles are split from
   CFX's red line by their shape.
+- Figure 19's axis is in decades.
+- Figure 38 draws both cases in one pair of colours, so each colour is split
+  column by column into its lower curve (Case 1) and its upper (Case 2).
 
 **What each record holds.**
 - **A band:** the union of the codes that the paper says agree, with the page
@@ -125,8 +128,19 @@ Figures 7 and 13 give the same point, the axis at x = 0, 0.4 % apart.
   - At x = −0.3 m (Figure 12), only 0.1 m into the uniform field, the
     codes' jets are 0.081 m/s: the flow there is still developing.
 
-Figures 15–19 and 38, and Case 2's, follow in later parts, along with the
-sources in `benchmarks/provenance.json`.
+**Two inferences of the specification, confirmed by the figures:**
+- **The heated width.** Figure 17's outlet bulk temperature is 310.10–310.12 °C.
+  The specification's energy balance, with the full 50 mm outer width heated,
+  gives 310.12 °C.
+- **The length in Nu.** From Figure 38's OF_KIT temperatures at x = 0.29 m,
+  `T_w − T_b` is 19.24 K, so `Nu = q'' a / (k (T_w − T_b))` is 2.34 with
+  L = a. That lies inside Figure 18's band, 2.22–2.35.
+
+The printed "Nu → 2.45" (p. 10) is about 4 % above both of these numbers. It
+is recorded as printed and not used as a gate.
+
+Case 2's curves follow in a later part. The sources are in
+`benchmarks/provenance.json`.
 
 ## Sources
 

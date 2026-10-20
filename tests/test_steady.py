@@ -1617,7 +1617,8 @@ def test_the_magnetoconvection_section_meets_the_printed_developed_gradient():
 
 def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale():
     """The reference curves, read from the paper's figures: each axis fits its major ticks within 1 px, each band is
-    ordered, and Fig. 8's slope over |x| < 0.4 m is the printed -0.0855 in sigma u0 B0^2 with the pinned PbLi."""
+    ordered, and Fig. 8's slope over |x| < 0.4 m is the printed -0.0855 in sigma u0 B0^2 with the pinned PbLi; the
+    figures also confirm the inferred heated width and L = a."""
     import json
 
     from validation import mistrangelo
@@ -1641,3 +1642,30 @@ def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressu
     scale = mistrangelo.pinned_pbli(record)["electrical_conductivity_S_per_m"] * case["mean_velocity_m_per_s"]
     scale *= record["field"]["peak_T"] ** 2
     assert np.polyfit(x[inside], middle[inside], 1)[0] / scale == pytest.approx(-0.0855, rel=0.01)
+    # Fig. 17's outlet bulk temperature is the specification's energy balance (the full outer width heated), and
+    # Fig. 38's temperatures give Fig. 18's Nu with L = a, both within 2 px.
+    pbli, a, wall = (
+        mistrangelo.pinned_pbli(record),
+        record["geometry"]["half_width_m"],
+        record["geometry"]["wall_thickness_m"],
+    )
+    q, u0 = case["heat_flux_W_per_m2"], case["mean_velocity_m_per_s"]
+    rise = (
+        q
+        * 2.0
+        * (a + wall)
+        * 0.6
+        / (pbli["density_kg_per_m3"] * pbli["heat_capacity_J_per_kg_K"] * u0 * 4.0 * a**2)
+    )
+    band, pixel = figures[17]["band"], figures[17]["per_pixel"][1]
+    x, lower, upper = (np.array(band[k]) for k in ("x", "lower", "upper"))
+    plateau = (x > 0.4) & (x < 0.9)
+    assert np.all(lower[plateau] - 2 * pixel <= 300.0 + rise) and np.all(
+        300.0 + rise <= upper[plateau] + 2 * pixel
+    )
+    curves = figures[38]["curves"]
+    wall_t, bulk_t = (np.interp(0.29, curves[k]["x"], curves[k]["y"]) for k in ("T_w case1", "T_b case1"))
+    nusselt = q * a / (pbli["thermal_conductivity_W_per_m_K"] * (wall_t - bulk_t))
+    band, pixel = figures[18]["band"], figures[18]["per_pixel"][1]
+    lower, upper = (np.interp(0.29, band["x"], band[k]) for k in ("lower", "upper"))
+    assert lower - 2 * pixel <= nusselt <= upper + 2 * pixel

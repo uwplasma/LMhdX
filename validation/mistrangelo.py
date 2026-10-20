@@ -163,9 +163,11 @@ STATIONS = {  # Fig. 11, OF_KIT at five stations, in its own colours
     "x=0.6": ((292, 330), (0.4, 1.0), (0.25, 1.0)),
     "x=1": ((340, 25), (0.12, 0.35), (0.55, 0.92)),
 }
+PAIRS = {"T_w": ((200, 265), (0.3, 1.0), (0.25, 1.0)), "T_b": ((75, 160), (0.3, 1.0), (0.25, 1.0))}  # Fig. 38
 # Figure: page, xref, x anchors, y anchors (value, approximate pixel), the quantity, the codes the paper says agree
 # (the band is their union) and where it says so. Options: "log" (y in decades), "circles" (the analytical
-# solution's red markers split from CFX by shape), "rows" (pixel rows excluded from black: a dotted zero line).
+# solution's red markers split from CFX by shape), "rows" (pixel rows excluded from black: a dotted zero line),
+# "branches" (two curves per colour, named lower then upper).
 # fmt: off
 FIGURES = {
     6: dict(page=8, xref=176, x=((-1.5, 85), (1.5, 730)), y=((310, 97), (300, 457)), quantity="T [C] on y = z = 0 against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 8"),
@@ -176,6 +178,12 @@ FIGURES = {
     11: dict(page=10, xref=235, x=((-0.025, 83), (0.025, 720.5)), y=((330, 8), (300, 454)), quantity="T [C] in the fluid at y = 0 against z [m], OF_KIT at five stations", agree=(), cite="p. 9", colours=STATIONS),
     12: dict(page=10, xref=237, x=((-0.025, 87), (0.025, 722)), y=((0.1, 7), (0.0, 451)), quantity="u [m/s] at x = -0.3 m, y = 0 against z [m]", agree=("FLUENT_CIEMAT", "OF_ORNL", "OF_KIT", "COMSOL"), cite="p. 9"),
     13: dict(page=10, xref=239, x=((-0.025, 88), (0.025, 722)), y=((0.1, 7), (0.0, 451)), quantity="u [m/s] at x = 0, y = 0 against z [m]", agree=("FLUENT_CIEMAT", "OF_ORNL", "OF_KIT", "COMSOL", "analytical"), cite="p. 9", circles=True),
+    15: dict(page=11, xref=275, x=((-1.5, 95), (1.5, 731)), y=((0, 22), (-400, 446)), quantity="phi [uV] at y = 0 on the interface z = -0.023 m against x [m]", agree=SIX, cite="p. 10: most of the data fits well together"),
+    16: dict(page=11, xref=277, x=((-0.025, 86), (0.025, 722)), y=((400, 7), (-400, 452.5)), quantity="phi [uV] at x = y = 0 against z [m]", agree=SIX[:1] + SIX[2:], cite="p. 10: FLUENT_UK deviates slightly", rows=(226, 234)),
+    17: dict(page=11, xref=279, x=((-1.5, 87.5), (1.5, 731)), y=((312.5, 7), (300, 454)), quantity="bulk T [C], eq. 6, against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 10: FLUENT_UK non-physical"),
+    18: dict(page=12, xref=309, x=((-0.3, 83), (0.3, 730)), y=((20, 8), (0, 468)), quantity="Nu, eq. 7, against x [m]", agree=SIX[:1] + SIX[2:], cite="p. 10: FLUENT_UK as in the previous figures; Nu -> 2.45"),
+    19: dict(page=12, xref=311, x=((-1.25, 68), (1.25, 726)), y=((1e-3, 33), (1e-7, 461.5)), quantity="E_t, eq. 8, against x [m]", agree=("FLUENT_CIEMAT", "OF_ORNL", "OF_KIT"), cite="as read: FLUENT_UK as in the previous figures (p. 10), CFX lower, its diffusion (p. 16); COMSOL not shown", log=True),
+    38: dict(page=17, xref=486, x=((-1, 88.5), (1, 777)), y=((400, 44.5), (300, 481)), quantity="T_w at y = 0, z = -0.023 m and T_b [C] against x [m], OF_KIT, both cases (case1 dashed, below)", agree=(), cite="p. 15", colours=PAIRS, branches=("case1", "case2")),
 }
 # fmt: on
 
@@ -291,6 +299,31 @@ def _circles(mask):
     return rings, mask & ~rings
 
 
+def _branches(mask):
+    """Split a mask holding two curves of one colour into the lower and the upper in value, column by column.
+
+    A column with one cluster of pixels goes to the nearer of the two tracks, or to both where they coincide.
+    """
+    low, high = np.zeros_like(mask), np.zeros_like(mask)
+    track = None
+    for c in np.flatnonzero(mask.any(0)):
+        rows = np.flatnonzero(mask[:, c])
+        clusters = np.split(rows, np.flatnonzero(np.diff(rows) > 3) + 1)
+        if len(clusters) > 1:
+            high[clusters[0], c], low[clusters[-1], c] = True, True  # rows grow downward: the first is higher
+            track = (np.median(clusters[-1]), np.median(clusters[0]))
+            continue
+        row = np.median(rows)
+        if track is None or abs(track[0] - track[1]) <= 3:
+            low[rows, c] = high[rows, c] = True
+            track = (row, row)
+        elif abs(row - track[0]) < abs(row - track[1]):
+            low[rows, c], track = True, (row, track[1])
+        else:
+            high[rows, c], track = True, (track[0], row)
+    return low, high
+
+
 def digitize(image: Path, figure: int) -> dict:
     """One figure's curves, each the median row per pixel column, and the band of the codes that agree."""
     from PIL import Image
@@ -305,6 +338,9 @@ def digitize(image: Path, figure: int) -> dict:
     masks = _masks(a, spec_.get("colours", COLOURS), frame, legend, relax)
     if spec_.get("circles"):
         masks["analytical"], masks["CFX"] = _circles(masks["CFX"])
+    for name in list(masks) if spec_.get("branches") else ():
+        low, high = _branches(masks.pop(name))
+        masks[f"{name} {spec_['branches'][0]}"], masks[f"{name} {spec_['branches'][1]}"] = low, high
     for name in masks:
         if "rows" in spec_ and name == "FLUENT_CIEMAT":
             masks[name][slice(*spec_["rows"])] = False
