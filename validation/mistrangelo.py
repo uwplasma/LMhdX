@@ -273,9 +273,9 @@ def _ticks(a, frame, axis, dark=0.45):
 def _calibration(axis, ticks, ends, log=False):
     """The axis's map, fitted to every major tick inside the frame on its label lattice.
 
-    The two (value, approximate pixel) anchors are snapped to detected ticks and label the others; a tick inside the
-    frame that does not land within a quarter step of the lattice, or fewer than three that do, is an error, so a
-    wrong anchor value or a missed tick fails here.
+    The two (value, approximate pixel) anchors are snapped to detected ticks and label the others. A tick inside the
+    frame that does not land within a quarter step of the lattice, or fewer than three ticks that do, is an error, so
+    a wrong anchor value fails here; a tick on a frame line counts only where it lands on the lattice.
     """
     (v0, p0), (v1, p1), step = axis
     if log:
@@ -286,14 +286,14 @@ def _calibration(axis, ticks, ends, log=False):
     if max(abs(q0 - p0), abs(q1 - p1)) > 4.0:
         raise ValueError(f"no tick within 4 px of {p0} or {p1}: {ticks}")
     slope = (v1 - v0) / (q1 - q0)
-    inside = np.array([t for t in ticks if min(abs(t - e) for e in ends) > 2.0])
-    labels = v0 + slope * (inside - q0)
+    edge = np.array([min(abs(t - e) for e in ends) <= 2.0 for t in ticks])
+    labels = v0 + slope * (np.asarray(ticks) - q0)
     lattice = np.round(labels / step) * step
     on = np.abs(labels - lattice) <= 0.25 * step
-    if on.sum() < 3 or not on.all():
-        raise ValueError(f"ticks inside the frame off the {step} lattice or too few: {inside}, {labels}")
-    fit = np.polyfit(inside, lattice, 1)
-    misfit = float(np.max(np.abs(np.polyval(fit, inside) - lattice)) / abs(fit[0]))
+    if not on[~edge].all() or on.sum() < 3:  # a frame-edge tick counts only where it lands on the lattice
+        raise ValueError(f"ticks inside the frame off the {step} lattice or too few: {ticks}, {labels}")
+    fit = np.polyfit(np.asarray(ticks)[on], lattice[on], 1)
+    misfit = float(np.max(np.abs(np.polyval(fit, np.asarray(ticks)[on]) - lattice[on])) / abs(fit[0]))
     found = {"anchors": [[v0, q0], [v1, q1]], "step": step, "ticks": int(on.sum()), "misfit_px": misfit}
     return (float(fit[1]), float(fit[0])), found
 
