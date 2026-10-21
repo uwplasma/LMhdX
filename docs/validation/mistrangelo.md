@@ -105,10 +105,10 @@ axes, at Ha 235 (`python -m validation.mistrangelo`).
 - A digitized comparison follows with the reference curves.
 
 `tests/test_steady.py` checks:
-- the specification's printed groups and anchors, and its recorded pinned
-  values;
-- the 48/6 section's gradient, within 0.5 % of 0.0863;
-- its jets and core.
+- what the specification checks against something else: Martelli's shortfall
+  from the printed groups, eq. 1's anchors and the bulk rise;
+- the 48/6 section's gradient, within 0.5 % of 0.0863. This is a mesh-convergence
+  check of the pin, not of the paper.
 
 ## Reference curves (Case 1)
 

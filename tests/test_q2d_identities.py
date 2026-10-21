@@ -27,6 +27,7 @@ import numpy as np
 import pytest
 
 from lmhdx.q2d import evolve_q2d
+from validation.q2d_campaigns import TITHOF_PUBLISHED, tithof_formula, tithof_neutral
 
 pytestmark = pytest.mark.numerical
 
@@ -151,3 +152,18 @@ def test_the_working_dtype_follows_the_state_it_is_given():
         ].dtype
         == jnp.float32
     )
+
+
+@pytest.mark.validation
+def test_the_neutral_reynolds_number_at_the_critical_wavenumber_is_within_2_percent_of_tithof_et_al():
+    """Section 4.2 of J. Fluid Mech. 828, 837: Re_c 7.60 at q_c 0.465 for beta 1, alpha/(nu kappa^2) 0.3208.
+
+    The published value is the minimum of their three-mode eq. (4.1), 7.646 here at q_c (7.60 as printed);
+    the periodic-box growth rates of ``lmhdx.q2d`` give 7.694 at q_c, +1.2 % from 7.60 and +0.6 % from
+    the formula, whose truncation to three modes is the expected sign of the difference.
+    """
+    published, q_c = TITHOF_PUBLISHED
+    measured = tithof_neutral(q_c)
+    assert measured == pytest.approx(published, rel=0.02)
+    assert measured == pytest.approx(float(tithof_formula(q_c)), rel=0.01)
+    assert measured > float(tithof_formula(q_c))
