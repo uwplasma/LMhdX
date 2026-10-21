@@ -361,6 +361,7 @@ states each gate and what it does not cover.
 | `python examples/hunt_example.py` | conducting walls, prescribed throughput and hydraulic power |
 | `python examples/li_aln_wall_stack_example.py` | explicit wall material layers and interface currents |
 | `python examples/fringe_duct_example.py` | 3-D duct leaving a magnet, drop and its field derivative |
+| `python examples/open_duct_inertia_example.py` | inertial share of the fringe drop from the Newton open-duct solve |
 | `python examples/q2d_turbulence_demo.py` | Q2D vorticity evolution, energy decay, movie |
 | `python examples/duct_design_law.py` | optimum aspect ratio of an insulated duct, one blanket design |
 

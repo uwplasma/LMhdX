@@ -83,6 +83,16 @@ def test_fringe_duct_example_conserves_and_checks_its_gradient(tmp_path: Path):
     assert summary["derivative_relative_error"] < 1e-6
 
 
+def test_open_duct_inertia_example_reports_a_small_positive_share(tmp_path: Path):
+    script = Path(__file__).resolve().parents[1] / "examples/open_duct_inertia_example.py"
+    subprocess.run([sys.executable, script], cwd=tmp_path, timeout=180, check=True)
+    summary = json.loads(next((tmp_path / "artifacts").rglob("open_duct_inertia_summary.json")).read_text())
+
+    shares = [row["inertial_share_percent"] for row in summary["rows"]]
+    assert all(0.0 < share < 10.0 for share in shares) and shares == sorted(shares)
+    assert all(row["relative_residual"] <= 1e-9 for row in summary["rows"])
+
+
 def test_duct_design_law_example_finds_the_studys_optima(tmp_path: Path):
     script = Path(__file__).resolve().parents[1] / "examples/duct_design_law.py"
     subprocess.run([sys.executable, script], cwd=tmp_path, timeout=180, check=True)
