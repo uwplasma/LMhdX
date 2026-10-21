@@ -563,28 +563,32 @@ carries
 the [figures](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-figures.zip)
 and the [tables](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-tables.zip).
 
-The thermal design of plan step 5.5 is the study's forced-convection screening,
-[Stage 3](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/blob/stage3-v1/results/stage3-thermal/README.md), on Case P:
-- **At a fixed 1.5 kW duty,** Stage 2's design is the thermal optimum to 0.1 %.
-  It needs 7.2 times its velocity bound to carry the heat.
-- **At a fixed first-wall flux,** the optimum is squarer, b/a 0.28 against
-  0.15. Stage 2's design costs 21 % more per metre of first wall.
+The thermal design of plan step 5.5 is the study's forced-convection screening
+of Case P, [Stage 3](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/blob/stage3-v1/results/stage3-thermal/README.md),
+with a follow-up,
+[Stage 3 v2](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/blob/stage3-v2/results/stage3-v2/README.md).
+Each shape takes its cheapest flow that keeps the developed peaks within
+625 K. The hydraulic power is then minimised over area and aspect, under
+`Re/Ha ≤ 200` and an area cap:
 
-Its finer-mesh check passes. One of its gates failed and stays open: the
-fixed-flux optimum's stationarity, 1.8e-6 against 1e-6.
+| | Fixed duty, 1.5 kW | Fixed first-wall flux, 96.8 kW/m² |
+|:--|:--|:--|
+| The optimum | Stage 2's design, to 0.1 % | b/a 0.28, against Stage 2's 0.15 |
+| Stage 2's design costs | the same (0.9997 at a common flow) | 21 % more per metre of first wall (26 % at a common flow) |
+| The flow it needs | 7.2 times Stage 2's velocity bound | |
+| On 72/9 cells | within 0.4 % | within 0.4 % |
+| Open duct, 12–48 axial cells (v2) | ≥ 99.96 % delivered; wall face 624.936 ± 0.003 K | ≥ 99.96 % delivered; wall face 624.952 ± 0.001 K |
 
-A follow-up,
-[Stage 3 v2](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/blob/stage3-v2/results/stage3-v2/README.md),
-closes the other two open items, with every gate passing:
-- **The open duct, refined.** On 12, 24 and 48 axial cells, at least 99.96 % of
-  the heat is delivered. The hottest face of the heated wall extrapolates to
-  624.936 ± 0.003 K (fixed duty) and 624.952 ± 0.001 K (fixed flux), within
-  625 K. It stays below the developed screening along the whole duct.
-- **A common feasible flow.** At a fixed duty, Stage 2's design costs the same
-  as the optimum (ratio 0.9997). At a fixed flux and equal flow per metre of
-  first wall, it costs 26 % more.
+Nine of Stage 3's ten gates pass, and every one of v2's. The failure stays
+open: the fixed-flux optimum's stationarity, 1.8e-6 against 1e-6. The
+hydrodynamic entrance, buoyancy and solid walls are outside the study. It is a
+study, not a library feature: `examples/duct_design_law.py` still sizes a duct
+by its velocity bound, `MIN_VELOCITY`.
 
-It reproduces bit for bit on LMhdX 1.11.0. The release
+Re-evaluated on LMhdX 1.11.0, the four designs reproduce the values in
+stage3-v1's results.json exactly. The release lists each asset's SHA-256;
+results.json is
+`2dda7498809683860b889cefb67cc174ae65bf4b5614bfaf05d5c0a9bf1f98ca`. The release
 [stage3-v1](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/tag/stage3-v1) carries
 [results.json](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-results.json),
 the [figures](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-figures.zip)
@@ -592,4 +596,4 @@ and the [figure data](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/re
 The release
 [stage3-v2](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/tag/stage3-v2) carries v2's
 [results.json](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage3-v2/stage3-v2-results.json)
-and [figures](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage3-v2/stage3-v2-figures.zip).
+(`7b4fd3b008fcc9ef5a4461853fd6e7c18ff7eae03843e37a408d84df37acb32a`) and [figures](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage3-v2/stage3-v2-figures.zip).
