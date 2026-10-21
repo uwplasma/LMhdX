@@ -523,6 +523,27 @@ def test_walls_resolved_in_cells_solve_the_dense_conductivity_jump():
         )
 
 
+def test_the_corners_of_walls_of_equal_cells_are_shared_alike():
+    """Walls of the same cells on both axes but of different materials: the corner cells' depths tie exactly, and
+    every tie goes to the first axis alike, so a mirror-symmetric charge has a mirror-symmetric potential. The
+    rounding of the cells' centres split the ties unevenly before (plan step 5.4b)."""
+    from lmhdx.poisson import fast_diagonal_thin_wall_poisson
+
+    grid = Grid(uniform_faces(1, 0.0, 1.0), uniform_faces(6, -1.0, 1.0), uniform_faces(6, -1.0, 1.0))
+    periodic, insulating = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN)
+    hartmann, side = ((4.0, 4.0), (0.1, 0.1)), ((0.5, 0.5), (0.1, 0.1))
+    solver = fast_diagonal_thin_wall_poisson(
+        grid, (periodic, insulating, insulating), (0.0, 0.0, 0.0), layers=(None, (hartmann,) * 2, (side,) * 2)
+    )
+    rhs = np.random.default_rng(1).standard_normal((6, 6))
+    rhs = rhs + rhs[::-1] + rhs[:, ::-1] + rhs[::-1, ::-1]
+    rhs -= rhs.mean()
+    potential = np.asarray(solver.solve(Field(jnp.asarray(rhs[None]), (CENTER,) * 3, grid)).data[0])
+    scale = 1e-12 * np.max(np.abs(potential))
+    np.testing.assert_allclose(potential[::-1], potential, atol=scale)
+    np.testing.assert_allclose(potential[:, ::-1], potential, atol=scale)
+
+
 def test_resolved_walls_on_two_axes_give_each_corner_cell_its_nearer_wall():
     """The Woodbury corner correction against the five-point operator of fluid, walls and corners."""
     from lmhdx.poisson import fast_diagonal_thin_wall_poisson
@@ -562,7 +583,8 @@ def test_resolved_walls_on_two_axes_give_each_corner_cell_its_nearer_wall():
     hy, sy, dy, ly = axis(walls_y, np.diff(fy))
     hz, sz, dz, lz = axis(walls_z, np.diff(fz))
     wy, wz = dy[:, None] > 0, dz[None, :] > 0
-    sigma = np.where(wy & wz, np.where(dy[:, None] <= dz[None, :], sy[:, None], sz[None, :]), 1.0)
+    nearer = dy[:, None] <= dz[None, :] + 1e-9 * np.maximum(dy[:, None], dz[None, :])  # ties to y, as built
+    sigma = np.where(wy & wz, np.where(nearer, sy[:, None], sz[None, :]), 1.0)
     sigma = np.where(wy & ~wz, sy[:, None], np.where(wz & ~wy, sz[None, :], sigma))
     rows, columns = hy.size, hz.size
     matrix = np.zeros((rows * columns, rows * columns))

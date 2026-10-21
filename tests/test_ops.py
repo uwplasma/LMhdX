@@ -1349,6 +1349,7 @@ def test_walls_build_the_extended_grid_and_its_corners_take_the_nearer_wall():
     mixed = conjugate_grid(fluid, [[None, None], [copper, copper], (steel, steel)])  # lists are pairs too
     k = mixed.cells("thermal_conductivity", 1.0)
     assert (k[0, 0, 0], k[0, 1, 0], k[0, 0, 1], k[0, 6, 7]) == (400.0, 400.0, STEEL[0], 400.0)
+    assert np.array_equal(k, k[:, ::-1]) and np.array_equal(k, k[:, :, ::-1])  # every corner alike
     for walls, message in (
         (((steel, None), (None, None), (None, None)), "transverse"),
         (((None, None), (0.1, None), (None, None)), "SolidWall"),
@@ -1364,6 +1365,23 @@ def test_walls_build_the_extended_grid_and_its_corners_take_the_nearer_wall():
     conduction = variable_helmholtz(fluid, (WRAP, WALL, WALL), 1.0, 1.0, 1.0)
     with pytest.raises(ValueError, match="own kinds"):
         conduction.lift((WRAP, thermal_boundary("temperature", 1.0), WALL))
+
+
+def test_without_a_shift_one_material_is_the_singular_fast_diagonal_inverse():
+    """The charge balance of one conductivity, insulated outside: PCG is the fast-diagonal Poisson inverse in one
+    iteration, the right-hand side's incompatible mean removed and the solution's mean zero."""
+    from lmhdx.poisson import fast_diagonal_poisson
+
+    charge = variable_helmholtz(STRETCHED, (WRAP, WALL, WALL), 2.0, None, 1.0)
+    rhs = jnp.asarray(np.random.default_rng(7).standard_normal(STRETCHED.shape))
+    potential, iterations = charge.solve(rhs)
+    direct = fast_diagonal_poisson(STRETCHED, (WRAP, WALL, WALL)).solve(Field(-rhs / 2.0, CELL, STRETCHED))
+    assert np.asarray(potential) == pytest.approx(
+        np.asarray(direct.data), abs=1e-10 * float(jnp.max(jnp.abs(direct.data)))
+    )
+    assert int(iterations) == 1
+    with pytest.raises(ValueError, match="insulated or periodic"):
+        variable_helmholtz(STRETCHED, (WRAP, WALL, thermal_boundary("temperature")), 2.0, None, 1.0)
 
 
 def test_a_float32_fast_diagonal_helmholtz_stays_definite_at_a_large_coefficient():

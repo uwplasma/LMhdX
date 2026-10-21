@@ -30,6 +30,46 @@ stack = (ratios, widths)
 way. Inspect the regime with `wall_conductance_ratio`,
 `tangential_stack_conductance_ratio`, and `normal_stack_leakage_ratio`.
 
+## Solid walls
+
+Wall layers solve the potential separably, so they reach two axes only when the
+third has one cell. Solid walls lift that limit (plan step 5.4b, ADR 0009 D36).
+`ChannelProblem(solid_walls=...)` takes a `core3d.SolidWall` or `None` at each
+end of the wall-bounded axes 1 and 2: a thickness in equal cells, with its
+`electrical_conductivity` (absolute, not over the fluid's) beside the
+`thermal_conductivity` and `heat_capacity` a thermal problem uses. The walls
+become cells of an extended grid (`core3d.conjugate_grid`), and the charge
+balance is solved through fluid and walls by SOLVAX `pcg`, preconditioned by
+the fast-diagonal Poisson inverse at the volume-mean conductivity
+(`poisson.variable_helmholtz` with no shift). The velocity and pressure stay on
+the fluid's grid. The currents into the walls heat the fluid's half cells and
+are left out of the Lorentz force, as a resolved wall's are; the walls' own
+Joule heat is not deposited.
+
+```python
+from lmhdx.core3d import SolidWall
+
+steel = SolidWall(
+    2e-3, 4, thermal_conductivity=18.3, heat_capacity=4.27e6, electrical_conductivity=1.04e6
+)
+# ChannelProblem(..., solid_walls=((None, None), (steel, steel), (steel, steel)))
+```
+
+On a section one cell long, solid walls of the same cells give the resolved
+path's potential, currents and powers to 1e-9, corners included, and its
+developed flow rate to 1e-8 (`tests/test_core3d.py`). Thinned at a fixed
+conductance ratio $c = \sigma_w t_w/(\sigma a)$, Hartmann walls alone approach
+the thin-wall model at second order in $t_w$: the flow rate of Hunt's duct at
+Ha 20 and $c = 0.05$ is 4.3e-3, 1.1e-3 and 2.8e-4 off at $t_w = a/10$, $a/20$
+and $a/40$. On a 12-cell section, the steel of plan step 5.4 at its pinned
+conductivity converges to 1e-13 in 10 PCG iterations.
+
+A corner cell, in walls of both axes, takes the nearer wall's material, and the
+first axis's where the two are equally near. Walls of equal cells on both axes
+tie exactly there; before 5.4b the resolved path split those ties by rounding,
+unevenly about the duct's middle, which moved a mean velocity by up to 1.4e-4
+where the two walls' materials differ.
+
 ## Add an analytic field
 
 `MagneticFieldSpec(kind="analytic", fn=...)` accepts a callable that returns a

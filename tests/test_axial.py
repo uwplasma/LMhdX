@@ -111,16 +111,25 @@ def test_the_open_stokes_operator_is_symmetric_in_the_face_volume_inner_product(
     assert float(jnp.max(jnp.abs(first[0].data[0]))) == 0.0, "the correction has no inlet flux"
 
 
-def test_a_uniform_field_duct_is_its_fully_developed_flow_to_round_off():
-    """With nothing to develop, the open duct reproduces the inlet profile and its gradient everywhere."""
+@pytest.mark.parametrize("walls", ["thin", "solid"])
+def test_a_uniform_field_duct_is_its_fully_developed_flow_to_round_off(walls):
+    """With nothing to develop, the open duct reproduces the inlet profile and its gradient everywhere, its walls
+    thin or solid (plan step 5.4b, part 3): the inlet section is solved with the duct's own walls."""
+    from lmhdx.core3d import SolidWall
+
     base = _small_fringe(spacing=1.0, upstream=2.0, downstream=2.0)
+    steel = SolidWall(0.1, 2, 1.0, 1.0, 0.2)  # c = 0.02, as the thin walls
     uniform = ChannelProblem(
         grid=base.grid,
         conditions=(BoundaryCondition(PERIODIC), _WALL, _WALL),
         conductivity=1.0,
         magnetic_field=(0.0, 10.0, 0.0),
-        wall_conductance=(0.0, 0.02, 0.02),
         dt=1.0,
+        **(
+            {"wall_conductance": (0.0, 0.02, 0.02)}
+            if walls == "thin"
+            else {"solid_walls": ((None, None), (steel, steel), (steel, steel))}
+        ),
     )
     problem = open_duct(uniform, 4.0)
     _, gradient = fully_developed_inlet(problem, 4.0)

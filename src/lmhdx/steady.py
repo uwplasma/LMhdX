@@ -774,14 +774,23 @@ def shape_key(problem: ChannelProblem) -> tuple:
         pattern,
         tuple(bool(c) for c in problem.wall_conductance),
         tuple(pair and tuple(end and len(end[1]) for end in pair) for pair in problem.wall_layers),
+        tuple(tuple(wall and wall.cells for wall in pair) for pair in problem.solid_walls),
         bool(problem.conductivity),
         jax.default_backend(),
     )
 
 
 def _shareable(problem: ChannelProblem) -> bool:
-    """The problems whose programs read every array through :mod:`lmhdx._programs` (2b.1 stage 5)."""
-    return problem.advection == "off" and not problem.grid.is_polar and problem.open_axis is None
+    """The problems whose programs read every array through :mod:`lmhdx._programs` (2b.1 stage 5).
+
+    Solid walls' PCG reads its arrays directly, so their problems trace each its own program.
+    """
+    return (
+        problem.advection == "off"
+        and not problem.grid.is_polar
+        and problem.open_axis is None
+        and not problem.has_solid_walls
+    )
 
 
 def shared_or_embedded(problem: ChannelProblem, build, *arguments):

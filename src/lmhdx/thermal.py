@@ -212,10 +212,11 @@ class ThermalProblem:
     cells added (:func:`lmhdx.core3d.conjugate_grid`), and ``thermal_conditions`` hold on its outer surface, an
     inlet profile included: a heat flux there is built with the ``k`` of each boundary cell, an array where
     fluid and wall cells meet the surface. The walls' end faces take the axis-0 conditions: an inflow-outflow
-    axis holds them at the inlet temperature and insulates them at the outlet. The flow, its pressure and
-    currents stay on the flow's grid: no heat is carried in a wall, and Joule heat is deposited in the fluid
-    only. A thin electrical wall on a walled axis is refused (D36), and resolved electrical ``wall_layers``
-    there must have the solid wall's cells.
+    axis holds them at the inlet temperature and insulates them at the outlet. The flow and its pressure
+    stay on the flow's grid, and so do its currents, unless the flow's own ``solid_walls`` carry them: no heat
+    is carried in a wall, and Joule heat is deposited in the fluid only. A thin electrical wall on a walled axis is refused (D36), and resolved electrical ``wall_layers``
+    there must have the solid wall's cells. A flow with ``solid_walls`` gives them as the thermal walls, which
+    ``walls`` may repeat but not change: the charge and the heat share one extended grid.
     """
 
     flow: ChannelProblem
@@ -285,6 +286,20 @@ class ThermalProblem:
     def _add_walls(self) -> None:
         """Keep ``walls`` as tuples and, with any, the extended grid and each cell's ``k`` and ``rho c_p``."""
         conjugate = conjugate_grid(self.flow.grid, ((None, None),) * 3 if self.walls is None else self.walls)
+        if not self.flow.has_solid_walls and any(
+            wall is not None and wall.electrical_conductivity is not None
+            for pair in conjugate.walls
+            for wall in pair
+        ):
+            raise ValueError(
+                "a wall's electrical_conductivity carries current only among the flow's solid_walls"
+            )
+        if self.flow.has_solid_walls:  # one extended grid for the charge and the heat
+            if any(wall is not None for pair in conjugate.walls for wall in pair) and (
+                conjugate.walls != self.flow.solid_walls
+            ):
+                raise ValueError("the flow's solid walls are the thermal walls too: give the same, or none")
+            conjugate = conjugate_grid(self.flow.grid, self.flow.solid_walls)
         object.__setattr__(self, "walls", conjugate.walls)
         if not any(wall is not None for pair in conjugate.walls for wall in pair):
             object.__setattr__(self, "_conjugate", None)
@@ -327,10 +342,7 @@ class ThermalProblem:
 
     def on_thermal_grid(self, data: jnp.ndarray, axes: tuple[int, ...] = (0, 1, 2)) -> jnp.ndarray:
         """Fluid data on the cells, or on the faces, of ``axes``, padded with zeros onto :attr:`thermal_grid`."""
-        if self._conjugate is None:
-            return data
-        shape, block = self.thermal_grid.shape, self.fluid_block
-        return jnp.pad(data, [(block[axis].start, shape[axis] - block[axis].stop) for axis in axes])
+        return data if self._conjugate is None else self._conjugate.padded(data, axes)
 
     def conduction(self) -> VariableHelmholtz:
         """The implicit conduction of the fluid and its walls on :attr:`thermal_grid`, built on the host."""
