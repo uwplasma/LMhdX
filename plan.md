@@ -693,10 +693,10 @@ is reported.
 | 2 Hartmann | exact profile | `test_physics`, `test_fully_developed` | profile error only |
 | 3/4/27 Shercliff, Hunt (Smolentsev 2015 Table I) | four-digit analytic column, its rounding stated | `test_table_i` (#160, #183) | order 1.96–2.02, GCI 1.8–5.4e-3, analytic value inside the band (`validation/gci.py`) |
 | 5 conducting pipe | independent spectral solve | `test_pipe` | order 2.00, GCI 7.7e-4 |
-| 7 TM-228 core flow | 0.0932 − 0.0754 = 0.0178 and Figure 10's 0.126 c^½ | `test_coreflow` | order 1.63, Richardson within 1.1e-4 |
+| 7 TM-228 core flow | 0.0932 − 0.0754 = 0.0178 and Figure 10's 0.126 c^½ | `test_coreflow` | order 1.63, Richardson within 1.1e-4. *2026-10-20:* the 1/B floor is not the cause (cap 1e3 → 1e6 moves the excess by 8e-6); cross-section-only order 2.05 and axis-only 1.97 have opposite signs and cancel in the joint sequence; separable value 0.017805 |
 | 6/11 ALEX B1 | digitised data packaged (`alex-b1-pipe.csv`) | campaign only (#219); no test reads the data | none (`axial.py` held by #225) |
-| Ni 2007 | conservation property (face currents, charge to round-off) | `test_em`, `test_pipe` | none; Ni's published Shercliff and Hunt error tables are not reproduced |
-| 13–16 Q2D (Sommeria 1986, Pothérat) | Taylor–Green decay exact | `test_q2d_identities` | none; rows 13–16 not run |
+| Ni 2007 | conservation property (face currents, charge to round-off) | `test_em`, `test_pipe`; *2026-10-20:* Tables 2–4 in `test_table_i` | Table 2 flow-rate errors on the paper's layer resolutions (LMhdX below Ni's on the coarsest mesh, within 1.4× and 2.9× on the others); Tables 3/4 analytic ∇p within 4.9e-4 and 4.2e-4 of the spectral solve; Ni's 0.06 % 3-D error not reproduced at 47² (0.7–0.9 %) |
+| 13–16 Q2D (Sommeria 1986, Pothérat) | Taylor–Green decay exact; *2026-10-20:* row 15 Tithof 2017 Re_c 7.60, q_c 0.465 (`test_q2d_identities`); row 13 campaign `validation/q2d_campaigns.py` | `test_q2d_identities` | row 15 Re_c 7.694 (+1.2 %), q_c 0.462; row 13 C 4.2–6.3 for Re_α 28–66, 2.8–2.9 at 14 (docs/validation/q2d.md); rows 14, 16 not run |
 
 **Recommendations.** Each is kept out of this pass because it is not small:
 
@@ -706,11 +706,21 @@ is reported.
   at a coarse mesh, gated on the upstream gradient (0.0250 ± 0.002). It waits on
   #225 releasing `axial.py`.
 - (c) Rows 13 and 15 as campaign scripts: Sommeria 1986's vortex-lattice
-  coefficient C 3–7, and Tithof's Re_c 7.60 and q_c 0.465.
+  coefficient C 3–7, and Tithof's Re_c 7.60 and q_c 0.465. **Done 2026-10-20**
+  (`validation/q2d_campaigns.py`, `docs/validation/q2d.md`): row 15 met (Re_c 7.694,
+  +1.2 %, q_c 0.462, within 2 %, gated in `test_q2d_identities`); row 13 C = 4.2–6.3
+  at Re_α 28–66 but 2.8–2.9 at Re_α 14 and 1.3 at 6.7, so only the upper part of
+  the row's Re_α 1–30 is in 3–7, and condensation is not reached.
 - (d) Ni 2007 Part I's Shercliff and Hunt error tables at Ha 1000 on uniform
-  meshes, as a cheap code-to-code anchor for the consistent scheme.
+  meshes, as a cheap code-to-code anchor for the consistent scheme. **Done
+  2026-10-20** against the paper's actual Tables 1–4 (it has no Ha 1000 uniform-mesh error table):
+  Table 2 (Shercliff Ha 50, 500, 1000, 38²–62²) and Tables 3/4 (Hunt Ha 300 and 500)
+  in `tests/test_table_i.py`; Table 1's field-norm orders and Table 3's 0.06 % 3-D error are not
+  reproduced (docs/validation/index.md).
 - (e) A second-order lever-rule interpolation of the 1/B floor in the core-flow
-  model, if row 7's order 1.63 is to reach 2.
+  model, if row 7's order 1.63 is to reach 2. **Closed 2026-10-20, no code change**:
+  the floor is not the cause (see the row 7 line above and docs/validation/index.md); a
+  floor interpolation would change neither the order nor the value.
 
 ### 3.5 Presentation and process
 
@@ -1467,9 +1477,9 @@ Everything else still waits (D21): no thermal or device work before 1.10b and
 | 10 | ALEX B2 | Ha 2900, N 540, c 0.07, t_w/L 0.15 | digitised experiment (figures only; tap through the side wall) + FreeMHD | axial gradient 5–10 % of experiment via the core-flow model; transverse Δp shape and sign; 1–2 % code to code | 4.3, 4.4 |
 | 11 | ALEX B1 | Ha 6600, N 10700, c 0.027 | digitised experiment | core-flow model; 3-D only if affordable | 4.5 |
 | 12 | Q2D frozen decay | ν → 0, γ t_eddy 0.1–1 | exact rescaling identity | 1e-8 | 3.2 |
-| 13 | Q2D vortex lattice | k_f = 6, Re_α 1–30 | Sommeria 1986: C 3–7, condensation | C in range | 3.2 |
+| 13 | Q2D vortex lattice | k_f = 6, Re_α 1–30 | Sommeria 1986: C 3–7, condensation | C in range | 3.2 *Status (2026-10-20)*: campaign run (`validation/q2d_campaigns.py`, docs/validation/q2d.md); C 4.2–6.3 at Re_α 28–66, 2.8–2.9 at 14, 1.3 at 6.7; condensation not reached |
 | 14 | Q2D Kolmogorov + drag | sin(4y), γ 0.1, Re 1000/4000 | Kochkov 2021 fields | spectra | 3.2 |
-| 15 | Q2D Tithof flow | α 0.064, β 1 | Re_c 7.60, q_c 0.465 | 2 % | 3.2 |
+| 15 | Q2D Tithof flow | α 0.064, β 1 | Re_c 7.60, q_c 0.465 | 2 % | 3.2 *Status (2026-10-20)*: **met**, Re_c 7.694 (+1.2 %), q_c 0.462; `test_q2d_identities` |
 | 16 | Q2D cross-code | 256², identical initial data | GeophysicalFlows.jl / Dedalus | 1e-3 | 3.3 |
 | 17 | Fully developed design | Hartmann, Shercliff, Hunt | analytic response, synthetic recovery | 1e-6; finer mesh | 3b |
 | 18 | Thermal limits | pipe/duct laminar | Nu 48/11, 3.66; Shah & London | 0.5 % | 5.2 |
@@ -1745,3 +1755,4 @@ Process: pyOpenSci README guide · JOSS review criteria · Google small CLs · D
 | 2026-10-15 | Review of #261 (stacked on it): the thermal gradient-vs-central-difference test now runs with `advection="van_leer"` as well as upwind, on the same random buoyant start, best of three sizes within 1e-5; the van Leer page states that the limiter is piecewise smooth and that at a kink `jax.grad` follows the implementation's derivative conventions, not necessarily a directional derivative (wording corrected at integration, review notes Section 4). Office CPU, load 55-65: warm 100-step run on 4x48x48 costs 0.28 s upwind and 0.38 s van Leer, its gradient 0.68 s and 1.16 s. Adds about 11 s (latest stack) to 19 s (floor) to the timeloop test's shard. |
 | 2026-10-19 | Slimming of the thermal module (merged as #266, 47319aa), behaviour preserved, no tolerance changed. `thermal.py` 1,441 to 1,246 lines (package 12,776 to 12,742; `io.py` 1,312 to 1,436, now the largest module, `ops.py` 968 to 1,008). (1) One rectilinear VTR writer: `io.write_vtr(path, faces, **cells)` takes named cell arrays and `write_thermal_vtr` is gone (-38 lines); the 2-D `write_paraview` now writes its cells x-fastest as VTK orders them, which the old writer did not for `ny != nz`. (2) The thermal TOML reader moved out of `thermal.py` to `io.thermal_run_from_toml` with one `[grid]` parser, one `[flow]` parser and a one-line-per-table schema; top-level `schema_version = 1` is checked (optional, default 1, anything else refused) and documented in `docs/reference/cli.md`; the page's example carries it. (3) `ops.neighbours`, `ops.outgoing_rate` (beside `advective_step_limit`), `ops.cell_force_to_faces` (used by `_buoyancy` and `core3d.face_lorentz_force`) and `ops.padded_gradient` (used by `face_gradient` and van Leer); the test-only `_conduct` is gone. (4) Van Leer reads its slopes from the one array padded by the thermal conditions (no second pad) and skips one-cell axes: forward fields bit-identical to `main`, gradients within 3e-15 (upwind and van Leer, 48 x 16 x 16, 40 steps, floor and latest). (5) `advance_thermal(..., diagnostics=n)` keeps every n-th step's scalars (default 1, as before); chunked `jax.checkpoint` runs are documented as the recipe for long differentiated runs. (6) The thermal duct design test runs the page's workflow on 3 of its 7 shapes, a golden section stopped at 0.08 in ln(b/a) and a 40-cell mesh check: same contracts, still in the same tier; 58.6 / 61.9 s against 77.7 / 81.5 s on `main` (floor / latest, back to back at load 20), about 25 % less on either stack. Warm and gradient timings against `main` (office CPU, load 20-30, best of 5 and 3, floor / latest): upwind warm 195 / 152-165 ms against 191-197 / 157-162; van Leer warm 191-197 / 161-170 against 197-203 / 184; van Leer gradient 275-277 / 204-218 against 273-306 / 215-240; no slowdown | Remaining to reach about 1,100 lines in `thermal.py`: the developed-duct section (about 190 lines) and the docstrings |
 | 2026-10-19 | Release 1.11.0. Phase 5's thermal module, by Tyler Brandes (#266), slimmed in #267: temperature on the staggered core with implicit conduction, upwind or van Leer transport, Joule heat, optional Boussinesq buoyancy, the thermally developed duct, heated open and Hunt ducts, TOML runs, restarts, ParaView output and a checkpointing recipe. Also in this release: Table I fully gated (#160); the duct design law (#221); the `lmhdx.pipe` split (#223); open-duct and pressure fixes (#229); support for JAX 0.11 (#243) and NumPy 2.5 (#257); the GCI table and claim wording (#253); examples and docs (#224) | slimming of the developed-duct section; #225, the open-axis preconditioner |
+| 2026-10-20 | Literature anchors of the #253 audit, Section 3.8.6 (c)–(e). (d) Ni et al. 2007 Part I, Tables 2–4, run in `tests/test_table_i.py` (`table_i_flow_rate` takes the layer thickness factor 2 for the paper's meshes): LMhdX flow-rate errors against Ni's on 38², 46², 62² at Ha 50/500/1000 (2.6/3.4, 0.8–1.3/0.9–1.1, 0.35–1.1/0.27–0.47 %), Ni's analytic Hunt ∇p·Re 5854.302 and 9531.4475 vs the spectral solve (+4.9e-4, +4.2e-4); not reproduced: Table 1 orders and the 0.06 % 3-D error. (c) `validation/q2d_campaigns.py`: row 15 Re_c 7.694 (+1.2 % from 7.60), q_c 0.462, gated in `test_q2d_identities` (7 s); row 13 vortex lattice C 4.2–6.3 at Re_α 28–66 and 2.8–2.9 at 14, 1.3 at 6.7, condensation not reached; docs/validation/q2d.md. (e) row 7: the 1/B floor is not the cause of order 1.63 (cap 1e3 → 1e6: 8e-6); cross-section-only order 2.05 and axis-only 1.97 cancel in the joint sequence, separable value 0.017805; `test_coreflow` gates it; no code change. Audit budgets raised by what was added | rows 13 (upper Re_α only), 14, 16; rows 6/7 anchors still wait on #225 |
