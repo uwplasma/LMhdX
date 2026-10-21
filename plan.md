@@ -577,7 +577,7 @@ to be checked before it is cited in a paper.
 | Transient 3-D | projection, implicit Lorentz damping, `lax.scan` [V] | FreeMHD/MHD-PISO: PISO with the consistent-conservative scheme; Krasnov et al. 2023: direct thin-wall inside the solve [M] | adequate; Crank–Nicolson advertised but not implemented (#228) |
 | Q2D | ETDRK pseudo-spectral SM82 model [V] | Dedalus, GeophysicalFlows.jl, Pothérat's Q2D codes [M] | row 16 cross-code not yet run |
 | Core flow | 1.9c inertialess core-flow model with layer conductances (#206) [V] | Walker/Hunt asymptotics, TM-228 SOR; Mistrangelo/Bühler's asymptotic codes [M] | inertial error N^-1/3 unquantified per case |
-| Pipe | polar fast-diagonal, open pipe in Stokes limit (#219) [V] | Ni 2007 II, FreeMHD KIT pipe [M] | row 6 station-wise met at the side-wall tap (0.86 / 1.39), not for the section mean (2.4 / 5.1); tap position unverified |
+| Pipe | polar fast-diagonal, open pipe in Stokes limit (#219) [V] | Ni 2007 II, FreeMHD KIT pipe [M] | row 6 station-wise met at the side-wall tap (0.86 / 1.39), not for the section mean (2.4 / 5.1); met if the ALEX taps are on the side walls, to be confirmed |
 
 High-Ha meshing: LMhdX's rule (≥ 6–8 cells across a/Ha, ≥ 10 across a/√Ha,
 ratio ≤ 1.15) matches HIMAG/FreeMHD practice [V Section 3.1]; #225 adds that
@@ -627,7 +627,7 @@ trigger).
 - **Row 24** is met at one point (c 0.1, Ha 2×10⁴) against a model whose layer
   correction was added by the same lane; at c 0.02 it is 4–5 %. State both
   numbers; it is internal consistency, not validation.
-- **Row 6** is not met station by station for the section-mean pressure (RMS 2.4, L∞ 5.1 against 1 and 2); it is met for the wall pressure at the walls parallel to the field (0.86 / 1.39, see the 2026-10-20 log row), and the tap position is unverified.
+- **Row 6** is not met station by station for the section-mean pressure (RMS 2.4, L∞ 5.1 against 1 and 2); it is met for the wall pressure at the walls parallel to the field (0.86 / 1.39, see the 2026-10-20 log row), so row 6 is met if the ALEX taps are on the side walls, which is to be confirmed.
 - **Row 27** (Table I) is the strongest claim: analytic, three meshes per row.
 - **1.9d narrowing**: the 2026-09-28 extrapolation "6–11 % below" and the
   2026-10-04 "33 % above at Ha 2×10⁴" both stand in the log; a referee needs
