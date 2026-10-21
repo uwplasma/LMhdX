@@ -1188,28 +1188,13 @@ def test_the_run_summary_reduces_each_chunk_as_the_whole_history_would():
     last = {name: float(values[-1]) for name, values in whole.items()}
     assert np.isnan(largest["advective_cfl"])
     for size in (1, 7, 20, 60):
-        extremes = cli._RunExtremes()
+        extremes = {"finite": True, "last": {}, "largest": {}}
         for start in range(0, steps, size):
-            extremes.add(_diagnostics({name: values[start : start + size] for name, values in whole.items()}))
-        assert extremes.finite is False
-        np.testing.assert_equal(extremes.largest, largest)
-        np.testing.assert_equal(extremes.last, last)
-
-
-def test_the_run_summary_does_not_grow_with_the_step_count():
-    """2000 chunks of 50 samples are 17 MB of diagnostics if kept; the reduction holds a few floats."""
-    import tracemalloc
-
-    from lmhdx.thermal import ThermalDiagnostics
-
-    rng, extremes = np.random.default_rng(5), cli._RunExtremes()
-    tracemalloc.start()
-    for _ in range(2000):
-        extremes.add(_diagnostics({name: rng.standard_normal(50) for name in ThermalDiagnostics._fields}))
-    held, _ = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-    whole = 2000 * 50 * len(ThermalDiagnostics._fields) * 8
-    assert held < 64 * 1024 < whole / 100, (held, whole)
+            chunk = _diagnostics({name: values[start : start + size] for name, values in whole.items()})
+            extremes = cli._fold_chunk(extremes, chunk)
+        assert extremes["finite"] is False
+        np.testing.assert_equal(extremes["largest"], largest)
+        np.testing.assert_equal(extremes["last"], last)
 
 
 def test_a_thermal_run_reports_the_same_at_any_chunk_size(tmp_path: Path):

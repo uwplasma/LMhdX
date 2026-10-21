@@ -1039,23 +1039,21 @@ def _thermal_rejection(history, limits: dict, done: int) -> dict | None:
 _LARGEST = ("heat_balance_residual", "advective_cfl", "buoyancy_courant", "boussinesq_measure")
 
 
-class _RunExtremes:
-    """What a thermal run's summary keeps of its diagnostics, reduced chunk by chunk on the host.
+def _fold_chunk(extremes: dict, history) -> dict:
+    """The summary's finite flag, largest magnitude of each of ``_LARGEST`` and last sample, with one chunk more.
 
-    Only floats are held: the cumulative finite flag, the largest magnitude of each of ``_LARGEST`` (a NaN,
-    once seen, stays, as a maximum over the whole history would give), and the last sample. The run's memory
-    then does not grow with its step count, whatever the chunk size.
+    Only floats are kept, so a run's memory does not grow with its step count. A NaN, once seen, stays, as a
+    maximum over the whole history would give.
     """
-
-    def __init__(self) -> None:
-        self.finite, self.largest, self.last = True, {}, {}
-
-    def add(self, history) -> None:
-        self.finite = self.finite and bool(np.all(np.asarray(history.finite)))
-        for name in _LARGEST:
-            chunk = np.max(np.abs(np.asarray(getattr(history, name))))  # NaN if any sample is
-            self.largest[name] = float(np.maximum(self.largest.get(name, chunk), chunk))  # and NaN stays
-        self.last = {name: float(np.asarray(values)[-1]) for name, values in history._asdict().items()}
+    largest = {}
+    for name in _LARGEST:
+        chunk = np.max(np.abs(np.asarray(getattr(history, name))))  # NaN if any sample is
+        largest[name] = float(np.maximum(extremes["largest"].get(name, chunk), chunk))  # and NaN stays
+    return {
+        "finite": extremes["finite"] and bool(np.all(np.asarray(history.finite))),
+        "last": {name: float(np.asarray(values)[-1]) for name, values in history._asdict().items()},
+        "largest": largest,
+    }
 
 
 def run_thermal(run) -> dict[str, object]:
@@ -1099,10 +1097,11 @@ def run_thermal(run) -> dict[str, object]:
     thermal_step = build_thermal_step(problem, dtype=jnp.result_type(float), hold_flow=run.hold_flow)
     chunk = jax.jit(lambda start: advance_thermal(thermal_step, start, heat, run.chunk))
     first, frames, rejected = round(float(state.time) / float(problem.flow.dt)), [], None
-    accepted, done, extremes = state, first, _RunExtremes()
+    accepted, done = state, first
+    extremes = {"finite": True, "last": {}, "largest": {}}
     for index in range(run.steps // run.chunk):
         state, history = chunk(accepted)
-        extremes.add(history)  # the summary's reductions; the chunk's arrays are then dropped
+        extremes = _fold_chunk(extremes, history)  # the chunk's arrays are then dropped
         rejected, label = _thermal_rejection(history, limits, done), f"{run.name}_{done + run.chunk:06d}"
         if rejected is not None:
             rejected["chunk"] = index
@@ -1131,9 +1130,7 @@ def run_thermal(run) -> dict[str, object]:
         "restart": run.restart,
         "steps": done - first,
         "time": float(state.time),
-        "finite": extremes.finite,
-        "last": extremes.last,
-        "largest": dict(extremes.largest),
+        **extremes,
     }
     run.directory.mkdir(parents=True, exist_ok=True)
     (run.directory / "thermal_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
