@@ -505,6 +505,7 @@ def initial_thermal_state(
     The velocity is the flow at rest unless given; a given one must already meet
     the face constraints and be divergence free, as :func:`validate_thermal_inputs` checks.
     """
+    _cartesian(problem)
     grid, dtype = problem.flow.grid, jnp.result_type(float)
     data = jnp.broadcast_to(jnp.asarray(temperature, dtype=dtype), grid.shape)
     velocity = zero_velocity(problem.flow) if velocity is None else tuple(velocity)
@@ -815,6 +816,7 @@ def write_thermal_record(
     and an outlet's backflow temperature, kept so that a resume can check it.
     Returns the path written.
     """
+    _cartesian(problem)
     path = Path(path).with_suffix(".npz")
     path.parent.mkdir(parents=True, exist_ok=True)
     arrays = {f"velocity_{name}": np.asarray(field.data) for name, field in zip("xyz", state.velocity)}
@@ -844,6 +846,7 @@ def load_thermal_record(
     Given ``run``, the load is an exact resume and the record's run provenance must
     equal it; without, it is a state import, the start of another experiment.
     """
+    _cartesian(problem)
     dtype, grid = jnp.result_type(float), problem.flow.grid
     with np.load(Path(path), allow_pickle=False) as record:
         arrays = {name: np.asarray(record[name]) for name in record.files}
@@ -1177,16 +1180,11 @@ def developed_heat(
 
 
 class DevelopedWallTemperature(NamedTuple):
-    """The thermally fully developed duct of :func:`developed_wall_temperature`, its walls at one temperature.
+    """The duct of :func:`developed_wall_temperature`; ``docs/physics/thermal.md`` gives the equations.
 
-    Downstream of the entrance the excess over the wall decays as ``T - T_w = theta e^{-lambda x}``, the same
-    shape at every station. ``temperature`` is that shape scaled to a unit bulk excess, ``(T - T_w)/(T_b - T_w)``;
-    ``eigenvalue`` is ``Lambda`` in ``-L(theta) = Lambda f theta`` with ``f = u/u_mean``, which sets the decay
-    rate per unit length, ``decay_rate = Lambda alpha/u_mean``, and the Nusselt number,
-    ``nusselt = q_w D_h / (k (T_w - T_b)) = Lambda D_h A / P_w``. Here ``D_h = 4A/P`` over every transverse
-    wall, as in :class:`DevelopedHeat`, and ``q_w`` is averaged over ``P_w``, the walls held at the temperature:
-    all of them in the classic T condition. ``eigen_residual`` is ``max |L(theta) + Lambda f theta|`` over
-    ``max |Lambda f theta|``, how far the inverse iteration settled.
+    ``temperature`` is the shape at a unit bulk excess, ``(T - T_w)/(T_b - T_w)``; ``eigenvalue`` is ``Lambda`` in
+    ``-L(theta) = Lambda f theta``, ``f = u/u_mean``; ``nusselt`` averages the wall flux over the held walls.
+    ``eigen_residual`` is ``max |L(theta) + Lambda f theta| / max |Lambda f theta|`` after ``iterations``.
     """
 
     temperature: Field
@@ -1196,25 +1194,26 @@ class DevelopedWallTemperature(NamedTuple):
     hydraulic_diameter: float
     nusselt: jnp.ndarray
     eigen_residual: jnp.ndarray
+    iterations: jnp.ndarray
 
 
 def developed_wall_temperature(
-    problem: ThermalProblem, velocity: tuple[Field, Field, Field], *, iterations: int = 64
+    problem: ThermalProblem,
+    velocity: tuple[Field, Field, Field],
+    *,
+    tolerance: float | None = None,
+    max_iterations: int = 2000,
 ) -> DevelopedWallTemperature:
-    """Solve the thermally fully developed duct whose walls are held at one uniform temperature (the T condition).
+    """The thermally fully developed duct with its walls held at one temperature (the T condition).
 
-    Without axial conduction or internal heat, ``rho c_p u dT/dx = k L(T)`` across the section, and downstream
-    of the entrance ``T - T_w = theta e^{-lambda x}``: ``theta`` is the eigenfunction of ``-L(theta) =
-    Lambda f theta`` with the smallest eigenvalue, ``f = u/u_mean`` and ``lambda = Lambda alpha/u_mean``. It is
-    found by inverse iteration, ``iterations`` solves with the fast-diagonal Poisson factorization of the
-    walls' homogeneous conditions, and ``Lambda`` is the Rayleigh quotient of the converged ``theta``: the
-    quotient is stationary at an eigenfunction, so its derivative needs none of the iteration's.
+    ``theta`` is the eigenfunction of the smallest eigenvalue, found by inverse iteration with the fast-diagonal
+    factorization until ``eigen_residual`` is below ``tolerance`` (1e-10 in float64, 1e-4 in float32) or after
+    ``max_iterations``. Each iteration gains the ratio of the two smallest eigenvalues of the section's symmetric
+    modes: a square duct reaches 1e-10 in 13, a 1:8 duct in about 150. ``Lambda`` is the Rayleigh quotient
+    of the result, stationary at an eigenfunction, so its derivative in the velocity needs none of the iteration.
 
-    The walls with a prescribed temperature are held at one value, which does not enter; any heat-flux wall
-    is adiabatic. The duct is as for :func:`developed_heat`, periodic along one axis and one cell long, and
-    the flow runs forward in every cell, which :func:`validate_developed_inputs` checks (with a zero source and
-    any finite ``axial_gradient``). Heat sources and Joule heat are left out, whatever ``joule_heating`` says:
-    the T condition has none. Differentiable in the velocity, and compiled whole by :func:`jax.jit`.
+    The duct is as for :func:`developed_heat`. The held walls share one temperature, which does not enter; a
+    heat-flux wall must be adiabatic. Sources and Joule heat are left out. Compiled whole by :func:`jax.jit`.
     """
     flow, grid, conditions = problem.flow, problem.flow.grid, problem.thermal_conditions
     axial = _developed_axis(problem)
@@ -1233,16 +1232,30 @@ def developed_wall_temperature(
     volumes = jnp.asarray(grid.cell_volumes(), dtype=speed.dtype)
     mean = jnp.sum(volumes * speed) / jnp.sum(volumes)
     weight = speed / mean
+    if tolerance is None:
+        tolerance = 1e-10 if weight.dtype == jnp.float64 else 1e-4
 
-    def inverse(theta, _):
-        grown = -factorization.solve(theta.replace_data(weight * theta.data)).data
-        return theta.replace_data(grown / jnp.max(jnp.abs(grown))), None
+    def quotient(theta, weight):
+        stiffness = -laplacian(theta, homogeneous).data
+        eigenvalue = jnp.sum(volumes * theta.data * stiffness) / jnp.sum(volumes * weight * theta.data**2)
+        scale = jnp.max(jnp.abs(eigenvalue * weight * theta.data))
+        return eigenvalue, jnp.max(jnp.abs(stiffness - eigenvalue * weight * theta.data)) / scale
 
-    theta, _ = jax.lax.scan(inverse, Field(weight, _CELL, grid), None, length=iterations)
+    fixed = jax.lax.stop_gradient(weight)  # the loop is not differentiated
+
+    def inverse(carry):
+        theta, _, count = carry
+        grown = -factorization.solve(theta.replace_data(fixed * theta.data)).data
+        theta = theta.replace_data(grown / jnp.max(jnp.abs(grown)))
+        return theta, quotient(theta, fixed)[1], count + 1
+
+    theta, _, count = jax.lax.while_loop(
+        lambda carry: (carry[1] > tolerance) & (carry[2] < max_iterations),
+        inverse,
+        (Field(fixed, _CELL, grid), jnp.asarray(jnp.inf, fixed.dtype), jnp.asarray(0)),
+    )
     theta = jax.lax.stop_gradient(theta)
-    stiffness = -laplacian(theta, homogeneous).data
-    eigenvalue = jnp.sum(volumes * theta.data * stiffness) / jnp.sum(volumes * weight * theta.data**2)
-    residual = jnp.max(jnp.abs(stiffness - eigenvalue * weight * theta.data))
+    eigenvalue, residual = quotient(theta, weight)
     perimeter, held_perimeter = 0.0, 0.0  # wall areas over the axial length
     length = float(np.sum(grid.widths[axial]))
     for (axis, end), kind in zip(walls, kinds):
@@ -1257,7 +1270,8 @@ def developed_wall_temperature(
         mean * area,
         4.0 * area / perimeter,
         eigenvalue * (4.0 * area / perimeter) * area / held_perimeter,
-        residual / jnp.max(jnp.abs(eigenvalue * weight * theta.data)),
+        residual,
+        count,
     )
 
 
@@ -1299,7 +1313,7 @@ def _section_poisson(grid, conditions, precision: str):
 
 
 def _cartesian(problem: ThermalProblem) -> None:
-    """Refuse a time step on a polar grid, which is not qualified."""
+    """Refuse a time step, its state or its record on a polar grid, which is not qualified."""
     if problem.flow.grid.is_polar:
         raise ValueError("a thermal time step on a polar grid is not qualified; the developed pipe is")
 

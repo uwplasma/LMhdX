@@ -479,6 +479,29 @@ it by inverse iteration with the same fast-diagonal factorization, and returns:
 - $Nu_T=\Lambda D_hA/P_w$, which is $\Lambda D_h^2/4$ when every wall is held, with
   the wall flux averaged over the held perimeter $P_w$.
 
+```python
+import lmhdx
+from lmhdx.core3d import ChannelProblem
+from lmhdx.grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces
+from lmhdx.steady import solve_steady_state
+from lmhdx.thermal import ThermalProblem, developed_wall_temperature, thermal_boundary
+
+lmhdx.enable_x64()
+periodic, wall, held = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN), thermal_boundary("temperature")
+grid = Grid(uniform_faces(1, 0.0, 1.0), uniform_faces(32, -1.0, 1.0), uniform_faces(32, -1.0, 1.0))
+flow = ChannelProblem(grid, (periodic, wall, wall), forcing=(1.0, 0.0, 0.0))  # one periodic axial cell
+thermal = ThermalProblem(
+    flow, (periodic, held, held), specific_heat=1.0, thermal_conductivity=1.0, reference_temperature=0.0
+)
+result = developed_wall_temperature(thermal, solve_steady_state(flow).velocity)
+print(f"Nu_T {float(result.nusselt):.4f} in {int(result.iterations)} iterations")  # 2.9823 in 13
+```
+
+The iteration stops once `eigen_residual` is below `tolerance` (1e-10 in
+float64, 1e-4 in float32), or after `max_iterations`. Each iteration gains the
+ratio of the two smallest eigenvalues of the section's symmetric modes: the
+square duct takes 13 iterations, a 1:8 duct about 150.
+
 $\Lambda$ is the Rayleigh quotient of the converged $\theta$. The quotient is
 stationary at an eigenfunction, so its derivative in the velocity needs none of
 the iteration's; the gradient through the steady solve's field scale meets
@@ -503,8 +526,36 @@ the plates' own $D_h=4a$; their references are one-dimensional Chebyshev solves.
 **The pipe.** On the polar grid of `lmhdx.pipe`, both developed solves use the
 polar Poisson factorization. The azimuth wraps and the face on the axis has no
 area, so the wall is the outer radius alone, and $D_h=2R$. The flow is
-`solve_pipe`'s, placed on the axial faces; Joule heat is refused there, since a
-pipe forms its currents in `lmhdx.pipe`, not in the core.
+`solve_pipe`'s, placed on the axial faces. Joule heat is refused there, since a
+pipe forms its currents in `lmhdx.pipe`, not in the core, so a pipe's
+`ThermalProblem` needs `joule_heating=False`:
+
+```python
+import dataclasses
+
+import jax.numpy as jnp
+
+import lmhdx
+from lmhdx.core3d import ChannelProblem, zero_velocity
+from lmhdx.grid import CENTER, NEUMANN, PERIODIC, BoundaryCondition, Field
+from lmhdx.pipe import pipe_problem, solve_pipe
+from lmhdx.thermal import ThermalProblem, developed_heat, developed_wall_temperature, thermal_boundary
+
+lmhdx.enable_x64()
+pipe = pipe_problem(hartmann=0.0, radial=32, azimuthal=16)  # radius, azimuth and one axial cell
+periodic, wall = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN)
+flow = ChannelProblem(pipe.grid, (wall, periodic, periodic))
+rest = zero_velocity(flow)
+axial = jnp.broadcast_to(solve_pipe(pipe)[0].data, rest[2].shape)  # the developed flow on the axial faces
+velocity = (*rest[:2], rest[2].replace_data(axial))
+heated = thermal_boundary("heat_flux", -1.0, -1.0, conductivity=1.0)  # a unit flux in through the wall
+thermal = ThermalProblem(flow, (heated, periodic, periodic), 1.0, 1.0, 0.0, joule_heating=False)
+zero = Field(jnp.zeros(pipe.grid.shape), (CENTER,) * 3, pipe.grid)
+flux = float(developed_heat(thermal, velocity, zero).nusselt)  # 48/11 to 0.07 %
+conditions = (thermal_boundary("temperature"), periodic, periodic)
+held = float(developed_wall_temperature(dataclasses.replace(thermal, thermal_conditions=conditions), velocity).nusselt)
+print(f"Nu_H {flux:.4f}, Nu_T {held:.4f}")  # 3.65679 to 0.02 %
+```
 
 | Pipe | Exact | 16 / 32 / 64 radial cells | Order |
 |:--|--:|:--|:--|

@@ -1321,9 +1321,6 @@ def test_heated_hartmann_plates_reach_the_analytical_nusselt_number(hartmann):
     assert errors[1] < 5e-3 and np.all(orders > (1.5 if np.isinf(hartmann) else 3.5)), (errors, orders)
 
 
-# Review corrections, part 5b: the reduction's guards, an undefined Nu and physical temperatures (D33).
-
-
 # The uniform wall temperature, the T condition: the smallest eigenvalue of the section.
 
 # Nu_T of the square duct from an independent Chebyshev collocation of the same eigenproblem, n = 24 to 48,
@@ -1336,10 +1333,9 @@ def _plate_t_nusselt(hartmann: float, count: int = 96) -> float:
     by Chebyshev collocation on the interior nodes, with no discrete operator of the package."""
     from scipy.linalg import eig
 
-    nodes = np.cos(np.pi * np.arange(count + 1) / count)
-    weights = np.hstack([2.0, np.ones(count - 1), 2.0]) * (-1.0) ** np.arange(count + 1)
-    derivative = np.outer(weights, 1.0 / weights) / (nodes[:, None] - nodes[None, :] + np.eye(count + 1))
-    derivative -= np.diag(derivative.sum(axis=1))
+    from validation.shercliff import _differentiation_matrix
+
+    derivative, nodes = _differentiation_matrix(count)
     second, eta = (derivative @ derivative)[1:-1, 1:-1], nodes[1:-1]
     if hartmann == 0.0:
         profile = 1.5 * (1.0 - eta**2)
@@ -1429,6 +1425,30 @@ def test_the_uniform_wall_temperature_nusselt_number_differentiates_through_the_
     assert gradient > 0.0 and min(errors) < 1e-5, (gradient, errors)
 
 
+def test_the_inverse_iteration_stops_on_its_tolerance_and_reports_where_it_stopped():
+    """Each iteration gains the ratio of the two smallest symmetric eigenvalues: about 13 iterations reach 1e-10
+    in the square duct, about 150 in a 1:8 one, where the ratio is near 1.1. Stopped early, the residual says so."""
+    from lmhdx.thermal import developed_wall_temperature
+
+    for cells, aspect, most in ((16, 1.0, 20), (64, 0.125, 200)):
+        thermal = _developed_duct(cells, aspect)
+        result = developed_wall_temperature(thermal, solve_steady_state(thermal.flow).velocity)
+        assert float(result.eigen_residual) <= 1e-10 and int(result.iterations) <= most, result.iterations
+    early = developed_wall_temperature(thermal, solve_steady_state(thermal.flow).velocity, max_iterations=20)
+    assert int(early.iterations) == 20 and float(early.eigen_residual) > 1e-6
+
+
+def test_the_t_condition_snippet_runs_as_written():
+    """The usage snippet of docs/physics/thermal.md's uniform-wall-temperature paragraph."""
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[1] / "docs/physics/thermal.md").read_text()
+    code = page.split("**The uniform wall temperature.**", 1)[1].split("```python\n", 1)[1].split("```", 1)[0]
+    namespace = {"__name__": "t_condition"}
+    exec(compile(code, "thermal.md", "exec"), namespace)
+    assert float(namespace["result"].nusselt) == pytest.approx(2.98226, rel=1e-5)
+
+
 def test_the_spectral_nusselt_reference_meets_the_exact_series():
     """``validation.shercliff.developed_nusselt``, the reference of the MHD Nusselt campaign (docs, not a gate):
     at Ha 0 it gives the H1 double-sine series and H2's 3.08738 (Wang; the package's Richardson value), on 32 points."""
@@ -1480,10 +1500,9 @@ def _pipe_t_nusselt(count: int = 63) -> float:
     collocation across the diameter (odd ``count``: no node on the axis), with no discrete operator of the package."""
     from scipy.linalg import eig
 
-    nodes = np.cos(np.pi * np.arange(count + 1) / count)
-    weights = np.hstack([2.0, np.ones(count - 1), 2.0]) * (-1.0) ** np.arange(count + 1)
-    derivative = np.outer(weights, 1.0 / weights) / (nodes[:, None] - nodes[None, :] + np.eye(count + 1))
-    derivative -= np.diag(derivative.sum(axis=1))
+    from validation.shercliff import _differentiation_matrix
+
+    derivative, nodes = _differentiation_matrix(count)
     radial = (derivative @ derivative + np.diag(1.0 / nodes) @ derivative)[1:-1, 1:-1]
     values = eig(-radial, np.diag(2.0 * (1.0 - nodes[1:-1] ** 2)), right=False)
     return float(np.min(values[np.isfinite(values) & (values.real > 0.0)].real))
@@ -1519,26 +1538,51 @@ def test_the_developed_pipe_meets_its_exact_nusselt_numbers():
         assert errors[-1] < 1e-3 and np.all((orders > 1.8) & (orders < 2.3)), (wall, slug, errors, orders)
 
 
-def test_a_pipe_steps_no_time_and_forms_no_current_of_its_own():
-    """A polar grid serves the developed solves only: the time step and its validation refuse it, and Joule heat
-    is refused there, since a pipe's currents come from lmhdx.pipe. Compiled whole, the pipe equals the eager result."""
+def test_the_pipe_snippet_runs_as_written():
+    """The pipe recipe of docs/physics/thermal.md, run from the page."""
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[1] / "docs/physics/thermal.md").read_text()
+    code = page.split("**The pipe.**", 1)[1].split("```python\n", 1)[1].split("```", 1)[0]
+    namespace = {"__name__": "pipe"}
+    exec(compile(code, "thermal.md", "exec"), namespace)
+    assert namespace["flux"] == pytest.approx(48.0 / 11.0, rel=1e-3)
+    assert namespace["held"] == pytest.approx(3.65679, rel=1e-3)
+
+
+def test_a_pipe_steps_no_time_and_forms_no_current_of_its_own(tmp_path):
+    """A polar grid serves the developed solves only: the time step, its validation, its state and its records
+    refuse it, and Joule heat is refused there, since a pipe's currents come from lmhdx.pipe. Compiled whole, the
+    pipe equals the eager result."""
     from lmhdx.thermal import (
+        ThermalState,
         build_thermal_step,
         developed_heat,
         initial_thermal_state,
+        load_thermal_record,
         validate_thermal_inputs,
+        write_thermal_record,
     )
 
     thermal, velocity, zero = _pipe(8)
-    with pytest.raises(ValueError, match="polar grid is not qualified"):
-        build_thermal_step(thermal, dtype=jnp.float64)
-    with pytest.raises(ValueError, match="polar grid is not qualified"):
-        validate_thermal_inputs(thermal, initial_thermal_state(thermal, 0.0), zero, divergence_tolerance=1e-9)
+    state = ThermalState(velocity, zero, jnp.asarray(0.0))
+    for refused in (
+        lambda: build_thermal_step(thermal, dtype=jnp.float64),
+        lambda: validate_thermal_inputs(thermal, state, zero, divergence_tolerance=1e-9),
+        lambda: initial_thermal_state(thermal, 0.0),
+        lambda: write_thermal_record(tmp_path / "pipe", thermal, state, units="SI"),
+        lambda: load_thermal_record(tmp_path / "pipe", thermal, units="SI"),
+    ):
+        with pytest.raises(ValueError, match="polar grid is not qualified"):
+            refused()
     with pytest.raises(ValueError, match="joule_heating=False"):
         developed_heat(dataclasses.replace(thermal, joule_heating=True), velocity, zero)
     eager = developed_heat(thermal, velocity, zero).nusselt
     jitted = jax.jit(lambda flow: developed_heat(thermal, flow, zero).nusselt)(velocity)
     assert float(jitted) == pytest.approx(float(eager), rel=1e-13)
+
+
+# Review corrections, part 5b: the reduction's guards, an undefined Nu and physical temperatures (D33).
 
 
 def test_developed_inputs_are_checked_against_the_reduction():
