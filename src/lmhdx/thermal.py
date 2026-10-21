@@ -505,6 +505,7 @@ def initial_thermal_state(
     The velocity is the flow at rest unless given; a given one must already meet
     the face constraints and be divergence free, as :func:`validate_thermal_inputs` checks.
     """
+    _cartesian(problem)
     grid, dtype = problem.flow.grid, jnp.result_type(float)
     data = jnp.broadcast_to(jnp.asarray(temperature, dtype=dtype), grid.shape)
     velocity = zero_velocity(problem.flow) if velocity is None else tuple(velocity)
@@ -815,6 +816,7 @@ def write_thermal_record(
     and an outlet's backflow temperature, kept so that a resume can check it.
     Returns the path written.
     """
+    _cartesian(problem)
     path = Path(path).with_suffix(".npz")
     path.parent.mkdir(parents=True, exist_ok=True)
     arrays = {f"velocity_{name}": np.asarray(field.data) for name, field in zip("xyz", state.velocity)}
@@ -844,6 +846,7 @@ def load_thermal_record(
     Given ``run``, the load is an exact resume and the record's run provenance must
     equal it; without, it is a state import, the start of another experiment.
     """
+    _cartesian(problem)
     dtype, grid = jnp.result_type(float), problem.flow.grid
     with np.load(Path(path), allow_pickle=False) as record:
         arrays = {name: np.asarray(record[name]) for name in record.files}
@@ -1310,7 +1313,7 @@ def _section_poisson(grid, conditions, precision: str):
 
 
 def _cartesian(problem: ThermalProblem) -> None:
-    """Refuse a time step on a polar grid, which is not qualified."""
+    """Refuse a time step, its state or its record on a polar grid, which is not qualified."""
     if problem.flow.grid.is_polar:
         raise ValueError("a thermal time step on a polar grid is not qualified; the developed pipe is")
 

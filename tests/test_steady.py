@@ -1491,10 +1491,9 @@ def _pipe_t_nusselt(count: int = 63) -> float:
     collocation across the diameter (odd ``count``: no node on the axis), with no discrete operator of the package."""
     from scipy.linalg import eig
 
-    nodes = np.cos(np.pi * np.arange(count + 1) / count)
-    weights = np.hstack([2.0, np.ones(count - 1), 2.0]) * (-1.0) ** np.arange(count + 1)
-    derivative = np.outer(weights, 1.0 / weights) / (nodes[:, None] - nodes[None, :] + np.eye(count + 1))
-    derivative -= np.diag(derivative.sum(axis=1))
+    from validation.shercliff import _differentiation_matrix
+
+    derivative, nodes = _differentiation_matrix(count)
     radial = (derivative @ derivative + np.diag(1.0 / nodes) @ derivative)[1:-1, 1:-1]
     values = eig(-radial, np.diag(2.0 * (1.0 - nodes[1:-1] ** 2)), right=False)
     return float(np.min(values[np.isfinite(values) & (values.real > 0.0)].real))
@@ -1530,21 +1529,43 @@ def test_the_developed_pipe_meets_its_exact_nusselt_numbers():
         assert errors[-1] < 1e-3 and np.all((orders > 1.8) & (orders < 2.3)), (wall, slug, errors, orders)
 
 
-def test_a_pipe_steps_no_time_and_forms_no_current_of_its_own():
-    """A polar grid serves the developed solves only: the time step and its validation refuse it, and Joule heat
-    is refused there, since a pipe's currents come from lmhdx.pipe. Compiled whole, the pipe equals the eager result."""
+def test_the_pipe_snippet_runs_as_written():
+    """The pipe recipe of docs/physics/thermal.md, run from the page."""
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[1] / "docs/physics/thermal.md").read_text()
+    code = page.split("**The pipe.**", 1)[1].split("```python\n", 1)[1].split("```", 1)[0]
+    namespace = {"__name__": "pipe"}
+    exec(compile(code, "thermal.md", "exec"), namespace)
+    assert namespace["flux"] == pytest.approx(48.0 / 11.0, rel=1e-3)
+    assert namespace["held"] == pytest.approx(3.65679, rel=1e-3)
+
+
+def test_a_pipe_steps_no_time_and_forms_no_current_of_its_own(tmp_path):
+    """A polar grid serves the developed solves only: the time step, its validation, its state and its records
+    refuse it, and Joule heat is refused there, since a pipe's currents come from lmhdx.pipe. Compiled whole, the
+    pipe equals the eager result."""
     from lmhdx.thermal import (
+        ThermalState,
         build_thermal_step,
         developed_heat,
         initial_thermal_state,
+        load_thermal_record,
         validate_thermal_inputs,
+        write_thermal_record,
     )
 
     thermal, velocity, zero = _pipe(8)
-    with pytest.raises(ValueError, match="polar grid is not qualified"):
-        build_thermal_step(thermal, dtype=jnp.float64)
-    with pytest.raises(ValueError, match="polar grid is not qualified"):
-        validate_thermal_inputs(thermal, initial_thermal_state(thermal, 0.0), zero, divergence_tolerance=1e-9)
+    state = ThermalState(velocity, zero, jnp.asarray(0.0))
+    for refused in (
+        lambda: build_thermal_step(thermal, dtype=jnp.float64),
+        lambda: validate_thermal_inputs(thermal, state, zero, divergence_tolerance=1e-9),
+        lambda: initial_thermal_state(thermal, 0.0),
+        lambda: write_thermal_record(tmp_path / "pipe", thermal, state, units="SI"),
+        lambda: load_thermal_record(tmp_path / "pipe", thermal, units="SI"),
+    ):
+        with pytest.raises(ValueError, match="polar grid is not qualified"):
+            refused()
     with pytest.raises(ValueError, match="joule_heating=False"):
         developed_heat(dataclasses.replace(thermal, joule_heating=True), velocity, zero)
     eager = developed_heat(thermal, velocity, zero).nusselt

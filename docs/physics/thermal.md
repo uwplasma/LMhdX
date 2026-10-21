@@ -526,8 +526,36 @@ the plates' own $D_h=4a$; their references are one-dimensional Chebyshev solves.
 **The pipe.** On the polar grid of `lmhdx.pipe`, both developed solves use the
 polar Poisson factorization. The azimuth wraps and the face on the axis has no
 area, so the wall is the outer radius alone, and $D_h=2R$. The flow is
-`solve_pipe`'s, placed on the axial faces; Joule heat is refused there, since a
-pipe forms its currents in `lmhdx.pipe`, not in the core.
+`solve_pipe`'s, placed on the axial faces. Joule heat is refused there, since a
+pipe forms its currents in `lmhdx.pipe`, not in the core, so a pipe's
+`ThermalProblem` needs `joule_heating=False`:
+
+```python
+import dataclasses
+
+import jax.numpy as jnp
+
+import lmhdx
+from lmhdx.core3d import ChannelProblem, zero_velocity
+from lmhdx.grid import CENTER, NEUMANN, PERIODIC, BoundaryCondition, Field
+from lmhdx.pipe import pipe_problem, solve_pipe
+from lmhdx.thermal import ThermalProblem, developed_heat, developed_wall_temperature, thermal_boundary
+
+lmhdx.enable_x64()
+pipe = pipe_problem(hartmann=0.0, radial=32, azimuthal=16)  # radius, azimuth and one axial cell
+periodic, wall = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN)
+flow = ChannelProblem(pipe.grid, (wall, periodic, periodic))
+rest = zero_velocity(flow)
+axial = jnp.broadcast_to(solve_pipe(pipe)[0].data, rest[2].shape)  # the developed flow on the axial faces
+velocity = (*rest[:2], rest[2].replace_data(axial))
+heated = thermal_boundary("heat_flux", -1.0, -1.0, conductivity=1.0)  # a unit flux in through the wall
+thermal = ThermalProblem(flow, (heated, periodic, periodic), 1.0, 1.0, 0.0, joule_heating=False)
+zero = Field(jnp.zeros(pipe.grid.shape), (CENTER,) * 3, pipe.grid)
+flux = float(developed_heat(thermal, velocity, zero).nusselt)  # 48/11 to 0.07 %
+conditions = (thermal_boundary("temperature"), periodic, periodic)
+held = float(developed_wall_temperature(dataclasses.replace(thermal, thermal_conditions=conditions), velocity).nusselt)
+print(f"Nu_H {flux:.4f}, Nu_T {held:.4f}")  # 3.65679 to 0.02 %
+```
 
 | Pipe | Exact | 16 / 32 / 64 radial cells | Order |
 |:--|--:|:--|:--|
