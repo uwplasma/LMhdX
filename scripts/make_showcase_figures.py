@@ -394,12 +394,12 @@ PAPER = {
     "ytick.right": True,
 }
 _WRAP = BoundaryCondition(PERIODIC)
-# Chandrasekhar (1961), rigid plates, as tabulated by Basak & Kumar (2015), Table I: (Q, Ra_c).
-CHANDRASEKHAR_TABLE = ((0.0, 1707.8), (10.0, 1945.9), (50.0, 2802.1), (100.0, 3757.4))
 
 
 def thermal_developed() -> None:
     """Developed Nusselt numbers against exact series, Shah & London's fit and the Hartmann closed form."""
+    from validation.thermal import h1_series, plate_nusselt, shah_london_h1
+
     lmhdx.enable_x64()
     aspects, counts = np.array([1.0, 0.75, 0.5, 1 / 3, 0.25, 1 / 6, 0.125]), np.array([8, 16, 32, 64])
     duct_fields = np.array([0.0, 1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0])
@@ -413,14 +413,14 @@ def thermal_developed() -> None:
         squares = {hartmann: _h1(duct_problem(hartmann=hartmann, cells=48)) for hartmann in duct_fields}
         plates = np.array([_heated_plates(128, hartmann) for hartmann in plate_fields])
         errors = {
-            "Square H1, Poiseuille": [nusselt(_rectangle(n)) / _h1_series(1, 1) - 1 for n in counts],
-            "Square H1, slug": [nusselt(_rectangle(n), True) / _h1_series(1, 1, True) - 1 for n in counts],
-            "Plates, Ha = 10": [_heated_plates(n, 10.0, False) / _plate_nusselt(10.0) - 1 for n in counts],
+            "Square H1, Poiseuille": [nusselt(_rectangle(n)) / h1_series(1, 1) - 1 for n in counts],
+            "Square H1, slug": [nusselt(_rectangle(n), True) / h1_series(1, 1, True) - 1 for n in counts],
+            "Plates, Ha = 10": [_heated_plates(n, 10.0, False) / plate_nusselt(10.0) - 1 for n in counts],
         }
     square = np.array([float(result.nusselt) for result, _ in squares.values()])
-    worst = np.max(np.abs(rectangles / [_h1_series(1.0, aspect) for aspect in aspects] - 1.0))
+    worst = np.max(np.abs(rectangles / [h1_series(1.0, aspect) for aspect in aspects] - 1.0))
     print(f"developed: rectangles within {worst:.2%} of the series; square H1 Nu {np.round(square, 3)}")
-    relative = np.round(plates / _plate_nusselt(plate_fields) - 1, 4)
+    relative = np.round(plates / plate_nusselt(plate_fields) - 1, 4)
     print(f"developed: plates against the closed form {relative}")
 
     with plt.rc_context(PAPER):
@@ -444,7 +444,7 @@ def thermal_developed() -> None:
 
         axis = fig.add_subplot(top[2])
         alpha = np.linspace(0.02, 1.0, 200)
-        exact, fit = [_h1_series(1.0, a) for a in alpha], _shah_london_h1(alpha)
+        exact, fit = [h1_series(1.0, a) for a in alpha], shah_london_h1(alpha)
         axis.plot(alpha, exact, color=INK, lw=1.4, label="Exact double-sine series")
         axis.plot(alpha, fit, "--", color=SERIES[1], lw=1.4, label="Shah & London (1978) fit")
         axis.plot(aspects, rectangles, "o", color=SERIES[0], ms=6.5, label="LMhdX", **OPEN)
@@ -457,14 +457,14 @@ def thermal_developed() -> None:
 
         axis = fig.add_subplot(bottom[0])
         line = np.logspace(-1, 3.3, 300)
-        axis.semilogx(line, _plate_nusselt(line), color=INK, lw=1.4, label="Hartmann plates, closed form")
+        axis.semilogx(line, plate_nusselt(line), color=INK, lw=1.4, label="Hartmann plates, closed form")
         axis.semilogx(plate_fields, plates, "s", color=SERIES[1], label="Hartmann plates, LMhdX", **OPEN)
         axis.semilogx(duct_fields[1:], square[1:], "o-", color=SERIES[0], label="Square duct, LMhdX", **OPEN)
         for value, text in (
             (140 / 17, "Plates, Ha → 0: 140/17"),
             (12.0, "Plates, slug flow: 12"),
-            (_h1_series(1.0, 1.0), "Square, Ha → 0: 3.608"),
-            (_h1_series(1.0, 1.0, True), "Square, slug flow: 7.114"),
+            (h1_series(1.0, 1.0), "Square, Ha → 0: 3.608"),
+            (h1_series(1.0, 1.0, True), "Square, slug flow: 7.114"),
         ):
             offset, align = (0.1, "bottom") if "slug" in text else (-0.1, "top")
             axis.axhline(value, color=MUTED, lw=0.8, ls=":")
@@ -491,11 +491,13 @@ def thermal_developed() -> None:
 
 def thermal_entrance(hartmann_numbers: tuple[float, ...] = (0.0, 10.0, 50.0)) -> None:
     """The thermal entrance of heated Hartmann plates, an open duct against the Graetz eigen-expansion."""
+    from validation.thermal import graetz
+
     lmhdx.enable_x64()
     with jax.default_device(jax.devices("cpu")[0]):
         cases = {hartmann: _entrance(hartmann) for hartmann in hartmann_numbers}
         long = _entrance(0.0, peclet=1600.0, extent=0.03)  # the expansion leaves out axial conduction
-    errors = {ha: (xplus, nusselt / _graetz(ha, xplus) - 1) for ha, (xplus, nusselt, *_) in cases.items()}
+    errors = {ha: (xplus, nusselt / graetz(ha, xplus) - 1) for ha, (xplus, nusselt, *_) in cases.items()}
     for hartmann, (xplus, error) in errors.items():
         within = [f"{np.max(np.abs(error[xplus > start])):.2%} past x+ = {start:g}" for start in (1e-3, 1e-2)]
         print(f"entrance Ha {hartmann:g}: within {', '.join(within)}")
@@ -515,9 +517,9 @@ def thermal_entrance(hartmann_numbers: tuple[float, ...] = (0.0, 10.0, 50.0)) ->
         axis = fig.add_subplot(grid[1])
         line = np.logspace(-4.3, -0.9, 300)
         for color, marker, (hartmann, (xplus, nusselt, *_)) in zip(SERIES, "os^", cases.items()):
-            axis.semilogx(line, _graetz(hartmann, line), color=color, lw=1.4)
+            axis.semilogx(line, graetz(hartmann, line), color=color, lw=1.4)
             axis.semilogx(xplus[3::6], nusselt[3::6], marker, color=color, label=f"Ha = {hartmann:g}", **OPEN)
-        axis.semilogx(line, _graetz(np.inf, line), "--", color=INK, lw=1.1, label="Slug flow, Ha → ∞")
+        axis.semilogx(line, graetz(np.inf, line), "--", color=INK, lw=1.1, label="Slug flow, Ha → ∞")
         axis.semilogx([], [], color=MUTED, lw=1.4, label="Eigen-expansion (lines)")
         axis.semilogx([], [], "o", color=MUTED, label="LMhdX open duct (symbols)", **OPEN)
         axis.set(xlim=(1.5e-4, 0.12), ylim=(6, 42), xlabel=r"$x^+ = x/(D_h\,Pe)$", ylabel="Local $Nu_x$")
@@ -528,7 +530,7 @@ def thermal_entrance(hartmann_numbers: tuple[float, ...] = (0.0, 10.0, 50.0)) ->
         axis = fig.add_subplot(grid[2])
         for color, (hartmann, (xplus, error)) in zip(SERIES, errors.items()):
             axis.semilogx(xplus, 100 * error, color=color, label=f"Ha = {hartmann:g}")
-        error = 100 * (long[1] / _graetz(0.0, long[0]) - 1)
+        error = 100 * (long[1] / graetz(0.0, long[0]) - 1)
         axis.semilogx(long[0], error, "--", color=SERIES[0], label="Ha = 0, Pe = 1600")
         axis.axhline(0.0, color=MUTED, lw=0.8)
         axis.set(xlim=(2e-4, 0.12), ylim=(-1, 4), xlabel="$x^+$", ylabel="$Nu_x$ against the expansion (%)")
@@ -540,12 +542,14 @@ def thermal_entrance(hartmann_numbers: tuple[float, ...] = (0.0, 10.0, 50.0)) ->
 
 def thermal_onset(chandrasekhar_numbers: tuple[float, ...] = (0.0, 10.0, 100.0, 300.0, 1000.0)) -> None:
     """Rayleigh-Benard onset in a vertical field against Chandrasekhar's eigenproblem."""
+    from validation.thermal import CHANDRASEKHAR_TABLE, chandrasekhar_onset
+
     lmhdx.enable_x64()
-    curve = np.array([(q, *_chandrasekhar_onset(q)) for q in np.concatenate(([0.0], np.logspace(0, 5, 31)))])
+    curve = np.array([(q, *chandrasekhar_onset(q)) for q in np.concatenate(([0.0], np.logspace(0, 5, 31)))])
     rows, modes = [], {}
     with jax.default_device(jax.devices("cpu")[0]):
         for q in chandrasekhar_numbers:
-            exact, k = _chandrasekhar_onset(q)
+            exact, k = chandrasekhar_onset(q)
             coarse, onsets = 0.05 / (q + np.sqrt(exact)), []  # resolves 1/Q and the buoyancy time
             for dt in (coarse, coarse / 2.0):
                 (below, _), (above, modes[q]) = (_onset_growth(f * exact, dt, q, k) for f in (0.97, 1.03))
@@ -600,33 +604,6 @@ def thermal_onset(chandrasekhar_numbers: tuple[float, ...] = (0.0, 10.0, 100.0, 
         _save_webp(fig, STATIC / "thermal_magnetoconvection.webp", dpi=110, palette=True)
 
 
-def _h1_series(a: float, b: float, slug: bool = False, terms: int = 801) -> float:
-    """Nu of the H1 duct ``[-a, a] x [-b, b]`` by double sine series (both fields solve Poisson)."""
-    m, n = np.arange(1, terms, 2)[:, None], np.arange(1, terms, 2)[None, :]
-    eigen = (m * np.pi / (2.0 * a)) ** 2 + (n * np.pi / (2.0 * b)) ** 2
-    weight = 256.0 * a * b / (m**2 * n**2 * np.pi**4)
-    first, perimeter, diameter = np.sum(weight / eigen), 4.0 * (a + b), 4.0 * a * b / (a + b)
-    if slug:
-        return 16.0 * a**2 * b**2 * diameter / (perimeter * first)
-    return first**2 * diameter / (perimeter * np.sum(weight / eigen**3))
-
-
-def _shah_london_h1(alpha: np.ndarray) -> np.ndarray:
-    """Shah & London's (1978) fit of the rectangular-duct H1 Nusselt number, short over long side ``alpha``.
-
-    The coefficients are those of the ``ht`` library's ``Nu_laminar_rectangular_Shan_London``.
-    """
-    return 8.235 * np.polyval([-0.1861, 1.0578, -2.4765, 3.0853, -2.0421, 1.0], alpha)
-
-
-def _plate_nusselt(hartmann):
-    """Uniformly heated Hartmann plates, ``D_h = 4a``: the closed form, 140/17 at Ha 0 and 12 as Ha grows."""
-    ha = np.maximum(np.asarray(hartmann, dtype=float), 1e-3)
-    tanh, sech = np.tanh(ha), 1.0 / np.cosh(np.minimum(ha, 300.0))
-    value = 4.0 * (1.0 - tanh / ha) ** 2 / (1 / 3 - 2 / ha**2 - sech**2 / (2 * ha**2) + 2.5 * tanh / ha**3)
-    return np.where(ha > 1e-2, value, 140.0 / 17.0)
-
-
 def _developed_flow(grid, hartmann: float = 0.0, periodic_span: bool = False):
     wall = BoundaryCondition(NEUMANN)
     conditions = (_WRAP, wall, _WRAP if periodic_span else wall)
@@ -671,43 +648,6 @@ def _heated_plates(cells: int, hartmann: float, stretched: bool = True) -> float
     velocity = (rest[0].replace_data(solved[0].data), *rest[1:])
     result = developed_heat(thermal, velocity, Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid))
     return 4.0 / float(result.peak_wall_temperature - result.bulk_temperature)  # q = k = 1, D_h = 4a
-
-
-def _graetz(hartmann: float, xplus: np.ndarray, cells: int = 4000, modes: int = 120) -> np.ndarray:
-    """Local Nu of plates each taking in a uniform flux from ``x = 0``, without axial conduction.
-
-    ``f theta_xi = theta_eta,eta`` with ``xi = alpha x/(U a^2) = 16 x+`` and ``f`` the mean-normalized
-    velocity: Poiseuille at Ha 0, Hartmann, or slug at Ha inf, where the series is the closed form
-    ``4 / (1/3 - (2/pi^2) sum exp(-16 n^2 pi^2 x+)/n^2)``. The developed part ``xi + phi(eta)`` and the
-    modes of ``Y'' + lambda f Y = 0``, ``Y' = 0`` at the plates, a symmetric tridiagonal eigenproblem on fine
-    finite volumes. ``Nu = 4/(theta_w - theta_b)`` with ``D_h = 4a``.
-    """
-    from scipy.linalg import eigh_tridiagonal
-
-    def profile(eta):
-        if hartmann == 0.0:
-            return 1.5 * (1.0 - eta**2)
-        if np.isinf(hartmann):
-            return np.ones_like(eta)
-        return (1.0 - np.cosh(hartmann * eta) / np.cosh(hartmann)) / (1.0 - np.tanh(hartmann) / hartmann)
-
-    width = 2.0 / cells
-    eta = -1.0 + width * (np.arange(cells) + 0.5)
-    diagonal, scale = np.full(cells, 2.0 / width**2), 1.0 / np.sqrt(profile(eta))
-    diagonal[[0, -1]] = 1.0 / width**2
-    off = -scale[:-1] * scale[1:] / width**2
-    rates, vectors = eigh_tridiagonal(diagonal * scale**2, off, select="i", select_range=(1, modes))
-    shapes = vectors * scale[:, None]
-    fine = np.linspace(-1.0, 1.0, 200001)
-    weight = profile(fine)
-    slope = -1.0 + np.concatenate(([0.0], np.cumsum(0.5 * (weight[1:] + weight[:-1]) * np.diff(fine))))
-    phi = np.concatenate(([0.0], np.cumsum(0.5 * (slope[1:] + slope[:-1]) * np.diff(fine))))
-    phi -= np.trapezoid(weight * phi, fine) / np.trapezoid(weight, fine)
-    weighted = profile(eta)[:, None] * shapes
-    start = np.interp(eta, fine, phi)[:, None]
-    amplitudes = -np.sum(weighted * start, axis=0) / np.sum(weighted * shapes, axis=0)
-    decay = np.exp(-rates * 16.0 * np.asarray(xplus)[:, None])
-    return 4.0 / (phi[-1] + np.sum(amplitudes * shapes[-1] * decay, axis=1))
 
 
 def _entrance(hartmann: float, peclet: float = 400.0, cells: int = 64, extent: float = 0.12):
@@ -764,43 +704,6 @@ def _held_heat(grid, hartmann, walls, k, end):
     storage = abs(float(history.storage_rate[-1])) / float(history.advective_heat_out[-1])
     print(f"held flow Ha {hartmann:g}: {grid.shape} cells, final storage/outflow {storage:.1e}")
     return np.asarray(state.temperature.data), inlet
-
-
-def _marginal_rayleigh(wavenumber: float, chandrasekhar: float, count: int = 48) -> float:
-    """Stationary onset between rigid isothermal plates in a vertical field (Chandrasekhar 1961, Ch. IV).
-
-    ``[(D^2 - a^2)^2 - Q D^2] W = Ra a^2 Theta`` and ``(D^2 - a^2) Theta = -W`` with ``W = DW = Theta = 0`` at
-    ``z = +-1/2``, by Chebyshev collocation: the smallest real Ra of the generalized eigenproblem.
-    """
-    from scipy.linalg import eig
-
-    nodes = np.cos(np.pi * np.arange(count + 1) / count)
-    weights = np.hstack([2.0, np.ones(count - 1), 2.0]) * (-1.0) ** np.arange(count + 1)
-    derivative = np.outer(weights, 1.0 / weights) / (nodes[:, None] - nodes[None, :] + np.eye(count + 1))
-    derivative = 2.0 * (derivative - np.diag(derivative.sum(axis=1)))  # on [-1/2, 1/2]
-    identity, second = np.eye(count + 1), derivative @ derivative
-    helmholtz = second - wavenumber**2 * identity
-    dirichlet, source = helmholtz.copy(), -identity
-    dirichlet[[0, -1]], source[[0, -1]] = identity[[0, -1]], 0.0
-    left = helmholtz @ helmholtz - chandrasekhar * second
-    right = wavenumber**2 * np.linalg.solve(dirichlet, source)
-    ends = ((0, identity[0]), (1, derivative[0]), (count - 1, derivative[-1]), (count, identity[-1]))
-    for row, condition in ends:
-        left[row], right[row] = condition, 0.0
-    values = eig(left, right, right=False)
-    values = values[np.isfinite(values)]
-    real = values[(np.abs(values.imag) <= 1e-6 * np.abs(values.real)) & (values.real > 0)]
-    return float(np.min(real.real))
-
-
-def _chandrasekhar_onset(chandrasekhar: float) -> tuple[float, float]:
-    """The critical Rayleigh number and wavenumber, the marginal curve's minimum."""
-    from scipy.optimize import minimize_scalar
-
-    guess = (np.pi**4 * chandrasekhar / 2.0) ** (1.0 / 6.0) if chandrasekhar > 100.0 else 3.1
-    bounds = (0.6 * guess, 1.8 * guess)
-    result = minimize_scalar(_marginal_rayleigh, bounds=bounds, args=(chandrasekhar,), method="bounded")
-    return float(result.fun), float(result.x)
 
 
 def _onset_growth(rayleigh: float, dt: float, chandrasekhar: float, wavenumber: float) -> tuple[float, dict]:

@@ -1525,9 +1525,9 @@ raw data as release assets with checksums.
 | Q2D forced lattice and condensate | 1024², movie | 300 KB animation + MP4 | Phase 3.4 |
 | GPU scaling | time/step vs size; CPU / 1 GPU / 2 GPU; fp32/fp64 | 60 KB | Phase 2.5 |
 | B2 comparison | ΔP curves: LMX three meshes, FreeMHD, experiment with error bars | 80 KB | Phase 4.4 |
-| `docs/_static/thermal_developed_duct.webp` | H1 square duct at Ha 0 and 100 in 3-D (velocity as height, temperature as colour); rectangular-duct `Nu_H1` against the exact series and Shah & London's fit; Nu against Ha for the square duct and Hartmann plates against their closed form; mesh convergence | 65 KB | Phase 5, this PR |
-| `docs/_static/thermal_entrance.webp` | Temperature above the bulk over the entrance in 3-D; local Nu along heated Hartmann plates (Ha 0, 10, 50) against the Graetz eigen-expansion and the slug closed form; error, with Pe 1600 | 46 KB | Phase 5, this PR |
-| `docs/_static/thermal_magnetoconvection.webp` | `Ra_c` against Q = 0–1000 against Chandrasekhar's eigenproblem and table; the critical rolls at Q = 0 and 1000; first order in the time step | 43 KB | Phase 5, this PR |
+| `docs/_static/thermal_developed_duct.webp` | H1 square duct at Ha 0 and 100 in 3-D (velocity as height, temperature as colour); rectangular-duct `Nu_H1` against the exact series and Shah & London's fit; Nu against Ha for the square duct and Hartmann plates against their closed form; mesh convergence | 65 KB | Phase 5, done (#269) |
+| `docs/_static/thermal_entrance.webp` | Temperature above the bulk over the entrance in 3-D; local Nu along heated Hartmann plates (Ha 0, 10, 50) against the Graetz eigen-expansion and the slug closed form; error, with Pe 1600 | 46 KB | Phase 5, done (#269) |
+| `docs/_static/thermal_magnetoconvection.webp` | `Ra_c` against Q = 0–1000 against Chandrasekhar's eigenproblem and table; the critical rolls at Q = 0 and 1000; first order in the time step | 43 KB | Phase 5, done (#269) |
 | Heated duct | temperature and Nu | ≤ 100 KB | Phase 5 |
 | Stellarator channel | coil field along the channel, ΔP, wall current | ≤ 150 KB + MP4 | Phase 6.2 |
 
