@@ -14,6 +14,7 @@ from lmhdx.coreflow import (
     side_layer_coefficient,
 )
 from lmhdx.grid import Grid, uniform_faces
+from validation.gci import grid_convergence
 
 pytestmark = pytest.mark.unit
 
@@ -105,6 +106,37 @@ def test_the_anl_fringe_reproduces_tm228():
     assert drop - local == pytest.approx(0.0932 - 0.0754, rel=0.01)
     # Figure 10: the three-dimensional excess is k c^(1/2) with k = 0.126 for x0 = 3.
     assert drop - local == pytest.approx(0.126 * 0.02**0.5, rel=0.01)
+
+
+def _anl_excess(cells, nodes, beta_max=1000.0):
+    """Row-7 excess of the ANL fringe (x in [-10, 6]) over its locally fully developed drop, as in ``validation.gci``."""
+    x = np.linspace(-10.0, 6.0, nodes)
+    solve = lambda model, field: model.solve(field, c_t=0.02, c_s=0.02, beta_max=beta_max)  # noqa: E731
+    pressure = np.asarray(solve(CoreFlow(x, nz=cells, ny=cells), _anl(x)).pressure).mean(axis=1)
+    gradient = float(solve(CoreFlow(np.linspace(0.0, 2.0, 9), nz=cells, ny=cells), np.ones(9)).pressure_drop)
+    inside = (x > -6.0 - 1e-9) & (x < 2.0 + 1e-9)
+    square = _anl(x[inside]) ** 2
+    local = gradient / 2.0 * float(np.sum(0.5 * (square[1:] + square[:-1]) * np.diff(x[inside])))
+    return float(np.interp(-6.0, x, pressure) - np.interp(2.0, x, pressure)) - local
+
+
+@pytest.mark.numerical
+def test_the_floor_is_not_why_the_excess_converges_at_order_1_63():
+    """Row 7: the joint-refinement order 1.63 is two second-order errors of opposite sign, not the 1/B floor.
+
+    Raising the cap on 1/B from 1e3 to 1e6 changes the excess by 1.3e-5 (relative) on the coarse mesh and
+    8e-6 on the fine one. Refining the cross-section alone (10, 20, 40 cells at 161 stations) gives order
+    2.05 from above, refining the axis alone (81, 161, 321 stations at 20 cells) gives 1.97 from below, so
+    they cancel in the joint sequence; the separable Richardson value is 0.017805 against the joint 0.017798.
+    """
+    assert _anl_excess(10, 81, 1e6) == pytest.approx(_anl_excess(10, 81), rel=3e-5)
+    section = grid_convergence(*(_anl_excess(c, 161) for c in (10, 20, 40)), 2.0)
+    axis = grid_convergence(*(_anl_excess(20, n) for n in (81, 161, 321)), 2.0)
+    assert section.monotone and axis.monotone
+    assert section.order == pytest.approx(2.05, abs=0.1) and axis.order == pytest.approx(1.97, abs=0.1)
+    assert section.extrapolated < _anl_excess(20, 161) < axis.extrapolated
+    separable = section.extrapolated + axis.extrapolated - _anl_excess(20, 161)
+    assert separable == pytest.approx(0.0178, rel=1e-3)
 
 
 def test_the_fringe_field_provider_feeds_the_model():
