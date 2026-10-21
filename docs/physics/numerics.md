@@ -549,6 +549,100 @@ with Re at fixed N. A fit with an inertial term needs points at several Re per
 Ha, which this preconditioner makes too costly beyond Re ≈ 40 (Ha 100, Re 33
 did not finish in 5.5 h); a transport-aware preconditioner is the next step.
 
+**What the cost was, and the fit (2026-10-07).** Three findings, on the office
+host (one A4000 shared with other jobs; load 4–20 on 36 cores):
+
+1. *The buffers, not the preconditioner, stopped Ha 100, Re 33.* With the
+   default buffer growth the downstream cells reach $8\Delta x = 2$, a cell
+   Reynolds number of 66 at Re 33, and central transport there loses the
+   iteration: continuation in steps of 0.1 converges to Re 31.35 and then
+   stalls at a residual of $2.4\times10^2$ whatever the preconditioner or a
+   backtracking line search. With `fringe_duct(growth=1.0)` (buffers at the
+   core spacing, $124\times32^2$, cell Reynolds number $\le 8$) the same case
+   converges in 4,743 outer iterations; the Stokes-limit drop does not change
+   (0.227655 on both meshes).
+2. *Restart length and inner tolerance.* On the first Newton update at Ha 100,
+   Re 33: cycle 30 / inner $10^{-2}$ took 166 outer iterations (163 s), cycle
+   120 took 84 (111 s), and the inner tolerance does not change the count
+   ($3\times10^{-1}$: 88, $10^{-1}$: 86, $3\times10^{-2}$: 85). The defaults are
+   now cycle 120, inner $10^{-1}$, at most 3,600 outer iterations per update.
+3. *Transport-aware preconditioners, measured and rejected.* One projection
+   step with the axial transport $U\partial_x$ (mean speed, central or upwind)
+   in the Helmholtz solve, the cross-section in the viscous eigenbasis and a
+   tridiagonal line per mode along the open axis, with a uniform or an
+   $x$-local Joule damping: 470–2,734 outer iterations on that update, about
+   15–30 ms each, against 84 at about 0.7 s for the Stokes CG. It wins at low
+   Re (Ha 100, Re 10: 29 s against 46 s warm) and reaches Re 33 in 42 min
+   against 1.9 h, but at Ha 200, Re 40 it exhausts 7,200 outer iterations at
+   97.5 % of the flow rate while the Stokes CG does not; multiplicative
+   Stokes-then-transport and transport-then-Stokes combinations, masked to the
+   weak-field region or not, took 105–1,800 iterations against 84. The
+   residual the exact Stokes inverse leaves ($\lVert(I-JA^{-1})r\rVert/\lVert r\rVert
+   = 1.4$) sits at $x\in[1.5,3]$, where the field ends and the jets of the
+   Hartmann profile relax; a frozen axial speed does not describe it. The
+   outer count grows with Re for every preconditioner tried (Stokes: 16–37 per
+   update at Re 16.5, 476–1,014 at Re 33), as a Jacobian approaching a
+   critical mode would; outer iterations independent of Re were not reached.
+   The experiment code is deleted; `solve_open_duct` keeps the Stokes CG.
+4. *Recycling the Krylov subspace, measured and rejected (2026-10-21).*
+   `solvax.gcrot(recycle=...)` carries a $(C,U)$ pair, ten directions, from one
+   Newton step to the next and from one continuation stage to the next
+   (`"fifo"`, and `"harmonic"` deflated restarting on CPU). Same mesh, same
+   continuation (stages of 1.5 in Re from 15, a single stage up to Re 15),
+   outer iterations and cold time:
+
+   | Ha | Re | stages | Stokes CG only | recycle fifo | recycle harmonic |
+   |---|---|---|---|---|---|
+   | 100 | 10 | 1 | 38 | 38 | |
+   | 100 | 20 | 5 | 313 (32 min) | 224 (22 min) | 317 |
+   | 200 | 20 | 5 | 289 (35 min) | 206 (23 min) | |
+   | 100 | 33 | 13 | 5,302 (4.5 h) | 11,202 (10.5 h) | |
+   | 200 | 40 | 18 | 18,932 (21.8 h) | not finished | |
+
+   Recycling saves 28–29 % of the outer iterations at Re 20 and nothing at Re
+   10 (one stage), but at Ha 100, Re 33 it doubles them, so the count still grows
+   faster than Re and the near-critical mode is not what the ten recycled
+   directions capture. The harmonic variant does not beat the plain one at Re 20.
+   The Re 33 and Re 20 baselines and the recycled runs ran on different shared
+   hosts (A4000 for the baseline, CPU for most recycled runs); the outer counts do
+   not depend on the host, and the time per outer iteration is within a factor of
+   two (3–7 s). Ha 200, Re 40 with recycling was started twice on the GPU and
+   killed by the host both times, and was stopped on the CPU after a day.
+   Recycling is not adopted: the code was removed and `solve_open_duct` is
+   unchanged. The Re-independent outer count is still open.
+
+ANL fringe, $124\times32^2$ (`growth=1.0`), Stokes-preconditioned Newton,
+continuation from $Re=15$ in steps of 0.1 of the flow rate; relative residual
+$\le 10^{-10}$, mass $\le 1.5\times10^{-16}$, charge $\le 1.9\times10^{-13}$:
+
+| Ha | Re | N | $\Delta p$ | inertial | share | outer its | cold time |
+|---|---|---|---|---|---|---|---|
+| 100 | 0 | ∞ | 0.227655 | | | (245 CG) | |
+| 100 | 10 | 1000 | 0.227919 | 0.000265 | 0.42 % | 39 | 89 s (46 s warm) |
+| 100 | 20 | 500 | 0.228346 | 0.000691 | 1.10 % | 247 | 12 min |
+| 100 | 33 | 303 | 0.228977 | 0.001323 | 2.11 % | 4,743 | 1.9 h |
+| 200 | 0 | ∞ | 0.181530 | | | (448 CG) | |
+| 200 | 10 | 4000 | 0.181739 | 0.000210 | 0.40 % | 37 | 3.3 min |
+| 200 | 20 | 2000 | 0.182048 | 0.000518 | 0.98 % | 229 | 21 min |
+| 200 | 40 | 1000 | 0.182760 | 0.001230 | 2.33 % | 18,932 | 21.8 h |
+
+The counts and times in the table are from the first campaign; the 2026-10-21 re-run with a fixed continuation (stages of 1.5 in Re from 15) is in finding 4: 313 outer iterations at Ha 100, Re 20, 5,302 at Re 33, 289 at Ha 200, Re 20 and 18,932 at Re 40 (21.8 h on a shared A4000), with the same shares and drops to the printed digits.
+
+**The fit.** At fixed Re the share hardly depends on Ha (0.42 / 0.40 % at Re
+10, 1.10 / 0.98 % at Re 20 for Ha 100 / 200), while at fixed N it does not
+hold still (0.42 % at Ha 100, Re 10 against 2.33 % at Ha 200, Re 40, both N
+1000). A least-squares fit of $\ln$ share on $\ln Re$ and $\ln Ha$ over the six
+points gives share $\approx 0.045\,\% \cdot Re^{1.31} Ha^{-0.16}$; in Re alone,
+$0.021\,\% \cdot Re^{1.30}$. The local exponent between successive Re is 1.39
+and 1.30 at Ha 100 and 1.30 and 1.25 at Ha 200, so it falls slowly with Re. The
+plan's $\beta N^{-1/3}$ term is not supported on this range (Ha 100–200, Re
+10–40). The 2.3 % of #218 on the $70\times32^2$ mesh and the 2.33 % here on the
+$124\times32^2$ mesh agree.
+Station by station the inertial change of $-\partial_x\bar p$ is $\le 2.3\,\%$
+of the local gradient wherever the local $N b(x)^2 \ge 125$, and of order the
+gradient only where $N b^2 \lesssim 30$ (downstream of $x=1$), where the
+gradient itself is small.
+
 #### The gap is the layers' conductance (rows 7 and 24)
 
 *Lane A, 2026-10-04.* The tools for this were converged meshes at Ha $10^4$ and
