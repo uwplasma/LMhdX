@@ -73,8 +73,14 @@ TABLE_I_MESHES = {
 }
 
 
-def table_i_flow_rate(hartmann: float, conductance: float, cells, layer, cells_across, layer_across) -> float:
-    """Square-duct flow rate for unit ``-dP/dx`` on the staggered core (Table I's normalisation)."""
+def table_i_flow_rate(
+    hartmann: float, conductance: float, cells, layer, cells_across, layer_across, thickness: float = 1.0
+) -> float:
+    """Square-duct flow rate for unit ``-dP/dx`` on the staggered core (Table I's normalisation).
+
+    The layers resolved by ``layer`` and ``layer_across`` cells are ``thickness / Ha`` and
+    ``thickness / sqrt(Ha)`` thick (Ni et al. 2007 use 2).
+    """
     import numpy as np
 
     from lmhdx import enable_x64
@@ -93,8 +99,8 @@ def table_i_flow_rate(hartmann: float, conductance: float, cells, layer, cells_a
     problem = ChannelProblem(
         grid=Grid(
             uniform_faces(1, 0.0, 1.0),
-            faces(cells, layer, 1.0 / hartmann),
-            faces(cells_across, layer_across, hartmann**-0.5),
+            faces(cells, layer, thickness / hartmann),
+            faces(cells_across, layer_across, thickness * hartmann**-0.5),
         ),
         conditions=(BoundaryCondition(PERIODIC), wall, wall),
         conductivity=1.0,
