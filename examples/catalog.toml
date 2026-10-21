@@ -46,6 +46,15 @@ outputs = ["conservation checks", "fringe pressure drop", "gradient check", "dia
 docs = "docs/tutorials/fringing.md"
 
 [[example]]
+id = "open-duct-inertia"
+path = "examples/open_duct_inertia_example.py"
+command = "python examples/open_duct_inertia_example.py"
+status = "research-stage"
+runtime = "portable"
+outputs = ["inertial share of the fringe drop", "outer iterations", "diagnostics"]
+docs = "docs/tutorials/fringing.md"
+
+[[example]]
 id = "q2d-vortex-decay"
 path = "examples/q2d_turbulence_demo.py"
 command = "python examples/q2d_turbulence_demo.py"
