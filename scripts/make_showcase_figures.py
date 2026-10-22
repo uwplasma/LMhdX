@@ -384,9 +384,9 @@ ROW = {"right": 0.985, "top": 0.9, "bottom": 0.14}  # a row of three panels
 PAPER = {
     "font.family": "STIXGeneral",
     "mathtext.fontset": "stix",
-    "font.size": 10.5,
-    "axes.titlesize": 10.5,
-    "legend.fontsize": 9,
+    "font.size": 13.5,
+    "axes.titlesize": 13.5,
+    "legend.fontsize": 11.5,
     "legend.frameon": False,
     **{f"{a}tick.direction": "in" for a in "xy"},
     **{f"{a}tick.minor.visible": True for a in "xy"},
@@ -443,8 +443,8 @@ def thermal_developed() -> None:
     )
 
     with plt.rc_context(PAPER):
-        fig = plt.figure(figsize=(13.2, 8.4))
-        outer = fig.add_gridspec(2, 1, hspace=0.3, left=0.05, right=0.985, top=0.95, bottom=0.075)
+        fig = plt.figure(figsize=(13.2, 8.8))
+        outer = fig.add_gridspec(2, 1, hspace=0.45, left=0.05, right=0.985, top=0.93, bottom=0.075)
         top = outer[0].subgridspec(1, 3, width_ratios=[1.0, 1.0, 1.05], wspace=0.18)
         bottom = outer[1].subgridspec(1, 2, width_ratios=[1.25, 1.0], wspace=0.22)
         views = {0.0: "H1 square duct, no field", 100.0: "The same duct at Ha = 100"}
@@ -460,9 +460,9 @@ def thermal_developed() -> None:
             mesh = np.meshgrid(*result.temperature.grid.centers[1:], indexing="ij")
             _paint(axis, *mesh, u / bulk, plt.get_cmap("inferno")(theta / np.min(theta)))
             axis.set(zlim=(0.0, 2.2), zticks=[0, 1, 2])
-            axis.set_title(f"{title}:  $Nu_{{H1}}$ = {float(result.nusselt):.2f}", pad=0)
+            axis.set_title(f"{title}\n$Nu_{{H1}}$ = {float(result.nusselt):.2f}", pad=0)
             _panel(axis, "ab"[index])
-        label = r"Height: axial velocity $u/\bar{u}$.   Color: temperature $(T_w - T)/(T_w - T_{center})$."
+        label = r"Temperature $(T_w - T)/(T_w - T_{center})$"
         _colorbar(fig, (0.14, 0.535, 0.36, 0.012), "inferno", Normalize(0.0, 1.0), label)
 
         axis = fig.add_subplot(top[2])
@@ -470,18 +470,20 @@ def thermal_developed() -> None:
         exact, fit = [h1_series(1.0, a) for a in alpha], shah_london_h1(alpha)
         axis.plot(alpha, exact, color=INK, lw=1.4, label="Exact double-sine series")
         axis.plot(alpha, fit, "--", color=SERIES[1], lw=1.4, label="Shah & London (1978) fit")
-        axis.plot(aspects, rectangles, "o", color=SERIES[0], ms=6.5, label="LMhdX", **OPEN)
+        axis.plot(
+            aspects, rectangles, "o", color=SERIES[0], ms=6.5, label="LMhdX, 32 cells across $b$", **OPEN
+        )
         axis.axhline(140.0 / 17.0, color=MUTED, lw=0.8, ls=":")
-        axis.text(0.5, 140 / 17 + 0.08, "Parallel plates, 140/17", ha="center", color=MUTED, size=9)
+        axis.text(0.5, 140 / 17 + 0.08, "Parallel plates, 140/17", ha="center", color=MUTED, size=11.5)
         axis.set(xlim=(0, 1.02), ylim=(3.2, 8.75), xlabel="Aspect ratio $b/a$", ylabel="$Nu_{H1}$")
-        axis.set_title(f"Rectangular ducts, 32 cells across $b$: within {100 * worst:.2f} % of exact")
+        axis.set_title(f"Rectangular ducts: within {100 * worst:.2f} % of exact")
         axis.legend(loc="center right", bbox_to_anchor=(1.0, 0.6))
         _panel(axis, "c")
 
         axis = fig.add_subplot(bottom[0])
         line = np.logspace(-1, 3.3, 300)
-        axis.semilogx(line, plate_nusselt(line), color=INK, lw=1.4, label="Hartmann plates, closed form")
-        axis.semilogx(plate_fields, plates, "s", color=SERIES[1], label="Hartmann plates, LMhdX", **OPEN)
+        axis.semilogx(line, plate_nusselt(line), color=INK, lw=1.4, label="Plates, closed form")
+        axis.semilogx(plate_fields, plates, "s", color=SERIES[1], label="Plates, LMhdX", **OPEN)
         axis.semilogx(duct_fields[1:], square[1:], "o-", color=SERIES[0], label="Square duct, LMhdX", **OPEN)
         for value, text in (
             (140 / 17, "Plates, Ha → 0: 140/17"),
@@ -489,20 +491,20 @@ def thermal_developed() -> None:
             (h1_series(1.0, 1.0), "Square, Ha → 0: 3.608"),
             (h1_series(1.0, 1.0, True), "Square, slug flow: 7.114"),
         ):
-            offset, align = (0.1, "bottom") if "slug" in text else (-0.1, "top")
+            offset, align = (0.1, "bottom") if text.startswith("Plates, slug") else (-0.1, "top")
             axis.axhline(value, color=MUTED, lw=0.8, ls=":")
-            axis.text(0.115, value + offset, text, color=MUTED, size=8.5, va=align)
-        axis.set(xlim=(0.1, 2000), ylim=(2.8, 13.2), xlabel="Hartmann number Ha")
-        axis.set_ylabel(r"Nu   (uniform heat flux along the duct, $D_h$-based)")
-        axis.set_title("A transverse field flattens the core and raises Nu toward slug flow")
-        axis.legend(loc="lower right", bbox_to_anchor=(1.0, 0.1))
+            axis.text(0.115, value + offset, text, color=MUTED, size=11, va=align)
+        axis.set(xlim=(0.1, 2000), ylim=(1.8, 13.2), xlabel="Hartmann number Ha")
+        axis.set_ylabel(r"$Nu$  (uniform heat flux, on $D_h$)")
+        axis.set_title("A transverse field raises Nu toward the slug-flow limit")
+        axis.legend(loc="lower right", frameon=True, facecolor="white", edgecolor="none", framealpha=1.0)
         _panel(axis, "d")
 
         axis = fig.add_subplot(bottom[1])
         for (label, values), marker, color in zip(errors.items(), "o^s", (SERIES[0], SERIES[2], SERIES[1])):
             axis.loglog(counts, np.abs(values), marker + "-", color=color, label=label, **OPEN)
         axis.loglog([7.0, 80.0], 0.3 * (np.array([7.0, 80.0]) / 10.0) ** -2.0, "--", color=INK, lw=1.0)
-        axis.text(25, 0.3 * 2.5**-2 * 1.3, "Second order", rotation=-31, size=9, color=INK)
+        axis.text(25, 0.3 * 2.5**-2 * 1.3, "Second order", rotation=-31, size=11.5, color=INK)
         axis.set_xticks(counts, [str(count) for count in counts])
         axis.set_xticks([], minor=True)
         axis.set(xlabel="Cells across the duct", ylabel="Relative error in Nu")
@@ -541,7 +543,7 @@ def thermal_entrance(hartmann_numbers: tuple[float, ...] = (0.0, 10.0, 50.0)) ->
         axis = _axes_3d(fig, grid[0], labels, (24, -122), ((-3, -2), (-1, 0, 1)))
         colors = plt.get_cmap("RdBu_r")(0.5 + 0.5 * theta[keep] / np.max(np.abs(theta[keep])))
         _paint(axis, *np.meshgrid(np.log10(xplus[keep]), y, indexing="ij"), theta[keep], colors)
-        axis.set_title("Temperature above the bulk, Ha = 10", pad=0)
+        axis.set_title("Temperature at Ha = 10", pad=0)
         _panel(axis, "a")
 
         axis = fig.add_subplot(grid[1])
@@ -564,7 +566,7 @@ def thermal_entrance(hartmann_numbers: tuple[float, ...] = (0.0, 10.0, 50.0)) ->
         axis.semilogx(long[0], error, "--", color=SERIES[0], label="Ha = 0, Pe = 1600")
         axis.axhline(0.0, color=MUTED, lw=0.8)
         axis.set(xlim=(2e-4, 0.12), ylim=(-1, 4), xlabel="$x^+$", ylabel="$Nu_x$ against the expansion (%)")
-        axis.set_title("Pe = 400 unless marked: axial conduction")
+        axis.set_title("Axial conduction at Pe = 400")
         axis.legend(loc="upper right")
         _panel(axis, "c")
         _save_webp(fig, STATIC / "thermal_entrance.webp", dpi=110, palette=True)
@@ -611,7 +613,7 @@ def thermal_onset(chandrasekhar_numbers: tuple[float, ...] = (0.0, 10.0, 100.0, 
         axis.set(xlim=(0, 1.2e5), ylim=(1.2e3, 2e6), xlabel="Chandrasekhar number $Q = Ha^2$")
         axis.set_ylabel("Critical Rayleigh number $Ra_c$")
         worst = np.max(np.abs(rows[:, 5] / rows[:, 1] - 1.0))
-        axis.set_title(f"A vertical field delays convection: LMhdX within {100 * worst:.1f} %")
+        axis.set_title(f"Onset in a vertical field: within {100 * worst:.1f} %")
         axis.legend(loc="upper left")
         _panel(axis, "a")
 
@@ -621,21 +623,21 @@ def thermal_onset(chandrasekhar_numbers: tuple[float, ...] = (0.0, 10.0, 100.0, 
             _draw_roll(axis, modes[q], width=4.0)
             exact = rows[list(rows[:, 0]).index(q)]
             title = f"Critical roll at Q = {q:g}:  $a_c$ = {exact[2]:.2f},  $Ra_c$ = {exact[1]:,.0f}"
-            axis.set_title(title, fontsize=10)
+            axis.set_title(title, fontsize=12.5)
             axis.set_xlabel("$x/d$" if row else "")
             if not row:
                 axis.set_xticklabels([])
-                axis.text(-0.13, 1.08, "(b)", transform=axis.transAxes, fontsize=12, fontweight="bold")
+                axis.text(-0.13, 1.08, "(b)", transform=axis.transAxes, fontsize=15, fontweight="bold")
 
         axis = fig.add_subplot(outer[2])
-        steps = (r"$\Delta t_0$", r"$\Delta t_0/2$", r"Richardson in $\Delta t$")
+        steps = (r"$\Delta t_0 = 0.05/(Q + Ra_c^{1/2})$", r"$\Delta t_0/2$", r"Richardson in $\Delta t$")
         for color, column, marker, label in zip(SERIES[::-1], (3, 4, 5), "s^o", steps):
             values = 100 * (rows[:, column] / rows[:, 1] - 1)
             axis.plot(rows[:, 0], values, marker + "-", color=color, label=label, **OPEN)
         axis.axhline(0.0, color=MUTED, lw=0.8)
         axis.set_xscale("symlog", linthresh=10.0, linscale=0.35)
         axis.set(xlim=(0, 1500), xlabel="$Q$", ylabel="$Ra_c$ against the eigenproblem (%)")
-        axis.set_title(r"First order in the time step, $\Delta t_0 = 0.05/(Q + Ra_c^{1/2})$")
+        axis.set_title("First order in the time step")
         axis.legend(loc="center right", bbox_to_anchor=(1.0, 0.6))
         _panel(axis, "c")
         _save_webp(fig, STATIC / "thermal_magnetoconvection.webp", dpi=110, palette=True)
@@ -804,9 +806,9 @@ def _draw_roll(axis, mode: dict, width: float) -> None:
 
 def _panel(axis, letter: str) -> None:
     """A journal-style panel letter at the top left."""
-    style = {"transform": axis.transAxes, "fontsize": 12, "fontweight": "bold"}
+    style = {"transform": axis.transAxes, "fontsize": 15, "fontweight": "bold"}
     if hasattr(axis, "text2D"):
-        axis.text2D(0.0, 0.97, f"({letter})", **style)
+        axis.text2D(0.0, 1.0, f"({letter})", va="bottom", **style)
     else:
         axis.text(-0.02, 1.03, f"({letter})", ha="right", **style)
 
@@ -833,8 +835,8 @@ def _paint(axis, x, y, z, colors) -> None:
 def _colorbar(fig, rect, cmap, norm, label: str, ticks=None) -> None:
     mappable = plt.cm.ScalarMappable(norm, cmap)
     bar = fig.colorbar(mappable, cax=fig.add_axes(rect), orientation="horizontal", ticks=ticks)
-    bar.set_label(label, fontsize=9.5)
-    bar.ax.tick_params(labelsize=8.5, direction="out", top=False)
+    bar.set_label(label, fontsize=12.5)
+    bar.ax.tick_params(labelsize=11, direction="out", top=False)
     bar.ax.minorticks_off()
 
 
