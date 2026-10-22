@@ -80,15 +80,28 @@ the thermal open axis, and SOLVAX on the 0.19 floor.
 **D35. The target is Case 1, gated. Case 2 follows as a reported comparison.**
 
 - **Case 1's gate.** Its heated zone is steady and laminar, the codes agree
-  there, and the paper prints scalars to check against. The gate is declared
-  before the run: agreement with the codes that agree with one another, on two
-  meshes and two outlet lengths, at each observable the specification names.
-- **Case 2** is run afterwards, with its averaging protocol fixed first, and
-  reported against the codes' spread. It has no pass or fail: the references
+  there, and the paper prints scalars to check against. The gate is a band
+  declared before the run, which combines the reference codes' spread, the
+  digitizing uncertainty and LMhdX's discretization error, the last from its
+  grid, time-step, tolerance and outlet-length studies. It holds on two meshes
+  and two outlet lengths, at each observable the specification names. A known
+  failure of the band stays visible.
+- **Calibrated and independent.** The wall's conductivity ratio is calibrated
+  on the developed pressure gradient (below), so that gradient is in no pass
+  list. The independent observables are the velocity (the jets' height and
+  position), the temperature, and the potential and currents.
+- **Case 2** is run afterwards and reported against the codes' spread, with
+  its burn-in, averaging window and statistical uncertainty fixed by a stated
+  criterion before the comparison. It has no pass or fail: the references
   themselves differ in kind.
 - **What the gate is.** Both are code-to-code evidence, not validation against
-  an experiment. Joule heat is off, as in the reference equation; LMhdX's
-  energy verification with Joule heat on stays a separate check.
+  an experiment. Joule heat is off in the fluid and in the walls, as in the
+  reference equation; LMhdX's energy verification with Joule heat on stays a
+  separate check.
+- **Moving-flow claims wait.** The stabilised transient momentum step does not
+  keep a pressure-balanced rest state with the field along `y`, so no moving
+  thermal flow result is claimed until that step is corrected, or until a
+  time-step refinement shows the effect is small for this configuration.
 - **Validation row 6.** The paper prints no wall property, so 5.4a uses the
   printed gradient −0.0863 to fix the wall's effective conductivity ratio.
   Row 6's 1 % on that gradient is then met by construction and is not evidence.
@@ -121,6 +134,13 @@ and the potential.**
   `SolidWall`, `conjugate_grid` and the physics. Until a SOLVAX release carries
   the operator, it lives in `poisson.py`, marked to move (uwplasma/SOLVAX#158);
   LMhdX then calls it and deletes its own.
+- **What a solid wall needs:** a thickness, a whole number of equal cells, a
+  thermal conductivity, a volumetric heat capacity `ρc_p` and, for the charge,
+  an electrical conductivity. These are the fields the 2.0 `WallLayer` gains.
+- **What is differentiable.** The conductivities, the heat capacity and the
+  widths of the wall cells are traced leaves in 2.0, so a gradient with respect
+  to them, a wall's conductance and thickness among them, is not ruled out
+  here. The number of cells and the walls' topology stay static.
 - **The scope.** The extended grid is opt-in. Thin walls, resolved walls and
   the fluid-only thermal inverse keep their separable paths as the default.
   Wall Joule heat is not deposited (the reference has none), and thin walls get
@@ -151,6 +171,11 @@ needs new corner algebra and gives nothing for the heat.
   Both are run in the outlet-length study. The steady open duct keeps D26's.
 - **Buoyancy** is allowed once the evolving duct passes its own gates. The
   refusal in `build_thermal_step` stays for a held flow.
+- **When the moving thermal flow is done:** an open manufactured solution
+  converges at its order; the inlet, outlet and global energy budgets close; the
+  backflow treatment is declared; the sensitivity to domain length and the
+  temporal refinement are measured; and buoyant onset and decay are checked.
+  Conduction on a held flow is not presented as the coupled result.
 - **What this is not:** a general energy-stable open boundary. A long outlet
   region and an outlet-length study are part of every comparison, as the paper
   recommends (p. 17).
