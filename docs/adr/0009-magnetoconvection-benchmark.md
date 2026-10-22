@@ -119,8 +119,8 @@ and the potential.**
   face conductances, the cell-wise Helmholtz shift) and its preconditioned
   solve are generic. They go to SOLVAX, and LMhdX keeps the materials,
   `SolidWall`, `conjugate_grid` and the physics. Until a SOLVAX release carries
-  the operator, it lives in `poisson.py`, marked to move, with the SOLVAX issue
-  linked; LMhdX then calls it and deletes its own.
+  the operator, it lives in `poisson.py`, marked to move (uwplasma/SOLVAX#158);
+  LMhdX then calls it and deletes its own.
 - **The scope.** The extended grid is opt-in. Thin walls, resolved walls and
   the fluid-only thermal inverse keep their separable paths as the default.
   Wall Joule heat is not deposited (the reference has none), and thin walls get
