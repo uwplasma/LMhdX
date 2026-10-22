@@ -456,9 +456,13 @@ def thermal_developed() -> None:
         for index, (hartmann, title) in enumerate(views.items()):
             result, velocity = squares[hartmann]
             theta, u = np.asarray(result.temperature.data)[0], np.asarray(velocity[0].data)[0]
+            areas = np.asarray(velocity[0].grid.face_areas(0))[0]
+            # The area-weighted mean, Q/A: an unweighted one on the layer-resolving cells was not u's mean.
+            bulk = np.sum(areas * u) / np.sum(areas)
+            assert abs(np.sum(areas * u / bulk) / np.sum(areas) - 1.0) < 1e-12
             axis = _axes_3d(fig, top[index], labels, (26, -60))
             mesh = np.meshgrid(*result.temperature.grid.centers[1:], indexing="ij")
-            _paint(axis, *mesh, u / np.mean(u), plt.get_cmap("inferno")(theta / np.min(theta)))
+            _paint(axis, *mesh, u / bulk, plt.get_cmap("inferno")(theta / np.min(theta)))
             axis.set(zlim=(0.0, 2.2), zticks=[0, 1, 2])
             axis.set_title(f"{title}:  $Nu_{{H1}}$ = {float(result.nusselt):.2f}", pad=0)
             _panel(axis, "ab"[index])
