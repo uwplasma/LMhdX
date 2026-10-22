@@ -9,8 +9,8 @@ reference file's.
 
 A reference keeps, per figure, the image's hash, the calibration of both axes, the codes that agree and where the
 paper says so (``agree_basis``: "the paper", or "my reading" where it does not), and the band of those codes, with
-the curves that are not one of the six codes. Each is simplified to within half a pixel and rounded to a tenth of
-one. Each axis carries its calibration misfit in its own units, and the record its digitizing uncertainty, which a
+the curves that are not one of the six codes. Each is simplified to within half a pixel of every extracted column,
+nothing decimated before, and rounded to a tenth of one. Each axis carries its calibration misfit in its own units, and the record its digitizing uncertainty, which a
 test uses as its tolerance. ``digitize`` returns every code's curve in full, for a figure read again.
 """
 
@@ -242,11 +242,10 @@ def _curve(mask, gap=0):
     return full[keep], np.interp(full[keep], cols, rows)
 
 
-def _sample(points, *arrays):
-    """Every ``ceil(n / points)``-th entry and the last, at five significant figures."""
-    n = len(arrays[0])
-    index = np.unique(np.r_[np.arange(0, n, max(1, int(np.ceil(n / points)))), n - 1]) if n else np.arange(0)
-    return [[float(f"{v:.5g}") for v in np.asarray(arr)[index]] for arr in arrays]
+def _full(*arrays):
+    """Every pixel column's value, at six significant figures (well under a tenth of a pixel): no decimation, so
+    the compact record's simplification is bounded against the extraction itself."""
+    return [[float(f"{v:.6g}") for v in np.asarray(arr)] for arr in arrays]
 
 
 def digitize(image: Path, figure: int, table: dict | None = None) -> dict:
@@ -285,7 +284,7 @@ def digitize(image: Path, figure: int, table: dict | None = None) -> dict:
         if coverage < 0.01:
             omitted[name] = "not visible: under 1 % of the columns"
             continue
-        curves[name] = dict(zip(("x", "y"), _sample(60, *values(cols, rows))), coverage=coverage)
+        curves[name] = dict(zip(("x", "y"), _full(*values(cols, rows))), coverage=coverage)
     record = {"figure": figure, "quantity": spec_["quantity"], "pdf_page": spec_["pdf_page"], "xref": spec_["xref"],
               "sha256": hashlib.sha256(data).hexdigest(), "pixels": list(a.shape[:2]), "frame": list(frame),
               "legend": None if legend is None else [int(v) for v in legend], "calibration": {"x": cx, "y": cy},
@@ -304,7 +303,7 @@ def digitize(image: Path, figure: int, table: dict | None = None) -> dict:
         lower = [max(rows[c]) for c in cols]  # rows grow downward: the largest row is the lowest value
         upper = [min(rows[c]) for c in cols]
         x, lo = values(cols, lower)
-        band = _sample(100, x, lo, values(cols, upper)[1], [len(rows[c]) for c in cols])
+        band = _full(x, lo, values(cols, upper)[1], [len(rows[c]) for c in cols])
         record["band"] = dict(zip(("x", "lower", "upper", "codes"), band))
     return record
 
@@ -334,8 +333,10 @@ def _simplify(cols, *rows, tolerance=0.5):
 
 def _compact(record: dict) -> dict:
     """The record as shipped: the band and the curves that are not one of the six codes (the analytical markers,
-    stations, branches), each simplified to within half a pixel and rounded to a tenth of one; the per-code curves
-    are dropped, since this script regenerates them."""
+    stations, branches), each simplified to within half a pixel of every extracted column and its values rounded to
+    a tenth of one. The kept vertices keep the extraction's own x, since at a steep step a vertex moved sideways
+    would move the interpolant vertically by the step's height. The per-code curves are left out: they are the
+    release asset :func:`write_curves` writes."""
     (sx, sy), log = record["per_pixel"], record["y_scale"] == "log10"
 
     def pixels(values):
@@ -362,12 +363,12 @@ def _compact(record: dict) -> dict:
         if name in SIX:
             continue
         index = _simplify(np.asarray(curve["x"]) / sx, pixels(curve["y"]))
-        out["curves"][name] = {"x": rounded(np.asarray(curve["x"])[index], sx),
+        out["curves"][name] = {"x": [float(v) for v in np.asarray(curve["x"])[index]],
                                "y": rounded(np.asarray(curve["y"])[index], sy), "coverage": curve["coverage"]}  # fmt: skip
     if "band" in record:
         band = {k: np.asarray(v) for k, v in record["band"].items()}
         index = _simplify(band["x"] / sx, pixels(band["lower"]), pixels(band["upper"]), 2.0 * band["codes"])
-        out["band"] = {"x": rounded(band["x"][index], sx), "lower": rounded(band["lower"][index], sy),
+        out["band"] = {"x": [float(v) for v in band["x"][index]], "lower": rounded(band["lower"][index], sy),
                        "upper": rounded(band["upper"][index], sy), "codes": [int(c) for c in band["codes"][index]]}  # fmt: skip
     return out
 

@@ -76,15 +76,15 @@ rows nearest the midplane on each side.
 - **The core follows from the gradient.** The Hartmann walls' current balance
   gives `K(1 + c + 1/Ha)/(c + 1/Ha) = 0.853`, against the section's 0.850.
 - **The profile is the independent check**, against Figure 13's analytical
-  markers. On 96/12, the core (\|z\| ≤ 0.7 a) is within 1.86 px of every
-  marker and 0.65 % low on average, gated within the record's uncertainty
-  (2.44 px) and 1 %. On the jets' steep flanks the difference is
+  markers. On 96/12, the core (\|z\| ≤ 0.7 a) is within 2.09 px of each of the
+  markers' 37 columns and 0.62 % low on average, gated within the record's
+  uncertainty (2.44 px) and 1 %. On the jets' steep flanks the difference is
   about 10 px. The paper puts the jets' maximum at 0.935 a (p. 12); the section
   has 0.929 a.
 
 ## The digitized figures
 
-`src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json` (33 KB) and
+`src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json` (90 KB) and
 `-case2.json` (31 KB) hold the figures, read by
 `python scripts/digitize_mistrangelo.py DIR`. The figures are xmgrace plots
 embedded in the PDF as images, extracted with `pymupdf`
@@ -105,11 +105,20 @@ code's curve to `DIR/mistrangelo2025-case1-curves.json` and `-case2-curves.json`
   `agree_basis` records whether the paper chose those codes or my reading did.
 - **What is shipped.** Per figure: the image's page, xref and SHA-256, the
   calibration, the band, and the curves that are not a code's (Figure 13's
-  markers, Figure 11's stations, Figure 38's branches). Each is simplified to
-  within half a pixel and rounded to a tenth of one. The per-code curves are
-  not shipped. With the figure images (the paper is CC BY 4.0) they are the
-  release assets `mistrangelo2025-case1-extraction.zip` and
-  `-case2-extraction.zip` on `mistrangelo2025-references`.
+  markers, Figure 11's stations, Figure 38's branches).
+  - Each is simplified to within half a pixel of every extracted pixel column,
+    with nothing decimated before. The kept vertices keep their extracted x,
+    and the values are rounded to a tenth of a pixel.
+  - Against the full extraction, every record is within 0.53 px, log axes in
+    decades.
+  - The per-code curves, every column of them, are not shipped. With the figure
+    images (the paper is CC BY 4.0) they are the release assets
+    `mistrangelo2025-case1-extraction.zip` and `-case2-extraction.zip` on
+    `mistrangelo2025-references`.
+  - The release is a draft until the owner publishes it. Until then the
+    archives are reachable only to the repository's maintainers, so the
+    extraction is reproducible publicly from the paper's PDF and this script,
+    not yet from the archives.
 - **Provenance.** `benchmarks/provenance.json` records the paper's DOI and
   SHA-256, and each file's SHA-256 with the extraction date and the
   digitizer's SHA-256, and the release asset's (`extraction`). A test checks
@@ -119,11 +128,18 @@ code's curve to `DIR/mistrangelo2025-case1-curves.json` and `-case2-curves.json`
 the axis's units: the read line within 1.5 px, the compact record within 0.6 px
 of it (the synthetic figure's bounds), and the axis's calibration misfit, which
 each axis also carries in its units (`misfit`). That is 2.3–2.5 px, for example
-0.064 K in Figure 6 and 5.5e-4 m/s in Figure 12. A comparison's acceptance band
-is the codes' spread widened by it: `validation.mistrangelo.band_misfit(x, y,
-figure)` takes arrays and numbers and returns the largest excess beyond it,
-zero inside. At 5.4e, ADR 0009 D35's band also takes in LMhdX's discretization
-error.
+0.064 K in Figure 6 and 5.5e-4 m/s in Figure 12.
+
+**The band** is the envelope of the codes chosen to agree, not a statistical
+confidence interval. A comparison's acceptance band is that envelope widened by
+the digitizing uncertainty:
+- `validation.mistrangelo.band_misfit(x, y, figure)` takes arrays and numbers,
+  and returns the largest excess beyond it, zero inside.
+- It interpolates the band as plotted, in decades on a log axis.
+- Each edge is taken at its extreme over x ± the x uncertainty, then widened by
+  the y uncertainty.
+
+At 5.4e, ADR 0009 D35's band also takes in LMhdX's discretization error.
 
 ### Case 1
 
@@ -145,17 +161,18 @@ error.
 | 38 | OF_KIT's T_w and T_b, both cases | no band | one code (p. 16) | — |
 
 **Checks of Case 1's figures** (`tests/test_steady.py`):
-- **The pressure scale.** Figure 8's slope over \|x\| < 0.4 m is −569.0 Pa/m,
+- **The pressure scale.** Figure 8's slope over \|x\| < 0.4 m is −568.6 Pa/m,
   against −564.5 Pa/m for the printed −0.0855 σu₀B₀² with the pinned PbLi:
   0.8 %, gated within 1 %. It cannot tell the pinned σ from Martelli's, 0.4 %
   away.
 - **The heated width.** The energy balance with the full outer width heated
-  gives 310.12 °C. That is the upper edge of Figure 17's outlet band
-  (310.08–310.15 °C): never below its lower edge, and at most 0.014 K above
-  its upper one, within a pixel.
-- **The length in Nu.** Figure 38's `T_w − T_b` at x = 0.29 m is 19.23 K, so
+  gives 310.12 °C. Over Figure 17's outlet plateau (310.08–310.15 °C), every
+  column read, it lies inside the band to half a pixel either way: at most
+  0.08 px below its lower edge and 0.42 px above its upper. A 46 mm patch
+  would be 0.8 K off.
+- **The length in Nu.** Figure 38's `T_w − T_b` at x = 0.29 m is 19.28 K, so
   `Nu = q'' a / (k (T_w − T_b))` is 2.34 with L = a. That lies inside Figure
-  18's band there, 2.24–2.42 (Nu on L = a), and inside its acceptance band
+  18's band there, 2.23–2.41 (Nu on L = a), and inside its acceptance band
   (`band_misfit`); L = 2a would double it.
 - **The printed "Nu → 2.45"** (p. 10, on L = a) matches Figure 18's codes near
   x = 0.3 m, where their band reaches 2.48. It is about 4 % above OF_KIT's
