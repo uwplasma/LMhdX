@@ -1403,6 +1403,17 @@ The statuses are:
 | Thermal design (5.5) | screening study, outside the library | the duct-optimization study's Stage 3 and v2, summarized in the duct-design tutorial's record | Case P, forced convection, developed peaks; no entrance, buoyancy or solid walls; the example still sizes by the velocity bound |
 | Conjugate walls, evolving open coupling, Mistrangelo et al. 2025 | pending | — | step 5.4 |
 
+**Open blockers** (known defects that bound the claims above):
+- the stabilised transient momentum step does not keep a pressure-balanced
+  state at rest with the field along `y`: it picks up a spurious velocity that
+  shrinks with the time step;
+- the momentum reconstruction on stretched and periodic grids uses raw index
+  differences and mirrored end widths.
+
+Steady and held-flow results are not affected: thermal transport on a held
+flow is supported, and the validation of thermal transport on a moving flow is
+blocked on the corrected momentum step.
+
 **Interfaces of a thermal run (5.6, after #267).**
 
 - `lmhdx.io.thermal_run_from_toml` reads a parsed TOML document and checks
@@ -1421,15 +1432,17 @@ bound on the host to its problem's properties, time step, boundary data and
 precision. A gradient is supported only in what the step or solve takes as
 input:
 
-| Input | Path | Tested against |
-|---|---|---|
-| initial temperature | `advance_thermal`, plain and checkpointed | central differences within 1e-5, upwind and van Leer; the checkpointed gradient equal to the plain one within 1e-12 |
-| external heat source | `advance_thermal` | central differences within 1e-5, both schemes |
-| reservoir temperature | open duct on a held flow | central differences within 1e-8 (upwind) and 1e-7 (van Leer) |
-| field scale, through the steady velocity | `developed_heat` after `solve_steady_state` | central differences within 1e-5 (`dNu`) |
-| heat source and axial gradient `γ` | `developed_heat` | stated in `docs/physics/thermal.md`, not yet tested |
-| velocity (initial, or the held flow) | `advance_thermal`, in the state | supported, not yet tested |
-| conductivity, heat capacity, `σ`, `β`, `g`, `T_r`, the magnetic field, density, viscosity, `dt`, geometry, boundary data | rebuild only | not differentiable through a prepared step: rebuild the problem and the step (and `thermal_boundary` when `k` or a flux changes, since a flux is stored as `q/k`) |
+| Input | Kind | Path | Tested against |
+|---|---|---|---|
+| initial temperature | leaf | `advance_thermal`, plain and checkpointed | central differences within 1e-5, upwind and van Leer; the checkpointed gradient equal to the plain one within 1e-12 |
+| external heat source | leaf | `advance_thermal` | central differences within 1e-5, both schemes |
+| reservoir temperature | leaf | open duct on a held flow | central differences within 1e-8 (upwind) and 1e-7 (van Leer) |
+| field scale, through the steady velocity | leaf | developed duct after the steady solve | central differences within 1e-5 (`dNu`) |
+| heat source and axial gradient `γ` | leaf | developed duct | stated in `docs/physics/thermal.md`, not yet tested |
+| velocity (initial, or the held flow) | leaf | the thermal state | supported, not yet tested |
+| the flow, for the developed duct at a uniform wall temperature (pending) | leaf | its eigenvalue | the first derivative of Nu at a converged solve only; no profile sensitivity, no second derivative |
+| wall conductance and wall thickness | planned | the 2.0 problem, as traced leaves | — |
+| conductivity, heat capacity, `σ`, `β`, `g`, `T_r`, the magnetic field, density, viscosity, `dt`, geometry, boundary data | rebuild only | bound on the host by a prepared step | not differentiable through it: rebuild the problem and the step (and the boundary data when `k` or a flux changes, since a flux is stored as `q/k`) |
 
 **Size.** The 2026-10-19 log row's remaining target, about 1,100 lines in
 `thermal.py`, is retired. A thermal change is judged on:
