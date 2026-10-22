@@ -72,6 +72,49 @@ tie exactly there; before 5.4b the resolved path split those ties by rounding,
 unevenly about the duct's middle, which moved a mean velocity by up to 1.4e-4
 where the two walls' materials differ.
 
+**The nullspace contract.** The charge balance through insulated walls is
+singular, its null mode the constants. The solve adds `a V (V . x)/sum V` and
+removes the volume mean after, so the gauge removes the constants and nothing
+else.
+- A right-hand side whose volume mean exceeds rounding, a net source, is
+  refused: the solve returns NaN rather than absorbing it.
+- `VariableHelmholtz.defect` reports the mean that would have been removed.
+  For the charge balance it is rounding, 1e-15 of the right-hand side.
+
+**Charge, current and work** (`tests/test_core3d.py`):
+- The currents' divergence vanishes in every cell, fluid and wall, to the
+  solve's 1e-13.
+- The walls carry current, and the insulated outer faces carry none.
+- The Lorentz work is minus the fluid's and the walls' Joule dissipation, to
+  1e-9.
+
+**The walls' Joule heat is omitted, and measured.** The thermal step deposits
+the fluid's Joule heat only. On plan step 5.4's developed section (Case 1, 48
+fluid cells, the pinned steel), the walls dissipate 84 % of the Joule heat:
+0.029 W/m, against the 2000 W/m that heats the duct, or 1.5e-5. Deposited, it
+would raise the bulk temperature by under 1e-3 K of its 10 K, far inside
+Figure 6's digitizing uncertainty of 0.064 K.
+
+**A published number.** Hunt's duct at Ha 300 has conducting Hartmann walls of
+$c = 0.05$ and insulating side walls.
+- Rogerio's digest attributes $dp/dx = 374.897$ at Re 10 to Ni et al. (2007),
+  not checked against the paper here. That is
+  $(Ha^2/Re)\,K$ for $K = dp/dx/(\sigma u B^2) = 0.0416552$, and the
+  spectral solve of `validation.shercliff` gives 0.0416622, 0.017 % away.
+- On 48 cells the thin-wall model is 0.48 % below the number.
+- Solid walls of that $c$, $a/10$ and $a/20$ thick, sit 2.7 % and 0.74 % below
+  the thin-wall model, approaching it at second order in the thickness. That is
+  the finite thickness's order-1 % effect.
+
+This runs with the scheduled tests.
+
+**Derivatives.** A solid wall's electrical conductivity is a leaf of the charge
+solve, put into the cells in the trace. Its derivative is tested to the
+derivative standard, with no recompilation for a new value. The steady solve
+builds its walls as constants: a gradient of the pressure drop in a wall's
+conductivity is planned with the wall-conductance work. A traced conductivity
+given to `SolidWall` is refused.
+
 ## Add an analytic field
 
 `MagneticFieldSpec(kind="analytic", fn=...)` accepts a callable that returns a

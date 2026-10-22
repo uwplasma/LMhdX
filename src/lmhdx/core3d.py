@@ -629,6 +629,20 @@ def face_currents(
     and the energy budget cannot drift apart in how they close the wall or scale
     the potential. ``field_scale`` multiplies the imposed field and may be traced.
     """
+    field, conductivities, emfs, motional = _motional(velocity, problem, field_scale)
+    if problem.has_solid_walls:
+        return (*_solid_wall_currents(motional, problem), field)
+    factorization = problem.factorization() if factorization is None else factorization
+    potential, walls = _solve_potential(divergence(motional), problem, factorization)
+    currents = tuple(
+        _closed_current(potential, walls[axis], conductivities[axis], emfs[axis], axis, problem)
+        for axis in range(3)
+    )
+    return potential, currents, field
+
+
+def _motional(velocity, problem: ChannelProblem, field_scale=1.0):
+    """The imposed field, the face conductivities and electromotive forces, and the motional flux ``sigma u x B``."""
     scalar = problem.scalar_conditions
     field = tuple(
         component.replace_data(field_scale * component.data) for component in _imposed_field(problem)
@@ -646,19 +660,11 @@ def face_currents(
         )
         for axis in range(3)
     )
-    if problem.has_solid_walls:
-        return (*_solid_wall_currents(motional, problem), field)
-    factorization = problem.factorization() if factorization is None else factorization
-    potential, walls = _solve_potential(divergence(motional), problem, factorization)
-    currents = tuple(
-        _closed_current(potential, walls[axis], conductivities[axis], emfs[axis], axis, problem)
-        for axis in range(3)
-    )
-    return potential, currents, field
+    return field, conductivities, emfs, motional
 
 
 def _solid_wall_currents(
-    motional: tuple[Field, Field, Field], problem: ChannelProblem
+    motional: tuple[Field, Field, Field], problem: ChannelProblem, walls: dict | None = None
 ) -> tuple[Field, tuple[Field, Field, Field]]:
     """Solve the charge balance through the fluid and its solid walls: the fluid's potential and face currents.
 
@@ -667,6 +673,9 @@ def _solid_wall_currents(
     a resolved wall's has it over the fluid, so the two differ by a constant. The currents ``M - G grad phi`` on
     the fluid's faces include those into the walls, which the Lorentz force leaves out as it does a resolved
     wall's. A solve that does not converge gives NaN, which the step's diagnostics report as not finite.
+
+    ``walls`` maps a solid wall, ``(axis, side)``, to an electrical conductivity in place of its own, which may be
+    traced: the walls' conductivity is then a leaf of the charge solve (:meth:`ConjugateGrid.cells`).
     """
     conjugate, charge = _solid_wall_solve(
         problem.grid,
@@ -675,6 +684,9 @@ def _solid_wall_currents(
         float(problem.conductivity),
         problem.precision,
     )
+    if walls:
+        sigma = conjugate.cells("electrical_conductivity", float(problem.conductivity), walls)
+        charge = charge.with_coefficients(conductivity=sigma)
     padded = tuple(Field(conjugate.padded(flux.data), flux.offset, conjugate.grid) for flux in motional)
     potential, _ = charge.solve(-divergence(padded).data)
     conducted = charge.face_fluxes(potential)

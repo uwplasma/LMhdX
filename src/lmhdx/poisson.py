@@ -1407,6 +1407,7 @@ def _axis_weights(grid: Grid, axis: int, offset_value: float, condition: Boundar
 
 _CELL = (CENTER, CENTER, CENTER)
 _PCG_TOLERANCE = {"float64": 1.0e-11, "float32": 1.0e-5}
+_DEFECT = {"float64": 1.0e-10, "float32": 1.0e-4}  # a singular right-hand side's mean, of its largest entry
 
 
 @dataclass(frozen=True)
@@ -1424,8 +1425,8 @@ class VariableHelmholtz:
     is symmetric positive definite: an implicit conduction step through solid walls, ``shift`` the cells' ``rho c_p``
     and ``coefficient`` the time step. With ``shift=None`` it is the charge balance through them, insulated or
     periodic everywhere and so singular: only the compatible part of a right-hand side is solved, for zero volume
-    mean, preconditioned by the fast-diagonal Poisson inverse. ``conditions`` are homogeneous; boundary data enter
-    through :meth:`lift`.
+    mean, preconditioned by the fast-diagonal Poisson inverse, and a right-hand side with a net source is refused
+    (:meth:`defect`). ``conditions`` are homogeneous; boundary data enter through :meth:`lift`.
     :meth:`with_coefficients` takes other cell values in the trace.
     """
 
@@ -1485,7 +1486,7 @@ class VariableHelmholtz:
         tangent and adjoint solves also from zero. Singular, it solves the operator plus ``a V (V . x) / sum V``,
         positive definite, with the preconditioner exact on the constants; removing the volume mean after leaves
         the compatible part's solution, so every solve converges, a right-hand side compatible only to rounding
-        included.
+        included; one whose volume mean exceeds rounding, a net source the gauge would absorb, gives NaN.
         """
         volumes, singular = jnp.asarray(self.grid.cell_volumes(), rhs.dtype), self.shift is None
         tolerance = _PCG_TOLERANCE[jnp.dtype(rhs.dtype).name] if self.tolerance is None else self.tolerance
@@ -1507,8 +1508,11 @@ class VariableHelmholtz:
         )
         failed = ~(result.converged & jnp.isfinite(result.residual_norm))
         solution = result.x
-        if singular:
+        if singular:  # the gauge removes the constants only: a net source is refused, not absorbed
             solution = solution - jnp.sum(volumes * solution) / total
+            failed = failed | (
+                jnp.abs(self.defect(rhs)) > _DEFECT[jnp.dtype(rhs.dtype).name] * jnp.max(jnp.abs(rhs))
+            )
         # Unconverged, the value is NaN and so are its derivatives in the right-hand side and the coefficients. The
         # implicit adjoint alone returns a zero gradient for a NaN cotangent, since its PCG starts from zero.
         inputs = jnp.sum(rhs) + sum(jnp.sum(g) for g in self.conductances)
@@ -1516,6 +1520,12 @@ class VariableHelmholtz:
             inputs = inputs + jnp.sum(jnp.asarray(self.shift))
         poison = jnp.where(failed, jnp.nan, 0.0) * inputs
         return jnp.where(failed, jnp.nan, solution) + poison, result.iterations
+
+    def defect(self, rhs: jnp.ndarray) -> jnp.ndarray:
+        """The volume mean of ``rhs``, which a singular solve's gauge would remove: rounding for a compatible
+        right-hand side, such as a charge balance through insulated walls, and a net source otherwise."""
+        volumes = jnp.asarray(self.grid.cell_volumes(), rhs.dtype)
+        return jnp.sum(volumes * rhs) / jnp.sum(volumes)
 
 
 def _face_conductances(grid: Grid, conditions, conductivity) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:

@@ -1465,18 +1465,27 @@ def test_walls_build_the_extended_grid_and_its_corners_take_the_nearer_wall():
 
 
 def test_without_a_shift_one_material_is_the_singular_fast_diagonal_inverse():
-    """The charge balance of one conductivity, insulated outside: PCG is the fast-diagonal Poisson inverse in one
-    iteration, the right-hand side's incompatible mean removed and the solution's mean zero."""
+    """The nullspace contract of the charge balance, insulated outside. The operator is singular on the constants,
+    so the solve adds ``a V (V . x)/sum V`` and removes the volume mean after. A compatible right-hand side gives the
+    fast-diagonal Poisson inverse, in one iteration for one material, with zero mean. One with a net source is
+    refused, NaN, rather than absorbed by the gauge, and ``defect`` reports the mean that would have been removed."""
     from lmhdx.poisson import fast_diagonal_poisson
 
     charge = variable_helmholtz(STRETCHED, (WRAP, WALL, WALL), 2.0, None, 1.0)
     rhs = jnp.asarray(np.random.default_rng(7).standard_normal(STRETCHED.shape))
+    rhs = rhs - charge.defect(rhs)
+    assert abs(float(charge.defect(rhs))) <= 1e-15 * float(jnp.max(jnp.abs(rhs)))
     potential, iterations = charge.solve(rhs)
     direct = fast_diagonal_poisson(STRETCHED, (WRAP, WALL, WALL)).solve(Field(-rhs / 2.0, CELL, STRETCHED))
     assert np.asarray(potential) == pytest.approx(
         np.asarray(direct.data), abs=1e-10 * float(jnp.max(jnp.abs(direct.data)))
     )
     assert int(iterations) == 1
+    volumes = STRETCHED.cell_volumes()
+    assert abs(float(np.sum(volumes * np.asarray(potential)))) <= 1e-12 * float(np.sum(volumes))
+    source = rhs + 1e-3
+    assert float(charge.defect(source)) == pytest.approx(1e-3, rel=1e-9)
+    assert np.all(np.isnan(np.asarray(charge.solve(source)[0]))), "a net source was absorbed by the gauge"
     with pytest.raises(ValueError, match="insulated or periodic"):
         variable_helmholtz(STRETCHED, (WRAP, WALL, thermal_boundary("temperature")), 2.0, None, 1.0)
 
