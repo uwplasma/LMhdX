@@ -85,12 +85,12 @@ rows nearest the midplane on each side.
 ## The digitized figures
 
 `src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json` (33 KB) and
-`-case2.json` (30 KB) hold the figures, read by
+`-case2.json` (31 KB) hold the figures, read by
 `python scripts/digitize_mistrangelo.py DIR`. The figures are xmgrace plots
 embedded in the PDF as images, extracted with `pymupdf`
 (`Document.extract_image(xref)`). They are not in the repository, so the
 digitizer is not in the package or in `validation/`. It also writes every
-code's curve to `DIR/mistrangelo2025-case1-curves.json`.
+code's curve to `DIR/mistrangelo2025-case1-curves.json` and `-case2-curves.json`.
 
 **How a figure is read.**
 - **Calibration.** The frame and the major ticks outside it are detected. Two
@@ -108,8 +108,8 @@ code's curve to `DIR/mistrangelo2025-case1-curves.json`.
   markers, Figure 11's stations, Figure 38's branches). Each is simplified to
   within half a pixel and rounded to a tenth of one. The per-code curves are
   not shipped. With the figure images (the paper is CC BY 4.0) they are the
-  release asset `mistrangelo2025-case1-extraction.zip` on
-  `mistrangelo2025-references`.
+  release assets `mistrangelo2025-case1-extraction.zip` and
+  `-case2-extraction.zip` on `mistrangelo2025-references`.
 - **Provenance.** `benchmarks/provenance.json` records the paper's DOI and
   SHA-256, and each file's SHA-256 with the extraction date and the
   digitizer's SHA-256, and the release asset's (`extraction`). A test checks
@@ -140,7 +140,7 @@ error.
 | 15 | φ on the interface | none | most of the data fits well together (p. 10) | the paper |
 | 16 | φ across, x = 0 | FLUENT_UK | a slight deviation (p. 10) | the paper |
 | 17 | bulk T, eq. 6 | FLUENT_UK | non-physical (p. 10) | the paper |
-| 18 | Nu, eq. 7 | FLUENT_UK | as p. 10 says of Figure 16 | my reading |
+| 18 | Nu, eq. 7, on L = a | FLUENT_UK | as p. 10 says of Figure 16 | my reading |
 | 19 | E_t, eq. 8 (log) | FLUENT_UK, CFX; COMSOL not shown | as before (p. 10); CFX's diffusion (p. 16) | my reading |
 | 38 | OF_KIT's T_w and T_b, both cases | no band | one code (p. 16) | — |
 
@@ -163,9 +163,47 @@ error.
 
 ### Case 2
 
-Case 2 is reported, not gated (ADR 0009 D35). COMSOL's outlet backflow (pp. 12
-and 14) is kept out of the bands of Figures 23, 24 and 30–32, which stop at
-x = 0.7 m.
+Case 2 is a statistical target, reported and not gated (ADR 0009 D35): a
+time-dependent flow whose figures are time averages. COMSOL's outlet backflow
+(pp. 12 and 14) is kept out of the bands of Figures 23, 24 and 30–32, which stop
+at x = 0.7 m.
+
+**The reference runs differ** (Tables 2–5, section 4), and those differences
+are part of the codes' spread. Each code chose its own domain, inlet and outlet:
+
+| Code | Time scheme | Δt (s) | Axial cells | Inlet | Outlet | Length (m) | Averaged over (s) |
+|:--|:--|:--|:--|:--|:--|--:|--:|
+| FLUENT_CIEMAT | first-order implicit | not given | 141, uniform | developed laminar | p = 0; extra viscosity in the last 0.2 m; backflow allowed | 2.3 | 60 |
+| FLUENT_UK | second-order implicit | not given | 287 | ∂ₓu = 0, p = 0 | fixed mass flow | 3 | 50 |
+| CFX | backward Euler | 0.015, the adaptive step's final value | 450, uniform | uniform u | opening, backflow allowed; mean p = 0; T from the energy balance | 2.25 | 225 |
+| OF_ORNL | forward Euler | not given | 230, uniform | uniform u | ∂ₓu = 0, p = 0; extra viscosity in the last 0.2 m | 2.3 | 100 |
+| OF_KIT | second-order backward | 0.01 to 0.004, by mesh | 700 | developed turbulent | convective, ∂ₜu + u∂ₓu = 0 | 3 | 450 |
+| COMSOL | second-order backward | not given | 300 | uniform u | ∂ₓu = 0, p = 0 | 2.5 | 50 |
+
+Every inlet is at 300 °C. No code reports a burn-in or a measure of its
+averages' statistical convergence, and the windows differ ninefold.
+
+**LMhdX's Case 2 protocol, declared before any run.**
+- **The set-up.** Each result records its solver, time step, mesh, domain,
+  inlet and outlet: the configuration that 5.4d's outlet-length study settles
+  (ADR 0009 D37).
+- **Burn-in.** Averaging starts after one flow-through of the domain at u₀, and
+  once two consecutive 50 s means move by under 1 % of the bulk rise (0.76 K).
+  This applies to both the outlet bulk temperature and the heated wall's
+  temperature at x = 0.
+- **The window.** At least 450 s, the longest reference window, split into five
+  equal batches.
+- **The statistical error** is the standard error of the five batch means,
+  quoted with every averaged observable.
+- **The comparison** is against the codes' spread, widened by the digitizing
+  uncertainty and by LMhdX's discretization and statistical errors. It is
+  reported, not gated.
+- **Fixed in advance.** If the burn-in or the window changes after a first
+  comparison, the old outcome and the reason stay in the record.
+- **Not before the corrected momentum step.** Case 2 is a moving, buoyant flow.
+  The stabilised transient step does not keep a pressure-balanced rest state
+  with the field along `y`. No Case 2 result is claimed until that step is
+  corrected, or until a time-step refinement shows the effect is small here.
 
 | Figure | Quantity | Left out of the band | Why (page) | Chosen by |
 |:--|:--|:--|:--|:--|
@@ -181,14 +219,19 @@ x = 0.7 m.
 | 33 | φ across, x = 0 | CFX | good agreement (p. 15), but CFX is offset | my reading |
 | 34 | bulk T, eq. 6 | OF_ORNL, COMSOL | unphysical (p. 15, caption; p. 16) | the paper |
 | 35 | E_t, eq. 8 (log, seven decades) | CFX, OF_ORNL, COMSOL | CFX differs; OF_ORNL and COMSOL unphysical in the kinetic energy (pp. 15–16) | the paper |
-| 37 | Nu, eq. 7 | CFX, OF_ORNL, COMSOL | CFX differs; the bulk temperatures of OF_ORNL and COMSOL fluctuate (p. 16) | my reading |
+| 37 | Nu, eq. 7, on L = a | CFX, OF_ORNL, COMSOL | CFX differs; the bulk temperatures of OF_ORNL and COMSOL fluctuate (p. 16) | my reading |
+
+**Withdrawn:** a comparison of the section's jets with Figure 26. What read as
+CFX's curve there is the analytical solution's markers, merged in the JPEG, so
+the jets are compared with Figure 13 only.
 
 **Checks of Case 2's figures** (`tests/test_steady.py`):
 - **The velocity, 0.01 m/s.** Figure 30's slope over \|x\| < 0.4 m is
   −191.4 Pa/m, against −189.9 Pa/m for the developed −0.0863 σu₀B₀² at that
   velocity: 0.8 %. The slope scales with u₀ alone, so this fixes it.
 - **The flux, 10 W/cm².** Over 0.5 < x < 0.9 m, the top of Figure 34's band is
-  375.78–375.90 °C, against 375.93 °C for the energy balance. The window starts
+  375.78–375.90 °C, against 375.93 °C for the energy balance, within the
+  record's uncertainty (0.45 K). The window starts
   past the settling of the bulk temperature after the heated zone, about 0.1 m.
   FLUENT_UK's plateau, 4.5 K lower, sets the band's lower edge.
 
