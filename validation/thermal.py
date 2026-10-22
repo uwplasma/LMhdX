@@ -32,7 +32,7 @@ __all__ = [
 CHANDRASEKHAR_TABLE = ((0.0, 1707.8), (10.0, 1945.9), (50.0, 2802.1), (100.0, 3757.4))
 
 
-def h1_series(a: float, b: float, *, slug: bool = False, terms: int = 801) -> float:
+def h1_series(a: float, b: float, slug: bool = False, terms: int = 801) -> float:
     """Nu of the H1 duct ``[-a, a] x [-b, b]`` from double sine series: no discrete operator involved.
 
     Velocity and temperature both solve Dirichlet Poisson problems, so with the
