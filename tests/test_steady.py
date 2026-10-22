@@ -1407,15 +1407,19 @@ def test_plates_at_one_wall_temperature_reach_the_spectral_nusselt_number(hartma
 
 
 def test_the_uniform_wall_temperature_nusselt_number_differentiates_through_the_flow():
-    """d Nu_T / d(field scale) through the steady solve's implicit derivative and the Rayleigh quotient, which
-    needs no derivative of the inverse iteration, against central differences."""
+    """d Nu_T / d(field scale) through the steady solve's implicit derivative and the Rayleigh quotient, at a
+    converged solve. It meets central differences at two steps; its Taylor remainder falls at second order; a
+    tighter tolerance gives the same gradient, and a finer mesh its own central difference. In the velocity, the
+    JVP equals the VJP's dot product. The profile is returned without a gradient."""
     from lmhdx.thermal import developed_wall_temperature
 
-    thermal = _developed_duct(16, hartmann=10.0)
-
-    def nusselt(scale):
+    def result(scale, cells=16, **options):
+        thermal = _developed_duct(cells, hartmann=10.0)
         velocity = solve_steady_state(thermal.flow, field_scale=scale).velocity
-        return developed_wall_temperature(thermal, velocity).nusselt
+        return developed_wall_temperature(thermal, velocity, **options)
+
+    def nusselt(scale, cells=16, **options):
+        return result(scale, cells, **options).nusselt
 
     gradient = float(jax.grad(nusselt)(1.0))
     errors = [
@@ -1423,19 +1427,43 @@ def test_the_uniform_wall_temperature_nusselt_number_differentiates_through_the_
         for h in (1e-3, 1e-4)
     ]
     assert gradient > 0.0 and min(errors) < 1e-5, (gradient, errors)
+    base = float(nusselt(1.0))
+    remainders = [abs(float(nusselt(1.0 + h)) - base - h * gradient) for h in (0.02, 0.01, 0.005)]
+    assert all(3.0 < coarse / fine < 5.0 for coarse, fine in zip(remainders, remainders[1:])), remainders
+    assert float(jax.grad(lambda x: nusselt(x, tolerance=1e-13))(1.0)) == pytest.approx(gradient, rel=1e-9)
+    finer = float(jax.grad(lambda x: nusselt(x, 24))(1.0))
+    assert finer == pytest.approx(float(nusselt(1.001, 24) - nusselt(0.999, 24)) / 0.002, rel=1e-5)
+    assert float(jax.grad(lambda x: jnp.sum(result(x).temperature.data))(1.0)) == 0.0
+    thermal = _developed_duct(16, hartmann=10.0)
+    velocity = solve_steady_state(thermal.flow).velocity
+
+    def of_flow(axial):
+        return developed_wall_temperature(thermal, (velocity[0].replace_data(axial), *velocity[1:])).nusselt
+
+    direction = jnp.asarray(np.random.default_rng(7).standard_normal(velocity[0].data.shape))
+    tangent = float(jax.jvp(of_flow, (velocity[0].data,), (direction,))[1])
+    cotangent = jax.vjp(of_flow, velocity[0].data)[1](jnp.ones(()))[0]
+    assert float(jnp.sum(cotangent * direction)) == pytest.approx(tangent, rel=1e-12)
 
 
 def test_the_inverse_iteration_stops_on_its_tolerance_and_reports_where_it_stopped():
     """Each iteration gains the ratio of the two smallest symmetric eigenvalues: about 13 iterations reach 1e-10
-    in the square duct, about 150 in a 1:8 one, where the ratio is near 1.1. Stopped early, the residual says so."""
+    in the square duct, about 150 in a 1:8 one, where the ratio is near 1.1. Stopped early, or with a cell whose
+    flow runs backward, the solve is not converged and its eigenvalue and Nusselt number are NaN."""
     from lmhdx.thermal import developed_wall_temperature
 
     for cells, aspect, most in ((16, 1.0, 20), (64, 0.125, 200)):
         thermal = _developed_duct(cells, aspect)
         result = developed_wall_temperature(thermal, solve_steady_state(thermal.flow).velocity)
         assert float(result.eigen_residual) <= 1e-10 and int(result.iterations) <= most, result.iterations
-    early = developed_wall_temperature(thermal, solve_steady_state(thermal.flow).velocity, max_iterations=20)
+    velocity = solve_steady_state(thermal.flow).velocity
+    early = developed_wall_temperature(thermal, velocity, max_iterations=20)
     assert int(early.iterations) == 20 and float(early.eigen_residual) > 1e-6
+    assert not bool(early.converged) and np.isnan(float(early.nusselt)) and np.isnan(float(early.eigenvalue))
+    sign = np.ones(velocity[0].data.shape)
+    sign[:, 3, 4] = -1.0  # one cell's flow runs backward
+    backward = (velocity[0].replace_data(velocity[0].data * jnp.asarray(sign)), *velocity[1:])
+    assert np.isnan(float(developed_wall_temperature(thermal, backward).nusselt))
 
 
 def test_the_t_condition_snippet_runs_as_written():

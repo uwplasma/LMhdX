@@ -505,7 +505,12 @@ square duct takes 13 iterations, a 1:8 duct about 150.
 $\Lambda$ is the Rayleigh quotient of the converged $\theta$. The quotient is
 stationary at an eigenfunction, so its derivative in the velocity needs none of
 the iteration's; the gradient through the steady solve's field scale meets
-central differences to 1e-5. A heat-flux wall must be adiabatic, and sources
+central differences to 1e-5, with a Taylor remainder of second order. **The
+supported derivative** is the first derivative of $\Lambda$, the decay rate and
+$Nu_T$ at a converged solve. The profile comes without a gradient (its
+sensitivity needs an implicit eigenvector solve), and second derivatives are not
+supported. An unconverged solve, or a flow that runs backward in a cell, returns
+NaN for $\Lambda$ and $Nu_T$, with `converged` false. A heat-flux wall must be adiabatic, and sources
 and Joule heat are left out, since the T condition has none.
 
 | Duct | Reference | 16 / 32 / 64 cells | Order |
@@ -557,15 +562,17 @@ held = float(developed_wall_temperature(dataclasses.replace(thermal, thermal_con
 print(f"Nu_H {flux:.4f}, Nu_T {held:.4f}")  # 3.65679 to 0.02 %
 ```
 
-| Pipe | Exact | 16 / 32 / 64 radial cells | Order |
+| Pipe: mean Nu on the diameter, $D_h=2R$ | Exact | 16 / 32 / 64 radial cells | Order |
 |:--|--:|:--|:--|
-| uniform flux, Poiseuille | 48/11 = 4.36364 | +0.28 % / +0.071 % / +0.018 % | 2.0 |
-| uniform flux, slug | 8 | −0.39 % / −0.098 % / −0.024 % | 2.0 |
-| one wall temperature, Poiseuille | 3.65679 | +0.077 % / +0.019 % / +0.0049 % | 2.0 |
-| one wall temperature, slug | $j_{0,1}^2=5.78319$ | −0.12 % / −0.031 % / −0.0077 % | 2.0 |
+| H (uniform flux; H1 and H2 coincide in a pipe), Poiseuille | 48/11 = 4.36364 | +0.28 % / +0.071 % / +0.018 % | 2.0 |
+| H, slug | 8 | −0.39 % / −0.098 % / −0.024 % | 2.0 |
+| T (one wall temperature), Poiseuille | 3.65679 | +0.077 % / +0.019 % / +0.0049 % | 2.0 |
+| T, slug | $j_{0,1}^2=5.78319$ | −0.12 % / −0.031 % / −0.0077 % | 2.0 |
 
 The 3.65679 is a radial Chebyshev solve of the same eigenproblem across the
-diameter.
+diameter. The T numbers come from `developed_wall_temperature`, so its derivative
+contract holds here too: the first derivative of $Nu_T$ at a converged solve is
+supported, and the profile's sensitivity is not.
 
 **An MHD Nusselt campaign.** Shercliff's square duct is compared in H1, H2 and
 T against an independent spectral solve, within 0.06 % from Ha 1 to 316, and
