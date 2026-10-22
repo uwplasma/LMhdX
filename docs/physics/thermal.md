@@ -550,6 +550,27 @@ closed form and its developed limit, 140/17; the sweep is rerun with
 :align: center
 ```
 
+**A side-layer jet.** A square duct at Ha 1000 and $Pe=2000$, 24 half-widths
+long, is heated with a uniform flux through one side wall downstream of a cold
+inlet, without Joule heat. With conducting Hartmann walls ($c=0.05$) the side
+layers carry jets at 8.4 times the mean velocity along that wall. The wall's
+hottest point then rises 25 % less above the inlet temperature than in the
+insulating duct: 25.0 % on 32 cells across and 64 along, and 25.0 % again on 40
+and 80. The hot strips left along the corners are where the jet meets the
+Hartmann layers. `python scripts/make_showcase_figures.py --only heated-duct`
+runs both meshes in about two minutes on a laptop GPU.
+
+The flow is held fixed, so this is a heat-transfer result in a given flow, not
+a coupled flow and heat result. The 25 % applies at that flow rate, with thin
+electrical walls and no heat conduction through solid walls. It does not mean a
+lower pumping cost: at the same flow rate, conducting walls raise the MHD
+pressure drop. It is not a conjugate-wall result either.
+
+```{image} ../_static/thermal_heated_duct.webp
+:alt: Heated wall, floor and outlet temperatures of an insulating and a Hunt duct in 3-D as heat enters from one side wall
+:align: center
+```
+
 **Crediting a load.** A design that must remove a given duty is judged on what
 the duty itself does, not on the gross outlet enthalpy. Joule heat and a
 recirculating hot flow also raise the gross figure.
@@ -617,6 +638,24 @@ corrected step is merged; the Q = 0 result does not change.
 
 ```{image} ../_static/thermal_magnetoconvection.webp
 :alt: Critical Rayleigh number against the Chandrasekhar number, the critical rolls at Q = 0 and 1000, and the error against the time step
+:align: center
+```
+
+At $Ra=10^4$ and $Pr=0.1$, a periodic $4\times4\times1$ layer (64 × 64 × 32
+cells, van Leer heat transport, limited momentum transport, Courant number at
+most 0.44) convects in cells that keep rearranging. A horizontal field of
+$Q=1000$ damps every motion that varies along it and leaves steady rolls with
+their axes along the field, as in the NaK experiments of Burr & Müller (2002).
+The movie colours the side walls and the mid-plane by temperature.
+`python scripts/make_showcase_figures.py --only convection` takes three minutes
+on a laptop GPU and about a quarter of an hour on its CPU.
+
+This is a transient run in a field. It shows how the flow evolves, but it is
+not a quantitative result until the stabilised transient step keeps a fluid at
+rest in a field along $y$.
+
+```{image} ../_static/thermal_convection_3d.webp
+:alt: A liquid-metal layer heated from below, without a field and in a horizontal field
 :align: center
 ```
 

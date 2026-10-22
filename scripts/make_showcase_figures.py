@@ -3,12 +3,14 @@
 Run ``python scripts/make_showcase_figures.py``. Outputs go to ``docs/_static``:
 a 256^2 quasi-2D turbulence animation and poster, a Hunt-duct Hartmann-number
 sweep, the validation ladder of the staggered core against the spectral
-reference, the pipe, and three heat-transfer benchmarks against the literature
-(developed Nusselt numbers, the thermal entrance, magnetoconvection onset). The
-duct, pipe and Q2D figures take about three minutes on a laptop CPU, the thermal
-benchmarks about eight; their small solves are pinned to the CPU, where they run
-faster than on a GPU. Sizes are kept under the documented Git media budget;
-production-resolution movies are release assets.
+reference, the pipe, and the heat-transfer set: three benchmarks against the
+literature (developed Nusselt numbers, the thermal entrance, magnetoconvection
+onset) and two 3-D movies (convection with and without a field, a heated duct).
+The duct, pipe and Q2D figures take about three minutes on a laptop CPU, the
+thermal benchmarks about eight; the convection movie takes three minutes on a
+laptop GPU and about a quarter of an hour on its CPU. The small thermal solves
+are pinned to the CPU, where they run faster than on a GPU. Sizes are kept under
+the documented Git media budget.
 """
 
 from __future__ import annotations
@@ -375,11 +377,12 @@ def pipe_sweep(hartmann_numbers: tuple[float, ...] = (0.0, 20.0, 100.0, 400.0)) 
     _save_webp(fig, STATIC / "pipe_flow.webp")
 
 
-# Heat transfer (lmhdx.thermal): three benchmarks against exact solutions and the literature.
+# Heat transfer (lmhdx.thermal): three benchmarks against exact solutions and the literature, two 3-D movies.
 # Journal style: STIX type, ticks inside boxed axes, panel letters. The series colors pass a check for
 # color-vision deficiency on adjacent pairs; exact and published references are drawn in ink.
 SERIES, INK, MUTED = ("#2a78d6", "#eb6834", "#1baf7a"), "#1a1a1a", "#6b6a66"
 OPEN = {"mfc": "white", "mew": 1.6}  # open markers for LMhdX over a reference line
+SOLID = {"projection": "3d", "computed_zorder": False}  # 3-D axes painted back to front
 ROW = {"right": 0.985, "top": 0.9, "bottom": 0.14}  # a row of three panels
 PAPER = {
     "font.family": "STIXGeneral",
@@ -643,6 +646,95 @@ def thermal_onset(chandrasekhar_numbers: tuple[float, ...] = (0.0, 10.0, 100.0, 
         _save_webp(fig, STATIC / "thermal_magnetoconvection.webp", dpi=110, palette=True)
 
 
+def thermal_convection(rayleigh: float = 1.0e4, prandtl: float = 0.1, chandrasekhar: float = 1000.0) -> None:
+    """A liquid-metal layer heated from below: cells without a field, rolls along a horizontal one.
+
+    Three minutes on a laptop GPU (an RTX 3060, float64), about a quarter of an hour on its CPU.
+    """
+    lmhdx.enable_x64()
+    # Free-fall units, with d, U_ff = sqrt(g beta Delta T d) and rho one; Q = sigma B^2 d^2 / (rho nu).
+    field = np.sqrt(chandrasekhar * np.sqrt(prandtl / rayleigh))
+    titles = ("No magnetic field", f"Horizontal field,  Q = {chandrasekhar:g}")
+    runs = {title: _convection(strength, rayleigh, prandtl) for title, strength in zip(titles, (0.0, field))}
+    cmap, norm = plt.get_cmap("RdBu_r"), Normalize(-0.5, 0.5)
+    shape = runs[titles[0]][0].shape
+    faces = [np.linspace(0.0, extent, count + 1) for extent, count in zip((4.0, 4.0, 1.0), shape[1:])]
+    label, conditions = (
+        r"Temperature $(T - T_{mean})/\Delta T$",
+        rf"Ra = $10^{{{np.log10(rayleigh):.0f}}}$,  Pr = {prandtl:g}",
+    )
+    frames = []
+    with plt.rc_context(PAPER):
+        for index in range(3, shape[0], 2):  # every 5 d/U_ff, from when the instability has grown
+            fig = plt.figure(figsize=(6.4, 3.28), dpi=200)  # 1280 px across; small inches keep the text large
+            for column, (title, (temperatures, nusselt)) in enumerate(runs.items()):
+                axis = fig.add_axes((0.5 * column, 0.25, 0.5, 0.62), **SOLID)
+                _cutaway(axis, temperatures[index], faces, cmap, norm, cut=shape[3] // 2)
+                axis.set_box_aspect((4, 4, 1.3), zoom=1.3)
+                axis.view_init(elev=30, azim=-58)
+                axis.set_axis_off()
+                middle = 0.25 + 0.5 * column
+                fig.text(middle, 0.965, title, ha="center", va="top")
+                fig.text(middle, 0.88, f"Nu = {nusselt[index]:.2f}", ha="center", va="top", color=MUTED)
+            axis.quiver(0.6, -0.8, 0.0, 2.4, 0.0, 0.0, color=INK, linewidth=1.5, arrow_length_ratio=0.15)
+            axis.text(3.2, -0.95, 0.0, r"$\mathbf{B}$", color=INK, fontsize=15)
+            fig.text(0.02, 0.04, f"t = {2.5 * (index + 1):.0f} $d/U_{{ff}}$")
+            fig.text(0.98, 0.04, conditions, ha="right", color=MUTED)
+            _colorbar(fig, (0.31, 0.16, 0.38, 0.03), cmap, norm, label, (-0.5, 0, 0.5))
+            frames.append(_rgb(fig))
+    _animate(frames, "thermal_convection_3d", width=720, duration=160)
+
+
+def thermal_heated_duct(hartmann: float = 1000.0, peclet: float = 2000.0) -> None:
+    """A duct heated through one side wall from a cold inlet: a Hunt duct's side-layer jet keeps it cool."""
+    lmhdx.enable_x64()
+    cases = {0.0: _heated_duct(0.0, hartmann, peclet), 0.05: _heated_duct(0.05, hartmann, peclet)}
+    peaks = {conductance: float(case["wall"][-1].max()) for conductance, case in cases.items()}
+    jet, cooler = cases[0.05]["inlet"].max(), 1 - peaks[0.05] / peaks[0.0]
+    finer = {c: float(_heated_duct(c, hartmann, peclet, cells=40)["wall"][-1].max()) for c in cases}
+    print(f"heated duct: jet {jet:.2f} x mean; hottest kT_w/(qa) {peaks}, {cooler:.1%} lower")
+    print(f"  on 40 cells across instead of 32: {finer}, {1 - finer[0.05] / finer[0.0]:.1%} lower")
+    cmap, norm = plt.get_cmap("YlOrRd"), Normalize(0.0, max(peaks.values()))
+    titles = {0.0: ("Insulating walls", "Insulating")}
+    titles[0.05] = ("Conducting Hartmann walls, c = 0.05", "c = 0.05")
+    frames = []
+    with plt.rc_context(PAPER):
+        for frame, time in enumerate(cases[0.0]["time"]):
+            fig = plt.figure(figsize=(7.2, 3.45), dpi=200)  # 1440 px across; small inches keep the text large
+            profiles, walls = fig.add_axes((0.69, 0.62, 0.29, 0.29)), fig.add_axes((0.69, 0.14, 0.29, 0.29))
+            for row, (color, (conductance, case)) in enumerate(zip(SERIES, cases.items())):
+                axis = fig.add_axes((0.02, 0.51 - 0.4 * row, 0.6, 0.52), **SOLID)
+                _duct_cutaway(axis, case, frame, cmap, norm, labels=row == 0)
+                fig.text(0.03, 0.965 - 0.38 * row, titles[conductance][0], fontsize=13, va="top")
+                x, z = (0.5 * (face[1:] + face[:-1]) for face in case["faces"][::2])
+                profiles.plot(z, case["inlet"][case["inlet"].shape[0] // 2], color=color)
+                walls.plot(x, case["wall"][-1].max(axis=1), color=color, lw=0.8, alpha=0.35)
+                walls.plot(x, case["wall"][frame].max(axis=1), color=color, label=titles[conductance][1])
+            _colorbar(fig, (0.2, 0.19, 0.27, 0.025), cmap, norm, r"Temperature $kT/(q\,a)$")
+            fig.text(
+                0.62,
+                0.965,
+                f"Ha = {hartmann:g},  Pe = {peclet:g}",
+                ha="right",
+                va="top",
+                color=MUTED,
+                fontsize=12,
+            )
+            profiles.set(xlim=(-1, 1), xlabel="$z/a$  (heated wall at $-1$)", ylabel=r"$u/\bar u$ at $y = 0$")
+            profiles.set_title("Inlet velocity: side-layer jets", fontsize=12)
+            walls.set(xlim=(0, x[-1]), ylim=(0, 1.08 * norm.vmax), xlabel="Distance from the inlet $x/a$")
+            walls.set_ylabel(r"Hottest $kT_w/(q\,a)$")
+            walls.set_title(rf"Heated wall at t = {time:.0f} $a/\bar u$", fontsize=12)
+            walls.legend(loc="lower right", fontsize=11)
+            for inset in (profiles, walls):
+                inset.tick_params(labelsize=11)
+                inset.xaxis.label.set_size(12)
+                inset.yaxis.label.set_size(12)
+            frames.append(_rgb(fig))
+    # Quality 80: at 70 the encoder left a faint line beside the outlet.
+    _animate(frames, "thermal_heated_duct", width=760, duration=150, quality=80)
+
+
 def _developed_flow(grid, hartmann: float = 0.0, periodic_span: bool = False):
     wall = BoundaryCondition(NEUMANN)
     conditions = (_WRAP, wall, _WRAP if periodic_span else wall)
@@ -705,8 +797,8 @@ def _entrance(hartmann: float, peclet: float = 400.0, cells: int = 64, extent: f
     grid = Grid(axial, across, uniform_faces(1, 0.0, 1.0))
     walls = (thermal_boundary("heat_flux", -1.0, -1.0, conductivity=conductivity), _WRAP)
     end = 1.5 * length + 3.0 / conductivity  # the transit and three diffusion times across the gap
-    temperature, inlet = _held_heat(grid, hartmann, walls, conductivity, end)
-    temperature, heights, speed = temperature[:, :, 0], np.diff(across), inlet[:, 0]
+    temperature, _, inlet = _held_heat(grid, hartmann, 0.0, walls, conductivity, end)
+    temperature, heights, speed = temperature[-1][:, :, 0], np.diff(across), inlet[:, 0]
     bulk = temperature @ (speed * heights) / np.sum(speed * heights)
     wall = 0.5 * (temperature[:, 0] + temperature[:, -1]) + 0.25 * (heights[0] + heights[-1]) / conductivity
     xplus = 0.5 * (axial[1:] + axial[:-1]) / (4.0 * peclet)
@@ -714,16 +806,34 @@ def _entrance(hartmann: float, peclet: float = 400.0, cells: int = 64, extent: f
     return xplus, nusselt, conductivity * (temperature - bulk[:, None]), grid.centers[1]
 
 
-def _held_heat(grid, hartmann, walls, k, end):
+def _heated_duct(
+    conductance: float, hartmann: float, peclet: float, length: float = 24.0, cells: int = 32
+) -> dict:
+    """A square duct whose side wall z = -a takes in a unit flux: ``kT/(q a)`` at 40 frames to t = 60 a/u.
+
+    ``cells`` across the section, on ``duct_problem``'s layer-resolving mesh, and twice as many along it.
+    """
+    section = duct_problem(hartmann=hartmann, cells=cells, wall_conductance=conductance).grid
+    grid = Grid(uniform_faces(2 * cells, 0.0, length), section.y_faces, section.z_faces)
+    conductivity = 2.0 / peclet  # D_h = 2a
+    walls = tuple(thermal_boundary("heat_flux", q, 0.0, conductivity=conductivity) for q in (0.0, -1.0))
+    temperature, times, inlet = _held_heat(grid, hartmann, conductance, walls, conductivity, 60.0, frames=40)
+    temperature, faces = conductivity * temperature, [np.asarray(face) for face in grid.faces]
+    wall = temperature[:, :, :, 0] + 0.5 * (faces[2][1] - faces[2][0])  # the unit flux over half a cell
+    return {"temperature": temperature, "wall": wall, "time": times, "inlet": inlet, "faces": faces}
+
+
+def _held_heat(grid, hartmann, c, walls, k, end, frames=1):
     """Carry heat from a cold inlet on LMhdX's developed profile, mean velocity one, held in an open duct.
 
-    The field is along y; ``walls`` are the thermal conditions of the two transverse axes and ``k`` the
-    conductivity. Van Leer transport; Joule heat left out, so the walls' flux is the only heat. Returns the
-    temperature at time ``end`` and the inlet profile.
+    The field is along y with wall conductance ``c`` on the walls normal to it; ``walls`` are the thermal
+    conditions of the two transverse axes and ``k`` the conductivity. Van Leer transport; Joule heat left
+    out, so the walls' flux is the only heat. Returns ``frames`` temperatures evenly spaced up to time
+    ``end``, their times, and the inlet profile.
     """
     wall = BoundaryCondition(NEUMANN)
     conditions = (_WRAP, wall, _WRAP if walls[1].is_periodic else wall)
-    duct = ChannelProblem(grid, conditions, magnetic_field=(0, hartmann, 0))
+    duct = ChannelProblem(grid, conditions, magnetic_field=(0, hartmann, 0), wall_conductance=(0, c, 0))
     flow = open_duct(duct, float(np.sum(grid.face_areas(0)[0])))
     inlet = np.asarray(flow.conditions[0].lower)
     rest = zero_velocity(flow)
@@ -736,13 +846,18 @@ def _held_heat(grid, hartmann, walls, k, end):
     heat = Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid)
     validate_thermal_inputs(thermal, state, heat, divergence_tolerance=1e-12)
     step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
-    run = jax.jit(lambda start: advance_thermal(step, start, heat, round(end / dt), checkpoint=False))
-    state, history = run(state)
-    if not bool(history.finite.all()):
-        raise RuntimeError("the held-flow heat run lost finiteness")
+    steps = max(1, round(end / frames / dt))
+    run = jax.jit(lambda start: advance_thermal(step, start, heat, steps, checkpoint=False))
+    temperatures, times = [], []
+    for _ in range(frames):
+        state, history = run(state)
+        if not bool(history.finite.all()):
+            raise RuntimeError("the held-flow heat run lost finiteness")
+        temperatures.append(np.asarray(state.temperature.data))
+        times.append(float(state.time))
     storage = abs(float(history.storage_rate[-1])) / float(history.advective_heat_out[-1])
-    print(f"held flow Ha {hartmann:g}: {grid.shape} cells, final storage/outflow {storage:.1e}")
-    return np.asarray(state.temperature.data), inlet
+    print(f"held flow Ha {hartmann:g}, c {c:g}: {grid.shape} cells, final storage/outflow {storage:.1e}")
+    return np.array(temperatures), np.array(times), inlet
 
 
 def _onset_growth(rayleigh: float, dt: float, chandrasekhar: float, wavenumber: float) -> tuple[float, dict]:
@@ -804,6 +919,39 @@ def _draw_roll(axis, mode: dict, width: float) -> None:
     axis.set(xlim=(0, width), ylim=(0, 1), yticks=[0, 1], ylabel="$z/d$", aspect="equal")
 
 
+def _convection(field: float, rayleigh: float, prandtl: float, cells: int = 64, end: float = 150.0):
+    """A periodic 4 x 4 x 1 layer between rigid isothermal plates in free-fall units, from a perturbed rest.
+
+    A horizontal field ``field`` along x. Every 2.5 time units: the temperature and the Nusselt number at the
+    hot plate. Van Leer heat transport and limited momentum transport, both inside their Courant limits.
+    """
+    dt, every = 0.0125, 2.5
+    grid = Grid(uniform_faces(cells, 0, 4), uniform_faces(cells, 0, 4), uniform_faces(cells // 2, 0, 1))
+    conditions = (_WRAP, _WRAP, BoundaryCondition(NEUMANN))
+    motion = {"viscosity": np.sqrt(prandtl / rayleigh), "dt": dt, "advection": "limited"}
+    flow = ChannelProblem(grid, conditions, magnetic_field=(field, 0.0, 0.0), **motion)
+    plates, diffusivity = thermal_boundary("temperature", 0.5, -0.5), 1.0 / np.sqrt(rayleigh * prandtl)
+    buoyancy = {"expansion_coefficient": 1.0, "gravity": (0.0, 0.0, -1.0), "advection": "van_leer"}
+    thermal = ThermalProblem(flow, (_WRAP, _WRAP, plates), 1.0, diffusivity, 0.0, **buoyancy)
+    z = np.asarray(grid.centers[2])[None, None, :]
+    noise = np.random.default_rng(7).standard_normal(grid.shape)
+    state = initial_thermal_state(thermal, 0.5 - z + 1e-3 * noise * np.sin(np.pi * z))
+    heat = state.temperature.replace_data(jnp.zeros(grid.shape))
+    validate_thermal_inputs(thermal, state, heat, divergence_tolerance=1e-12)
+    step = build_thermal_step(thermal, dtype=jnp.float64)
+    run = jax.jit(lambda start: advance_thermal(step, start, heat, round(every / dt), checkpoint=False))
+    temperatures, nusselt, courant = [], [], 0.0
+    for _ in range(round(end / every)):
+        state, history = run(state)
+        courant = max(courant, float(history.advective_cfl.max()))
+        if not bool(history.finite.all()) or courant > 0.5:
+            raise RuntimeError(f"the convection run left its envelope: Courant {courant:.3f}")
+        temperatures.append(np.asarray(state.temperature.data, dtype=np.float32))
+        nusselt.append(float(np.mean(0.5 - temperatures[-1][:, :, 0])) * cells)  # over half a cell
+    print(f"convection, field {field:.3g}: largest Courant {courant:.3f}, Nu at the end {nusselt[-1]:.3f}")
+    return np.array(temperatures), np.array(nusselt)
+
+
 def _panel(axis, letter: str) -> None:
     """A journal-style panel letter at the top left."""
     style = {"transform": axis.transAxes, "fontsize": 15, "fontweight": "bold"}
@@ -832,12 +980,73 @@ def _paint(axis, x, y, z, colors) -> None:
     axis.plot_surface(x, y, z, facecolors=colors, **style)
 
 
+def _face(axis, normal: int, position: float, u, v, values, cmap, norm) -> None:
+    """Paint ``values`` on the plane ``normal = position``; ``u`` and ``v`` are the faces along the others."""
+    mesh = list(np.meshgrid(u, v, indexing="ij"))
+    mesh.insert(normal, np.full_like(mesh[0], position))
+    _paint(axis, *mesh, cmap(norm(values)))
+
+
+def _cutaway(axis, temperature, faces, cmap, norm, cut: int) -> None:
+    """A box cut open at its ``cut``-th face along z: four side walls and the slice, back to front."""
+    x, y, z = faces[0], faces[1], faces[2][: cut + 1]
+    for normal, position, u, v, values in (
+        (0, x[0], y, z, temperature[0, :, :cut]),
+        (1, y[-1], x, z, temperature[:, -1, :cut]),
+        (2, z[-1], x, y, temperature[:, :, cut - 1]),
+        (0, x[-1], y, z, temperature[-1, :, :cut]),
+        (1, y[0], x, z, temperature[:, 0, :cut]),
+    ):
+        _face(axis, normal, position, u, v, values, cmap, norm)
+    axis.set(xlim=(x[0], x[-1]), ylim=(y[0], y[-1]), zlim=(0.0, 2.0 * z[-1]))
+
+
+def _duct_cutaway(axis, case: dict, frame: int, cmap, norm, labels: bool) -> None:
+    """The duct cut open toward the viewer: the heated side wall behind, the bottom wall, the outlet section.
+
+    Display axes: x along the duct, ``-z`` into the page (the heated wall z = -a behind), the field's y up.
+    """
+    x, y, z = case["faces"]
+    depth, temperature = -z[::-1], case["temperature"][frame][:, :, ::-1]
+    _face(axis, 1, 1.0, x, y, case["wall"][frame], cmap, norm)
+    _face(axis, 2, -1.0, x, depth, temperature[:, 0, :], cmap, norm)
+    _face(axis, 0, x[-1], depth, y, temperature[-1].T, cmap, norm)
+    for start, end in (((0, -1, -1), (0, 1, -1)), ((0, 1, -1), (0, 1, 1)), ((0, 1, 1), (x[-1], 1, 1))):
+        axis.plot(*zip(start, end), color=MUTED, lw=0.7)
+    if labels:
+        axis.text(x[-1] * 0.5, 1.0, 1.25, "Heated wall", color=MUTED, fontsize=11, ha="center")
+        axis.text2D(0.0, 0.42, "Flow →", transform=axis.transAxes, color=INK, fontsize=12)
+        axis.text2D(0.0, 0.55, r"↑ $\mathbf{B}$", transform=axis.transAxes, color=INK, fontsize=13)
+    axis.set(xlim=(0, x[-1]), ylim=(-1, 1), zlim=(-1, 1))
+    axis.set_box_aspect((x[-1] / 2.4, 2, 2), zoom=1.12)
+    axis.view_init(elev=22, azim=-62)
+    axis.set_axis_off()
+
+
 def _colorbar(fig, rect, cmap, norm, label: str, ticks=None) -> None:
     mappable = plt.cm.ScalarMappable(norm, cmap)
     bar = fig.colorbar(mappable, cax=fig.add_axes(rect), orientation="horizontal", ticks=ticks)
     bar.set_label(label, fontsize=12.5)
     bar.ax.tick_params(labelsize=11, direction="out", top=False)
     bar.ax.minorticks_off()
+
+
+def _rgb(fig) -> np.ndarray:
+    fig.canvas.draw()
+    frame = np.asarray(fig.canvas.buffer_rgba())[:, :, :3].copy()
+    plt.close(fig)
+    return frame
+
+
+def _animate(frames: list, name: str, width: int, duration: int, quality: int = 45) -> None:
+    """An animated WebP, each frame downsampled to ``width`` pixels for smooth edges; ``minimize_size`` stores
+    only what changes between frames."""
+    height = round(frames[0].shape[0] * width / frames[0].shape[1])
+    images = [Image.fromarray(frame).resize((width, height), Image.LANCZOS) for frame in frames]
+    options = {"duration": duration, "loop": 0, "quality": quality, "method": 6, "minimize_size": True}
+    path = STATIC / f"{name}.webp"
+    images[0].save(path, save_all=True, append_images=images[1:], **options)
+    print(f"wrote {path.name}: {len(images)} frames, {path.stat().st_size / 1024:.0f} KiB")
 
 
 RESULTS = Path(__file__).resolve().parents[1] / "benchmarks" / "results"
@@ -976,7 +1185,13 @@ def _save_webp(fig: plt.Figure, path: Path, dpi: int = 120, palette: bool = Fals
     print(f"wrote {path.name}: {path.stat().st_size / 1024:.0f} KiB")
 
 
-THERMAL = {"developed": thermal_developed, "entrance": thermal_entrance, "onset": thermal_onset}
+THERMAL = {
+    "developed": thermal_developed,
+    "entrance": thermal_entrance,
+    "onset": thermal_onset,
+    "convection": thermal_convection,
+    "heated-duct": thermal_heated_duct,
+}
 
 
 def main() -> None:

@@ -49,6 +49,10 @@ Core references used by the implemented models and validation contracts include:
   a vertical field (Ch. II and IV); his rigid-plate values are quoted from
   A. Basak and K. Kumar, “A model for Rayleigh–Bénard magnetoconvection,”
   [arXiv:1508.02493](https://arxiv.org/abs/1508.02493), 2015, Table I.
+- U. Burr and U. Müller, “Rayleigh–Bénard convection in liquid metal layers
+  under the influence of a horizontal magnetic field,” *Journal of Fluid
+  Mechanics*, 2002 — the field's alignment of convection rolls shown in the
+  convection movie.
 - I. Celik et al., “Procedure for estimation and reporting of uncertainty due
   to discretization in CFD applications,” *Journal of Fluids Engineering* 130,
   2008, [doi:10.1115/1.2960953](https://doi.org/10.1115/1.2960953) — the

@@ -166,44 +166,47 @@ python examples/fringe_duct_example.py
 
 ## Heat transfer
 
+![A liquid-metal layer heated from below, without a field and in a horizontal field](docs/_static/thermal_convection_3d.webp)
+
+*Liquid metal heated from below, at Ra = 10⁴ and Pr = 0.1. Without a field the
+convection cells keep rearranging. A horizontal field (the arrow) leaves
+straight rolls lined up with it, as in liquid-metal experiments (Burr & Müller
+2002). The movie shows how the flow evolves; it is not a quantitative result.*
+
 `lmhdx.thermal` adds a temperature field to the flow solver. Heat conducts
 through the fluid, is carried along by the flow, can be released by the
 currents as Joule heating, and can drive buoyant flow. Every time step checks
-that the heat budget balances. The module is still research stage; the
-[heat transport page](https://lmhdx.readthedocs.io/en/latest/physics/thermal.html)
-covers it in full. The Nusselt number, Nu, measures how well the flow carries
-heat away from a wall.
+that the heat budget balances. The module is still research stage. The
+Nusselt number, Nu, measures how well the flow carries heat away from a wall.
+The [heat transport page](https://lmhdx.readthedocs.io/en/latest/physics/thermal.html)
+shows each of these comparisons with its figure. All of them are against exact
+or independent solutions, so they verify the solver; none is a comparison with
+experiment.
+- Far down a heated duct, LMhdX matches the exact mean Nusselt number of
+  rectangular ducts of any aspect ratio to within 0.35 % (the H1 condition, on
+  the hydraulic diameter). Between Hartmann plates heated with a uniform flux it
+  matches the closed form to within 0.2 % from Ha 1 to 1000, and the error
+  falls at second order as the mesh is refined.
+- A vertical field delays the onset of convection in a layer heated from below.
+  LMhdX follows Chandrasekhar's tenfold rise in the critical Rayleigh number
+  from Q = Ha² = 0 to 1000 to within 0.9 %, once extrapolated in the time step.
+- In a duct at Ha 1000 heated through one side wall, with the flow held fixed,
+  conducting Hartmann walls drive side-layer jets that lower the wall's hottest
+  rise by about a quarter. That is at a fixed flow rate; the same walls also
+  raise the pressure drop.
 
-![Velocity and temperature of a square duct at Ha 0 and 100 in 3-D, Nusselt numbers against aspect ratio and Hartmann number, and mesh convergence](docs/_static/thermal_developed_duct.webp)
-
-Far down a heated duct the temperature profile stops changing shape. There,
-LMhdX matches the exact mean Nusselt number of rectangular ducts of any aspect
-ratio to within 0.35 % (uniform axial heating with the wall at one temperature
-around the section, the H1 condition, based on the hydraulic diameter). Between
-Hartmann plates heated with a uniform flux, it matches the closed-form solution
-to within 0.2 % from Ha 1 to 1000, and the error falls at second order as the
-mesh is refined.
-
-![Critical Rayleigh number against the field strength, the critical rolls at Q = 0 and 1000, and the error against the time step](docs/_static/thermal_magnetoconvection.webp)
-
-A vertical magnetic field delays the onset of convection in a layer heated from
-below. Chandrasekhar's theory predicts a tenfold rise in the critical Rayleigh
-number between Q = Ha² = 0 and 1000, and LMhdX follows it to within 0.9 % once
-the result is extrapolated in the time step.
-
-These comparisons are against exact or independent solutions, so they verify
-the solver; none of them is a comparison with experiment. The test suite runs
-the duct, plate and Q = 0 onset cases on fixed meshes and checks the reference
-solutions themselves ([`validation/thermal.py`](validation/thermal.py)). The
-full sweeps in the figures, and a comparison of the thermal entrance with the
-Graetz solution, take about eight minutes on a laptop CPU:
+The test suite runs the duct, plate and Q = 0 onset cases on fixed meshes and
+checks the reference solutions themselves
+([`validation/thermal.py`](validation/thermal.py)). The figures and movies are
+regenerated with
 
 ```console
-python scripts/make_showcase_figures.py --only developed   # or entrance, onset
+python scripts/make_showcase_figures.py --only developed   # or entrance, onset, convection, heated-duct
 ```
 
-Each figure's inputs and results are saved next to it, in
-[`docs/_static/data/`](docs/_static/data/).
+The three figures take about eight minutes on a laptop CPU, and each movie a
+few minutes on a laptop GPU. Each figure's inputs and results are saved next to
+it, in [`docs/_static/data/`](docs/_static/data/).
 
 ## Design with gradients
 
