@@ -10,14 +10,13 @@ The duct, pipe and Q2D figures take about three minutes on a laptop CPU, the
 thermal benchmarks about eight; the convection movie takes three minutes on a
 laptop GPU and about a quarter of an hour on its CPU. The small thermal solves
 are pinned to the CPU, where they run faster than on a GPU. Sizes are kept under
-the documented Git media budget; production-resolution movies are release assets.
+the documented Git media budget.
 """
 
 from __future__ import annotations
 
 import argparse
 import dataclasses
-import hashlib
 import json
 from pathlib import Path
 
@@ -388,9 +387,9 @@ ROW = {"right": 0.985, "top": 0.9, "bottom": 0.14}  # a row of three panels
 PAPER = {
     "font.family": "STIXGeneral",
     "mathtext.fontset": "stix",
-    "font.size": 10.5,
-    "axes.titlesize": 10.5,
-    "legend.fontsize": 9,
+    "font.size": 13.5,
+    "axes.titlesize": 13.5,
+    "legend.fontsize": 11.5,
     "legend.frameon": False,
     **{f"{a}tick.direction": "in" for a in "xy"},
     **{f"{a}tick.minor.visible": True for a in "xy"},
@@ -447,8 +446,8 @@ def thermal_developed() -> None:
     )
 
     with plt.rc_context(PAPER):
-        fig = plt.figure(figsize=(13.2, 8.4))
-        outer = fig.add_gridspec(2, 1, hspace=0.3, left=0.05, right=0.985, top=0.95, bottom=0.075)
+        fig = plt.figure(figsize=(13.2, 8.8))
+        outer = fig.add_gridspec(2, 1, hspace=0.45, left=0.05, right=0.985, top=0.93, bottom=0.075)
         top = outer[0].subgridspec(1, 3, width_ratios=[1.0, 1.0, 1.05], wspace=0.18)
         bottom = outer[1].subgridspec(1, 2, width_ratios=[1.25, 1.0], wspace=0.22)
         views = {0.0: "H1 square duct, no field", 100.0: "The same duct at Ha = 100"}
@@ -464,9 +463,9 @@ def thermal_developed() -> None:
             mesh = np.meshgrid(*result.temperature.grid.centers[1:], indexing="ij")
             _paint(axis, *mesh, u / bulk, plt.get_cmap("inferno")(theta / np.min(theta)))
             axis.set(zlim=(0.0, 2.2), zticks=[0, 1, 2])
-            axis.set_title(f"{title}:  $Nu_{{H1}}$ = {float(result.nusselt):.2f}", pad=0)
+            axis.set_title(f"{title}\n$Nu_{{H1}}$ = {float(result.nusselt):.2f}", pad=0)
             _panel(axis, "ab"[index])
-        label = r"Height: axial velocity $u/\bar{u}$.   Color: temperature $(T_w - T)/(T_w - T_{center})$."
+        label = r"Temperature $(T_w - T)/(T_w - T_{center})$"
         _colorbar(fig, (0.14, 0.535, 0.36, 0.012), "inferno", Normalize(0.0, 1.0), label)
 
         axis = fig.add_subplot(top[2])
@@ -474,18 +473,20 @@ def thermal_developed() -> None:
         exact, fit = [h1_series(1.0, a) for a in alpha], shah_london_h1(alpha)
         axis.plot(alpha, exact, color=INK, lw=1.4, label="Exact double-sine series")
         axis.plot(alpha, fit, "--", color=SERIES[1], lw=1.4, label="Shah & London (1978) fit")
-        axis.plot(aspects, rectangles, "o", color=SERIES[0], ms=6.5, label="LMhdX", **OPEN)
+        axis.plot(
+            aspects, rectangles, "o", color=SERIES[0], ms=6.5, label="LMhdX, 32 cells across $b$", **OPEN
+        )
         axis.axhline(140.0 / 17.0, color=MUTED, lw=0.8, ls=":")
-        axis.text(0.5, 140 / 17 + 0.08, "Parallel plates, 140/17", ha="center", color=MUTED, size=9)
+        axis.text(0.5, 140 / 17 + 0.08, "Parallel plates, 140/17", ha="center", color=MUTED, size=11.5)
         axis.set(xlim=(0, 1.02), ylim=(3.2, 8.75), xlabel="Aspect ratio $b/a$", ylabel="$Nu_{H1}$")
-        axis.set_title(f"Rectangular ducts, 32 cells across $b$: within {100 * worst:.2f} % of exact")
+        axis.set_title(f"Rectangular ducts: within {100 * worst:.2f} % of exact")
         axis.legend(loc="center right", bbox_to_anchor=(1.0, 0.6))
         _panel(axis, "c")
 
         axis = fig.add_subplot(bottom[0])
         line = np.logspace(-1, 3.3, 300)
-        axis.semilogx(line, plate_nusselt(line), color=INK, lw=1.4, label="Hartmann plates, closed form")
-        axis.semilogx(plate_fields, plates, "s", color=SERIES[1], label="Hartmann plates, LMhdX", **OPEN)
+        axis.semilogx(line, plate_nusselt(line), color=INK, lw=1.4, label="Plates, closed form")
+        axis.semilogx(plate_fields, plates, "s", color=SERIES[1], label="Plates, LMhdX", **OPEN)
         axis.semilogx(duct_fields[1:], square[1:], "o-", color=SERIES[0], label="Square duct, LMhdX", **OPEN)
         for value, text in (
             (140 / 17, "Plates, Ha → 0: 140/17"),
@@ -493,20 +494,20 @@ def thermal_developed() -> None:
             (h1_series(1.0, 1.0), "Square, Ha → 0: 3.608"),
             (h1_series(1.0, 1.0, True), "Square, slug flow: 7.114"),
         ):
-            offset, align = (0.1, "bottom") if "slug" in text else (-0.1, "top")
+            offset, align = (0.1, "bottom") if text.startswith("Plates, slug") else (-0.1, "top")
             axis.axhline(value, color=MUTED, lw=0.8, ls=":")
-            axis.text(0.115, value + offset, text, color=MUTED, size=8.5, va=align)
-        axis.set(xlim=(0.1, 2000), ylim=(2.8, 13.2), xlabel="Hartmann number Ha")
-        axis.set_ylabel(r"Nu   (uniform heat flux along the duct, $D_h$-based)")
-        axis.set_title("A transverse field flattens the core and raises Nu toward slug flow")
-        axis.legend(loc="lower right", bbox_to_anchor=(1.0, 0.1))
+            axis.text(0.115, value + offset, text, color=MUTED, size=11, va=align)
+        axis.set(xlim=(0.1, 2000), ylim=(1.8, 13.2), xlabel="Hartmann number Ha")
+        axis.set_ylabel(r"$Nu$  (uniform heat flux, on $D_h$)")
+        axis.set_title("A transverse field raises Nu toward the slug-flow limit")
+        axis.legend(loc="lower right", frameon=True, facecolor="white", edgecolor="none", framealpha=1.0)
         _panel(axis, "d")
 
         axis = fig.add_subplot(bottom[1])
         for (label, values), marker, color in zip(errors.items(), "o^s", (SERIES[0], SERIES[2], SERIES[1])):
             axis.loglog(counts, np.abs(values), marker + "-", color=color, label=label, **OPEN)
         axis.loglog([7.0, 80.0], 0.3 * (np.array([7.0, 80.0]) / 10.0) ** -2.0, "--", color=INK, lw=1.0)
-        axis.text(25, 0.3 * 2.5**-2 * 1.3, "Second order", rotation=-31, size=9, color=INK)
+        axis.text(25, 0.3 * 2.5**-2 * 1.3, "Second order", rotation=-31, size=11.5, color=INK)
         axis.set_xticks(counts, [str(count) for count in counts])
         axis.set_xticks([], minor=True)
         axis.set(xlabel="Cells across the duct", ylabel="Relative error in Nu")
@@ -545,7 +546,7 @@ def thermal_entrance(hartmann_numbers: tuple[float, ...] = (0.0, 10.0, 50.0)) ->
         axis = _axes_3d(fig, grid[0], labels, (24, -122), ((-3, -2), (-1, 0, 1)))
         colors = plt.get_cmap("RdBu_r")(0.5 + 0.5 * theta[keep] / np.max(np.abs(theta[keep])))
         _paint(axis, *np.meshgrid(np.log10(xplus[keep]), y, indexing="ij"), theta[keep], colors)
-        axis.set_title("Temperature above the bulk, Ha = 10", pad=0)
+        axis.set_title("Temperature at Ha = 10", pad=0)
         _panel(axis, "a")
 
         axis = fig.add_subplot(grid[1])
@@ -568,7 +569,7 @@ def thermal_entrance(hartmann_numbers: tuple[float, ...] = (0.0, 10.0, 50.0)) ->
         axis.semilogx(long[0], error, "--", color=SERIES[0], label="Ha = 0, Pe = 1600")
         axis.axhline(0.0, color=MUTED, lw=0.8)
         axis.set(xlim=(2e-4, 0.12), ylim=(-1, 4), xlabel="$x^+$", ylabel="$Nu_x$ against the expansion (%)")
-        axis.set_title("Pe = 400 unless marked: axial conduction")
+        axis.set_title("Axial conduction at Pe = 400")
         axis.legend(loc="upper right")
         _panel(axis, "c")
         _save_webp(fig, STATIC / "thermal_entrance.webp", dpi=110, palette=True)
@@ -615,7 +616,7 @@ def thermal_onset(chandrasekhar_numbers: tuple[float, ...] = (0.0, 10.0, 100.0, 
         axis.set(xlim=(0, 1.2e5), ylim=(1.2e3, 2e6), xlabel="Chandrasekhar number $Q = Ha^2$")
         axis.set_ylabel("Critical Rayleigh number $Ra_c$")
         worst = np.max(np.abs(rows[:, 5] / rows[:, 1] - 1.0))
-        axis.set_title(f"A vertical field delays convection: LMhdX within {100 * worst:.1f} %")
+        axis.set_title(f"Onset in a vertical field: within {100 * worst:.1f} %")
         axis.legend(loc="upper left")
         _panel(axis, "a")
 
@@ -625,21 +626,21 @@ def thermal_onset(chandrasekhar_numbers: tuple[float, ...] = (0.0, 10.0, 100.0, 
             _draw_roll(axis, modes[q], width=4.0)
             exact = rows[list(rows[:, 0]).index(q)]
             title = f"Critical roll at Q = {q:g}:  $a_c$ = {exact[2]:.2f},  $Ra_c$ = {exact[1]:,.0f}"
-            axis.set_title(title, fontsize=10)
+            axis.set_title(title, fontsize=12.5)
             axis.set_xlabel("$x/d$" if row else "")
             if not row:
                 axis.set_xticklabels([])
-                axis.text(-0.13, 1.08, "(b)", transform=axis.transAxes, fontsize=12, fontweight="bold")
+                axis.text(-0.13, 1.08, "(b)", transform=axis.transAxes, fontsize=15, fontweight="bold")
 
         axis = fig.add_subplot(outer[2])
-        steps = (r"$\Delta t_0$", r"$\Delta t_0/2$", r"Richardson in $\Delta t$")
+        steps = (r"$\Delta t_0 = 0.05/(Q + Ra_c^{1/2})$", r"$\Delta t_0/2$", r"Richardson in $\Delta t$")
         for color, column, marker, label in zip(SERIES[::-1], (3, 4, 5), "s^o", steps):
             values = 100 * (rows[:, column] / rows[:, 1] - 1)
             axis.plot(rows[:, 0], values, marker + "-", color=color, label=label, **OPEN)
         axis.axhline(0.0, color=MUTED, lw=0.8)
         axis.set_xscale("symlog", linthresh=10.0, linscale=0.35)
         axis.set(xlim=(0, 1500), xlabel="$Q$", ylabel="$Ra_c$ against the eigenproblem (%)")
-        axis.set_title(r"First order in the time step, $\Delta t_0 = 0.05/(Q + Ra_c^{1/2})$")
+        axis.set_title("First order in the time step")
         axis.legend(loc="center right", bbox_to_anchor=(1.0, 0.6))
         _panel(axis, "c")
         _save_webp(fig, STATIC / "thermal_magnetoconvection.webp", dpi=110, palette=True)
@@ -653,32 +654,33 @@ def thermal_convection(rayleigh: float = 1.0e4, prandtl: float = 0.1, chandrasek
     lmhdx.enable_x64()
     # Free-fall units, with d, U_ff = sqrt(g beta Delta T d) and rho one; Q = sigma B^2 d^2 / (rho nu).
     field = np.sqrt(chandrasekhar * np.sqrt(prandtl / rayleigh))
-    titles = ("No magnetic field", f"Horizontal field along $x$,  Q = {chandrasekhar:g}")
+    titles = ("No magnetic field", f"Horizontal field,  Q = {chandrasekhar:g}")
     runs = {title: _convection(strength, rayleigh, prandtl) for title, strength in zip(titles, (0.0, field))}
     cmap, norm = plt.get_cmap("RdBu_r"), Normalize(-0.5, 0.5)
     shape = runs[titles[0]][0].shape
     faces = [np.linspace(0.0, extent, count + 1) for extent, count in zip((4.0, 4.0, 1.0), shape[1:])]
-    label = (
-        rf"$(T - T_{{mean}})/\Delta T$ on the walls and the mid-plane.  "
-        rf"Ra = $10^{{{np.log10(rayleigh):.0f}}}$, Pr = {prandtl:g}."
+    label, conditions = (
+        r"Temperature $(T - T_{mean})/\Delta T$",
+        rf"Ra = $10^{{{np.log10(rayleigh):.0f}}}$,  Pr = {prandtl:g}",
     )
     frames = []
     with plt.rc_context(PAPER):
         for index in range(3, shape[0], 2):  # every 5 d/U_ff, from when the instability has grown
-            fig = plt.figure(figsize=(8.0, 4.1), dpi=160)
+            fig = plt.figure(figsize=(6.4, 3.28), dpi=200)  # 1280 px across; small inches keep the text large
             for column, (title, (temperatures, nusselt)) in enumerate(runs.items()):
-                axis = fig.add_axes((0.5 * column, 0.16, 0.5, 0.68), **SOLID)
+                axis = fig.add_axes((0.5 * column, 0.25, 0.5, 0.62), **SOLID)
                 _cutaway(axis, temperatures[index], faces, cmap, norm, cut=shape[3] // 2)
-                axis.set_box_aspect((4, 4, 1.3), zoom=1.05)
+                axis.set_box_aspect((4, 4, 1.3), zoom=1.3)
                 axis.view_init(elev=30, azim=-58)
                 axis.set_axis_off()
                 middle = 0.25 + 0.5 * column
-                fig.text(middle, 0.95, title, ha="center", va="top", fontsize=11.5)
-                fig.text(middle, 0.875, f"Nu = {nusselt[index]:.2f}", ha="center", va="top", color=MUTED)
+                fig.text(middle, 0.965, title, ha="center", va="top")
+                fig.text(middle, 0.88, f"Nu = {nusselt[index]:.2f}", ha="center", va="top", color=MUTED)
             axis.quiver(0.6, -0.8, 0.0, 2.4, 0.0, 0.0, color=INK, linewidth=1.5, arrow_length_ratio=0.15)
-            axis.text(3.2, -0.95, 0.0, r"$\mathbf{B}$", color=INK, fontsize=12)
-            fig.text(0.5, 0.95, f"t = {2.5 * (index + 1):.0f} $d/U_{{ff}}$", ha="center", va="top")
-            _colorbar(fig, (0.32, 0.115, 0.36, 0.022), cmap, norm, label, (-0.5, 0, 0.5))
+            axis.text(3.2, -0.95, 0.0, r"$\mathbf{B}$", color=INK, fontsize=15)
+            fig.text(0.02, 0.04, f"t = {2.5 * (index + 1):.0f} $d/U_{{ff}}$")
+            fig.text(0.98, 0.04, conditions, ha="right", color=MUTED)
+            _colorbar(fig, (0.31, 0.16, 0.38, 0.03), cmap, norm, label, (-0.5, 0, 0.5))
             frames.append(_rgb(fig))
     _animate(frames, "thermal_convection_3d", width=720, duration=160)
 
@@ -698,25 +700,39 @@ def thermal_heated_duct(hartmann: float = 1000.0, peclet: float = 2000.0) -> Non
     frames = []
     with plt.rc_context(PAPER):
         for frame, time in enumerate(cases[0.0]["time"]):
-            fig = plt.figure(figsize=(9.6, 4.6), dpi=150)
-            profiles, walls = fig.add_axes((0.67, 0.6, 0.31, 0.32)), fig.add_axes((0.67, 0.12, 0.31, 0.32))
+            fig = plt.figure(figsize=(7.2, 3.45), dpi=200)  # 1440 px across; small inches keep the text large
+            profiles, walls = fig.add_axes((0.69, 0.62, 0.29, 0.29)), fig.add_axes((0.69, 0.14, 0.29, 0.29))
             for row, (color, (conductance, case)) in enumerate(zip(SERIES, cases.items())):
-                axis = fig.add_axes((0.02, 0.47 - 0.45 * row, 0.6, 0.52), **SOLID)
+                axis = fig.add_axes((0.02, 0.51 - 0.4 * row, 0.6, 0.52), **SOLID)
                 _duct_cutaway(axis, case, frame, cmap, norm, labels=row == 0)
-                fig.text(0.03, 0.955 - 0.47 * row, titles[conductance][0], fontsize=11, va="top")
+                fig.text(0.03, 0.965 - 0.38 * row, titles[conductance][0], fontsize=13, va="top")
                 x, z = (0.5 * (face[1:] + face[:-1]) for face in case["faces"][::2])
                 profiles.plot(z, case["inlet"][case["inlet"].shape[0] // 2], color=color)
                 walls.plot(x, case["wall"][-1].max(axis=1), color=color, lw=0.8, alpha=0.35)
                 walls.plot(x, case["wall"][frame].max(axis=1), color=color, label=titles[conductance][1])
-            _colorbar(fig, (0.215, 0.1, 0.24, 0.02), cmap, norm, r"$kT/(q\,a)$")
+            _colorbar(fig, (0.2, 0.19, 0.27, 0.025), cmap, norm, r"Temperature $kT/(q\,a)$")
+            fig.text(
+                0.62,
+                0.965,
+                f"Ha = {hartmann:g},  Pe = {peclet:g}",
+                ha="right",
+                va="top",
+                color=MUTED,
+                fontsize=12,
+            )
             profiles.set(xlim=(-1, 1), xlabel="$z/a$  (heated wall at $-1$)", ylabel=r"$u/\bar u$ at $y = 0$")
-            profiles.set_title(f"Ha = {hartmann:g}: side-layer jets in the Hunt duct", fontsize=10)
+            profiles.set_title("Inlet velocity: side-layer jets", fontsize=12)
             walls.set(xlim=(0, x[-1]), ylim=(0, 1.08 * norm.vmax), xlabel="Distance from the inlet $x/a$")
             walls.set_ylabel(r"Hottest $kT_w/(q\,a)$")
-            walls.set_title(rf"Heated wall, Pe = {peclet:g},  t = {time:.0f} $a/\bar u$", fontsize=10)
-            walls.legend(loc="upper left")
+            walls.set_title(rf"Heated wall at t = {time:.0f} $a/\bar u$", fontsize=12)
+            walls.legend(loc="lower right", fontsize=11)
+            for inset in (profiles, walls):
+                inset.tick_params(labelsize=11)
+                inset.xaxis.label.set_size(12)
+                inset.yaxis.label.set_size(12)
             frames.append(_rgb(fig))
-    _animate(frames, "thermal_heated_duct", width=760, duration=150, quality=70)  # keeps the gradient
+    # Quality 80: at 70 the encoder left a faint line beside the outlet.
+    _animate(frames, "thermal_heated_duct", width=760, duration=150, quality=80)
 
 
 def _developed_flow(grid, hartmann: float = 0.0, periodic_span: bool = False):
@@ -938,9 +954,9 @@ def _convection(field: float, rayleigh: float, prandtl: float, cells: int = 64, 
 
 def _panel(axis, letter: str) -> None:
     """A journal-style panel letter at the top left."""
-    style = {"transform": axis.transAxes, "fontsize": 12, "fontweight": "bold"}
+    style = {"transform": axis.transAxes, "fontsize": 15, "fontweight": "bold"}
     if hasattr(axis, "text2D"):
-        axis.text2D(0.0, 0.97, f"({letter})", **style)
+        axis.text2D(0.0, 1.0, f"({letter})", va="bottom", **style)
     else:
         axis.text(-0.02, 1.03, f"({letter})", ha="right", **style)
 
@@ -998,9 +1014,9 @@ def _duct_cutaway(axis, case: dict, frame: int, cmap, norm, labels: bool) -> Non
     for start, end in (((0, -1, -1), (0, 1, -1)), ((0, 1, -1), (0, 1, 1)), ((0, 1, 1), (x[-1], 1, 1))):
         axis.plot(*zip(start, end), color=MUTED, lw=0.7)
     if labels:
-        axis.text(x[-1] * 0.5, 1.0, 1.25, "Heated wall", color=MUTED, fontsize=9, ha="center")
-        axis.text2D(0.0, 0.42, "Flow →", transform=axis.transAxes, color=INK, fontsize=10)
-        axis.text2D(0.0, 0.55, r"↑ $\mathbf{B}$", transform=axis.transAxes, color=INK, fontsize=11)
+        axis.text(x[-1] * 0.5, 1.0, 1.25, "Heated wall", color=MUTED, fontsize=11, ha="center")
+        axis.text2D(0.0, 0.42, "Flow →", transform=axis.transAxes, color=INK, fontsize=12)
+        axis.text2D(0.0, 0.55, r"↑ $\mathbf{B}$", transform=axis.transAxes, color=INK, fontsize=13)
     axis.set(xlim=(0, x[-1]), ylim=(-1, 1), zlim=(-1, 1))
     axis.set_box_aspect((x[-1] / 2.4, 2, 2), zoom=1.12)
     axis.view_init(elev=22, azim=-62)
@@ -1010,8 +1026,8 @@ def _duct_cutaway(axis, case: dict, frame: int, cmap, norm, labels: bool) -> Non
 def _colorbar(fig, rect, cmap, norm, label: str, ticks=None) -> None:
     mappable = plt.cm.ScalarMappable(norm, cmap)
     bar = fig.colorbar(mappable, cax=fig.add_axes(rect), orientation="horizontal", ticks=ticks)
-    bar.set_label(label, fontsize=9.5)
-    bar.ax.tick_params(labelsize=8.5, direction="out", top=False)
+    bar.set_label(label, fontsize=12.5)
+    bar.ax.tick_params(labelsize=11, direction="out", top=False)
     bar.ax.minorticks_off()
 
 
@@ -1024,20 +1040,13 @@ def _rgb(fig) -> np.ndarray:
 
 def _animate(frames: list, name: str, width: int, duration: int, quality: int = 45) -> None:
     """An animated WebP, each frame downsampled to ``width`` pixels for smooth edges; ``minimize_size`` stores
-    only what changes between frames. The movie is a release asset, written to the untracked
-    ``docs/_static/generated``; its last frame, 480 px wide, is the tracked preview."""
+    only what changes between frames."""
     height = round(frames[0].shape[0] * width / frames[0].shape[1])
     images = [Image.fromarray(frame).resize((width, height), Image.LANCZOS) for frame in frames]
     options = {"duration": duration, "loop": 0, "quality": quality, "method": 6, "minimize_size": True}
-    path = STATIC / "generated" / f"{name}.webp"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = STATIC / f"{name}.webp"
     images[0].save(path, save_all=True, append_images=images[1:], **options)
-    last = Image.fromarray(frames[-1])
-    last.resize((480, round(last.height * 480 / last.width)), Image.LANCZOS).save(
-        STATIC / f"{name}_preview.webp", quality=80, method=6
-    )
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    print(f"wrote {path.name}: {len(images)} frames, {path.stat().st_size / 1024:.0f} KiB, sha256 {digest}")
+    print(f"wrote {path.name}: {len(images)} frames, {path.stat().st_size / 1024:.0f} KiB")
 
 
 RESULTS = Path(__file__).resolve().parents[1] / "benchmarks" / "results"
@@ -1166,8 +1175,8 @@ def _save_webp(fig: plt.Figure, path: Path, dpi: int = 120, palette: bool = Fals
     fig.savefig(png, dpi=dpi)
     image = Image.open(png).convert("RGB")
     if palette:
-        # 128 colors, losslessly, to keep the Git media budget. Median cut keeps a near-white apart from the page.
-        image = image.quantize(128, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+        # 256 colors, losslessly: a colormap has 256. Median cut keeps a near-white apart from the page.
+        image = image.quantize(256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
         image.save(path, lossless=True, quality=100, method=6)
     else:
         image.save(path, quality=82, method=6)
