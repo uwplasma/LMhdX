@@ -1401,7 +1401,10 @@ _PCG_TOLERANCE = {"float64": 1.0e-11, "float32": 1.0e-5}
 
 @dataclass(frozen=True)
 class VariableHelmholtz:
-    """``V (shift x - coefficient div(G grad x))`` on cell-wise coefficients, solved by SOLVAX ``pcg`` (plan D5).
+    """``V (shift x - coefficient div(G grad x))`` on cell-wise coefficients, solved by SOLVAX (plan D5).
+
+    Generic numerics, to move to SOLVAX (uwplasma/SOLVAX#158, ADR 0009 D36); LMhdX keeps the materials and
+    ``conjugate_grid``.
 
     ``G`` is each face's conductance, the harmonic mean of its two half cells (:func:`lmhdx.ops.face_conductivity`),
     so what leaves one cell enters the next; a boundary face takes its cell's, which a Neumann datum, a gradient,
@@ -1449,22 +1452,20 @@ class VariableHelmholtz:
         """Return ``x`` with ``shift x - coefficient div(G grad x) = rhs``, and the PCG iterations; NaN unconverged.
 
         PCG starts from zero and stops at 1e-11 of ``rhs`` in float64, 1e-5 in float32, so a time step solves for its
-        increment. Its tangent and adjoint solves, by a symmetric :func:`jax.lax.custom_linear_solve`, start from zero.
+        increment. :func:`solvax.pcg_linear_solve` differentiates it implicitly, its tangent and adjoint solves also
+        from zero.
         """
         volumes = jnp.asarray(self.grid.cell_volumes(), rhs.dtype)
-        tolerance = _PCG_TOLERANCE[jnp.dtype(rhs.dtype).name]
 
         def precondition(residual):
             return self.preconditioner.solve(Field(residual / volumes, _CELL, self.grid)).data
 
-        def pcg(matvec, target):
-            result = solvax.pcg(
-                matvec, target, precond=precondition, rtol=tolerance, max_steps=self.max_steps
-            )
-            failed = ~(result.converged & jnp.isfinite(result.residual_norm))
-            return jnp.where(failed, jnp.nan, result.x), result.iterations
-
-        return jax.lax.custom_linear_solve(self.apply, volumes * rhs, pcg, symmetric=True, has_aux=True)
+        tolerance, steps = _PCG_TOLERANCE[jnp.dtype(rhs.dtype).name], self.max_steps
+        result = solvax.pcg_linear_solve(
+            self.apply, volumes * rhs, precond=precondition, rtol=tolerance, max_steps=steps
+        )
+        failed = ~(result.converged & jnp.isfinite(result.residual_norm))
+        return jnp.where(failed, jnp.nan, result.x), result.iterations
 
 
 def variable_helmholtz(
@@ -1479,7 +1480,10 @@ def variable_helmholtz(
 ) -> VariableHelmholtz:
     """Build :class:`VariableHelmholtz` on the host; ``conductivity`` and ``shift`` are numbers or cell arrays.
 
-    The preconditioner is the fast-diagonal inverse at their volume means, in ``precision``.
+    The preconditioner is the fast-diagonal inverse at their volume means, in ``precision``. On a duct walled on
+    four sides, 6 to 24 cells across, at ``dt`` 0.05 and 100: 7-8 iterations at the benchmark's steel and PbLi (``k``
+    ratio 0.9, ``rho c_p`` 2.3), 14-33 at copper's ``k`` ratio of 19, and 21-63 at 100. A high contrast costs more
+    iterations as the mesh refines.
     """
     if grid.is_polar:
         raise ValueError("a variable-coefficient solve needs a Cartesian grid")

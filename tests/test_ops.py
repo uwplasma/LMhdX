@@ -1304,6 +1304,20 @@ def test_walled_conduction_is_symmetric_conserves_heat_and_converges_in_few_iter
     assert int(iterations) < 10
 
 
+def test_walled_conduction_at_a_high_contrast_converges_in_the_documented_iterations():
+    """Copper-like walls, ``k`` 19 times the fluid's, on 24 cells across: the volume-mean preconditioner takes more
+    iterations (33 measured, against 8 for steel), within the 40 the docstring's range allows."""
+    fluid = Grid(uniform_faces(4, 0.0, 2.0), *(tanh_faces(24, -1.0, 1.0, 2.0) for _ in range(2)))
+    wall = SolidWall(2.0 / 23.0, 2, 390.0, 3.45)
+    walled = conjugate_grid(fluid, ((None, None), (wall, wall), (wall, wall)))
+    k, c = walled.cells("thermal_conductivity", 20.4), walled.cells("heat_capacity", 1.867)
+    source = np.zeros(walled.grid.shape)
+    source[walled.fluid] = 1.0
+    conduction = variable_helmholtz(walled.grid, (WRAP, WALL, WALL), k, c, 0.05)
+    increment, iterations = conduction.solve(0.05 * source)
+    assert 10 < int(iterations) <= 40 and np.all(np.isfinite(np.asarray(increment)))
+
+
 def test_uniform_conduction_is_the_fast_diagonal_inverse_and_walled_conduction_differentiates():
     """One material: PCG is the fast-diagonal inverse itself, one iteration. With walls, forward and reverse
     derivatives in the right-hand side match central differences, the tangent and adjoint solves starting from

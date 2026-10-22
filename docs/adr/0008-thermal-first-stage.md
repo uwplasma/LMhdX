@@ -175,7 +175,7 @@ inflow-outflow axis, with or without buoyancy, is still refused.
 - evolving open-duct momentum coupled to temperature;
 - higher-order time integration of the coupled step;
 - variable properties;
-- polar thermal transport (the pipe, open as #273).
+- polar thermal transport (the pipe).
 
 Plan step 5.4 orders the first two.
 
@@ -191,8 +191,7 @@ and the book's tables were never inspected. The evidence actually used:
   Richardson extrapolation gives 3.0873, 0.12 % lower.
 - **Hartmann plates** (the D33 amendment): checked against their closed form.
 
-Uniform wall temperature and the pipe are in open pull requests (#272, #273),
-not in `main`.
+Uniform wall temperature and the pipe are pending.
 
 **Cleanup done in #267**, not to be reopened:
 

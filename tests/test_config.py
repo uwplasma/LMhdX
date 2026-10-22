@@ -798,6 +798,7 @@ def test_curated_examples_use_submodules_and_linear_scripts_are_editable() -> No
             "hartmann_example.py": 160,
             "hunt_example.py": 160,
             "li_aln_wall_stack_example.py": 260,
+            "open_duct_inertia_example.py": 100,
             "q2d_turbulence_demo.py": 140,
         }
         if path.name in linear_limits:
@@ -813,7 +814,7 @@ def test_curated_examples_declare_user_facing_contracts(tmp_path: Path) -> None:
     inventory = build_inventory()["inventory"]
     curated = inventory["curated_examples"]
     assert {item["path"] for item in curated} == set(inventory["examples"])
-    assert len(curated) == 7
+    assert len(curated) == 8
     for item in curated:
         assert item["command"]
         assert item["outputs"]
