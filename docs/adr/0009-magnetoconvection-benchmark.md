@@ -211,9 +211,19 @@ and fringe structures are inertial.
     outside the wheel, and a reference stays in the wheel only while a test
     reads it.
 - **The references' size.** They ship in the wheel, so they are compact. A
-  figure keeps only its band, the range of the codes that agree, at about 40
-  points with four significant digits, and its calibration. The budget is 40 KB
-  per case, against the existing 0.5–2 KB references and the 384 KB wheel cap.
+  figure keeps its band, the range of the codes that agree, the curves that
+  are not a code's, and its calibration.
+  - Each is simplified to within half a pixel of every extracted pixel column,
+    with nothing decimated before.
+  - That bound costs 90 KB for Case 1 and 77 KB for Case 2, against a first
+    budget of 40 KB per case. That budget was met only by decimating the
+    extraction without a bound, which put the records up to tens of pixels off
+    it at narrow features, as the repository review found.
+  - The bound is kept, and the budget is the measured size, justified here as
+    plan H.10.8 asks.
+  - The wheel cap is 384 KB, and the references leave the wheel in 2.0 unless a
+    test reads them.
+
   The per-code curves are not shipped: they are a release asset, with their
   SHA-256 in the provenance, and the digitizer regenerates them.
 - **What is gated from them.**
