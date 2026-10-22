@@ -1569,6 +1569,9 @@ def test_the_magnetoconvection_specification_reproduces_its_printed_numbers():
 
     record = mistrangelo.spec()
     assert record["status"] == "frozen" and mistrangelo.developed_gradient(record) == 0.0863
+    calibration = record["calibration"]
+    assert "pressure gradient" in calibration["not_acceptance"]
+    assert not any("pressure" in check for check in calibration["independent"])
     case, a, b0 = record["cases"]["case1"], record["geometry"]["half_width_m"], record["field"]["peak_T"]
     u0, q, g = (
         case["mean_velocity_m_per_s"],
