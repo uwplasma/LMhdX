@@ -1209,7 +1209,22 @@ def developed_wall_temperature(
 
     The duct is as for :func:`developed_heat`. The held walls share one temperature, which does not enter; a
     heat-flux wall must be adiabatic. Sources and Joule heat are left out. Compiled whole by :func:`jax.jit`.
+
+    ``converged`` also certifies the raw flow, in traced arithmetic: a finite positive mean, every cell forward, the
+    same axial velocity on both axial faces and no transverse velocity (to 1e-9 of the largest in float64, 1e-4 in
+    float32). A reversed flow, whose normalized speeds are positive too, is not converged. ``tolerance`` and
+    ``max_iterations`` are checked on the host: positive and finite, and a positive integer.
     """
+    if tolerance is not None and (
+        isinstance(tolerance, bool) or not (np.isfinite(tolerance) and tolerance > 0.0)
+    ):
+        raise ValueError("tolerance must be positive and finite")
+    if (
+        isinstance(max_iterations, bool)
+        or not isinstance(max_iterations, (int, np.integer))
+        or max_iterations < 1
+    ):
+        raise ValueError("max_iterations must be a positive integer")
     flow, grid, conditions = problem.flow, problem.flow.grid, problem.thermal_conditions
     axial = _developed_axis(problem)
     walls = [(kind, value) for c in conditions for kind, value in zip(c.kinds, (c.lower, c.upper))]
@@ -1228,6 +1243,12 @@ def developed_wall_temperature(
     weight = speed / mean
     if tolerance is None:
         tolerance = 1e-10 if weight.dtype == jnp.float64 else 1e-4
+    along = velocity[axial].data
+    largest = jnp.max(jnp.abs(along))
+    stray = jnp.max(jnp.stack([jnp.max(jnp.abs(velocity[a].data)) for a in range(3) if a != axial]))
+    stray = jnp.maximum(stray, jnp.max(jnp.abs(along[_end(axial, -1)] - along[_end(axial, 0)])))
+    rough = 1e-9 if weight.dtype == jnp.float64 else 1e-4
+    forward = jnp.isfinite(mean) & (mean > 0.0) & jnp.all(speed > 0.0) & (stray <= rough * largest)
 
     def quotient(theta, weight):
         stiffness = -laplacian(theta, homogeneous).data
@@ -1250,7 +1271,7 @@ def developed_wall_temperature(
     )
     theta = jax.lax.stop_gradient(theta)
     eigenvalue, residual = quotient(theta, weight)
-    converged = (residual <= tolerance) & jnp.all(fixed > 0.0)
+    converged = (residual <= tolerance) & forward
     eigenvalue = jnp.where(converged, eigenvalue, jnp.nan)
     perimeter, held_perimeter = 0.0, 0.0  # wall areas over the axial length
     length = float(np.sum(grid.widths[axial]))

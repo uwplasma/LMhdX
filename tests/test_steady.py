@@ -1448,8 +1448,10 @@ def test_the_uniform_wall_temperature_nusselt_number_differentiates_through_the_
 
 def test_the_inverse_iteration_stops_on_its_tolerance_and_reports_where_it_stopped():
     """Each iteration gains the ratio of the two smallest symmetric eigenvalues: about 13 iterations reach 1e-10
-    in the square duct, about 150 in a 1:8 one, where the ratio is near 1.1. Stopped early, or with a cell whose
-    flow runs backward, the solve is not converged and its eigenvalue and Nusselt number are NaN."""
+    in the square duct, about 150 in a 1:8 one, where the ratio is near 1.1. Stopped early, the solve is not
+    converged and its eigenvalue and Nusselt number are NaN. So is it for a flow that is not the reduction's
+    forward throughflow, certified on the raw velocity: one cell backward, the whole flow reversed (its speeds
+    over its mean are positive too), no flow, a transverse velocity, or two axial faces that differ."""
     from lmhdx.thermal import developed_wall_temperature
 
     for cells, aspect, most in ((16, 1.0, 20), (64, 0.125, 200)):
@@ -1462,8 +1464,19 @@ def test_the_inverse_iteration_stops_on_its_tolerance_and_reports_where_it_stopp
     assert not bool(early.converged) and np.isnan(float(early.nusselt)) and np.isnan(float(early.eigenvalue))
     sign = np.ones(velocity[0].data.shape)
     sign[:, 3, 4] = -1.0  # one cell's flow runs backward
-    backward = (velocity[0].replace_data(velocity[0].data * jnp.asarray(sign)), *velocity[1:])
-    assert np.isnan(float(developed_wall_temperature(thermal, backward).nusselt))
+    across = velocity[1].replace_data(
+        velocity[1].data.at[0, 3, 4].set(1e-6 * float(jnp.max(velocity[0].data)))
+    )
+    uneven = velocity[0].data.at[-1].multiply(1.01)  # the two axial faces differ
+    for flawed in (
+        (velocity[0].replace_data(velocity[0].data * jnp.asarray(sign)), *velocity[1:]),  # mixed sign
+        (velocity[0].replace_data(-velocity[0].data), *velocity[1:]),  # all reversed: u / mean is positive
+        (velocity[0].replace_data(0.0 * velocity[0].data), *velocity[1:]),  # no flow
+        (velocity[0], across, velocity[2]),  # a transverse velocity
+        (velocity[0].replace_data(uneven), *velocity[1:]),
+    ):
+        result = developed_wall_temperature(thermal, flawed)
+        assert not bool(result.converged) and np.isnan(float(result.nusselt))
 
 
 def test_the_t_condition_snippet_runs_as_written():
@@ -1478,7 +1491,8 @@ def test_the_t_condition_snippet_runs_as_written():
 
 
 def test_the_uniform_wall_temperature_refuses_an_ill_posed_duct():
-    """No wall at a temperature, walls at different temperatures, or a wall taking in heat: not the T condition."""
+    """No wall at a temperature, walls at different temperatures, or a wall taking in heat: not the T condition.
+    Nor a tolerance that is not positive and finite, or an iteration bound that is not a positive integer."""
     from lmhdx.thermal import developed_wall_temperature, thermal_boundary
 
     thermal = _developed_duct(8)
@@ -1490,6 +1504,13 @@ def test_the_uniform_wall_temperature_refuses_an_ill_posed_duct():
     ):
         with pytest.raises(ValueError, match=message):
             developed_wall_temperature(dataclasses.replace(thermal, thermal_conditions=conditions), velocity)
+    # tolerance=inf would skip the loop (inf > inf is false) and certify the seed.
+    for tolerance in (np.inf, np.nan, 0.0, -1e-10, True):
+        with pytest.raises(ValueError, match="tolerance"):
+            developed_wall_temperature(thermal, velocity, tolerance=tolerance)
+    for count in (0, -3, True, 2.5, 20.0):
+        with pytest.raises(ValueError, match="max_iterations"):
+            developed_wall_temperature(thermal, velocity, max_iterations=count)
 
 
 # Review corrections, part 5b: the reduction's guards, an undefined Nu and physical temperatures (D33).
