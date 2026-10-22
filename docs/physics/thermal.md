@@ -373,15 +373,21 @@ not use it yet.
 `ConjugateGrid` it returns holds the extended grid, whose fluid block keeps the
 given faces exactly, the block's slices, and the walls, whose properties
 `cells(name, fluid_value)` spreads over every cell. A corner cell takes the
-nearer wall's material, the first axis's when equally near, as the corners of
-resolved electrical walls do.
+nearer wall's material, the first axis's when equally near to rounding, as the
+corners of resolved electrical walls do.
 
 **The solve.** `poisson.variable_helmholtz(grid, conditions, conductivity,
 shift, coefficient)` is $V\,(s\,x - \tau\,\nabla\cdot(k\nabla x))$ for cell-wise
-$k$ and $s$. A face's conductance is the harmonic mean of its half cells,
-$G = A/(\delta_1/k_1 + \delta_2/k_2)$, so the heat that leaves one cell enters the
-next; a boundary face takes its cell's $k$, which a heat flux there is built
-with (`thermal_boundary(..., conductivity=...)`). One implicit step solves for
+$k$ and $s$.
+
+**The face-conductance contract.** Between two cells with half widths
+$\delta_1$, $\delta_2$ and conductivities $k_1$, $k_2$, the flux per unit area
+is $(T_2 - T_1)/(\delta_1/k_1 + \delta_2/k_2)$, the half cells' series
+resistance, at a material interface as anywhere else. The face area and the
+cell volume enter once, in the divergence; the conductance does not carry the
+area a second time. So the heat that leaves one cell enters the next. A
+boundary face takes its cell's $k$, which a heat flux there is built with
+(`thermal_boundary(..., conductivity=...)`). One implicit step solves for
 the increment $\delta = T^{n+1} - T^n$,
 
 $$
@@ -392,13 +398,36 @@ $$
 $b$ the boundary data's `lift`, so PCG's tolerance is the change's.
 `solvax.pcg_linear_solve` is preconditioned by the fast-diagonal inverse at the
 volume-mean $k$ and $s$, and differentiates implicitly, its tangent and adjoint
-solves from zero. The operator is generic numerics, to move to SOLVAX
-(uwplasma/SOLVAX#158).
+solves from zero. Unconverged, it returns NaN, and NaN derivatives. The
+operator is generic numerics, to move to SOLVAX (uwplasma/SOLVAX#158).
 
-**Tested** (`tests/test_ops.py`): two materials in series, exact with the same
-flux through every face; steel brought into contact with fluid, the exact
-effusivity-weighted contact temperature at second order; the benchmark's steel
-and PbLi walled on four sides, symmetric and conservative.
+**What is differentiable.**
+- **The walls' conductivity and heat capacity.** `cells(name, fluid_value,
+  walls={(axis, side): value})` puts a wall's value into the cells in the
+  trace. `VariableHelmholtz.with_coefficients(conductivity, shift)` builds the
+  face conductances from it, and the preconditioner keeps its built means. So a
+  wall's $k$ or $\rho c_p$ is a leaf, and a new value does not recompile.
+- **Static:** a wall's thickness, its cell count, and which cell belongs to
+  which material.
+
+**Tested** (`tests/test_ops.py`):
+- two materials in series, exact, with the same flux through every face;
+- steel brought into contact with fluid: the exact effusivity-weighted contact
+  temperature, at second order;
+- the benchmark's steel and PbLi walled on four sides: symmetric and
+  conservative;
+- **an independent high-contrast check.** Walls of 1000 times the fluid's $k$,
+  held at 0 outside, around a uniformly heated square. The fluid's mean
+  temperature tends to the Dirichlet Poisson series, 0.140577, raised by the
+  walls' own drop $q a t/(2k_w)$. The error falls at about second order, and the
+  Richardson value meets the series within 1e-4.
+- **a wall conductivity's derivative,** to the derivative standard:
+  - central differences at two steps;
+  - a Taylor remainder of second order;
+  - a tighter tolerance and a finer mesh;
+  - the JVP/VJP identity in two walls at once;
+  - no recompilation for a new value;
+  - NaN when PCG has not converged.
 
 | Walls ($k$ and $\rho c_p$ over the fluid's) | PCG iterations, 6 to 24 cells across, $\Delta t$ 0.05 and 100 |
 |:--|:--|

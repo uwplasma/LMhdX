@@ -1416,11 +1416,14 @@ class VariableHelmholtz:
     Generic numerics, to move to SOLVAX (uwplasma/SOLVAX#158, ADR 0009 D36); LMhdX keeps the materials and
     ``conjugate_grid``.
 
-    ``G`` is each face's conductance, the harmonic mean of its two half cells (:func:`lmhdx.ops.face_conductivity`),
-    so what leaves one cell enters the next; a boundary face takes its cell's, which a Neumann datum, a gradient,
-    is multiplied by. With a positive ``shift`` the operator is symmetric positive definite. It is an implicit
-    conduction step through solid walls: ``shift`` the cells' ``rho c_p``, ``coefficient`` the time step.
-    ``conditions`` are homogeneous; boundary data enter through :meth:`lift`.
+    The face-conductance contract, stated once. ``G`` is each face's conductance per unit area, the harmonic mean of
+    its two half cells (:func:`lmhdx.ops.face_conductivity`), so ``G`` times the gradient over the centre distance is
+    the series resistance of the two half cells: what leaves one cell enters the next, and a material interface is
+    a series resistance. The face area and the cell volume enter once, in the divergence. A boundary face takes its
+    cell's conductivity, which a Neumann datum, a gradient, is multiplied by. With a positive ``shift`` the operator
+    is symmetric positive definite. It is an implicit conduction step through solid walls: ``shift`` the cells'
+    ``rho c_p``, ``coefficient`` the time step. ``conditions`` are homogeneous; boundary data enter through
+    :meth:`lift`. :meth:`with_coefficients` takes other cell values in the trace.
     """
 
     grid: Grid
@@ -1430,6 +1433,18 @@ class VariableHelmholtz:
     conductances: tuple[np.ndarray, np.ndarray, np.ndarray]
     preconditioner: FastDiagonalHelmholtz
     max_steps: int = 200
+    tolerance: float | None = None  # PCG's relative tolerance; by default 1e-11 in float64, 1e-5 in float32
+
+    def with_coefficients(self, conductivity=None, shift=None) -> VariableHelmholtz:
+        """The operator at other cell conductivities or shifts, built in the trace from ``jnp`` arrays.
+
+        Either may be traced, so a wall's conductivity or heat capacity is a leaf of :meth:`solve` and a new value
+        does not recompile. The preconditioner keeps the volume means it was built at: it only steers the iteration.
+        """
+        conductances = self.conductances
+        if conductivity is not None:
+            conductances = _face_conductances(self.grid, self.conditions, conductivity)
+        return replace(self, conductances=conductances, shift=self.shift if shift is None else shift)
 
     def face_fluxes(self, values: jnp.ndarray, conditions=None) -> tuple[Field, Field, Field]:
         """``G grad x`` on the faces of each axis, under ``conditions``, the homogeneous ones by default."""
@@ -1470,12 +1485,27 @@ class VariableHelmholtz:
         def precondition(residual):
             return self.preconditioner.solve(Field(residual / volumes, _CELL, self.grid)).data
 
-        tolerance, steps = _PCG_TOLERANCE[jnp.dtype(rhs.dtype).name], self.max_steps
+        tolerance = _PCG_TOLERANCE[jnp.dtype(rhs.dtype).name] if self.tolerance is None else self.tolerance
+        steps = self.max_steps
         result = solvax.pcg_linear_solve(
             self.apply, volumes * rhs, precond=precondition, rtol=tolerance, max_steps=steps
         )
         failed = ~(result.converged & jnp.isfinite(result.residual_norm))
-        return jnp.where(failed, jnp.nan, result.x), result.iterations
+        # Unconverged, the value is NaN and so are its derivatives in the right-hand side and the coefficients. The
+        # implicit adjoint alone returns a zero gradient for a NaN cotangent, since its PCG starts from zero.
+        inputs = jnp.sum(rhs) + jnp.sum(jnp.asarray(self.shift)) + sum(jnp.sum(g) for g in self.conductances)
+        return jnp.where(failed, jnp.nan, result.x) + jnp.where(
+            failed, jnp.nan, 0.0
+        ) * inputs, result.iterations
+
+
+def _face_conductances(grid: Grid, conditions, conductivity) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Each axis's face conductances from a cell conductivity, in the trace; a boundary face takes its cell's."""
+    pads = tuple(
+        BoundaryCondition(PERIODIC if condition.is_periodic else NEUMANN) for condition in conditions
+    )
+    cells = Field(jnp.broadcast_to(jnp.asarray(conductivity), grid.shape), _CELL, grid)
+    return tuple(face_conductivity(cells, axis, pads[axis]).data for axis in range(3))
 
 
 def variable_helmholtz(
@@ -1503,10 +1533,8 @@ def variable_helmholtz(
     if not (np.isfinite(coefficient) and float(coefficient) > 0.0):
         raise ValueError("coefficient must be positive and finite")
     homogeneous = tuple(condition.homogeneous() for condition in conditions)
-    pads = tuple(BoundaryCondition(PERIODIC if c.is_periodic else NEUMANN) for c in homogeneous)
     with jax.ensure_compile_time_eval():
-        field = Field(jnp.asarray(k), _CELL, grid)
-        conductances = tuple(np.asarray(face_conductivity(field, axis, pads[axis]).data) for axis in range(3))
+        conductances = tuple(np.asarray(g) for g in _face_conductances(grid, homogeneous, k))
     weights = grid.cell_volumes() / np.sum(grid.cell_volumes())
     preconditioner = fast_diagonal_helmholtz(
         grid,
