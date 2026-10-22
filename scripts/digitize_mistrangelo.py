@@ -1,7 +1,8 @@
 """Digitize the figures of Mistrangelo et al. (2025) into the compact references of plan step 5.4a (ADR 0009 D38).
 
 ``python scripts/digitize_mistrangelo.py DIR`` rewrites ``mistrangelo2025-case1.json`` and ``-case2.json`` from the
-paper's figure images in ``DIR``. They are extracted from the journal's PDF (doi:10.1088/1741-4326/ae0800) with ``pymupdf``,
+paper's figure images in ``DIR``, and writes every code's curve to ``DIR/mistrangelo2025-case<n>-curves.json``, a
+release asset. The images are extracted from the journal's PDF (doi:10.1088/1741-4326/ae0800) with ``pymupdf``,
 ``Document.extract_image(xref)``, as ``x<xref>.png`` or ``.jpeg``, and are not in the repository, so this script
 is not part of the package or of ``validation/``. ``benchmarks/provenance.json`` records its SHA-256 beside each
 reference file's.
@@ -9,7 +10,8 @@ reference file's.
 A reference keeps, per figure, the image's hash, the calibration of both axes, the codes that agree and where the
 paper says so (``agree_basis``: "the paper", or "my reading" where it does not), and the band of those codes, with
 the curves that are not one of the six codes. Each is simplified to within half a pixel and rounded to a tenth of
-one. ``digitize`` returns every code's curve in full, for a figure read again.
+one. Each axis carries its calibration misfit in its own units, and the record its digitizing uncertainty, which a
+test uses as its tolerance. ``digitize`` returns every code's curve in full, for a figure read again.
 """
 
 from __future__ import annotations
@@ -32,6 +34,9 @@ REFERENCES, REFERENCES_CASE2 = _DATA / "mistrangelo2025-case1.json", _DATA / "mi
 
 SIX = ("FLUENT_CIEMAT", "FLUENT_UK", "CFX", "OF_ORNL", "OF_KIT", "COMSOL")
 DASH = 15  # px: gaps in one code's curve up to a dash period are closed before the band is taken
+# The digitizing uncertainty, per axis: a drawn line or ring is read within 1.5 px and the compact record keeps it
+# within 0.6 px (both from test_the_digitizer_reads_a_drawn_figure), plus the axis calibration's own misfit.
+READ_PX, COMPACT_PX = 1.5, 0.6
 # Each colour as (hue window in degrees, saturation window, value window); black is unsaturated and dark.
 COLOURS = {
     "FLUENT_CIEMAT": ((0, 360), (0.0, 0.35), (0.0, 0.30)),
@@ -341,6 +346,16 @@ def _compact(record: dict) -> dict:
         return [round(float(v), digits) if not log else float(f"{v:.5g}") for v in values]
 
     out = {k: v for k, v in record.items() if k not in ("curves", "band")}
+    out["calibration"] = {axis: dict(fit) for axis, fit in record["calibration"].items()}
+    spread = {}
+    for axis, scale in zip("xy", record["per_pixel"]):
+        fit = out["calibration"][axis]
+        fit["misfit"] = float(f"{fit['misfit_px'] * scale:.3g}")  # in the axis's units, decades on a log axis
+        spread[axis] = READ_PX + COMPACT_PX + fit["misfit_px"]
+    out["uncertainty"] = {
+        axis: float(f"{spread[axis] * scale:.3g}") for axis, scale in zip("xy", record["per_pixel"])
+    }
+    out["uncertainty"]["px"] = {axis: round(value, 2) for axis, value in spread.items()}
     out["agree_basis"] = "my reading" if "as read" in record["agree_source"] else "the paper"
     out["curves"] = {}
     for name, curve in record["curves"].items():
@@ -373,9 +388,20 @@ def write_references(
     return path
 
 
+def write_curves(images: Path, path: Path, figures: dict = FIGURES, case: str = "case1") -> Path:
+    """Every code's curve, each figure's calibration and image hash: the extraction's intermediate, which is a
+    release asset beside the figure images (CC BY 4.0) rather than a file of the package."""
+    records = [digitize(_image(images, spec_["xref"]), figure, figures) for figure, spec_ in figures.items()]
+    head = {"source_id": "mistrangelo-2025", "case": case, "digitizer": "scripts/digitize_mistrangelo.py"}
+    path.write_text(json.dumps({**head, "figures": records}, indent=1) + "\n")
+    return path
+
+
 def main() -> None:
-    print(write_references(Path(sys.argv[1])))
-    print(write_references(Path(sys.argv[1]), REFERENCES_CASE2, FIGURES_CASE2, "case2"))
+    images = Path(sys.argv[1])
+    for path, figures, case in ((REFERENCES, FIGURES, "case1"), (REFERENCES_CASE2, FIGURES_CASE2, "case2")):
+        print(write_references(images, path, figures, case))
+        print(write_curves(images, images / f"mistrangelo2025-{case}-curves.json", figures, case))
 
 
 if __name__ == "__main__":
