@@ -1759,6 +1759,408 @@ Fluids 20:095105 (2008); Krasnov et al., J. Fluid Mech. 504:183 (2004);
 Uhlmann et al., J. Fluid Mech. 588:153 (2007); Priede et al., J. Fluid Mech.
 649:115 (2010); Zhao, Zikanov, Krasnov, Phys. Fluids 23:084103 (2011).
 
+#### H.10 Program H revision after independent review (2026-10-22)
+
+An external reviewer read LMhdX 1.11.0 (`main` at `d137209`), SOLVAX 0.31.0
+(`6b37c5d`), the 16 open pull requests and the commit history, and ran small
+probes on a CPU in float64. The report (22 pages, snapshot of 22 October 2026)
+gives 15 implementation packages in dependency order, application roadmaps and
+test standards. Its numbers are quoted here as the reviewer's. The PR that
+fixes each finding first reproduces it as a failing test on `main`, and no claim
+is promoted before that. This subsection only adds to Program H: H.1–H.9 stand
+as written, and where it changes an earlier step it names the step and the
+reason. The decisions are DH9–DH18 of ADR 0010 (proposed; the owner confirms
+them by merging). Named PRs: the **stage-1 PR** (H0.5) and the **stage-2 PR**
+(H0.6) are the two repairs below, opened by a parallel agent.
+
+##### H.10.1 Findings that change the order of work
+
+1. **A stabilised step does not keep a pressure-balanced rest state** (report
+   2.1). The transient predictor scales the whole momentum increment by
+   `1/(1 + dt lambda_i)` component by component, then applies the ordinary
+   projection. With B along y, x and z are damped and y is not, so the scaled
+   gradient force is no longer a gradient and the projection cannot remove what
+   is left. Probe: 16 × 16 × 1 periodic, density, conductivity and viscosity 1,
+   `p = sin x sin y`, force equal to LMhdX's own discrete `Gp`, so the
+   equilibrium is rest. Peak `|u|` with explicit viscosity is 4.58e-16 at
+   `B_y = 0`, and at `B_y = 10` it is 4.43e-2, 2.44e-3, 4.43e-5 for dt 0.1,
+   0.01, 0.001 (implicit viscosity 3.63e-2, 2.37e-3, 4.41e-5). The velocity is
+   divergence-free to roundoff, so mass conservation alone does not certify the
+   momentum equation. The step stays first-order consistent as dt goes to zero;
+   what fails is finite-step steady invariance (its fixed point solves
+   `P S^-1 R = 0`, not `P R = 0`). `steady_residual` and the held-flow thermal
+   runs do not use this step and stand. **H2.2 as written inherits the defect**:
+   its Lorentz damping sits in the Helmholtz shift, which is also different per
+   component, so the RK3 stage with a `psi` projection would fail the same test
+   for a non-isotropic B. This is an inference from the design, and the stage-2
+   PR confirms or refutes it before H2.2 starts.
+2. **Reconstruction and periodic geometry** (report 2.2). The limited momentum
+   face value uses ratios of raw differences, thermal reconstruction already uses
+   physical distance. Widths (1, 2, 4, 8), centres (0.5, 2, 5, 11), interior
+   affine `f = y`: the exact face value at `y = 3` is 3, the helper returns 8/3.
+   Several interpolation helpers mirror the first and last cell width on periodic
+   axes: end widths 1 and 8 give the seam weight 1/9, the helper gives 1/2. The
+   boundary-aware `_ghosted_widths` is the place to consolidate. This is the same
+   family as T23 (kinetic-energy drift of central transport on stretched grids,
+   H.0), so the two fixes are one PR.
+3. **The wall-temperature eigensolve (#272) has a narrower derivative contract**
+   (report 2.3). The first derivative of the smallest simple eigenvalue by
+   Rayleigh stationarity is right at a converged residual (Nu at parameter 0.6,
+   residual 8.33e-11: autodiff -0.853001182, centred difference -0.853001184).
+   The derivative with respect to the temperature shape is incomplete (cell
+   value -0.247150 against -0.190628), because the inverse iteration is not
+   differentiated, and after one iteration (residual 0.2894) finite values come
+   out that no gradient check supports (-0.78017 against -1.02255).
+4. **Physical-time integration** (report 2.4). Central transport with a forward
+   Euler increment has amplification `|1 - i C sin(theta)| > 1` for every
+   Courant number C, so a CFL below one does not help. This agrees with DH1 (the
+   RK3 stage map has an imaginary-axis limit of the square root of 3). The
+   mechanical ledger (drive + Lorentz − viscosity) omits buoyancy work,
+   open-boundary pressure and kinetic-energy flux, and the convective numerical
+   work.
+5. **Integration state** (report 3). #275 fails an existing tenfold thin-wall
+   against Krylov timing ratio (3.251 observed, 71 other tests in the job pass);
+   #273 stops at a 300 s support-test deadline near 98 %; #271's last workflow
+   is cancelled; the three wall drafts are green only on metadata, their
+   numerical jobs being skipped for drafts. These are three different
+   statuses and are not summarised as "all tests pass" or "broken".
+
+What the review does not change: the separate steady solver, the fully developed
+verification (Table I rows, observed orders 1.96–2.02, fine-grid errors
+0.16–0.43 %), the MAC core and its conservation identities, and the
+EMF/Lorentz adjoint pair, which every repair below keeps untouched.
+
+##### H.10.2 Where the review and our decisions differ, and the position taken
+
+| Topic | Our earlier position | Reviewer | Position from now |
+|---|---|---|---|
+| Momentum stage | Projection on `psi = gamma dt Phi` after a Helmholtz solve with the Lorentz damping in the shift (DH1, H2.2) | Solve `H u + (dt/rho) G p = b`, `D u = 0`; matched Schur operator `D H^-1 G`; generic Schur composition in SOLVAX | Adopted (DH9). The projection is the exact answer when `H` is the same on all components, so it is the starting iterate of the Schur solve, not a second path. LMhdX supplies `H`, `D`, `G` and the boundaries; SOLVAX takes the generic composition (H1.7) once the stage-2 PR has fixed the interface. |
+| Bit-identical Euler | `euler` goldens unchanged (H2.2, DH7) | Rest state and finite-step invariance must hold | Withdrawn for the **transient momentum step only**. Steady, Stokes and held-flow paths stay bit-identical. Transient goldens that contained the scaling are re-pinned in the stage-2 PR with a dt sweep that returns to the old values as dt goes to zero; no tolerance changes. Owner question 1. |
+| Block preconditioners (AL, PCD, LSC, Oseen) | Rejected as moot: the exact projection removes the pressure Schur complement (DH3, H.7) | Guided research (package J): Oseen-aware velocity blocks and pressure/electric Schur approximations, entered by measurement | Amended (DH13). The premise holds only for an isotropic `H`. With anisotropic Lorentz damping the Schur complement of the stage is real, and the separable Poisson solve is its first preconditioner. Oseen-aware blocks are a research branch (H8.3), entered when the Schur iteration count or the time to an accepted objective leaves a declared envelope. The measured rejections of H.7 stay as measurements for those configurations; they are not a proof that all AMG, block smoothing or recycling fails. |
+| PETSc, MUMPS, SuperLU_DIST | Host solvers rejected inside the differentiable loop (DH3) | One optional SOLVAX PETSc adapter (fieldsplit, hypre, sparse direct), only when a measured bottleneck warrants; real transpose solve, nullspace, status, coefficient derivatives; qualify the wrapper actually used | Reconciled (DH12). The default `march`/`rk3`/`newton` path stays native and device-resident. An adapter lives in SOLVAX, is opt-in with no hard dependency, and has two sanctioned uses: a reference solve for accuracy spot checks, and a fallback for a non-separable pressure once measured. It enters only with the contract tests above and a complete-cost comparison including host and device transfers. Today's MUMPS adapter is sequential (`COMM_SELF`), SciPy SuperLU is not SuperLU_DIST, and the differentiable sparse solve is a host callback; raw factor-object solves do not take traced values. |
+| Multigrid and tensor-product-Thomas | Dense separable eigenbasis kept (DH2); multigrid on stretched grids rejected | Benchmark tensor-product-Thomas and the existing line/plane deflation on real anisotropy and wall contrast; time and memory at matched physical error; keep dense transforms where they win | Compatible. DH2 stands; the benchmark goes into H8.3 and the existing H6 FFT item, at LMhdX column counts (a few hundred), not at 10,000 columns. |
+| Plan as logbook | Additive revisions, never cut lines | Short current decision document; do not make every PR edit a 1,765-line narrative | The owner's rule stands. The compact view the reviewer asks for is the status table H.10.9, and #276 owns the thermal status. Later PRs add a log row and the rows they change, nothing more. |
+| Test tiers and timing assertions | No test moves to a slower tier to hide cost | Wall-clock ratios, exact iteration counts and compiler-string expectations belong in diagnostic reports; portable numerical CI separate from campaigns | Applies to **new** tests (DH16). An existing assertion moves only with the owner's word, case by case; #275's ratio is the first candidate (owner question 2). What stays in the gate is physical: residual, objective, gradient, budget. |
+| Caps that rise with every PR | Raise audit budgets only by the lines a PR adds (lane rules) | An arbitrary cap that rises at each PR is not an architectural constraint; require removal | Merged (DH15). A source PR raises a size target only as a named loan with its repayment step in H.10.8; a loan unpaid at a release tag blocks the tag. Byte targets for docs and plan move with the docs. |
+
+##### H.10.3 Order of work
+
+The order is dependency order. Items on one line can run in parallel, three
+lanes at most.
+
+1. **Stage-1 PR (H0.5)**, with **stage-2 PR (H0.6)** in parallel: both before any
+   RK3 code. They touch `ops.py` and the step in `core3d.py`; H0.2 and H0.3
+   (also `core3d.py`, `poisson.py`) rebase on them and re-run their compile-count
+   tests, so two PRs never edit the same numerical core at once.
+2. SOLVAX release with the scalar and eigen contracts (H1.5, H1.6), beside H1.1–H1.4.
+3. H2.2–H2.8 on top of the stage-2 PR (RK3, ledger scope, stability evidence).
+4. Thermal track H7.1 → H7.2 (after H1.5), H7.3 any time; then H7.4 (moving open
+   thermal flow, after 3) and H7.5 (Mistrangelo Case 1, then Case 2).
+5. H8.1 (dynamic parameter gradients), H8.2 (temperature-dependent laws), H8.3
+   (measured bottlenecks), with H4.1–H4.4 running beside them.
+6. H9 application studies, starting with H9.1.
+
+**Claims gate.** New moving-flow thermal validation claims wait for H0.6 and
+H2.8. Held-flow thermal examples and documentation are not blocked by any high-Re
+work. Scope and reference PRs (#277–#281) proceed independently of the solvers
+once their provenance is corrected.
+
+##### H.10.4 New and amended steps
+
+Phase H0, additions (before the RK3 work):
+
+| Step | Action and place | Exit | Tests | Lines |
+|---|---|---|---|---|
+| H0.5 (A) | **Stage-1 PR.** One geometry helper: boundary-aware ghost widths (wall, open, periodic wrap) feed the interpolation weights, the limiter slopes and the carrier weights of the central flux. Limited face values use physical-distance slopes, as `thermal` does. The central flux takes own-width carrier weights and an arithmetic convected value (this is H2.1, which this step absorbs). The EMF/Lorentz face average and its adjoint are not changed. The mirrored first/last-width helpers are deleted | T36: face value 3 at `y = 3` on widths (1, 2, 4, 8) to 1e-14. T37: seam weight 1/9; a smooth periodic function converges at second order on a periodic mesh with unequal end widths (a globally affine function is not periodic and is not used). Limited transport creates no new extrema on representative layer grids. T23 as in H2.1: drift under 1e-13 at 30 % and 50 % modulation, momentum 1e-12, rates 1.97–2.00. Weighted conservation and the existing current/work identities and adjointness tests unchanged | T36, T37, T23 | net negative; the PR states the count |
+| H0.6 (A or B) | **Stage-2 PR.** Constraint-consistent stage in `core3d`: `H u + (dt/rho) G p = b`, `D u = 0`, with `H` the implicit viscous plus Lorentz-damping operator (different per component when B is not isotropic). `w = H^-1 b`; `p` from `(D H^-1 G) p = (rho/dt) D w`, preconditioned by the separable Poisson solve and started from the projection; `u = w − (dt/rho) H^-1 G p`. Built on the existing `pcg_linear_solve`; transpose and gauge through existing primitives. The local wrapper carries a deletion note for H1.7. The Schur residual and iteration count are reported. Steady, Stokes and held-flow paths unchanged | T38: peak `|u|` at roundoff (1e-13) for `B_y` 0 and 10, dt 0.1, 0.01, 0.001 and `dt lambda` below and above 1, explicit and implicit viscosity (`main`: 4.4e-2, 2.4e-3, 4.4e-5 at `B_y = 10`). T39: the transient fixed point satisfies the physical steady residual to tolerance at two dt values. T40: agreement with an independently assembled small saddle matrix; primal and transposed dot-product identity; pure-gradient force gives a null response; compatible and near-compatible right-hand sides; stopping diagnostics. Cost report: time per step and Schur iterations at 64³, Ha 20, against the 15.4 ms of H.0 | T38, T39, T40 | +60…90 |
+
+Phase H1, additions (SOLVAX, after H1.4; LMhdX raises its pin only after the release is on PyPI, and the same PR deletes what the release replaces):
+
+| Step | Action and place | Exit | Tests | Lines |
+|---|---|---|---|---|
+| H1.5 | Issue #158: variable-coefficient flux-form Helmholtz operator with a separable preconditioner on the existing `pcg_linear_solve`; gauge and compatibility handling; coefficient paths traced. Contracts: face conductance defined once, with face area and half-cell distances, never multiplied a second time; harmonic series resistance at material interfaces, physical inhomogeneous boundary lifts stay in LMhdX; for an insulated stiffness `K` with `K 1 = 0`, volume vector `v`, volume `Omega`: `K + alpha v v^T` with the matched constant-mode inverse `1 1^T r/(alpha Omega)`, reporting the compatibility defect that was removed (a gauge does not absorb a real net-current source); disconnected conductors need more than one null vector; PCG only for a symmetric positive operator with a fixed SPD preconditioner in the relevant weighting, flexible Krylov for adaptive inner solves or non-symmetric Oseen/upwind blocks | T42: composite slab analytic flux and storage, nonuniform meshes, contrast sweep, singular-gauge invariance, zero right-hand side, forward and transpose, coefficient Taylor checks | T42 | SOLVAX +; LMhdX duplicates deleted in H7.2 |
+| H1.6 | Residual-certified solve-callback inverse iteration: returns eigenvalue, normalised residual, iterations and a converged flag; first derivative of the smallest simple eigenvalue by Rayleigh stationarity, valid only at a converged residual; eigenvector, profile and Hessian derivatives raise `unsupported` until an implicit normalised-eigenvector tangent/adjoint solve exists; non-convergence, non-positive or non-finite flow weights and unsuitable degeneracy are rejected; no second derivative is inferred. SOLVAX #141 (zero and non-finite lifted eigenpair guard) is consumed here | T43: converged first derivative against a centred difference; a residual-0.29 run is rejected, not returned; a profile-derivative request raises | T43 | SOLVAX + |
+| H1.7 | Constrained linear stage in SOLVAX: Schur composition with inverse callbacks for `H`, `D`, `G`, transpose and gauge, stopping diagnostics; after H0.6 has fixed the interface | T40 passes on the SOLVAX side; the local wrapper of H0.6 is deleted in the pin-bump PR | T40 | SOLVAX +; LMhdX −wrapper |
+
+SOLVAX #142 (propagator exponential actions) is not on the thermal path. #143
+(Pallas batched Thomas) is benchmarked only at LMhdX's column counts and lengths.
+
+Phase H2, amendments (no earlier line is changed):
+
+- **H2.1 is absorbed into H0.5** (same exit, T23).
+- **H2.2 needs H0.6**, in addition to H1.1 and H0.3. Each stage calls the
+  constrained stage with the coefficient `gamma_k dt`; the `psi` form of H2.2 is
+  its isotropic limit, not a second path. The first RK3 gate is the rest test
+  T38 at `rk3`, before time order is measured.
+- **H2.7, mechanical ledger.** Extend the ledger with buoyancy work, open-boundary
+  pressure and kinetic-energy flux, and convective numerical work, or state in the
+  docs and in the result that it closes only for closed, unbuoyant flows.
+  Exit: a manufactured case closes with each term switched on, or the scope
+  sentence is pinned by a test.
+- **H2.8, time-accuracy evidence.** No physical-time claim without: temporal order
+  on a manufactured transient (T28), amplification of a transported Fourier mode
+  with central transport (Euler plus central detected as growing, `|g| > 1`; RK3
+  stable to the stage-map limit; limited transport bounded), shear-mode
+  growth and decay against the reference (T29), the kinetic-energy budget, and
+  the distinction between physical time (`rk3`, `euler`) and pseudo-time (`march`)
+  in the docs. Euler with central transport on an inertial run is refused with a message
+  naming `rk3` or limited transport (in `Solver` validation once H4.1 exists;
+  until then it is documented and T41 pins the growth).
+  Open-boundary variants are tested before open transient support is claimed.
+  Test T41.
+
+Phase H4, exit additions: `solve` dispatches thermal runs (`lmhdx.solve` has no
+thermal dispatch today, H4.1); one capability table (closed or open, held or
+evolving flow, walls, sources, dtypes, derivative directions) is generated from
+one source (H4.1); the result carries the true residual, divergence, charge
+defect, power and heat ledger, iterations and an accepted/converged flag in one
+summary (H4.1, H4.4); a rejected solve exits non-zero with a reason (H4.4);
+TOML accepts open thermal runs after H7.4 (H4.3); plotting, digitization and
+movie code stay out of the importable package, and generated fields, meshes and
+movies are versioned release assets with checksums and a short regenerator
+(H4.7; #270 is the first case).
+
+Phase H7, thermal track (new). The thermal PRs are Tyler Brandes's; we review and
+comment, and push to his branches only if the lead says so.
+
+| Step | Action and place | Exit | Tests | Lines |
+|---|---|---|---|---|
+| H7.1 | Conduction and eigen group: #272 holds for the H1.6 contract (residual gate, positive flow weight, scoped derivatives; generic inverse iteration through SOLVAX); #273 reuses the polar factorisation and keeps the 48/11 and 3.65679 limits with independent reference checks, and its CI budget is repaired so the gate finishes (a timeout is not evidence of numerical failure); #274 stores compact independent spectral/published references, the generation command, the normalisation and the H1/H2/T distinction; #275 and #276 first | #272–#274 pass their own gates on the integrated head | T43 and the PRs' tests | per PR |
+| H7.2 | Wall stack #284 → #285 → #286 after H1.5. Material layout, grid and interface flux physics stay in LMhdX; generic variable Helmholtz/PCG/gauge code is deleted for the SOLVAX API; the float32 eigenvalue correction is kept; the measured constant-coefficient fast path stays; open-duct wall-layer and inlet fixes are extracted early as their own PR; #286 implements the documented nullspace remedy, the full current and work balance and the supported gradients, and benchmarks the omission of wall Joule heat explicitly. The drafts are made ready so that the numerical jobs run | T44: combined fluid and solid energy storage; interface heat and current cancellation; insulated charge and power balance; thin-wall and insulating limits; independent high-contrast checks; solid Joule heating included or omitted by a documented switch | T44 | −duplicates |
+| H7.3 | Reference cleanup #277–#281, independent of the solvers: pinned physical definitions, source figures and provenance; a wall conductivity chosen to fit the pressure gradient is calibration and is labelled so; Case 1 uncertainty and curve extraction kept, digitization machinery and intermediates out of the runtime (compact numerical bands in the repository, intermediates archived); Case 2 recorded as a statistical target with source solver, averaging window and domain/BC variation, burn-in required; withdrawn labels removed with the reason | the reference data load from a small runtime budget; every number has a source figure | existing | −machinery |
+| H7.4 | Moving open thermal flow, after H0.6, H2.2, H2.7 and H7.2: open momentum, heat and buoyancy coupled with a consistent inlet profile, wall conduction and a declared backflow treatment; spatial heat sources; full mechanical and thermal boundary-power ledgers. Held-flow conduction is not presented as the coupled result | T45: open manufactured solution; inlet/outlet and global budgets; recovery of the prescribed-flow result; domain-length and backflow sensitivity; temporal refinement; buoyant onset and decay | T45 | |
+| H7.5 | Mistrangelo et al. 2025 heated conducting duct as a multi-code statistical comparison, not an exact curve: half-width 0.023 m, 0.002 m steel walls, bottom heating over the central 0.6 m, fringing transverse field, Ha 235. Freeze one Case 1 configuration (Re 3220, Gr 1.42e7) and run the physical problem; then Case 2 (Re 1073, Gr 3.55e7) with burn-in, averaging and uncertainty. Calibrated inputs are kept apart from the independent velocity, temperature and current observables; the paper's own definitions and one declared domain and BC configuration are used | T46: grid, time, solver-tolerance and outlet-length studies; agreement inside a combined reference, discretisation and statistical band declared before the run; full case inputs and an archived result manifest; a known band failure stays visible | T46 | |
+
+Phase H8, derivatives and material laws (new):
+
+| Step | Action and place | Exit | Tests | Lines |
+|---|---|---|---|---|
+| H8.1 | Dynamic physical parameters as leaves: separate static topology and BC kinds from dynamic vector-B arrays, material, wall and contact, and source arrays; keep the original residual dependence traced and the objective quadrature consistent; do not retrace for every field value. Starts on fixed topology. H4.2 (wall conductance and thickness, DH5) is the first member of this family; H8.1 adds spatial B, coil current, conductivity, heat capacity and heat load, then contact and coating resistance | T47, with the derivative standard of H.10.7: independent spatial B perturbations, coil current, conductivity, heat capacity and heat load; JVP/VJP pairing; mesh convergence of the gradients; non-convergence rejected; compile count and setup and warm timing recorded | T47 | |
+| H8.2 | Temperature-dependent laws: one calibrated positive family for sigma(T), mu(T), k(T) and enthalpy h(T) at fixed reference density inside a declared Boussinesq envelope, with `div(sigma grad phi) = div(sigma u × B)`, the viscous stress of the actual viscosity and a consistent heat capacity or enthalpy; validity ranges recorded. Dynamic coefficient arrays alone are not temperature feedback. The constant-property benchmark path is kept. Variable density needs its own low-Mach decision. Rm is tracked apart from Re, and a change of steel magnetisation is a field-model input, not a scalar wall conductivity. After H7.2, H7.4 and H8.1 | T48: manufactured nonlinear solution; interface flux and heat/work balance; positivity and validity checks; convergence under nonlinear tolerance tightening; coupled-parameter Taylor test | T48 | |
+| H8.3 | Measured bottlenecks, after profiling H0.6–H7.4: extend native anisotropic multigrid/deflation or tensor-product-Thomas where the measurements say so; Schur-PCG tuning and Oseen-aware velocity blocks for inertia as research; at most one optional SOLVAX PETSc adapter (DH12). Fixed family spanning mesh anisotropy, Ha, Re, wall contrast and length, true residual and physical-quantity error held fixed; report forward-plus-gradient time, setup, memory and failures. Defaults are chosen by complete cost, not iteration count | a table of the family; an adapter only if it removes a named bottleneck and passes transpose, nullspace, status and coefficient-derivative tests | measurement | |
+
+Phase H9, application studies (new; each step needs its own decision, and H9.2–H9.5 only after the qualified component below them):
+
+| Step | Study | Entry and exit |
+|---|---|---|
+| H9.1 | **First research milestone: a constrained heated channel in a real stellarator exterior field.** ESSOS supplies coil fields; VMEX supplies a finite-beta exterior contribution only once its extension and derivatives are qualified. Blanket points lie outside the last closed flux surface, so a core equilibrium table is not an exterior field because it can be interpolated. Start with two or three representative positions and orientations; compare fixed-throughput pressure drop, pumping power, peak solid-wall temperature, outlet bulk temperature and wall-current closure under a uniform field, a locally sampled field and the full 3-D field. Then optimise orientation, flow and selected wall parameters at fixed heat removal, and then add coil controls under plasma and engineering constraints: field and equilibrium quality, coil engineering, blanket clearance, total duty, structural pitch, temperature. Use implicit steady sensitivities only on the selected converged branch and assess its stability separately; add smooth metric and shape derivatives on fixed topology after the field and material gradients work; defer unstructured or moving topology until a concrete channel or manifold needs it. Ferromagnetic blanket effects belong to the field provider | After H7.4 (or H7.1–H7.2 with a held flow for the frozen-field part), H8.1 and H8.2. A frozen-field study may precede live differentiation. Done when (T49): non-trivial end-to-end Taylor directions; active-constraint checks; objective and gradient on a refined grid; a spot check against an external solver; an uncertainty margin on peak solid temperature; no zero-field, zero-flow or area-cap artefact read as optimality. The existing duct study stays a screening result (H.10.8) |
+| H9.2 | Blanket modules: electrically coupled adjacent channels and a flow-network model first, then mapped multiblock bends and manifolds; shared-wall electric coupling kept; mapped structured against an external mesh solver on cost before any general-geometry commitment. Electrical insulation, thermal insulation and tritium-permeation resistance are different wall properties and are not folded into one conductance. Needs finite conducting solids, thermal walls, contact and coating resistances, temperature-dependent properties, volumetric nuclear heat and buoyancy | After H9.1 and H8.2. Mass and pressure network closure; shared-wall current and energy balance; an independent manifold reference; fixed-topology metric identities and shape Taylor checks wherever a derivative is claimed |
+| H9.3 | Tritium: OpenMC → LMhdX → FESTIM (or pastaFoam, TMAP8 for verification). Pin matched geometry, materials, lithium isotopic composition, nuclear-data version and source normalisation, converting H-3 production to atoms/m³/s and heating from eV per source particle to W/m³ with the Monte Carlo uncertainty kept. Transfer conservatively (the sums of `S_T V` and `q V` preserved). At fixed geometry and neutron field a changed velocity changes transport and recovery, not production. A minimal dilute-species equation `dc/dt + div(u c − D grad c) = S_T − lambda c − S_trap` enters only when an optimisation needs it, with inventory, transfer, extraction and unintended permeation tracked separately; at equilibrium `c_l/K_l = c_s/K_s` under compatible Sieverts laws, with continuous normal flux. Neutron transport and complex isotope and material kinetics stay external; the frozen-source derivative scope is stated, since the Monte Carlo step is not differentiable. A breeding ratio above one does not establish fuel self-sufficiency | After useful flow and thermal fields (H7.4). Source normalisation and conservative transfer; analytic diffusion and plug-flow cases and a two-material partition; a complete inventory, production, outlet and permeation ledger; comparison with a specialist solver |
+| H9.4 | Wall and material interaction: first export physically meaningful loads (temperature, heat flux, pressure, shear, normal current). Species flux needs a normalised passive-species solve or a qualified Sherwood closure, since velocity and temperature alone do not give it. Then one calibrated species (dissolved iron) with measured solubility and a surface dissolution law, preserving removed and deposited mass; lifetime predictions need alloy- and coating-specific kinetics and uncertainty. The sign of the magnetic influence on corrosion depends on the flow regime (less turbulent mass transfer with rising field, slightly more in laminar flow), so no claim that higher Ha always protects the wall. Plasma coupling begins with qualified heat and particle flux laws; DRBX, JAX-in-Cell and ESSOS fast-particle deposition are used inside their documented models. Free surfaces are a separate capability (tracking, wetting, capillarity, evaporation) qualified against FreeMHD or a liquid-wall experiment | After H8.2 and H9.5 for turbulent mass transfer. Grid, time and statistical convergence; calibrated kinetics with uncertainty; reduced-model errors and exclusion zones documented |
+| H9.5 | High Re and Ha: two difficulties, the physical regime and the elliptic stiffness. For transverse fields choose layer grids from a/Ha and a/sqrt(Ha), prove quantity convergence, and refine the axial fringe and the core; cells per layer is a starting choice, not a certificate. High Ha does not guarantee laminar flow (insulating square duct, Re 100,000, Ha 0–400: turbulent side regions beside a laminar core and Hartmann layers). Start with reachable DNS and correct energy and time behaviour, then one LES closure with a stated evidence range and separate thermal and species subgrid models; a converged steady root is not a turbulent mean. Effective Hartmann-wall conditions and SM82/inertial reductions are tested against resolved 3-D overlap only; a varying field direction, tangency, strong buoyancy, wall currents or fast-changing geometry can defeat a uniform transverse-field reduction, and large-Ha magnetoconvection can look quasi-2-D while SM82 is inaccurate. Record Rm = mu0 sigma U L = Pm Re, the interaction number N = Ha²/Re, Pr/Pe and the buoyancy groups with their length and velocity definitions; a low Rm does not justify an electrostatic treatment of rapidly varying applied fields (disruptions and full induction are a separate model extension). Gradients over long chaotic windows need a statistical-sensitivity study; use short horizons or ensemble objectives | Extends H5 and H6, after H2.8 and H7.4. Grid, time and statistical convergence and energy budgets; a regime-specific literature comparison; LES overlap and exclusion zones; the estimator convergence study for any long-time gradient |
+
+##### H.10.5 Reviewer packages, step IDs and PRs
+
+| Order | Reviewer package | Steps | PR or state |
+|---|---|---|---|
+| 1 | A, stretched metric and momentum reconstruction | H0.5 (absorbs H2.1) | stage-1 PR |
+| 2 | B, constrained linear stage; C, momentum stepping and time accuracy | H0.6, H1.7; H2.2, H2.7, H2.8 | stage-2 PR; then the RK3 PR |
+| 3 | D, scalar and eigen contracts | H1.5, H1.6 | SOLVAX #158 and its release; #272 holds |
+| 4 | E, conjugate thermal/electric wall stack | H7.1–H7.3 | #272–#274, #284 → #285 → #286, #277–#281 |
+| 5 | F, moving open thermal flow | H7.4 | new PR after 2 and 4 |
+| 6 | G, heated conducting duct | H7.5 | Case 1 then Case 2; new PRs |
+| 7 | H, dynamic parameter gradients | H8.1 (with H4.2) | new PRs |
+| 8 | H2, temperature-dependent laws | H8.2 | new PRs |
+| 9 | I, Python/TOML alignment; J, solver bottlenecks | H4.1–H4.4 exits; H8.3 | Lane C PRs; measurement |
+| 10 | K, stellarator study; L, blankets; M, tritium; N, turbulence, materials, reduced walls | H9.1; H9.2; H9.3; H9.4, H9.5 | new PRs, in that order |
+
+Dispositions of the open PRs, from the review: #269 keep, finish the evidence
+packaging (reproducible sweep inputs and results, figure generation outside the
+core); #270 move the generated movies to release assets, keep a small preview and
+the regeneration command (raising the media limit is not a numerical fix); #271
+accept only as a bounded screening study after fixing the mixed-length Re/Ha
+filter (below); #272–#274 as H7.1; #275 high-priority maintenance, keep the
+NaN/rejection/restart parity and handle the timing gate by owner question 2; #276
+merge first as the concise reconciliation, with one current capability table,
+and with contradicted old statuses removed there rather than a layer added;
+#277 approve the corrected scoped contract (it already names SOLVAX 158 and a
+compact reference-data budget); #278–#281 as H7.3; #284–#286 as H7.2. Merge
+order of the thermal chain: #275 and #276 once their real gates pass, then the
+scope and reference PRs, then the wall stack in order. A green parent does not
+certify a different merged combination: each PR is re-based and re-run on the
+integrated head.
+
+The #271 filter uses `Re = U D_h/nu` but `Ha = B a sqrt(sigma/(rho nu))`. The
+Hartmann-layer Reynolds number is `Re_delta = (Re/Ha)(a/D_h)` and, for
+`beta = b/a`, `D_h/a = 4 beta/(1 + beta)`. A fixed `Re/Ha <= 200` then allows
+`Re_delta` of 2,550 at `beta = 0.02`; the reported candidate ratios 17 and 71
+correspond to about 34 and 80, so the correction changes the feasible region
+without rejecting those candidates. The thresholds are used with their original
+definitions and described as a screen, not as a stability proof. The study's
+corrected fixed-flux objective (pumping power over heated width) is a real
+improvement, but both optima still sit at the approximately 0.48 T field cap
+(an illustrative area cap), with insulating walls, constant properties and held
+fully developed flow; the small extrapolated margins to 625 K leave out
+solid-wall, buoyancy and material uncertainty. For blanket design the heated
+fluid width is replaced by the gross channel pitch including walls and ribs, with
+total heat removal and coverage constrained. The area direction is differentiated
+through a constant-property scaling and a Hartmann-number dependence, and the
+aspect ratio by derivative-free bracketing on rebuilt meshes, so future geometry
+derivative claims need traced metric derivatives and mixed-direction tests (H8.1).
+
+##### H.10.6 Derivative qualification standard (DH14)
+
+Every differentiable path a PR adds or changes carries, in the portable gate, one
+representative case of each of these, and in the scheduled tier the refinements:
+
+1. Taylor remainder: the error of the linearisation falls as epsilon squared over
+   a step sweep, with the slope reported, not a single step.
+2. JVP/VJP pairing: the dot-product identity `<J v, w> = <v, J^T w>` at the
+   tolerance of the solves.
+3. Centred-difference sweep with the plateau shown, against tighter primal and
+   adjoint tolerances (a gradient that moves when the tolerances tighten was not
+   converged).
+4. Mesh convergence of the **derivative**, not only of the objective.
+5. Distinct directions: independent perturbations of each parameter family, and a
+   mixed direction; a test in one direction does not qualify another.
+6. Explicit unsupported behaviour: a request the code does not support (profile
+   or eigenvector derivative, Hessian, a gradient at `c = 0`, a non-converged
+   solve) raises with a message and is tested to raise.
+7. A converged residual is a precondition of a derivative, enforced by the code
+   that returns it; a finite number from an unconverged solve is never returned
+   as a gradient.
+
+Reference tolerance for float64 steady gradients stays 1e-6 relative to central
+differences (T12, T35) unless a test states and justifies another.
+
+##### H.10.7 Test tiers, performance metric and review checklist (DH16)
+
+- **Portable PR gate**: small identities, analytic limits, one representative
+  derivative per changed path, strict parsing and the public workflow.
+  **Scheduled numerical gate**: representative 3-D, thermal, high-contrast and
+  directional-sensitivity studies with refinement. **Research campaigns**: large
+  Ha and Re, external-code comparisons, experimental targets, GPU and multi-device
+  performance and long statistical runs. Wall-clock ratios, exact iteration
+  counts and compiler-string expectations are diagnostic reports unless a
+  narrowly justified platform gate exists. Coverage of 95 % stays a development
+  aid and does not stand for accuracy; tests check invariants and independently
+  defined quantities, not internal helper names, so a kernel can be split or
+  rewritten without regenerating physical truth. Convergence studies separate
+  spatial, temporal, iterative, reference and statistical error and do not force
+  a formal order at limiter switches or non-smooth extrema.
+- **Benchmark schema**: one small schema and one runner storing the source DOI
+  and exact equation, table or figure, physical normalisation, material values,
+  geometry and BCs, electrical circuit, mesh family, observable definition,
+  uncertainty, solver tolerance, dtype and software and hardware provenance.
+  Acceptance is frozen before new production results are inspected; a changed
+  reference definition keeps the old outcome and the reason.
+- **Performance metric**: synchronised warm time, cold compile and setup, **total
+  time and memory to an accepted objective plus gradient**, failures and transfer
+  cost, for the same physics, accuracy and dtype, on recorded controlled hardware.
+  Milliseconds per step, time to steady state and time to gradient are three
+  different quantities and are never exchanged. Performance results are kept
+  apart from numerical unit CI.
+- **Review checklist for every PR that changes numerics**: the behaviour or
+  equation delta; the smallest useful validation; a cost report; the removal of
+  the code it replaces; no second numerical core edited at the same time; and a
+  requalification on the actual integrated head.
+
+##### H.10.8 Code-size rule, loans and removal targets (DH15)
+
+Size is a review signal for duplicated concepts, not a number to hit; an arbitrary
+cap that rises at every PR is not an architectural constraint. From this revision:
+
+- One implementation per metric, gauge, reconstruction and solver. A generic
+  nullspace, metric or parser is one small internal helper, not a plugin system.
+- A PR that adds source lines to `src/lmhdx` states the lines it removes in the
+  same PR. Where it cannot, the audit targets (`total_package_lines_max`,
+  `maintained_core_lines_max`, `largest_package_module_lines_max`) are raised only
+  as a **loan** with its repayment step named below; a loan unpaid at a release
+  tag blocks the tag. The byte target for docs and plan moves with the docs.
+- Plotting, digitization, movie code and per-benchmark solver branches stay out
+  of the package. Docstrings give equations or quantities, units, assumptions,
+  differentiable arguments, failure behaviour and one short example; comments
+  explain a non-obvious numerical reason, not a PR chronology.
+- Replaced implementations are deleted in the PR that adopts their replacement
+  (SOLVAX release, new helper), and the plan names them:
+
+| Replaced implementation | Removed by | Lines (estimate) |
+|---|---|---|
+| Mirrored first/last-width interpolation helpers; ratio-of-raw-differences limiter slope | H0.5 | net below zero with the new helper |
+| Per-component scaled predictor and its projection pairing | H0.6 | in the PR |
+| Local Schur wrapper | H1.7 pin bump | −wrapper |
+| Variable-coefficient Helmholtz, PCG, gauge code of #284–#286 and the thermal modules | H7.2 | −duplicates |
+| Separable eigen solver, compile cache, constrained CG | H4.6 | −0.9k |
+| Newton and inner-Stokes-CG stack for open ducts | H3.5 | −300 |
+| Case parser, second TOML schema, argparse CLI, duplicated design-law API | H4.7 | −3.4k |
+| Plotting and digitization in the package; media above the limit | H4.7, #270 | to release assets |
+
+Loans known today: H4.2 (+150…200 source lines, repaid by H4.6, −0.9k) and
+H0.6 (+60…90, repaid by H3.5, −300, and by the predictor scaling it removes). The byte target in `scripts/audit_architecture.py` rises in this PR by the
+bytes it adds (docs only, no source line).
+
+##### H.10.9 Capability status in one table (2026-10-22)
+
+| Area | Supported envelope | Evidence | Open blocker | Next |
+|---|---|---|---|---|
+| Fully developed MHD | Hartmann, Shercliff, Hunt ducts; polar pipes; implicit derivatives of converged steady solutions | Table I, eight rows, orders 1.96–2.02 | Does not qualify arbitrary 3-D blanket flow | keep |
+| Open and fringing flow | Cartesian Stokes/Newton ducts; open polar Stokes pipe; spatially varying B as static preparation data | ANL fringe rows; ALEX B1 at the side-wall tap | The original tap position is unresolved (selecting it by agreement would be calibration); no end-to-end coil derivative | read the ALEX report; H8.1 |
+| Transient momentum | First-order step with limited or upwind transport; Stokes and held-flow use | time order 1.00–1.04 (H.0) | no pressure-balanced rest state for a non-isotropic B (H.10.1); central transport with Euler is unstable; ledger scope | H0.5, H0.6, H2.2, H2.7, H2.8 |
+| Thermal | Constant-property fluid heat, implicit conduction, Joule heat, Boussinesq in closed flows, developed ducts; open thermal with held velocity | thermal PRs, Nu tables | evolving open thermal flow and solid storage are not on main | H7 |
+| Conducting walls | Insulating and thin walls; resolved layers in separable geometry; general 3-D electrical walls are draft #286 | wall tests | one-cell third axis on main | H7.2 |
+| Derivatives | Steady forcing and field-scale sensitivities, thermal state, source and reservoir directions in the prepared path | steady gradients vs central differences | geometry, material, timestep, BC setup and field arrays are static in important paths | H4.2, H8.1 |
+| High Re and Ha | Strong fully developed high-Ha evidence; central and limited transport; separate SM82 Q2D | no 3-D high-Re/Ha thermal or long-time statistical validation | time integrator, stage, LES | H2, H5, H9.5 |
+| Interfaces | CLI/TOML, Python drivers, restarts, VTR, compiled trajectories and chunked acceptance | tests | TOML thermal accepts periodic/wall axes only; `solve` has no thermal dispatch | H4.1–H4.4 |
+
+##### H.10.10 Statements to qualify (additive notes; the wording is changed in the PR that touches each)
+
+- **ALEX B1 pressure**: the side-wall tap comparison passes its normalised bands
+  and the section-mean pressure fails; the experimental tap location is still
+  unresolved. Read the scanned report's metadata first; do not pick the tap by
+  agreement. Row 6 stays conditional on it.
+- **FreeMHD**: the workflow runs a two-update transient smoke from a plug
+  profile. It is not a converged comparison at matched accuracy or a speed
+  benchmark. A real comparison uses FreeMHD's actual solver, electrical walls and
+  numerical settings on archived matched cases (generic mhdFoam is not the same
+  model).
+- **GPU**: the figures are step throughput and selected solve and gradient costs on
+  named hardware; cold compile, warm solve, total convergence and gradient costs
+  stay separate, and speed assertions use matched-accuracy timings. Two-device
+  Q2D correctness is shown, a speed-up is not. The README gives two-card
+  efficiencies 0.20 (float64) and 0.10 (float32) at 2048², the plan 0.25 and 0.14:
+  reconcile both against the benchmark record in the next docs PR.
+- **Layer-corrected core flow against 3-D**: internal consistency, not
+  independent experimental validation; the ANL thin-layer asymptote and the
+  finite-Ha model are different targets.
+- **Stale statuses**: remove open statuses of merged work, mark the retired B1/B2
+  lane as historical (the tag `lmx-b2-lane-v1` is a record, not a production
+  claim), and restate the inertia hypothesis with the measured small share of #225.
+  This belongs to #276 and later docs PRs; nothing already written is edited here.
+
+##### H.10.11 Tests added by the review (Table H.T, continued)
+
+| ID | Test | Reference numbers | Tolerance | Step |
+|---|---|---|---|---|
+| T36 | Affine interior reconstruction | widths (1, 2, 4, 8), centres (0.5, 2, 5, 11), `f = y`, face at 3 gives 3 (main: 8/3) | 1e-14 | H0.5 |
+| T37 | Periodic seam | end widths 1 and 8, seam weight 1/9 (main: 1/2); smooth periodic function, unequal-end-width mesh | exact weight; order 2.0 ± 0.2 | H0.5 |
+| T38 | Gradient-force rest balance | 16 × 16 × 1 periodic, `p = sin x sin y`, force = discrete `Gp`; `B_y` 0 and 10, dt 0.1, 0.01, 0.001, explicit and implicit viscosity; main: 4.58e-16 at `B_y = 0`, 4.43e-2 / 2.44e-3 / 4.43e-5 at `B_y = 10` | peak `abs(u)` 1e-13 | H0.6, H2.2 |
+| T39 | Finite-step steady invariance | the converged transient state satisfies the physical steady residual, independent of dt (below and above `dt lambda = 1`) | solver tolerance | H0.6 |
+| T40 | Constrained stage | independent small saddle matrix; primal/transpose dot-product test; pure-gradient force; compatible and near-compatible right-hand sides; stopping diagnostics | 1e-12 on the dense reference | H0.6, H1.7 |
+| T41 | Time-integration stability and ledger | central Fourier-mode amplification (Euler: `abs(g) = sqrt(1 + C² sin²θ) > 1`; RK3 stable to the stage-map limit); temporal order from T28; shear-mode growth and decay from T29; kinetic-energy budget with the H2.7 terms | as T28, T29 | H2.8, H2.7 |
+| T42 | Flux-form Helmholtz | composite slab analytic flux and storage; nonuniform meshes; contrast sweep; singular-gauge invariance; zero right-hand side; forward and transpose; coefficient Taylor | 1e-10 flux; Taylor slope 2 | H1.5 |
+| T43 | Eigen certification | converged Nu derivative against a centred difference (residual 8.33e-11: -0.853001182 vs -0.853001184); residual 0.29 rejected; profile derivative raises; non-positive flow weight rejected | 1e-8 absolute at converged residual | H1.6, H7.1 |
+| T44 | Conjugate wall stack energy | combined fluid and solid storage; interface heat and current cancellation; insulated charge and power balance; thin-wall and insulating limits; independent high-contrast check | 1e-10 balances | H7.2 |
+| T45 | Open thermal flow | manufactured open solution; inlet/outlet and global budgets; prescribed-flow recovery; domain-length and backflow sensitivity; temporal refinement; buoyant onset and decay | per sub-test | H7.4 |
+| T46 | Mistrangelo 2025 Cases 1 and 2 | Ha 235; Case 1 Re 3220, Gr 1.42e7; Case 2 Re 1073, Gr 3.55e7; steel walls 0.002 m, half-width 0.023 m | band declared before the run | H7.5 |
+| T47 | Dynamic-parameter gradients | spatial B, coil current, conductivity, heat capacity, heat load; the derivative standard of H.10.6; compile count and timing | 1e-6 relative; Taylor slope 2 | H8.1 |
+| T48 | Temperature-dependent laws | manufactured nonlinear solution, interface flux, heat/work balance, positivity, tolerance tightening, coupled Taylor | per sub-test | H8.2 |
+| T49 | Stellarator exterior-field channel | end-to-end Taylor directions, active constraints, refined-grid objective and gradient, external-solver spot check, peak-solid-temperature margin | stated in the study | H9.1 |
+
+T23 is unchanged and now rides with H0.5. Tests for H9.2–H9.5 are written when
+those steps start.
+
+##### H.10.12 Open for the owner after the review
+
+1. Withdraw the bit-identical requirement of the `euler` transient goldens
+   (H.10.2) and re-pin the transient goldens in the stage-2 PR with a dt sweep.
+   The recommendation is yes: the old step has the defect of H.10.1.
+2. #275's tenfold timing-ratio assertion: replace it in the gate by the
+   deterministic checks and record the ratio as a measurement on controlled
+   hardware (DH16). This moves an existing test, so it needs the owner's word.
+3. The loan rule of H.10.8 in place of "raise budgets by what a PR adds".
+4. The earlier open questions (voltage-driven walls and annuli; budget for the
+   long-box runs) are unchanged.
+
 ---
 
 ## 7. Validation ladder
@@ -2059,3 +2461,4 @@ Process: pyOpenSci README guide · JOSS review criteria · Google small CLs · D
 | 2026-10-20 | Row 6 sensitivity (lane row 6, branch fringe-row6-sensitivity; `pipe.py`, tests, docs, plan only; `axial.py` untouched). Measured runs of the ALEX B1 open pipe: field interpolant (monotone cubic, linear, spline) changes the side-wall RMS by 0.03; table ±0.03 and a ±0.5 ramp shift give 0.51–1.17 there and 2.1–2.7 for the section mean; c 0.020 / 0.035 / 0.054 miss the upstream gradient by 18 % / 39 % / 108 % and score 2.2 / 2.5 / 7.8 at the wall (Ha 1600). The finding: the section-mean pressure was the wrong observable for a tap. `lmhdx.pipe.wall_pressure_gradient` reads the wall cell: at Ha 6600 (48×64×76, 11,250 CG iterations, 618 s on the Mac CPU) RMS / L∞ are 0.86 / 1.39 at the walls parallel to the field, 3.11 / 6.60 at the walls normal to it, 1.79 / 3.82 for the ring and 2.43 / 5.08 for the section mean. Row 6 is therefore met station by station at the side-wall tap, conditional on ALEX having taps there (the digitized table does not say; the scanned report must be read). Inertia is not needed for the shape. Open: tap position; finite-thickness wall and B_x (need `axial.py`) | the tap position; confirm at Ha 6600 on the GPU |
 | 2026-10-21 | 1.9d, #225: the inertial share fitted on the uniform-buffer 124×32² mesh at Ha 100 (Re 10, 20, 33) and Ha 200 (Re 10, 20, 40): 0.42–2.11 % and 0.40–2.33 %, share ≈ 0.045 %·Re^1.31·Ha^-0.16; `solve_open_duct` cycle 120 and inner tolerance 1e-1, `fringe_duct(growth=)`. Krylov recycling across Newton steps and continuation measured and rejected (Re 20: 313 to 224 and 289 to 206 outer iterations; Ha 100, Re 33: 5,302 to 11,202); outer iterations still grow faster than Re. Row 6 inertia bounded at about 30× too small, consistent with the wall-tap finding of #282 (the shape does not need inertia). No tolerance changed, no test moved; budgets raised by the lines added. |
 | 2026-10-21 | High-Re and 2.0 plan (docs and plan only; ADR 0010, DH1–DH8, Program H in Section 6 and goal G13). Audit of `d137209` with the measured baseline of H.0; one IMEX RK3-CN stepper for steady and unsteady runs, Newton demoted to polish; separable eigenbasis kept; AL/PCD/LSC, multigrid, SER on an explicit march, recycling and host direct solvers rejected with evidence (H.7); API 2.0 (`Problem`, `Solver`, `Output`, TOML schema 3, wall conductance and thickness differentiable, logger text kept) approved by the owner; test matrix T1–T35 with reference numbers (Table H.T). Open for the owner: voltage-driven walls and annuli, budget for the long-box runs | H0.1–H0.4, H1 and H4.1 in parallel (three lanes); H2.1 beside them |
+| 2026-10-22 | Program H revision after an independent review (docs and plan only; ADR 0010, DH9–DH18; H.10 added, nothing above it changed). The reviewer's probes: the transient step does not keep a pressure-balanced rest state when B is not isotropic (peak abs(u) 4.4e-2 / 2.4e-3 / 4.4e-5 at dt 0.1 / 0.01 / 0.001, `B_y` 10; our H2.2 inherits it by design), the limited momentum face value and the periodic seam weight use the wrong geometry (8/3 against 3; 1/2 against 1/9), and #272's gradient is valid for the converged eigenvalue only. New order: H0.5 (stage-1 PR: one geometry helper, absorbs H2.1 / T23) and H0.6 (stage-2 PR: constrained stage `H u + (dt/rho) G p = b`, `D u = 0`) before the RK3 work; SOLVAX H1.5–H1.7 (#158 flux-form operator, certified eigen iteration, Schur composition); H2.7/H2.8 (ledger scope, time-accuracy evidence); thermal track H7.1–H7.5 (#272–#274, #284–#286, #277–#281, moving open flow, Mistrangelo Cases 1 and 2); H8 (dynamic-parameter gradients, temperature-dependent laws, measured bottlenecks); H9 (stellarator exterior-field heated channel first, then blankets, tritium, materials, high Re/Ha). Reconciled with earlier decisions: the Euler bit-identical requirement is withdrawn for the transient step only; host solvers and a PETSc adapter stay out of the default loop and enter SOLVAX as an opt-in, measured-gated adapter; Oseen-aware blocks become guided research because the projection is exact only for an isotropic damping; caps become loans with named repayment. Derivative standard, test tiers, performance metric (time and memory to an accepted objective plus gradient), PR checklist, status table, statements to qualify, T36–T49. Open for the owner: re-pinning the transient goldens, #275's timing-ratio gate, the loan rule | stage-1 and stage-2 PRs; H1.5 and H1.6 in SOLVAX; H7.3 beside them |

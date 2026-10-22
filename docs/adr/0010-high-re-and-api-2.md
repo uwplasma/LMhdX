@@ -149,3 +149,134 @@ the program must close with measurements: the in-trace eigen denominators (the
 differentiable-leaf list assumes them), the traced `eigh` of H4.2, and the
 constant-flux control and statistics, which are new numerics specified here only
 at the API level.
+
+## Revision of 2026-10-22: decisions from the independent review
+
+Status: proposed 2026-10-22; the owner confirms by merging. DH1–DH8 above are not
+edited. Where one of them is changed, the entry below says which and how. Basis:
+the external report on `d137209` and SOLVAX 0.31.0 (22 pages, snapshot of 22
+October 2026), its probes (quoted as the reviewer's until the PR that fixes each
+finding reproduces it), and `plan.md` H.10, which has the steps, tests and
+reasons.
+
+**DH9. The momentum stage is constraint-consistent.** The stage solves `H u +
+(dt/rho) G p = b`, `D u = 0`, with `H` the implicit viscous and Lorentz-damping
+operator, through the matched Schur operator `D H^-1 G` and the correction `u =
+w − (dt/rho) H^-1 G p`, `w = H^-1 b`. When Lorentz damping differs between
+components, scaling the whole increment component by component turns a gradient
+force into a non-gradient, and the ordinary projection cannot restore the rest
+state (peak `abs(u)` 4.4e-2 at `B_y = 10`, dt 0.1). This amends DH1: the `psi`
+projection of the RK3 stage is the isotropic limit of the stage and its starting
+iterate, not a separate path, and the bit-identical `euler` requirement of DH1
+and DH7 is withdrawn for the transient momentum step only (steady, Stokes and
+held-flow paths stay bit-identical). LMhdX supplies `H`, `D`, `G` and the
+boundaries; the generic Schur composition moves to SOLVAX once the interface
+is fixed. Steps H0.6, H1.7, H2.2.
+
+**DH10. One geometry helper.** Interpolation weights, limiter slopes and the
+carrier weights of the central flux read widths from one boundary-aware
+`_ghosted_widths` (wall, open, periodic wrap), and the limited face value uses
+physical-distance slopes. The EMF/Lorentz adjoint pair is not touched.
+Kinetic-energy conservation of central transport on stretched grids (T23) is
+fixed in the same change, which absorbs H2.1. Step H0.5.
+
+**DH11. Physical-time claims need stability, order and budget evidence.** Central
+transport with forward Euler is unstable for every Courant number
+(`abs(1 − i C sin theta) > 1`); an RK3 stage map has an imaginary-axis limit of
+the square root of 3. A claim of time accuracy states a manufactured temporal
+order, a transported Fourier mode, shear-mode growth and decay, and a kinetic
+energy budget whose terms (buoyancy work, open-boundary flux, numerical
+convective work) are included or declared out of scope. Physical time (`rk3`,
+`euler`) and pseudo-time (`march`) are distinguished in the docs. Steps H2.7,
+H2.8.
+
+**DH12. External solvers: an opt-in SOLVAX adapter, outside the default loop.**
+This refines the rejection of host direct solvers in DH3. The default path stays
+native and device-resident. One adapter in SOLVAX (PETSc fieldsplit, hypre,
+sparse direct including MUMPS and SuperLU_DIST) is admitted when a named
+bottleneck is measured at matched physical error and complete cost including
+host and device transfers, and when the wrapper actually used passes tests for a
+true transpose solve, nullspace, status reporting and coefficient derivatives.
+Two uses are sanctioned: a reference solve for accuracy spot checks, and a
+fallback for a pressure that is not separable. No hard dependency, no import by
+default. Reason: the present MUMPS adapter is sequential, SciPy SuperLU is not
+SuperLU_DIST, the differentiable sparse solve is a host callback, and raw
+factor-object solves do not accept traced values, so none of them is yet a
+distributed or GPU-resident solver. Step H8.3.
+
+**DH13. Oseen-aware block preconditioners are guided research.** This amends
+DH3. The argument that the exact projection removes the pressure Schur
+complement holds for an `H` that is the same on all components. With anisotropic
+Lorentz damping the Schur complement of the stage is real; its first
+preconditioner is the separable Poisson solve, with a flexible Krylov method
+where inner solves are adaptive. Oseen velocity blocks, augmented-Lagrangian and
+current-pressure blocks are entered only when the Schur iteration count or the
+time to an accepted objective leaves a declared envelope on a fixed family (mesh
+anisotropy, Ha, Re, wall contrast, length), and defaults are chosen by complete
+cost. The rejections recorded in `plan.md` H.7 remain measurements of those
+configurations and do not show that block smoothing or recycling cannot work.
+
+**DH14. Derivative qualification standard.** A differentiable path is accepted
+with a Taylor remainder over a step sweep, the JVP/VJP dot-product identity, a
+centred-difference sweep against tighter primal and adjoint tolerances, mesh
+convergence of the derivative, independent and mixed directions for each
+parameter family, and explicit unsupported behaviour that raises. A derivative is
+returned only from a converged residual. The eigenvalue interface is scoped to
+the converged first derivative of the smallest simple eigenvalue; eigenvector,
+profile and Hessian derivatives raise until an implicit normalised-eigenvector
+tangent or adjoint solve exists. Float64 steady gradients keep 1e-6 relative
+against central differences unless a test states another. Steps H1.6, H8.1.
+
+**DH15. Code size: one implementation per concept, and loans with repayment.**
+A size cap that rises at every PR does not constrain architecture. Each concept
+(metric, gauge, reconstruction, solver) has one implementation; plotting,
+digitization and movie code stay out of the package; a replaced implementation is
+deleted in the PR that adopts its replacement. A source PR states the lines it
+removes. A raise of an audit target is a loan with a named repayment step in
+`plan.md` H.10.8, and a loan unpaid at a release tag blocks the tag. The byte
+target for docs and plan moves with the docs. This replaces the earlier practice
+of raising budgets by what a PR adds, and keeps the owner's principle that size
+is a direction, not a number.
+
+**DH16. Three test tiers and one performance metric.** The portable PR gate holds
+small identities, analytic limits, one representative derivative per changed path
+and the public workflow; a scheduled gate holds the 3-D, thermal, contrast and
+directional-sensitivity studies with refinement; research campaigns hold large
+Ha and Re, external-code comparisons, GPU performance and long statistical runs.
+New wall-clock ratios, exact iteration counts and compiler-string expectations
+go to diagnostic reports. An existing assertion moves only with the owner's word.
+Performance is the synchronised warm time, cold compile and setup, and the total
+time and memory to an accepted objective plus gradient, for the same physics,
+accuracy and dtype on recorded hardware; milliseconds per step, time to steady
+state and time to gradient are not interchangeable.
+
+**DH17. Claims gate and benchmark discipline.** New moving-flow thermal validation
+claims wait for the constrained stage and the time-accuracy evidence of DH9 and
+DH11; held-flow thermal examples and documentation do not wait for high-Re work.
+The Mistrangelo et al. 2025 heated conducting duct is a multi-code statistical
+comparison: Case 1 is frozen and run first, Case 2 follows with burn-in,
+averaging and uncertainty, agreement is judged inside a band declared before the
+run, and a fitted material ratio is labelled calibration and kept apart from the
+independent velocity, temperature and current observables. The ALEX B1 tap
+location, the FreeMHD two-update smoke and the GPU step-throughput figures are
+stated at their real scope (`plan.md` H.10.10).
+
+**DH18. First application: a constrained heated channel in a real stellarator
+exterior field.** ESSOS supplies the coil field and VMEX the finite-beta exterior
+contribution once its closure and derivatives are qualified; blanket points are
+outside the last closed flux surface. The study compares uniform, locally sampled
+and full 3-D fields at fixed throughput and heat removal, with plasma, coil,
+clearance, duty, pitch and temperature constraints so that no weaker field, lower
+heat removal or unconstrained area passes for an optimum, and adds live
+coil-parameter derivatives after the field and material gradients (H8.1) work.
+Blankets, tritium (OpenMC, LMhdX, FESTIM), wall-material interaction and high
+Re and Ha follow as separate studies (`plan.md` H9.2–H9.5), each with its own
+entry condition. Step H9.1.
+
+Consequences of the revision. Two repairs, the stage-1 and stage-2 PRs, come
+before any RK3 code, and H2.2 starts from the corrected stage. SOLVAX gains the
+flux-form operator (issue 158), a certified eigen iteration and the Schur
+composition. The thermal chain is finished in a fixed order before moving open
+flow and the Mistrangelo comparison. The test matrix grows by T36–T49. The
+source size estimates under Consequences above are unchanged; the new loans are listed
+in `plan.md` H.10.8.
