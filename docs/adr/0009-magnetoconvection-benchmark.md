@@ -207,11 +207,15 @@ and fringe structures are inertial.
     images extracted from the journal's PDF, which are not in the repository,
     so it stays out of the package and `validation/`.
   - Long runs, records and figures are release assets, not tracked files.
+  - In 2.0 the specification, which is metadata, moves to `benchmarks/specs`
+    outside the wheel, and a reference stays in the wheel only while a test
+    reads it.
 - **The references' size.** They ship in the wheel, so they are compact. A
   figure keeps only its band, the range of the codes that agree, at about 40
   points with four significant digits, and its calibration. The budget is 40 KB
   per case, against the existing 0.5–2 KB references and the 384 KB wheel cap.
-  The per-code curves are not shipped; the digitizer regenerates them.
+  The per-code curves are not shipped: they are a release asset, with their
+  SHA-256 in the provenance, and the digitizer regenerates them.
 - **What is gated from them.**
   - In 5.4a: each figure's calibration, to an axis misfit under 0.6 px; the
     band's shape; and the specification's checks against figures, the pressure
