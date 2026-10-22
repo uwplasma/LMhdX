@@ -1662,6 +1662,35 @@ def _check_reference_record(record):
             assert record["window"][0] <= band["x"][0] and band["x"][-1] <= record["window"][1]
 
 
+def test_the_band_misfit_interpolates_as_plotted_and_widens_by_both_uncertainties():
+    """``band_misfit`` on synthetic records. A semilog band straight from 1 to 100 has its middle at 10 in decades,
+    where interpolating in y then taking the log put it at 50.5, 0.70 decades off; nonpositive values on a log axis
+    are refused. A band that steps from 0 to 10 holds a point at 10 just before the step only within the x
+    uncertainty, the edge taken at its extreme over that window; the y uncertainty widens it as before."""
+    from validation import mistrangelo
+
+    def record(x, lower, upper, scale="linear", across=0.0, along=0.0):
+        band = {"x": x, "lower": lower, "upper": upper, "codes": [1] * len(x)}
+        return {"figure": 0, "band": band, "y_scale": scale, "uncertainty": {"x": across, "y": along}}
+
+    semilog = record([0.0, 1.0], [1.0, 1.0], [100.0, 100.0], "log10")
+    assert mistrangelo.band_misfit(0.5, 10.0, record([0.0, 1.0], [1.0, 1.0], [100.0, 100.0], "log10")) == 0.0
+    narrow = record([0.0, 1.0], [1.0, 100.0], [1.0, 100.0], "log10")
+    assert mistrangelo.band_misfit(0.5, 10.0, narrow) == pytest.approx(0.0, abs=1e-12)
+    assert mistrangelo.band_misfit(0.5, 50.5, narrow) == pytest.approx(np.log10(50.5) - 1.0)
+    with pytest.raises(ValueError, match="positive"):
+        mistrangelo.band_misfit(0.5, 0.0, semilog)
+    step = [0.0, 0.5, 0.51, 1.0], [0.0, 0.0, 10.0, 10.0]
+    assert mistrangelo.band_misfit(0.45, 10.0, record(step[0], step[1], step[1])) == pytest.approx(10.0)
+    assert mistrangelo.band_misfit(0.45, 10.0, record(step[0], step[1], step[1], across=0.1)) == 0.0
+    assert mistrangelo.band_misfit(0.2, 10.0, record(step[0], step[1], step[1], across=0.1)) == pytest.approx(
+        10.0
+    )
+    assert mistrangelo.band_misfit(0.2, 10.0, record(step[0], step[1], step[1], along=4.0)) == pytest.approx(
+        6.0
+    )
+
+
 def test_the_digitizer_reads_a_drawn_figure(tmp_path):
     """A synthetic xmgrace-like figure: a frame with outward ticks, a solid green line, a dashed orange line and red
     rings. The calibration, the lines and rings within 1.5 px, and the band closed over the dashes are recovered; the
