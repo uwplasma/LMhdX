@@ -23,7 +23,10 @@ one point is gated in `tests/test_steady.py`, 48 cells at Ha 10 within 0.3 % of
 the spectral solve in each condition. The published curves are a reading from a
 figure, reported with its uncertainty. `python -m validation.mhd_nusselt`
 regenerates every number on this page on demand, in about ten minutes on a
-laptop CPU.
+laptop CPU. The compact record,
+`src/lmhdx/data/benchmarks/references/bluck2015-shercliff-nusselt.json`, holds
+the spectral column of the table below, the definition of Nu and that command,
+beside the readings. The test also checks the stored spectral values at Ha 10.
 
 | Ha on $a$ | H1 mean Nu on $D_h$: LMhdX / spectral | H2: LMhdX / spectral | T: LMhdX / spectral |
 |--:|:--|:--|:--|

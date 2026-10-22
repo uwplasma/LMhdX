@@ -1489,12 +1489,18 @@ def test_the_spectral_nusselt_reference_meets_the_exact_series():
 
 def test_the_mhd_nusselt_numbers_meet_the_spectral_solve_at_one_point():
     """docs/validation/mhd_nusselt.md at one point: LMhdX on 48 cells at Ha 10 against
-    ``validation.shercliff.developed_nusselt``, within 0.3 % in H1, H2 and T (0.06 % on the page's 128 cells)."""
-    from validation.mhd_nusselt import lmhdx_nusselt
+    ``validation.shercliff.developed_nusselt``, within 0.3 % in H1, H2 and T (0.06 % on the page's 128 cells). The
+    record's stored spectral values are the function's, to their six digits."""
+    import json
+
+    from validation.mhd_nusselt import READINGS, lmhdx_nusselt
     from validation.shercliff import developed_nusselt
 
+    stored = json.loads(READINGS.read_text())["spectral"]
     for heating, value in lmhdx_nusselt(10.0, cells=48).items():
-        assert value == pytest.approx(developed_nusselt(10.0, 48, heating=heating), rel=3e-3), heating
+        reference = developed_nusselt(10.0, 48, heating=heating)
+        assert stored[heating][stored["hartmann"].index(10.0)] == pytest.approx(reference, rel=2e-6), heating
+        assert value == pytest.approx(reference, rel=3e-3), heating
 
 
 def test_the_uniform_wall_temperature_refuses_an_ill_posed_duct():
