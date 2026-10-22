@@ -166,9 +166,10 @@ python examples/fringe_duct_example.py
 
 ## Heat transfer
 
-![A liquid-metal layer heated from below, without a field and in a horizontal field](docs/_static/thermal_convection_3d.webp)
+[![A liquid-metal layer heated from below, without a field and in a horizontal field](docs/_static/thermal_convection_3d_preview.webp)](https://github.com/uwplasma/LMhdX/releases/download/showcase-thermal/thermal_convection_3d.webp)
 
-*Liquid metal heated from below, Ra = 10⁴, Pr = 0.1. Without a field the convection cells keep rearranging; a horizontal
+*Liquid metal heated from below, Ra = 10⁴, Pr = 0.1; the image links to the
+movie. Without a field the convection cells keep rearranging; a horizontal
 field (the arrow) leaves straight rolls along it, as in liquid-metal
 experiments (Burr & Müller 2002). It illustrates the evolution and is not a
 quantitative claim.*

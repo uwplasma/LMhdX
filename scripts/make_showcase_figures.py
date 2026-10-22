@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import json
 from pathlib import Path
 
@@ -626,7 +627,7 @@ def thermal_convection(rayleigh: float = 1.0e4, prandtl: float = 0.1, chandrasek
     )
     frames = []
     with plt.rc_context(PAPER):
-        for index in range(3, shape[0], 4):  # every 10 d/U_ff, from when the instability has grown
+        for index in range(3, shape[0], 2):  # every 5 d/U_ff, from when the instability has grown
             fig = plt.figure(figsize=(8.0, 4.1), dpi=160)
             for column, (title, (temperatures, nusselt)) in enumerate(runs.items()):
                 axis = fig.add_axes((0.5 * column, 0.16, 0.5, 0.68), **SOLID)
@@ -642,7 +643,7 @@ def thermal_convection(rayleigh: float = 1.0e4, prandtl: float = 0.1, chandrasek
             fig.text(0.5, 0.95, f"t = {2.5 * (index + 1):.0f} $d/U_{{ff}}$", ha="center", va="top")
             _colorbar(fig, (0.32, 0.115, 0.36, 0.022), cmap, norm, label, (-0.5, 0, 0.5))
             frames.append(_rgb(fig))
-    _animate(frames, STATIC / "thermal_convection_3d.webp", width=480, duration=320, quality=40)
+    _animate(frames, "thermal_convection_3d", width=720, duration=160)
 
 
 def thermal_heated_duct(hartmann: float = 1000.0, peclet: float = 2000.0) -> None:
@@ -659,7 +660,7 @@ def thermal_heated_duct(hartmann: float = 1000.0, peclet: float = 2000.0) -> Non
     titles[0.05] = ("Conducting Hartmann walls, c = 0.05", "c = 0.05")
     frames = []
     with plt.rc_context(PAPER):
-        for frame, time in list(enumerate(cases[0.0]["time"]))[1::2]:  # every 3 a/u, to the steady state
+        for frame, time in enumerate(cases[0.0]["time"]):
             fig = plt.figure(figsize=(9.6, 4.6), dpi=150)
             profiles, walls = fig.add_axes((0.67, 0.6, 0.31, 0.32)), fig.add_axes((0.67, 0.12, 0.31, 0.32))
             for row, (color, (conductance, case)) in enumerate(zip(SERIES, cases.items())):
@@ -678,7 +679,7 @@ def thermal_heated_duct(hartmann: float = 1000.0, peclet: float = 2000.0) -> Non
             walls.set_title(rf"Heated wall, Pe = {peclet:g},  t = {time:.0f} $a/\bar u$", fontsize=10)
             walls.legend(loc="upper left")
             frames.append(_rgb(fig))
-    _animate(frames, STATIC / "thermal_heated_duct.webp", width=480, duration=300, quality=50)
+    _animate(frames, "thermal_heated_duct", width=760, duration=150, quality=70)  # keeps the gradient
 
 
 def _developed_flow(grid, hartmann: float = 0.0, periodic_span: bool = False):
@@ -984,14 +985,22 @@ def _rgb(fig) -> np.ndarray:
     return frame
 
 
-def _animate(frames: list, path: Path, width: int, duration: int, quality: int = 45) -> None:
+def _animate(frames: list, name: str, width: int, duration: int, quality: int = 45) -> None:
     """An animated WebP, each frame downsampled to ``width`` pixels for smooth edges; ``minimize_size`` stores
-    only what changes between frames."""
+    only what changes between frames. The movie is a release asset, written to the untracked
+    ``docs/_static/generated``; its last frame, 480 px wide, is the tracked preview."""
     height = round(frames[0].shape[0] * width / frames[0].shape[1])
     images = [Image.fromarray(frame).resize((width, height), Image.LANCZOS) for frame in frames]
     options = {"duration": duration, "loop": 0, "quality": quality, "method": 6, "minimize_size": True}
+    path = STATIC / "generated" / f"{name}.webp"
+    path.parent.mkdir(parents=True, exist_ok=True)
     images[0].save(path, save_all=True, append_images=images[1:], **options)
-    print(f"wrote {path.name}: {len(images)} frames, {path.stat().st_size / 1024:.0f} KiB")
+    last = Image.fromarray(frames[-1])
+    last.resize((480, round(last.height * 480 / last.width)), Image.LANCZOS).save(
+        STATIC / f"{name}_preview.webp", quality=80, method=6
+    )
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    print(f"wrote {path.name}: {len(images)} frames, {path.stat().st_size / 1024:.0f} KiB, sha256 {digest}")
 
 
 RESULTS = Path(__file__).resolve().parents[1] / "benchmarks" / "results"

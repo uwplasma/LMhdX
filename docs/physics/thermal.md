@@ -549,10 +549,20 @@ on 32 cells across and 64 along, and 25.0 % again on 40 and 80.
 in about two minutes on a laptop GPU. The
 hot strips left along its corners are where the jet meets the Hartmann layers.
 
-```{image} ../_static/thermal_heated_duct.webp
+The flow is held: the movie is a heat-transfer result in a given flow, not a
+coupled momentum and heat result.
+
+```{image} ../_static/thermal_heated_duct_preview.webp
 :alt: Heated wall, floor and outlet temperatures of an insulating and a Hunt duct in 3-D as heat enters from one side wall
 :align: center
+:target: https://github.com/uwplasma/LMhdX/releases/download/showcase-thermal/thermal_heated_duct.webp
 ```
+
+The image is the movie's last frame and links to the movie, a release asset:
+`thermal_heated_duct.webp`, SHA-256
+`4c983fb3bb2be2a219fba2bafaed2a594281c3f5dda91776db287aa4e7c18c5c`, written to
+`docs/_static/generated/` by
+`python scripts/make_showcase_figures.py --only heated-duct`.
 
 **Crediting a load.** A design that must remove a given duty is judged on what
 the duty itself does, not on the gross outlet enthalpy. Joule heat and a
@@ -623,10 +633,21 @@ axes lie along the field, as in the NaK experiments of Burr & Müller (2002).
 `python scripts/make_showcase_figures.py --only convection` takes three minutes
 on a laptop GPU and about a quarter of an hour on its CPU.
 
-```{image} ../_static/thermal_convection_3d.webp
+It is a transient run in a field: it illustrates the evolution and is not a
+quantitative claim until the stabilised transient step keeps a rest state in a
+field along $y$.
+
+```{image} ../_static/thermal_convection_3d_preview.webp
 :alt: A liquid-metal layer heated from below, without a field and in a horizontal field
 :align: center
+:target: https://github.com/uwplasma/LMhdX/releases/download/showcase-thermal/thermal_convection_3d.webp
 ```
+
+The image is the movie's last frame and links to the movie, a release asset:
+`thermal_convection_3d.webp`, SHA-256
+`7eaf631bd4d08a3cd6af03e8ccd43ab3a53a476cdfcdc1dea03ca0ce6babf9a7`, written to
+`docs/_static/generated/` by
+`python scripts/make_showcase_figures.py --only convection`.
 
 ## A worked example
 
