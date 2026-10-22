@@ -142,19 +142,23 @@ Figures 6–13, read by `scripts/digitize_mistrangelo.py`.
 - The figures are xmgrace plots embedded in the PDF as images.
 - They are extracted with `pymupdf` (`Document.extract_image(xref)`).
   `python scripts/digitize_mistrangelo.py DIR` regenerates the file from them
-  byte for byte. The images are not in the repository, so the digitizer is not
-  in the package or in `validation/`.
+  byte for byte, and writes every code's curve to
+  `DIR/mistrangelo2025-case1-curves.json`. The images are not in the
+  repository, so the digitizer is not in the package or in `validation/`.
+- The images and the per-code curves, the extraction's intermediates, are a
+  release asset, since the paper is CC BY 4.0. Part 2 records them in
+  `benchmarks/provenance.json` with their SHA-256s.
 - Each record carries:
   - the image's PDF page (the journal's is one less), xref and SHA-256;
   - the axis calibration;
   - whether the y axis is logarithmic (`y_scale`);
   - the codes it omits, and why;
   - whether the paper or my reading chose the band's codes (`agree_basis`).
-- The file is compact, 18 KB for these figures. A record keeps the band, and
+- The file is compact, 19 KB for these figures. A record keeps the band, and
   the curves that are not one of the six codes: Figure 13's analytical
   markers and Figure 11's stations. Each is simplified to within half a pixel
-  and rounded to a tenth of one. The per-code curves are not shipped; the
-  digitizer regenerates them.
+  and rounded to a tenth of one. The per-code curves are not shipped: they
+  are in the release asset.
 
 **How a figure is read.**
 - **Frame and ticks.** The plot frame, its legend and the major ticks outside
@@ -189,7 +193,16 @@ Figures 6–13, read by `scripts/digitize_mistrangelo.py`.
   Where curves coincide, the one drawn on top hides the rest, so
   FLUENT_CIEMAT's black is seldom visible.
 
-**The uncertainty is about 2 px:**
+**The digitizing uncertainty** is in each record, `uncertainty`, per axis in
+the axis's units. It sums three parts, 2.3–2.5 px in all:
+- the read line, within 1.5 px;
+- the compact record, within 0.6 px of it (both bounds are from the synthetic
+  figure below);
+- the axis's calibration misfit, which each axis also carries in its units
+  (`misfit`).
+
+The band's spread is the codes', apart from it. A comparison's acceptance band
+is the two combined (ADR 0009 D35). For scale:
 
 | | x per px | y per px |
 |:--|--:|--:|
@@ -205,8 +218,8 @@ Figures 6–13, read by `scripts/digitize_mistrangelo.py`.
     (−566.9 Pa/m).
 - **The developed section against Figure 13's analytical solution.**
   - In the core (|z| ≤ 0.7 a) the section on the pin's 96/12 mesh lies within
-    1.86 px of every marker, 0.65 % low on average. This is gated, within 2 px
-    and 1 %.
+    1.86 px of every marker, 0.65 % low on average. This is gated, within the
+    record's uncertainty (2.44 px) and 1 %.
   - On the steep flanks of the jets, one value per column is a poor trace.
   - The section's jets are 0.0841 m/s. The codes' band peaks at 0.0850 on the
     heated side and 0.0821 on the other, at x = 0, where buoyancy makes them
@@ -216,7 +229,7 @@ Figures 6–13, read by `scripts/digitize_mistrangelo.py`.
 
 `tests/test_steady.py` checks:
 - every record, with `_check_reference_record`: its hash, its calibration
-  within 0.6 px, its band and curves;
+  within 0.6 px, its uncertainty, its band and curves;
 - the developed section's core against Figure 13;
 - the digitizer itself, on a synthetic figure in CI. It is a drawn frame with
   ticks, a solid and a dashed line and rings. The compact record must keep the
