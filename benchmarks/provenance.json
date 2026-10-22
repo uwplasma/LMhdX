@@ -168,6 +168,7 @@
         "conjugate_comparison": false,
         "developed_section": true,
         "reference_curves_case1": true,
+        "reference_curves_case2": true,
         "specification_frozen": true
       },
       "id": "M1-magnetoconvection-horizontal-duct",
@@ -183,7 +184,8 @@
         "martelli-2019",
         "matolich-1965",
         "aries-ss316",
-        "mistrangelo2025-case1"
+        "mistrangelo2025-case1",
+        "mistrangelo2025-case2"
       ],
       "spec_path": "lmhdx/data/benchmarks/specs/mistrangelo2025.toml",
       "status": "specification-frozen",
@@ -192,7 +194,8 @@
         "tests/test_steady.py::test_the_magnetoconvection_section_converges_to_its_pinned_gradient",
         "tests/test_steady.py::test_the_magnetoconvection_section_meets_figure_13s_core",
         "tests/test_steady.py::test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale",
-        "tests/test_steady.py::test_the_digitizer_reads_a_drawn_figure"
+        "tests/test_steady.py::test_the_digitizer_reads_a_drawn_figure",
+        "tests/test_steady.py::test_the_digitized_case_2_curves_confirm_its_inferred_velocity_and_flux"
       ],
       "tier": "C",
       "title": "Heated conducting square duct in a fringing field",
@@ -280,7 +283,7 @@
     {
       "availability": "repository",
       "digitizer": "scripts/digitize_mistrangelo.py",
-      "digitizer_sha256": "27e9beb2ce39979c66121447266d9f90ea8bc2b5e031082f6e8169f139bda8ab",
+      "digitizer_sha256": "76de1726ae76a957edd8b39b5e061b44caadebe1bd2caaac8e5e35044394e4f7",
       "extracted": "2026-10-20, from the PDF of mistrangelo-2025 (its DOI and SHA-256 above) with pymupdf Document.extract_image(xref); each image's SHA-256 is in its record",
       "extraction": {
         "asset": "mistrangelo2025-case1-extraction.zip",
@@ -294,6 +297,24 @@
       "path": "lmhdx/data/benchmarks/references/mistrangelo2025-case1.json",
       "sha256": "ee939b2e4e552a664317d9d1a50140378eca9fa1d79bf73926224445b3e5158e",
       "title": "Mistrangelo et al. 2025, Case 1: figures digitized by scripts/digitize_mistrangelo.py"
+    },
+    {
+      "availability": "repository",
+      "digitizer": "scripts/digitize_mistrangelo.py",
+      "digitizer_sha256": "76de1726ae76a957edd8b39b5e061b44caadebe1bd2caaac8e5e35044394e4f7",
+      "extracted": "2026-10-20, from the PDF of mistrangelo-2025 (its DOI and SHA-256 above) with pymupdf Document.extract_image(xref); each image's SHA-256 is in its record",
+      "extraction": {
+        "asset": "mistrangelo2025-case2-extraction.zip",
+        "contents": "the 13 figure images, unmodified (CC BY 4.0, with the paper's attribution), and mistrangelo2025-case2-curves.json: every code's curve, one value per pixel column with nothing decimated, with each figure's calibration and image SHA-256",
+        "curves_sha256": "dc3aa29d1ce75fbf40520e3b41f6a186839aafbbe1e89e8d9be6f1fd09519806",
+        "release": "https://github.com/uwplasma/LMhdX/releases/tag/mistrangelo2025-references",
+        "sha256": "fb9c424d5e8487968952c6146b3eecad5edff5f06058ef65b3d7c2f1d739cd8a"
+      },
+      "id": "mistrangelo2025-case2",
+      "kind": "reference_data",
+      "path": "lmhdx/data/benchmarks/references/mistrangelo2025-case2.json",
+      "sha256": "146ce07108e7157586bb537509501702a1fe2cb08f89ae6505aac70c5c87658b",
+      "title": "Mistrangelo et al. 2025, Case 2: figures digitized by scripts/digitize_mistrangelo.py"
     }
   ]
 }

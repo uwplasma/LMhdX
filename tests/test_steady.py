@@ -1814,3 +1814,47 @@ def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressu
     )
     with pytest.raises(ValueError, match="outside"):
         mistrangelo.band_misfit(2.0, nusselt, figures[18])
+
+
+def test_the_digitized_case_2_curves_confirm_its_inferred_velocity_and_flux():
+    """Case 2's figures, each as ``_check_reference_record``: Fig. 30's slope is the developed -0.0863 sigma u0 B0^2 at
+    the inferred u0 = 0.01 m/s, and the top of Fig. 34's outlet band, the codes that close the balance (FLUENT_UK's
+    plateau sits 4.5 K lower), is the energy balance at the inferred 10 W/cm^2, within the record's uncertainty (2.4
+    px). The file is traced in ``benchmarks/provenance.json`` like Case 1's."""
+    import hashlib
+    import json
+    from pathlib import Path
+
+    from scripts import digitize_mistrangelo as digitizer
+    from validation import mistrangelo
+
+    figures = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES_CASE2.read_text())["figures"]}
+    assert sorted(figures) == sorted(digitizer.FIGURES_CASE2)
+    provenance = Path(__file__).resolve().parents[1] / "benchmarks" / "provenance.json"
+    entry = {s["id"]: s for s in json.loads(provenance.read_text())["sources"]}["mistrangelo2025-case2"]
+    assert entry["sha256"] == hashlib.sha256(mistrangelo.REFERENCES_CASE2.read_bytes()).hexdigest()
+    assert entry["digitizer_sha256"] == hashlib.sha256(Path(digitizer.__file__).read_bytes()).hexdigest()
+    for record in figures.values():
+        _check_reference_record(record)
+    record = mistrangelo.spec()
+    case, pbli, a = (
+        record["cases"]["case2"],
+        mistrangelo.pinned_pbli(record),
+        record["geometry"]["half_width_m"],
+    )
+    u0, q = case["mean_velocity_m_per_s"], case["heat_flux_W_per_m2"]
+    band = figures[30]["band"]
+    x, middle = np.array(band["x"]), (np.array(band["lower"]) + np.array(band["upper"])) / 2
+    scale = pbli["electrical_conductivity_S_per_m"] * u0 * record["field"]["peak_T"] ** 2
+    slope = np.polyfit(x[np.abs(x) < 0.4], middle[np.abs(x) < 0.4], 1)[0]
+    assert slope / scale == pytest.approx(-mistrangelo.developed_gradient(record), rel=0.015)
+    width = 2.0 * (a + record["geometry"]["wall_thickness_m"])
+    rise = q * width * 0.6 / (pbli["density_kg_per_m3"] * pbli["heat_capacity_J_per_kg_K"] * u0 * 4.0 * a**2)
+    band = figures[34]["band"]
+    x, upper = np.array(band["x"]), np.array(band["upper"])
+    # The bulk temperature of time-averaged fields still settles past the heated zone's end at x = 0.3 m: the steel
+    # walls conduct heat on downstream, and the fluctuating part of the heat flux, which time-averaged fields leave
+    # out, decays. The window starts at x = 0.5 m, past that settling length (about 0.1 m in the band), for that
+    # physical reason, not to pass: every sample from x = 0.35 m is within 1.2 px.
+    plateau = (x > 0.5) & (x < 0.9)
+    assert np.max(np.abs(upper[plateau] - 300.0 - rise)) <= figures[34]["uncertainty"]["y"]
