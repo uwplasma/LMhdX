@@ -1465,7 +1465,8 @@ def test_walls_build_the_extended_grid_and_its_corners_take_the_nearer_wall():
 
 def test_a_float32_fast_diagonal_helmholtz_stays_definite_at_a_large_coefficient():
     """Probed in float32, an insulated axis's null mode came out +3e-5, so at a large coefficient the shifted
-    operator turned indefinite and PCG broke down at once; the eigenvalues are clamped to the Laplacian's sign."""
+    operator turned indefinite and PCG broke down at once. The null eigenvalue is now zero, read from the axis's
+    conditions, so the walled conduction's preconditioner stays definite and PCG converges."""
     import subprocess
     import sys
 

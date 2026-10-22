@@ -1,15 +1,17 @@
 """Digitize the figures of Mistrangelo et al. (2025) into the compact references of plan step 5.4a (ADR 0009 D38).
 
 ``python scripts/digitize_mistrangelo.py DIR`` rewrites ``mistrangelo2025-case1.json`` and ``-case2.json`` from the
-paper's figure images in ``DIR``. They are extracted from the journal's PDF (doi:10.1088/1741-4326/ae0800) with ``pymupdf``,
+paper's figure images in ``DIR``, and writes every code's curve to ``DIR/mistrangelo2025-case<n>-curves.json``, a
+release asset. The images are extracted from the journal's PDF (doi:10.1088/1741-4326/ae0800) with ``pymupdf``,
 ``Document.extract_image(xref)``, as ``x<xref>.png`` or ``.jpeg``, and are not in the repository, so this script
 is not part of the package or of ``validation/``. ``benchmarks/provenance.json`` records its SHA-256 beside each
 reference file's.
 
 A reference keeps, per figure, the image's hash, the calibration of both axes, the codes that agree and where the
 paper says so (``agree_basis``: "the paper", or "my reading" where it does not), and the band of those codes, with
-the curves that are not one of the six codes. Each is simplified to within half a pixel and rounded to a tenth of
-one. ``digitize`` returns every code's curve in full, for a figure read again.
+the curves that are not one of the six codes. Each is simplified to within half a pixel of every extracted column,
+nothing decimated before, and rounded to a tenth of one. Each axis carries its calibration misfit in its own units, and the record its digitizing uncertainty, which a
+test uses as its tolerance. ``digitize`` returns every code's curve in full, for a figure read again.
 """
 
 from __future__ import annotations
@@ -32,6 +34,9 @@ REFERENCES, REFERENCES_CASE2 = _DATA / "mistrangelo2025-case1.json", _DATA / "mi
 
 SIX = ("FLUENT_CIEMAT", "FLUENT_UK", "CFX", "OF_ORNL", "OF_KIT", "COMSOL")
 DASH = 15  # px: gaps in one code's curve up to a dash period are closed before the band is taken
+# The digitizing uncertainty, per axis: a drawn line or ring is read within 1.5 px and the compact record keeps it
+# within 0.6 px (both from test_the_digitizer_reads_a_drawn_figure), plus the axis calibration's own misfit.
+READ_PX, COMPACT_PX = 1.5, 0.6
 # Each colour as (hue window in degrees, saturation window, value window); black is unsaturated and dark.
 COLOURS = {
     "FLUENT_CIEMAT": ((0, 360), (0.0, 0.35), (0.0, 0.30)),
@@ -237,11 +242,10 @@ def _curve(mask, gap=0):
     return full[keep], np.interp(full[keep], cols, rows)
 
 
-def _sample(points, *arrays):
-    """Every ``ceil(n / points)``-th entry and the last, at five significant figures."""
-    n = len(arrays[0])
-    index = np.unique(np.r_[np.arange(0, n, max(1, int(np.ceil(n / points)))), n - 1]) if n else np.arange(0)
-    return [[float(f"{v:.5g}") for v in np.asarray(arr)[index]] for arr in arrays]
+def _full(*arrays):
+    """Every pixel column's value, at six significant figures (well under a tenth of a pixel): no decimation, so
+    the compact record's simplification is bounded against the extraction itself."""
+    return [[float(f"{v:.6g}") for v in np.asarray(arr)] for arr in arrays]
 
 
 def digitize(image: Path, figure: int, table: dict | None = None) -> dict:
@@ -280,7 +284,7 @@ def digitize(image: Path, figure: int, table: dict | None = None) -> dict:
         if coverage < 0.01:
             omitted[name] = "not visible: under 1 % of the columns"
             continue
-        curves[name] = dict(zip(("x", "y"), _sample(60, *values(cols, rows))), coverage=coverage)
+        curves[name] = dict(zip(("x", "y"), _full(*values(cols, rows))), coverage=coverage)
     record = {"figure": figure, "quantity": spec_["quantity"], "pdf_page": spec_["pdf_page"], "xref": spec_["xref"],
               "sha256": hashlib.sha256(data).hexdigest(), "pixels": list(a.shape[:2]), "frame": list(frame),
               "legend": None if legend is None else [int(v) for v in legend], "calibration": {"x": cx, "y": cy},
@@ -299,7 +303,7 @@ def digitize(image: Path, figure: int, table: dict | None = None) -> dict:
         lower = [max(rows[c]) for c in cols]  # rows grow downward: the largest row is the lowest value
         upper = [min(rows[c]) for c in cols]
         x, lo = values(cols, lower)
-        band = _sample(100, x, lo, values(cols, upper)[1], [len(rows[c]) for c in cols])
+        band = _full(x, lo, values(cols, upper)[1], [len(rows[c]) for c in cols])
         record["band"] = dict(zip(("x", "lower", "upper", "codes"), band))
     return record
 
@@ -329,8 +333,10 @@ def _simplify(cols, *rows, tolerance=0.5):
 
 def _compact(record: dict) -> dict:
     """The record as shipped: the band and the curves that are not one of the six codes (the analytical markers,
-    stations, branches), each simplified to within half a pixel and rounded to a tenth of one; the per-code curves
-    are dropped, since this script regenerates them."""
+    stations, branches), each simplified to within half a pixel of every extracted column and its values rounded to
+    a tenth of one. The kept vertices keep the extraction's own x, since at a steep step a vertex moved sideways
+    would move the interpolant vertically by the step's height. The per-code curves are left out: they are the
+    release asset :func:`write_curves` writes."""
     (sx, sy), log = record["per_pixel"], record["y_scale"] == "log10"
 
     def pixels(values):
@@ -341,18 +347,28 @@ def _compact(record: dict) -> dict:
         return [round(float(v), digits) if not log else float(f"{v:.5g}") for v in values]
 
     out = {k: v for k, v in record.items() if k not in ("curves", "band")}
+    out["calibration"] = {axis: dict(fit) for axis, fit in record["calibration"].items()}
+    spread = {}
+    for axis, scale in zip("xy", record["per_pixel"]):
+        fit = out["calibration"][axis]
+        fit["misfit"] = float(f"{fit['misfit_px'] * scale:.3g}")  # in the axis's units, decades on a log axis
+        spread[axis] = READ_PX + COMPACT_PX + fit["misfit_px"]
+    out["uncertainty"] = {
+        axis: float(f"{spread[axis] * scale:.3g}") for axis, scale in zip("xy", record["per_pixel"])
+    }
+    out["uncertainty"]["px"] = {axis: round(value, 2) for axis, value in spread.items()}
     out["agree_basis"] = "my reading" if "as read" in record["agree_source"] else "the paper"
     out["curves"] = {}
     for name, curve in record["curves"].items():
         if name in SIX:
             continue
         index = _simplify(np.asarray(curve["x"]) / sx, pixels(curve["y"]))
-        out["curves"][name] = {"x": rounded(np.asarray(curve["x"])[index], sx),
+        out["curves"][name] = {"x": [float(v) for v in np.asarray(curve["x"])[index]],
                                "y": rounded(np.asarray(curve["y"])[index], sy), "coverage": curve["coverage"]}  # fmt: skip
     if "band" in record:
         band = {k: np.asarray(v) for k, v in record["band"].items()}
         index = _simplify(band["x"] / sx, pixels(band["lower"]), pixels(band["upper"]), 2.0 * band["codes"])
-        out["band"] = {"x": rounded(band["x"][index], sx), "lower": rounded(band["lower"][index], sy),
+        out["band"] = {"x": [float(v) for v in band["x"][index]], "lower": rounded(band["lower"][index], sy),
                        "upper": rounded(band["upper"][index], sy), "codes": [int(c) for c in band["codes"][index]]}  # fmt: skip
     return out
 
@@ -373,9 +389,20 @@ def write_references(
     return path
 
 
+def write_curves(images: Path, path: Path, figures: dict = FIGURES, case: str = "case1") -> Path:
+    """Every code's curve, each figure's calibration and image hash: the extraction's intermediate, which is a
+    release asset beside the figure images (CC BY 4.0) rather than a file of the package."""
+    records = [digitize(_image(images, spec_["xref"]), figure, figures) for figure, spec_ in figures.items()]
+    head = {"source_id": "mistrangelo-2025", "case": case, "digitizer": "scripts/digitize_mistrangelo.py"}
+    path.write_text(json.dumps({**head, "figures": records}, indent=1) + "\n")
+    return path
+
+
 def main() -> None:
-    print(write_references(Path(sys.argv[1])))
-    print(write_references(Path(sys.argv[1]), REFERENCES_CASE2, FIGURES_CASE2, "case2"))
+    images = Path(sys.argv[1])
+    for path, figures, case in ((REFERENCES, FIGURES, "case1"), (REFERENCES_CASE2, FIGURES_CASE2, "case2")):
+        print(write_references(images, path, figures, case))
+        print(write_curves(images, images / f"mistrangelo2025-{case}-curves.json", figures, case))
 
 
 if __name__ == "__main__":
