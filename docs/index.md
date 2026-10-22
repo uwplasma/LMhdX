@@ -92,6 +92,7 @@ physics/thermal
 validation/index
 validation/q2d
 validation/freemhd
+validation/mhd_nusselt
 ```
 
 ```{toctree}

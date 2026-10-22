@@ -1450,12 +1450,23 @@ def test_the_t_condition_snippet_runs_as_written():
 
 
 def test_the_spectral_nusselt_reference_meets_the_exact_series():
-    """``validation.shercliff.developed_nusselt``, the reference of the MHD Nusselt campaign (docs, not a gate):
-    at Ha 0 it gives the H1 double-sine series and H2's 3.08738 (Wang; the package's Richardson value), on 32 points."""
+    """``validation.shercliff.developed_nusselt``, the reference of the MHD Nusselt campaign: at Ha 0 it gives the
+    H1 double-sine series, H2's 3.08738 (Wang; the package's Richardson value) and T's 2.97753, on 32 points."""
     from validation.shercliff import developed_nusselt
 
     assert developed_nusselt(0.0, 32) == pytest.approx(_h1_nusselt(1.0, 1.0), rel=1e-7)
     assert developed_nusselt(0.0, 32, heating="H2") == pytest.approx(3.08738, rel=1e-5)
+    assert developed_nusselt(0.0, 32, heating="T") == pytest.approx(_SQUARE_T, rel=1e-5)
+
+
+def test_the_mhd_nusselt_numbers_meet_the_spectral_solve_at_one_point():
+    """docs/validation/mhd_nusselt.md at one point: LMhdX on 48 cells at Ha 10 against
+    ``validation.shercliff.developed_nusselt``, within 0.3 % in H1, H2 and T (0.06 % on the page's 128 cells)."""
+    from validation.mhd_nusselt import lmhdx_nusselt
+    from validation.shercliff import developed_nusselt
+
+    for heating, value in lmhdx_nusselt(10.0, cells=48).items():
+        assert value == pytest.approx(developed_nusselt(10.0, 48, heating=heating), rel=3e-3), heating
 
 
 def test_the_uniform_wall_temperature_refuses_an_ill_posed_duct():
