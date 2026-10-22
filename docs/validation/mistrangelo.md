@@ -206,10 +206,12 @@ Figures 6–13, 15–19 and 38, read by `scripts/digitize_mistrangelo.py`.
 **Two inferences of the specification, confirmed by the figures:**
 - **The heated width.** Figure 17's outlet bulk temperature is 310.08–310.15 °C
   over 0.4 < x < 0.9 m. The specification's energy balance, with the full
-  50 mm outer width heated, gives 310.12 °C.
+  50 mm outer width heated, gives 310.12 °C, at the band's upper edge: never
+  below its lower edge, and at most half a pixel (0.014 K) above its upper one.
+  The test allows one pixel, 0.03 K.
 - **The length in Nu.**
   - From Figure 38's OF_KIT temperatures at x = 0.29 m, `T_w − T_b` is
-    19.24 K, so `Nu = q'' a / (k (T_w − T_b))` is 2.34 with L = a.
+    19.23 K, so `Nu = q'' a / (k (T_w − T_b))` is 2.34 with L = a.
   - That lies inside Figure 18's band there, 2.24–2.42.
   - L = 2a would double it.
 
@@ -219,7 +221,9 @@ from Figure 38, within the digitizing uncertainty: 2 px on each temperature is
 about ±0.11 in Nu.
 
 Case 2's curves follow in a later part. The sources are in
-`benchmarks/provenance.json`.
+`benchmarks/provenance.json`: the paper's DOI and SHA-256, and each reference
+file's SHA-256 with the extraction date and the digitizer's SHA-256, which a
+test checks against the files.
 
 ## Sources
 

@@ -1703,10 +1703,13 @@ def test_the_digitizer_reads_a_drawn_figure(tmp_path):
 
 
 def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale():
-    """The reference curves, read from the paper's figures: each record as ``_check_reference_record``, and Fig. 8's
-    slope over |x| < 0.4 m is the printed -0.0855 in sigma u0 B0^2 (with the pinned PbLi; Martelli's sigma is 0.4 %
-    away, which the figure cannot tell apart); the figures also confirm the inferred heated width and L = a."""
+    """The reference curves, read from the paper's figures: each record as ``_check_reference_record``, traced in
+    ``benchmarks/provenance.json`` by its own and the digitizer's SHA-256, and Fig. 8's slope over |x| < 0.4 m is the
+    printed -0.0855 in sigma u0 B0^2 (with the pinned PbLi; Martelli's sigma is 0.4 % away, which the figure cannot
+    tell apart); the figures also confirm the inferred heated width and L = a."""
+    import hashlib
     import json
+    from pathlib import Path
 
     from scripts import digitize_mistrangelo as digitizer
     from validation import mistrangelo
@@ -1715,6 +1718,10 @@ def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressu
     assert sorted(figures) == sorted(digitizer.FIGURES)
     for record in figures.values():
         _check_reference_record(record)
+    provenance = Path(__file__).resolve().parents[1] / "benchmarks" / "provenance.json"
+    entry = {s["id"]: s for s in json.loads(provenance.read_text())["sources"]}["mistrangelo2025-case1"]
+    assert entry["sha256"] == hashlib.sha256(mistrangelo.REFERENCES.read_bytes()).hexdigest()
+    assert entry["digitizer_sha256"] == hashlib.sha256(Path(digitizer.__file__).read_bytes()).hexdigest()
     record, case = mistrangelo.spec(), mistrangelo.spec()["cases"]["case1"]
     band = figures[8]["band"]
     x, middle = np.array(band["x"]), (np.array(band["lower"]) + np.array(band["upper"])) / 2
@@ -1739,10 +1746,10 @@ def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressu
     )
     band, pixel = figures[17]["band"], figures[17]["per_pixel"][1]
     x, lower, upper = (np.array(band[k]) for k in ("x", "lower", "upper"))
-    plateau = (x > 0.4) & (x < 0.9)
-    assert np.all(lower[plateau] - 2 * pixel <= 300.0 + rise) and np.all(
-        300.0 + rise <= upper[plateau] + 2 * pixel
-    )
+    plateau = (x > 0.4) & (x < 0.9)  # the outlet's plateau
+    # The balance, 310.12, sits at the band's upper edge: never below its lower edge, and at most a pixel (0.03 K)
+    # above its upper one (0.014 K measured). Two pixels would be the band's own width, so they are not allowed.
+    assert np.all(lower[plateau] <= 300.0 + rise) and np.all(300.0 + rise <= upper[plateau] + pixel)
     curves = figures[38]["curves"]
     wall_t, bulk_t = (np.interp(0.29, curves[k]["x"], curves[k]["y"]) for k in ("T_w case1", "T_b case1"))
     nusselt = q * a / (pbli["thermal_conductivity_W_per_m_K"] * (wall_t - bulk_t))

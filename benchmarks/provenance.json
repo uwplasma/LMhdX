@@ -189,14 +189,16 @@
       "status": "specification-frozen",
       "tests": [
         "tests/test_steady.py::test_the_magnetoconvection_specification_reproduces_its_printed_numbers",
-        "tests/test_steady.py::test_the_magnetoconvection_section_meets_the_printed_developed_gradient",
+        "tests/test_steady.py::test_the_magnetoconvection_section_converges_to_its_pinned_gradient",
+        "tests/test_steady.py::test_the_magnetoconvection_section_meets_figure_13s_core",
         "tests/test_steady.py::test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale",
         "tests/test_steady.py::test_the_digitizer_reads_a_drawn_figure"
       ],
       "tier": "C",
       "title": "Heated conducting square duct in a fringing field",
       "workflows": [
-        "validation/mistrangelo.py"
+        "validation/mistrangelo.py",
+        "scripts/digitize_mistrangelo.py"
       ]
     }
   ],
@@ -248,6 +250,7 @@
       "filename": "paper_references/mistrangelo2025/mistrangelo2025_nf65_116006.pdf",
       "id": "mistrangelo-2025",
       "kind": "article",
+      "sha256": "04068bebcc7619a71fd1bee74c91d53be9bf3fa2cae4a3851e0c9a3dbd56c155",
       "title": "A code-to-code benchmark for magneto-convection in a horizontal duct",
       "year": 2025
     },
@@ -276,11 +279,14 @@
     },
     {
       "availability": "repository",
+      "digitizer": "scripts/digitize_mistrangelo.py",
+      "digitizer_sha256": "9d3ae9783ea4f29f3ab53d62cd4d32292b49228dfa6dc625e0af272b7b49299b",
+      "extracted": "2026-10-20, from the PDF of mistrangelo-2025 (its DOI and SHA-256 above) with pymupdf Document.extract_image(xref); each image's SHA-256 is in its record",
       "id": "mistrangelo2025-case1",
       "kind": "reference_data",
       "path": "lmhdx/data/benchmarks/references/mistrangelo2025-case1.json",
-      "sha256": "c362124e36e2f50c537cb2f85a76eda4fee0f87b63d94b1a7864ae6b5a335d22",
-      "title": "Mistrangelo et al. 2025, Case 1: figures digitized by validation.mistrangelo"
+      "sha256": "7affd6e7bc7ad7ce29c66915443aa386c55e58413b92ca6231c82781ef1adc17",
+      "title": "Mistrangelo et al. 2025, Case 1: figures digitized by scripts/digitize_mistrangelo.py"
     }
   ]
 }
