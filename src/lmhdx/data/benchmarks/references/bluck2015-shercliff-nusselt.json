@@ -1,6 +1,6 @@
 {
  "source": "bluck2015-shercliff",
- "description": "Bluck, Wolfendale & Marquis (2015): the square duct's (b/a = 1) fully developed Nusselt numbers against the Hartmann number, read from the vector paths of the accepted manuscript's Figs. 4 (H1) and 6 (H2). Each curve's polyline vertices sit on Ha = 10^(k/4), so they are the authors' computed points; they are mapped through each figure's own tick marks, which are uniform to 1e-3 pt. No Joule heat; insulating walls.",
+ "description": "Bluck, Wolfendale & Marquis (2015): the square duct's (b/a = 1) fully developed Nusselt numbers against the Hartmann number, read from the vector paths of the accepted manuscript's Figs. 4 (H1) and 6 (H2). Each curve's polyline vertices sit on Ha = 10^(k/4), which suggests the authors' computed points but is evidence of the drawn curve only; they are mapped through each figure's own tick marks, which are uniform to 1e-3 pt. No Joule heat; insulating walls.",
  "nusselt": "the section's mean Nusselt number on D_h = 2a, a the half-width: the wall flux averaged over the whole perimeter against the wall-to-bulk difference; H1 the wall at one temperature around the section with a uniform axial heat input, H2 a uniform wall flux, T the wall at one temperature along the duct",
  "regenerate": "python -m validation.mhd_nusselt (LMhdX on duct_problem's 128-cell meshes, about ten minutes)",
  "spectral": {
@@ -94,7 +94,7 @@
     ]
    },
    "check": "the Ha -> 0 plateau reads 3.60678; the paper's Table 1 gives 3.6068",
-   "hartmann_reads_as": "on the half-width a (on D_h it lies 3-12 % above the spectral solve)",
+   "hartmann_reads_as": "inferred, not confirmed: on the half-width a, where it fits the spectral solve (on D_h, as eq. (8) defines Ha, it lies 3-12 % above)",
    "hartmann": [
     0.01,
     0.0177828,
@@ -183,7 +183,7 @@
     ]
    },
    "check": "the Ha -> 0 plateau reads 3.08235; the paper's Table 2 gives 3.0871",
-   "hartmann_reads_as": "on the hydraulic diameter 2a, as eq. (8) defines it (on a it lies up to 10 % below)",
+   "hartmann_reads_as": "on the hydraulic diameter 2a, as eq. (8) defines it, where it fits the spectral solve (on a it lies up to 10 % below)",
    "hartmann": [
     0.1,
     0.177828,

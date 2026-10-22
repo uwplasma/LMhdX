@@ -10,7 +10,7 @@ heat input), H2 (a uniform wall flux) and T (the wall at one temperature along t
 - The reference: :func:`validation.shercliff.developed_nusselt`, Chebyshev collocation on its own velocity.
 - Bluck, Wolfendale & Marquis (2015): their Figs. 4 (H1) and 6 (H2), read from the accepted manuscript's vector
   paths into ``bluck2015-shercliff-nusselt.json`` (its provenance is in ``benchmarks/provenance.json``). The two
-  figures match the reference only with different Ha conventions, which the record states.
+  figures match the reference only under different Ha conventions, inferred from that fit and stated in the record.
 """
 
 from __future__ import annotations

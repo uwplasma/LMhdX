@@ -222,7 +222,7 @@
       "id": "bluck2015-shercliff-nusselt",
       "kind": "reference_data",
       "path": "lmhdx/data/benchmarks/references/bluck2015-shercliff-nusselt.json",
-      "sha256": "c74e63f2e96f090994c50ae9aeea45dcf9d7a8ecf12222e171f850933ab7e3af",
+      "sha256": "6ad48ae86febca1b1ad10345372f71fd99e19debb12d9521d615cda64d4cf80d",
       "title": "Bluck et al. 2015, Figs. 4 and 6: the square duct's H1 and H2 Nusselt numbers, read from the vector paths"
     }
   ]

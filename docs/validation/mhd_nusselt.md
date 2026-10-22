@@ -50,34 +50,44 @@ beside the readings. The test also checks the stored spectral values at Ha 10.
 Bluck, Wolfendale & Marquis (2015) is an analytical series for the same duct.
 Their square-duct curves in Figs. 4 (H1) and 6 (H2) were read from the vector
 paths of the accepted manuscript.
-- **How they were read.** Each curve's vertices sit on Ha $=10^{k/4}$, so they
-  are the authors' computed points, mapped through the figures' own tick marks.
-  The readings, the calibration and the manuscript's SHA-256 are in
+- **How they were read.** Each curve is a polyline whose vertices sit on
+  Ha $=10^{k/4}$, mapped through the figures' own tick marks. That regular
+  spacing suggests the authors' computed points, but the vertices are evidence
+  of the drawn curve, not access to their numbers. The readings, the
+  calibration and the manuscript's SHA-256 are in
   `src/lmhdx/data/benchmarks/references/bluck2015-shercliff-nusselt.json` and
   `benchmarks/provenance.json`.
 - **A check.** The H1 curve's plateau reads 3.60678, against their tabulated
   Ha 0 value of 3.6068. The H2 plateau reads 3.0824, against their 3.0871.
 
-The two figures use different Ha conventions, by exactly the factor of 2
-between the half-width and the full width:
-- **H1**, Figure 4, is on the half-width. It is then within 0.03 % of the
+**The Ha convention is inferred, not confirmed.** The extracted curves agree
+much more closely with the spectral solve under the following reading:
+- **H1**, Figure 4, read on the half-width. It is then within 0.03 % of the
   spectral value at Ha 1 and 0.07 % at Ha 10, falling to 0.19 % low at
-  Ha 31.6, 0.49 % at 100 and 1.2 % at 316. On $D_h$ it would lie 3–12 % above.
-- **H2**, Figure 6, is on the full width, $D_h=2a$, as their eq. (8) defines
-  it. It is then
-  0.17 % low at an equivalent Ha 0.5, and 0.22 %, 0.43 %, 1.0 % and 2.0 % low at
-  5, 15.8, 50 and 158. On the half-width it would lie up to 10 % below.
+  Ha 31.6, 0.49 % at 100 and 1.2 % at 316. Read on $D_h$, as the paper's eq. (8)
+  defines Ha, it would lie 3–12 % above.
+- **H2**, Figure 6, read on the full width, $D_h=2a$, as eq. (8) defines it. It
+  is then 0.17 % low at an equivalent Ha 0.5, and 0.22 %, 0.43 %, 1.0 % and 2.0 %
+  low at 5, 15.8, 50 and 158. Read on the half-width it would lie up to 10 %
+  below.
 
-Read on the other scale, each would be off by 3–12 %, so the factor of 2 is
-clear from the fit, though the paper does not say it of Figure 4. **The
-reading's own uncertainty** comes from the figures, not from digitizing, since
-the vertices are the authors' points. Figure 4's plateau equals their table to
-1e-5, and Figure 6's lies 0.15 % below theirs, so the H2 percentages carry
-about 0.15 %.
+So Figure 4 appears to be drawn against the half-width, by a factor of 2 from
+the paper's own definition. That is our inference from the fit. It has not
+been confirmed by the authors, or by an independently reproduced analytical
+value of theirs at nonzero Ha. Both readings, and the published definition,
+are kept in the record.
 
-Both curves fall below the reference as Ha grows. The authors note that their
-series' hyperbolic terms overflow double precision at large Ha, and they
-regroup them through logarithms; the error left there is not quantified. The
-comparison anchors LMhdX against both references at low and moderate Ha. Above
-Ha ≈ 30, the independent spectral solve, not the published series, is the
-reference.
+**Three uncertainties stay apart:**
+- the reading's precision, the calibration through the figures' tick marks;
+- the published curve's own error. Figure 4's plateau equals their table to
+  1e-5, and Figure 6's lies 0.15 % below theirs. A plateau difference is not a
+  bound on the rest of a curve.
+- the convention, which is inferred.
+
+Both curves fall below the spectral solve as Ha grows. The authors note that
+their series' hyperbolic terms overflow double precision at large Ha, and that
+they regroup them through logarithms; the error left there is not quantified.
+That two in-house discretizations, LMhdX and the spectral solve, agree does not
+show the publication wrong there. The comparison anchors LMhdX against both
+references at low and moderate Ha. Above Ha ≈ 30, the reference used here is
+the independent spectral solve.
