@@ -12,6 +12,17 @@ page records the frozen specification and the first check.
 numerics. Each value is marked *printed* (quoted, with its page), *inferred*
 (deduced, with the reason) or *pinned* (chosen to reproduce a printed number).
 The paper prints no material properties, so two choices carry the comparison.
+The file is metadata, read by `validation.mistrangelo` and the tests, and not a
+case that `lmhdx` runs.
+
+**Conventions** (`[conventions]`).
+- `Ha`, `Re` and `Gr` are on the half-width `a` = 23 mm, as Table 1 defines
+  them (printed).
+- `Nu` is on `L = a` (inferred: Figures 18 and 38 would double on `2a`).
+- The pressure is in `σ u₀ B₀²` (inferred: Figure 8's slope gives the printed
+  −0.0855 in it).
+- Joule heat is omitted in the fluid and in the walls. That is printed for the
+  fluid (eq. 4) and inferred for the walls, which are given no source.
 
 **PbLi.**
 - The properties are Martelli et al. (2019) at 573 K, the paper's reference
@@ -59,6 +70,19 @@ The paper prints no material properties, so two choices carry the comparison.
 - the reference levels of the potential and the pressure;
 - the inlet profile and domain length, which each code chose for itself;
 - the wall model of the analytical solution.
+
+**What is calibrated, and what checks it** (`[calibration]`, ADR 0009 D35).
+- **Calibrated:** the PbLi `μ`, `σ` and `β`, on the printed groups; the wall's
+  effective conductivity ratio, on the developed gradient −0.0863.
+- **Not acceptance:** the developed pressure gradient, which the calibrated
+  ratio meets by construction.
+- **Independent:**
+  - the side jets and the axial velocity (Figures 7, 12 and 13);
+  - the temperatures, the bulk temperature and `Nu` (Figures 6, 9–11, 17, 18
+    and 38);
+  - the potential (Figures 15 and 16) and the transverse energy (Figure 19).
+- **A known miss:** Matolich's measured ratio gives a gradient 4.1 % below
+  −0.0863. It is recorded, and nothing is tuned against it.
 
 **No gate yet.** The specification is frozen, but Case 1's gate (ADR 0009
 D35) is declared before step 5.4e, so
