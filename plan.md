@@ -50,6 +50,7 @@ serve one benchmark; *gate* = a measured condition with a stated tolerance.
 | G9 | Useful design results | A fully developed inverse-design example and a device-informed channel example with verified gradients |
 | G10 | Thermal channel physics | Passive-scalar energy equation with conjugate walls on the new core, verified against laminar limits |
 | G11 | Steady solves and adjoints at blanket Ha | Certified adjoints to Ha 1000 in the regression tier (today the tests stop at Ha 5 and the shipped tangent solve fails at Ha 300); a 3-D 128³ steady solve within 16 GB; Krylov iterations reported against Ha |
+| G13 | Time-accurate high-Re DNS and a stable public API (added 2026-10-21, ADR 0010) | Program H: IMEX RK3 stepper at time order 3 with kinetic-energy-conserving stretched advection (T23, T28); Hartmann-channel DNS at (R, Ha) = (700, 20) within Re_tau 2 % (T26); steady open ducts by a march that agrees with the Newton root to 1e-6 and costs 2 to 4 orders fewer iterations at Re 40; `Problem`/`Solver`/`Output` with TOML schema 3 and differentiable wall conductance (T35) in 2.0.0 |
 
 Non-goals before the release after 2.0: buoyancy beyond the optional
 Boussinesq term of the thermal step (D32), curved or mapped channels,
@@ -1464,6 +1465,300 @@ Everything else still waits (D21): no thermal or device work before 1.10b and
 1.9c, no Q2D trims below a profiled 10 %, and no speed PR without the Section
 2.5 before-and-after numbers.
 
+### Program H — high Reynolds number and the 2.0 API (from 2026-10-21)
+
+Decided with the owner on 2026-10-21 after a code audit of LMhdX and SOLVAX, a
+survey of the MHD, DNS and differentiable-CFD codes that matter here, and the
+papers listed in H.9, read in full (ADR 0010, DH1–DH8). The program has seven phases,
+**H0–H6**, numbered apart from Phases 0–7 above, which stand unchanged. It takes
+LMhdX from steady ducts at moderate Re to a time-accurate, energy-conserving
+stretched-grid stepper, replaces the Newton stack of the open-duct solve by a
+march to a fixed point, and ships a new public API as 2.0.0. Phase 7.1 is
+realised by H4.7; D13 still governs the tag, which waits for its gates. Test
+IDs T1–T35 are the rows of Table H.T below. A step is done when its exit holds
+with the numbers written here; "implemented" closes nothing.
+
+#### H.0 Baseline (measured 2026-10-21, `main` at `d137209`, LMhdX 1.11.0, SOLVAX 0.31.0)
+
+Apple M3 Max, JAX 0.11.2, float64 unless noted; the machine carried other
+sessions' load, so ratios are firmer than absolute times.
+
+| Quantity | Measured |
+|---|---|
+| Size | LMhdX src 12,802 lines in 16 modules, tests 12,776 lines (495 tests); SOLVAX src 14,997 lines, of which LMhdX calls 12 of 181 exports |
+| Step cost, periodic x, wall-resolving y/z, Ha 20, limited advection | 64³: 15.4 ms (float64), 8.1 ms (float32); 128³: 144 ms and 82 ms; about 58 ns per cell per step. Five dense solves are 45 % of a step; the rest is memory-bound ghost-cell stencil work |
+| Compilation | `advance` is not jitted and closes over the problem: 0.42 s per call at 16³, 0.8–1.2 s at 128³, every chunk. `Trajectory` is not a pytree. Reciprocal-eigenvalue arrays are embedded as constants: 244 MB of HLO text at 128³, growing as N³ |
+| Open duct, Ha 20, Re 10, 62×12×12, fresh process | 11.3 s, of which about 720 eager compiles take 9.0 s (the hidden steady solve in `fringe_duct`, a jaxpr replay in `_stokes_limit_root`); repeat 4.3 s. The same solve under `jit`: 7.3 s first call, 1.8 s afterwards, same answer (2301.63) |
+| Newton-Krylov, same duct | 31 outer iterations at Re 10, 403 at Re 20, 4,969 at Re 40 (337 s); Ha 100: 31 and 555 (237 s). The Stokes-CG inner inverse is at least 70 % of every outer iteration |
+| IMEX march, explicit limited transport, CFL 0.9 | Ha 20: 200 / 1,000 / 1,700 / 1,350 steps at Re 10 / 20 / 40 / 80 (23 s at Re 40); Ha 100: 800 / 5,150 / 7,850 / 6,350. One jitted step is 1.6 ms (62×12×12). The limited flux differs from the central-flux Newton root by 1.3e-4 (Ha 20, Re 40) and 3.6e-4 (Ha 100, Re 20) in total pressure drop |
+| Accuracy | space: order 2.00 on uniform and tanh meshes; time: order 1.00–1.04 (non-incremental projection, explicit Euler transport); charge: max abs(div J) over max abs(J) of 1.5e-11 to 1.8e-12 (solver tolerance times conditioning) |
+| Kinetic-energy conservation of central transport | exact on uniform grids; on stretched grids relative error −2.3e-3 / +3.1e-3 for 30 % / 50 % width modulation on random divergence-free fields, and 2.5e-3 / 6.8e-4 / 1.7e-4 for a tanh channel at N = 16 / 32 / 64, while momentum is exact. Not acceptable for stretched DNS |
+| One axis, CPU, 128³ / 256³ | dense contraction 1.1 / 18 ms, `rfft` 1.9 / 19 ms, batched tridiagonal 11.4 / 93 ms: dense wins on CPU up to N of order 10³ |
+
+#### H.1 Decisions in short (text and reasons in ADR 0010)
+
+- **DH1, one stepper.** IMEX Runge–Kutta of Spalart, Moser and Rogers (SMR RK3:
+  alpha 8/15, 5/12, 3/4; beta 0, −17/60, −5/12) with Crank–Nicolson viscous and
+  Lorentz damping in the Helmholtz shift, central explicit transport and one
+  projection per stage on psi = gamma dt Phi. The unsteady run is this stepper
+  to a final time; the steady run is this stepper to a fixed point (`march`).
+  Newton stays as `polish` and for a converged tangent.
+- **DH2, solvers.** The separable dense-eigenbasis Poisson/Helmholtz stays (it
+  is the method of CaNS-EIGEN and of the Ilmenau duct codes). FFT or cosine
+  transforms on uniform axes are added only after a GPU measurement. Generic
+  numerics move to SOLVAX; physics stays in LMhdX.
+- **DH3, rejected** (list with evidence in H.7).
+- **DH4, API 2.0.** `Problem`, `Solver`, `Output` and `solve`; TOML is the same
+  objects; Python and TOML are equally expressive; one interface from a five-line
+  beginner script to a custom stepper.
+- **DH5, differentiation.** `Problem` is a pytree; the wall conductance and the
+  wall thickness are leaves in 2.0 (H4.2).
+- **DH6, runtime.** Importing `lmhdx` has no side effects; the logger banner,
+  footer and ETA text stay.
+- **DH7, release path.** H4.1–H4.4 and H3 are additive; warnings for old names
+  switch on only in H4.5; deletion is H4.7.
+- **DH8, regime gates carry tags** (H.6).
+
+#### H.2 Lanes and order
+
+At most three agents at a time, one lane each. Every PR is opened non-draft to
+green and stops there; the owner merges. No tolerance is loosened and no test
+moves to a slower tier; examples follow the flat template (inputs, `solve`,
+print or save). Local preflight before each push: `ruff check` and
+`ruff format --check` over the CI paths, the focused test files with
+`pytest -n 2`, `scripts/audit_architecture.py --check`, and the docs build for
+H4.5 and H4.7. Budgets in `scripts/audit_architecture.py` are raised only by the
+lines a PR adds.
+
+| Lane | Work, in order | Starts when |
+|---|---|---|
+| A, kernels and steady | H0.1–H0.4; H2.1 (energy-conserving advection); H3 (march replaces Newton) | H0 now; H3 after H1.2 and H2.2 are merged |
+| B, numerics | H1 (SOLVAX release); H2.2–H2.6 (RK3 stepper); H4.6 (SOLVAX moves); then H5 on the office GPU | H1 now; H2.2 after H1.1 is on PyPI and H0.3 is merged |
+| C, API | H4.1 (`Problem` facade); H4.2 (differentiable walls); H4.3 (TOML schema 3); H4.4 (`Output`); H4.5 (migration); H4.7 (2.0.0) | H4.1 now; H4.2 only after H0.3 is merged |
+
+Tests ride with the PR that enables them (Table H.T, last column). Names used in
+the design discussion map to steps as follows: P0a–c = H0.1–H0.3 and H0.4;
+S-1 = H1; L-1 = H4.1; L-1b = H4.2; L-2 = H4.3; L-3 = H4.4; L-4 = H2.2–H2.5;
+L-5 = H3; L-6 = H4.5; S-2 (L-8) = H4.6; L-7 = H4.7.
+
+#### Phase H0 — Quick wins (Lane A, LMhdX, no API change, independent of each other)
+
+| Step | Action and place | Exit | Tests | Lines |
+|---|---|---|---|---|
+| H0.1 | `jax.jit` the bodies of `axial.solve_open_duct` and `fully_developed_inlet`; replace the eager `eval_jaxpr` replay in `steady._stokes_limit_root` by a trace inside the jit; `fringe_duct` stops running a hidden steady solve | Ha 20, Re 10, 62×12×12 in a fresh process: cold 11.3 s to at most 7.5 s, repeat 4.3 s to at most 2.0 s; pressure drop 2301.63 unchanged to 1e-10 relative; a compile-count assertion on the eager compiles | existing open-duct tests | +25 −10 |
+| H0.2 | Cache the compiled trajectory keyed on (grid shape, steps, dtype), factorization arrays passed as arguments; register `Trajectory` as a pytree (`core3d.advance`) | a second `advance` of equal shapes triggers zero new compilations; `jax.jit` and `jax.vmap` over a parameter work; 0.4 s per chunk becomes under 10 ms; goldens bit-identical | compile-count test; restart in chunks equals one run | +20 |
+| H0.3 | Form the reciprocal-eigenvalue array in the trace from the three 1-D vectors (`poisson._direct`, `_inverse_denominator`, `FastDiagonalHelmholtz`) | HLO text at 128³ from 244 MB to under 10 MB; a new viscosity or dt is an argument, not a program; step time within +5 %; goldens unchanged | compile-count test; HLO size test at 64³ | −25 +10 |
+| H0.4 | Conservation unit tests of the Lorentz force and the potential solve | T6 (sum F·vol equals the boundary term, constant B, stretched grid, 1e-12; max abs(div J) at solver tolerance) | T6 | tests only |
+
+The weaker items of the audit that are cheap and independent travel with these:
+the open-duct continuation takes the flow fraction as a traced scalar, so Re 25
+compiles one Newton program instead of ten (+10 −5, same PR as H0.1).
+
+#### Phase H1 — SOLVAX release (Lane B, repository `uwplasma/SOLVAX`)
+
+One additive minor release after 0.31.0; LMhdX raises its pin only after the
+release is on PyPI. About +180 lines for H1.1–H1.3.
+
+| Step | Action and place | Exit | Tests | Lines |
+|---|---|---|---|---|
+| H1.1 | `Tableau` type and IMEX low-storage tableaux `euler` and `smr_rk3` next to `RK4_2`, `BS3_2`, `DOPRI5_4` (`ode`) | coefficients and sums pinned: gamma = alpha + beta = (8/15, 2/15, 1/3), sum 1; imaginary-axis stability limit sqrt 3 and real-axis limit 2.513 reproduced on the 3-stage map; Dedalus' RKSMR weights (29/96, −3/40, 1/6) and (37/160, 5/24, 1/6) satisfy a_k + b_k = gamma_k | unit tests | +50 |
+| H1.2 | `march`: one `while_loop`, residual test every k steps, explicit status (`converged`, `stagnated`, `max_iterations`); fixed-point adjoint as a `custom_vjp` over `affine_fixed_point_gmres`, with the guards of PICT (refuse a non-finite residual, retry in float64) | adjoint equals central differences to 1e-6 relative on a model fixed point (T12); a stagnation test where the Kelley–Keyes decrease stops; no host sync inside the loop | T12 | +80…120 |
+| H1.3 | Separable generalised-eigen solver (per-axis shifts, null mode, float32 plus defect correction) as `solvax.separable`, additive: `_symmetric_eigen`, `_eigh`, `_scaled`, `_contracted`, `_refined`, `_corrected`, the direct solve, `FastDiagonalHelmholtz` core | bit-identical to LMhdX's own on the Poisson and Helmholtz tests of `tests/test_poisson.py` ported to SOLVAX; LMhdX not yet switched | ported tests | +450 (LMhdX −450 in H4.6) |
+| H1.4 | Hygiene: one `_tree.py` for the four copies of `_tree_dot`, `_tree_norm` and the three of `_tree_add_scaled`; delete `texput.log` and the duplicate `benchmarks/results/gpu/baselines.json` | tests unchanged and green; `git ls-files` shows both files gone | none new | −45 src, −1,240 JSON |
+
+#### Phase H2 — RK3 stepper and energy-conserving stretched advection (Lanes A and B)
+
+| Step | Action and place | Exit | Tests | Lines |
+|---|---|---|---|---|
+| H2.1 (A) | Fix `ops._across_axis`: carrier weights taken from the own cell widths (the mass-flux form; ghost widths wrapped on periodic axes) and an arithmetic convected value for the central part; the limiter stays opt-in; stay second order (no conservative fourth-order form exists on stretched meshes) | T23: relative kinetic-energy drift under 1e-13 at 30 % and 50 % modulation (fails on `main` today: −2.3e-3, +3.1e-3), momentum sum 1e-12, convergence rates on the smooth Taylor–Green flux divergence stay 1.97–2.00; Morinishi's own pairing was tried and did not conserve exactly, so the fix is the verified one | T23, T24 pairing check | +30 −20 |
+| H2.2 (B) | `core3d`: IMEX RK3-CN step as a tableau-driven stage loop (`euler` is the one-stage tableau and stays the default and bit-identical): Helmholtz operator I − (gamma_k dt/2) L_I, pressure as psi = gamma_k dt Phi, incremental pressure update P += Phi − (gamma_k dt/2) L_I Phi, with L_I the implicit viscous plus Lorentz-damping operator; restart only at step boundaries (beta_1 = 0), so 20 + 20 steps equal 40 bit for bit | Hartmann start-up (Ha 5) shows time order 3.0 ± 0.3 for `rk3`, 1.0 ± 0.1 for `euler`; T28 (spatial order 2.00 ± 0.15 on a tanh grid, divergence 1e-12 after projection, Lorentz variant included); `euler` goldens unchanged | T28, T24, T25 | +110 |
+| H2.3 (B) | CFL controller: dt re-evaluated every `check` steps as min(cfl dt_cfl, dt), abort on divergence above tolerance; constant-flux control (bulk velocity held by the mean forcing); switchable first-order damping correction (off for DNS) | explicit-viscous speed test: a wall-clustered 200×200 duct section, tanh A = 2, Re 800, Ha 260 (the cell sizes of Zhao and Zikanov's Table 1, where their explicit scheme needs dt = 5e-5) runs at a CFL-based dt of at least 1e-3 and gives the driving force F of the run at a quarter of that dt to 1e-3; flux held to 1e-12 | speed test (action 20) | +30 |
+| H2.4 (B) | Statistics accumulators in the scan carry (`stats=("mean","rms")`, `warmup`), `Re_tau` and `c_f` on the bulk velocity | T34: plane-averaged x-momentum residual under 1e-10 of the wall stress per step, c_f from wall shear equals c_f from the budget to 1e-8, Re_tau = Re_av sqrt(c_f/2) to 1e-12 | T34 | +60 |
+| H2.5 (B) | Accuracy gates of the stepper | T29: Shatrov duct, A = 5, beta = 0.91, Lx = 2 pi/0.91: omega_r 0.2115 ± 0.001 at Re_o = 10,400, sign of omega_i right at 10,000 and 11,000, abs(omega_i − table) at most 1.5e-4 (tighten after the first measurement); also shows the central path is not dissipative (a 7th-order upwind derivative at nx = 8 gives omega_i −5.1e-5 against −2.4e-6 at nx = 16) | T29 | tests |
+| H2.6 (A or B) | Lorentz off-diagonal damping for a tilted B: make it implicit or report the splitting error | measured error O(dt) for a B at 45° reported in the docs, or removed | one test | +20 |
+
+H2.1 does not depend on H1 and starts at once; H2.2 needs H1.1 and H0.3.
+
+#### Phase H3 — The march replaces Newton (Lane A; needs H1.2 and H2.2)
+
+| Step | Action and place | Exit | Tests | Lines |
+|---|---|---|---|---|
+| H3.1 | `axial.march_open_duct`: `solvax.march` over the RK3-CN step with central transport; `Solver(method="march")`; Newton becomes `polish`. The Newton path stays the default until H3.2 holds | the central-flux march reproduces the Newton root to 1e-6 relative in total pressure drop at Ha 20, Re 10–40 and Ha 100, Re 20; the limited-flux bias (1.3e-4, 3.6e-4) disappears | root comparison | +90 |
+| H3.2 | Anchors the march must pass and Newton cannot at Re 40 and above: invariance of dp times Re in a 3-D Hunt duct, and a very high Ha | T4: Hunt, Ha 300, c_w 0.05, Re 10 / 100 / 500 / 1,000: dp/dx 374.897 / 37.490 / 7.498 / 3.749, c_w 0.1: 585.43 / 58.54 / 11.71 / 5.854; Ha 500, c_w 0.05: 953.14 / 95.31 / 19.06 / 9.531; axial length 30, 31×47×47, within 0.2 % in the developed region. T5: Ha 10,000, Re 1,000, c_w 0.05, 4 cells per Hartmann layer: 1990.62 against 1972.26 analytic (+0.9 %), at most 1.5 % | T4, T5 | tests |
+| H3.3 | Fixed-point adjoint for the march | gradient of the pressure drop with respect to Ha and wall conductance equals central differences to 1e-6 relative (T12); cost of the reverse sweep at most the forward march | T12 | glue |
+| H3.4 | Three outcomes of a march: `converged`, `stagnated`, `unsteady` (the residual does not decay while the perturbation energy oscillates or grows); SOLVAX reports stagnation, LMhdX classifies it | the real case is T32(c), steady to Re about 35,400 and bursting above it, which waits for the annulus; until then a known time-periodic duct run is the test, and a steady problem converges with status `converged` | unit tests, T32(c) later | +20 |
+| H3.5 | Delete the Newton and inner-Stokes-CG stack for open ducts one release after H3.1–H3.4 hold on `main` | `axial.py` from about 1,040 to about 500 lines; no test tolerance changed | existing | −300 |
+
+#### Phase H4 — API 2.0 (Lane C, with H4.6 on Lane B)
+
+Contract in ADR 0010 (DH4–DH7). Everything before H4.7 is additive, so `main`
+stays green: the facade translates a `Problem` into today's kernels and the
+equivalence tests pin it before anything moves.
+
+| Step | Action and place | Exit | Tests | Lines |
+|---|---|---|---|---|
+| H4.1 | New modules `problem` (`Problem`, `Wall`, `Sides`, `Open`, `Periodic`, `Thermal`, presets `duct`, `channel`, `fringe_duct`, `pipe`, `q2d`), `fields` (`Uniform`, `Fringe`, `Table`, `Func`), `solve` (`Solver`, `build`, `solve`, `State`, `Solution`), `grid.axis`. `Problem` is a facade over the existing kernels; the old API is untouched. Release 1.12.0 | old-versus-new equivalence on Hartmann Ha 20, Hunt c = 0.05, a fringe duct (drop and gradient), the heated-duct run, Q2D and a pipe, bit-identical on Euler/Stokes paths or 1e-12 elsewhere; `channel()` takes R and Ha and the field direction (wall-normal, or spanwise for T8), with Re_av = R Ha Uav/U0 and Uav/U0 = (cosh Ha − sinh Ha/Ha)/(cosh Ha − 1) (0.95000 at Ha 20), domain lengths from the Boeck–Krasnov–Zienicke and KZB 2011 tables; the convention map of H.6 enters `docs/physics` | T1, T2, T3 (extending `test_table_i`), T14, T15, T19, T27 | +900 src, +400 tests |
+| H4.2 | Differentiable walls (owner decision of 2026-10-21). Conductance, and thickness through c = sigma_w t_w/(sigma L), are leaves. Static: whether a wall conducts, cell counts, grid, bc kinds. Rewrite `assemble_thin_wall_operator` and `assemble_thick_wall_operator` with `jnp`; make `FastDiagonalThinWallPoisson` a pytree whose eigen arrays are traced (`jnp.linalg.eigh` of the weight-symmetrised 1-D matrix, null mode by mask); `ops.thin_wall_flux` takes the traced c; `corner_gain` in-trace, `corner_fix` (two resolved walls) static with a clear error if traced. Gradient route: plain autodiff through `eigh`; if T35 shows more than 1e-6 relative error, a `custom_vjp` on the solve with dx/dc = −A⁻¹ (dA/dc) x, which needs no `eigh` derivative. c = 0 is the insulating pattern; its gradient is documented as undefined (use a small positive value). Starts only after H0.3 is merged | T35 passes; changing c does not recompile (compile-count assertion); forward result at the primal value bit-identical; the old statement that the wall derivative is available only by finite differences is removed from the docs after, not before | T35 | +150…200 src, +150 tests |
+| H4.3 | `config`: generic TOML loader and dumper (table = constructor call), overrides on the command line, `lmhdx upgrade` for schema 1 (thermal) and 2 (CaseSpec) files; the console script accepts schema 3 and the old files | round trip of every shipped example; unknown key, missing key and wrong type refused before anything is built, with the table path in the message; integer accepted for a float, float or bool never for an integer; `Func` fields import as `module:function` or `file.py:function` | loader tests | +260 |
+| H4.4 | `output`: `Output` (chunked records, restart, ParaView `.vtr`/`.vts`/`.pvd` for every run type, summary, profiles, log). The banner, footer and ETA text of `StreamingSolverLogger` are ported into `Output.log` (same text, same sections), with the JSON-lines chunk record added beside it | 20 + 20 steps equal 40 bit for bit for every run type; thermal records and summaries pinned byte for byte; existing logger tests keep pinning the text; src target about 11.0k lines, not 10.9k (this PR deletes about 190 lines instead of 250) | restart and logger tests | +330 −190 |
+| H4.5 | Migration: codemod the tests and examples, rewrite the docs, README and tutorials to the new calls, one `docs/reference/toml.md`, switch on warnings for every old name (pytest runs with `filterwarnings = ["error"]`, so they are enabled here, in the PR that migrates the tests, and not before) | docs build with `-W` green; no test or example uses an old name; migration guide drafted; validation numbers and goldens unchanged | all | −1.3k tests, mechanical; may be split by directory |
+| H4.6 (B) | SOLVAX moves, no API effect: LMhdX switches to `solvax.separable` (−450), `solvax.compile_cache` (−330) and the constrained CG with its derivative rule (−100); three small PRs | goldens unchanged; ideally merged before H4.7 so 2.0 ships slim | existing | −0.9k LMhdX |
+| H4.7 | **2.0.0**: delete `cases`, `io`, `fully_developed`, the argparse CLI, the `lmx` alias and the duplicated design-law API; move `coreflow` to `validation/`; drop the test-only helpers; stop flipping x64 and setting `XLA_FLAGS` at import (`lmhdx.configure(...)` does it, announced once); changelog and migration guide; SOLVAX pin | `scripts/audit_architecture.py` passes with lowered budgets; a grep gate for the old names; src between about 9.5k and 10.1k lines (estimates from function sizes, to be replaced by the count in the PR); D13's gates | all | −3.4k src |
+
+Intentional losses, announced in the migration guide: `lmhdx validate` and
+`lmhdx benchmark` subcommands (replaced by a shipped example plus the `diag`
+acceptance functions and `benchmarks/run_benchmarks.py`); old command lines stop
+working; a script that imported `lmhdx` only for an unrelated reason no longer
+gets x64.
+
+#### Phase H5 — Turbulence validation on the office GPU (Lane B, benchmark tier, after H2)
+
+Benchmark tier only, never in pull-request CI. Pin the matmul precision to
+`highest` (the default float32 contraction on the A4000 is TensorFloat-32), set
+the preallocation of the GPU memory off, and run one job per card. Averaging
+windows are set by us; regime assertions carry their tags (H.6).
+
+| Step | Run | Exit | Test |
+|---|---|---|---|
+| H5.1 | Channel with the field along the spanwise direction (KZB 2011 Table 1), Re 6,667, Ha 30, 64³, tanh A = 2.0, Lx × Ly = 2 pi × pi | Re_tau 306.7 (spectral) within 2 %, Ucl 1.2542 within 1.5 % | T8 |
+| H5.2 | Hartmann channel, R = 700, Ha = 20 (Re_av 13,300), 2 pi × 4 pi/5, 128³ stretched, about 116 d/U0 averaged | Re_tau 708.6 within 2 %, c_f 5.67e-3 within 4 %, Ucl 1.0880 within 1 %; 64³ is expected to fail (658.1, 1.0751) and is reported, not gated | T26, T9 |
+| H5.3 | Square duct, Re 3,000, Ha 0 / 5 / 7, 64², A = 2, Lx = 4 pi | f × 100 within 3 % of 1.714 / 1.680 / 1.647 (periodic DNS), averaged over at least 500 time units | T17 |
+| H5.4 | Short-box relaminarisation, Re 3,000, 2 pi box, 79×79×64, alpha = 2, dt 5e-3, from developed Ha 0 turbulence | Ha 0 and 10 sustain at least 1,500 times; Ha 15 relaminarises within 500 with c_f within 1 % of laminar; Ha_c = 12.25 is not a gate | T30 |
+| H5.5 | Cubic box with thin walls, Ra 1e5, Pr 0.0321, Ha 100, 64³, tanh A = 2.5 | Nu 3.331 (no field), 3.245 (c_w 0), 3.046 (0.01), 2.277 (0.1), 1.527 (1), 1.390 (50) within 3.5 % of the reference values 3.267 / 3.286 / 3.092 / 2.334 / 1.567 / 1.403 (the authors' own spread); can run on the existing thermal module before H2 | T22 |
+| H5.6 | Spike after H2 and H1.2: optimal transient growth by direct-adjoint power iteration through the RK3 tangent | collapse of the four Ha curves within 10 %, M_stream within 25 % of 2.0e4/Ha² for Ha ≥ 30, streamwise share above 99 % at T_opt; adjoint and tangent propagator norms agree to 1e-8 | T33 |
+
+Timing figures are inferences from cell and step counts of the sources (about
+3e4 RK3 steps for H5.2), not measurements of LMhdX; each run records its own.
+
+#### Phase H6 — Later (each needs its own decision and, where noted, a measurement)
+
+- FFT or cosine axes on uniform directions in SOLVAX (DCT-III and DST-II/III by
+  `rfft` with the usual twiddles, about 60 lines; `jax.scipy.fft` does only
+  type II) and an axis selector in `poisson`, only if a GPU measurement at
+  N ≥ 256 shows a gain; option: eigen-transform in two axes plus a batched
+  Thomas solve along the largest, which also removes the N³ constants.
+- LES closure through `Problem.terms` and a viscosity object (CaLES-style).
+- Turbulent inflow from a periodic precursor of length pi and convective outflow
+  with flux renormalisation every step, for spatially evolving ducts (untested
+  with RK3-CN).
+- Shadowing gradients (NILSAS, Lorenz unit test T13) after H5 works.
+- Long-box regimes: T18 and T31 need at least 16 pi boxes (2e6–5e6 cells, GPU
+  days); T20 and T21 (Kobayashi duct regimes, Re 14,500 laminar floors
+  3.530e-3 / 4.586e-3 / 5.112e-3 at Ha 43.5 / 58 / 65.25) wait with them.
+- Voltage-driven flow in an annulus (T32), if wanted; needs a Dirichlet
+  radial wall in the polar kernel first (a spike).
+- The induction model (`State.b`, curl-curl term) is reserved in the API and not
+  built.
+
+#### H.6 Test matrix of the program (Table H.T)
+
+References by short name are listed in H.9. "Cheap" means seconds on the laptop;
+the last column is the step that carries the test.
+
+| ID | Test | Reference numbers | Tolerance | Step |
+|---|---|---|---|---|
+| T1 | Square duct, insulating, mean velocity 1, Ha 100 / 200 / 300 / 350 / 400 | KZB 2012 Table 2, laminar: Ucl 1.1033 / 1.0688 / 1.0548 / 1.0507 / 1.0465; Cf_Ha·Re 197.7 / 396.0 / 594.7 / 694.1 / 793.6; Cf_Sh·Re 23.3 / 32.1 / 38.8 / 41.9 / 44.6 | 5e-4 on at least 8 cells per Hartmann layer; the exact (Chebyshev) values of T15 are the stricter gate | H4.1 |
+| T2 | Shercliff, Ha 300 / 500 / 1,000, Re 10, flow rate 4 | dp/dx 31.662 / 52.106 / 102.88 (Ni I–III; one of them misprints a value, so check against the spectral solve before gating; use 52.106 at Ha 500) | 0.3 % on 62² stretched | H4.1 |
+| T3 | Hunt, c_w 0.05 / 0.1 | dp/dx 374.897 (Ha 300, c_w 0.05, Re 10), 585.4302 (Ha 300, 0.1), 953.14475 (Ha 500, 0.05) | 0.1 % | H4.1 |
+| T4, T5 | Inertia-free invariance of dp·Re; Ha 10,000 | see H3.2 | 0.2 %; 1.5 % | H3.2 |
+| T6 | Charge and momentum conservation | max abs(div J) at solver tolerance; sum F·vol equals the boundary term | 1e-12 | H0.4 |
+| T7 | Grid builder | z = 0.96 sin(pi xi/2) + 0.04 xi, N = 769: dz_min 1.12e-4, dz_max 4.03e-3; at least 7 points per MHD layer (10 at Ha 1,000) | 1 % | H4.1 (`axis(blend=0.96)`) |
+| T8, T26, T9 | Channel DNS | see H5.1, H5.2; BKZ 2007 Table 1, 16 rows (the edge case R = 500, Ha = 30, Re_tau 785.9, c_f 5.87e-3, is turbulent in the spectral DNS and laminarises in 64³ and 128³ finite-difference runs: regime only, needs at least 256³) | as H5 | H5.1, H5.2 |
+| T10 | Laminarisation boundary | Hartmann channel R = 483, Ha 30; square duct Re about 3,000 turbulent for Re/Ha above 250 and laminar below 225 | regime, tagged | H5.4 |
+| T11 | Duct, Re 14,500, Ha 43.5 / 58 / 65.25 | regime from KZB 2012 text (Re_Kobayashi = 29,000 is the same case on the hydraulic diameter) | regime | H6 |
+| T12 | Steady sensitivity against finite differences | dp/dc_w and dp/dHa of a Hunt duct | 1e-6 relative | H1.2, H3.3 |
+| T13 | Lorenz shadowing unit test | sigma 10, beta 8/3, rho 28: d<z>/drho about 1 | 0.2 absolute over 20 runs | H6 |
+| T14 | Laminar duct friction, Re 3,000, Ha 17 and 20 | exact (Chebyshev, N = 64): f = 1.5243e-2 and 1.7397e-2 (G = 22.864, 26.095); DNS columns 1.531e-2 / 1.747e-2 (periodic), 1.531 / 1.745 (uniform B) | 5e-4 against the exact; 1.5 % against DNS | H4.1 |
+| T15 | Exact laminar columns of KZB Table 2 | Ha 100: Ucl 1.1044, Cf_Ha·Re 197.63, Cf_Sh·Re 23.25, G = 110.44; Ha 200: 1.0695, 395.79, 32.01, G = 213.90; G = (Cf_Ha·Re + Cf_Sh·Re)/2 to 3e-4 | 5e-4 | H4.1 |
+| T16 | Laminar pipe, Re 3,500, Ha 18 | f × 100 = 1.46 (spatially evolving DNS), 1.48 (periodic), 1.45 (experiment) | 2 % against DNS | H4.1 (pipe preset) |
+| T17 | Turbulent duct, Re 3,000 | H5.3 | 3 % | H5.3 |
+| T18 | Transition map | Re 3,000: turbulent Ha ≤ 10, puffs 12–14, laminar ≥ 17; Re 5,000: turbulent ≤ 21, laminar ≥ 26; pipe Re 3,500 turbulent 12, laminar ≥ 18. Cheap proxy: Ha 26, Re 5,000, 16 pi must laminarise | regime | H6 |
+| T19 | Thin-wall boundary condition | Hunt (C_par 0, C_perp 1) and Walker (C_w 1, 10, 100), Re 100, Ha 100 and 1,000: rms deviation from the asymptotic profiles; C_w = 1,000 equals the Dirichlet-wall run; grids 192² and 256² | rms 1e-3 | H4.1 |
+| T20, T21 | Kobayashi regimes; channel R = 500 | laminar floors above; c_f 5.87e-3 (DNS), 5.50e-3 (CSM-LES, 128³) | 5e-4; 5 % | H6 |
+| T22 | Thermal cubic box | H5.5 | 3.5 % | H5.5 |
+| T23 | Kinetic-energy conservation of central transport on stretched grids | H2.1 | 1e-13 | H2.1 |
+| T24 | Morinishi inviscid periodic box and continuity-pressure pairing | 16², 2 pi box, RK3, K0 = 1, T = 10, dt 1e-3: kinetic-energy change −1.6e-8 (second order), −3.2e-8 (fourth); error scales as dt³; a broken pairing gives +2.1e-2 | abs(dK) under 1e-7; slope 3 ± 0.2; pairing violation above 1e-3 detected | H2.1, H2.2 |
+| T25 | Orr–Sommerfeld growth on a tanh grid | plane Poiseuille, Re 8,000, alpha 1: omega_r 0.247075, omega_i 2.66441e-3, eps 1e-5, tanh gamma 2.75, meshes 8×16 … 256×512, 3.9 periods, CFL about 0.05 | second-order convergence; final error under 1e-3 | H2.2 |
+| T27 | Laminar Hartmann channel exactness, c_f/Re_tau identity, wall resolution | Uav/U0 0.90008 (Ha 10), 0.95000 (Ha 20); c_f 5.486e-3 (R 450, Ha 10), 4.756e-3 (450, 30), 4.281e-3 (500, 30), 3.166e-3 (700, 20), 2.411e-3 (900, 25); Re_tau = Re_av sqrt(c_f/2) to 6.4e-4 on all 16 BKZ rows; friction error against cells inside 1/Ha (second order, tanh): about 1.2 cells +7 %, 2.5 cells +1.5 %, 4 cells +0.3 % | 1e-3 at 6 cells per layer, order 2 ± 0.2; error at most 2 % at 2.5 and 0.5 % at 4 cells | H4.1 |
+| T28 | Shatrov manufactured solution | v_x = pi sin x sin 2 pi y sin 2 pi z sin(Omega t), v_y = −0.5 cos x sin²(pi y) sin 2 pi z sin(Omega t), v_z = −0.5 cos x sin 2 pi y sin²(pi z) sin(Omega t), p = sin x cos pi y cos pi z sin(Omega t); x periodic on [0, 2 pi), y, z in [−1, 1]; Re 100, Omega 10, t = 0.1, nx = 32; the paper finds spatial order 6 and temporal order 2 | spatial order 2.00 ± 0.15 on a tanh grid (alpha 2); rk3 temporal order 3.0 ± 0.3, euler 1.0 ± 0.1; divergence after projection 1e-12; add a Lorentz-force variant with a smooth B | H2.2 |
+| T29 | Shatrov duct growth rate | duct A = 5, beta 0.91, Rosenhead base flow normalised to 1; omega at Re_o 10,000: 0.2129 − 2.59e-4 i; 10,400: 0.2115 − 2.4e-6 i; 11,000: 0.2094 + 3.35e-4 i; literature omega_r at 10,400: 0.21167, 0.2112; paper grid 79 × 199, nx 16–64 | omega_r 0.2115 ± 0.001; sign of omega_i right at 10,000 and 11,000; abs(omega_i − table) at most 1.5e-4 | H2.5 |
+| T30 | Short-box relaminarisation | H5.4 | regime, tagged | H5.4 |
+| T31 | Grid shift of the threshold (PRL Supplement Table I) | N per unit length × Ny × Nz: 10×64×64 gives Ha_c 14 (Re 3,000) and 24 (Re 5,000); 20×128×128 gives 15 and 26; 40×256×256 gives 15 and 26 | report the shift, never above the converged 15 and 26 | H6 |
+| T32 | Toroidal duct, conducting walls | Ri = 4d, Ro = 5d, Ha 260, Re 30,000 steady: F = 0.01937, tau1 = tau2 = 0.03910, tau3 = 0.004310, tau4 = 0.002970 on 200² (160²: 0.01943; 100²: 0.01968); first instability Re_c about 35,400 (oscillatory), bursts at Re 36,000 with period about 2,500 | identities 1e-8; F and tau 2 %; march returns `unsteady` above 35,400 | H3.4, H6 |
+| T33 | Optimal transient growth | H5.6; square duct Re 5,000: G(alpha = 0, T) = (Re/Ha)² G~(T Ha/Re) | spike | H5.6 |
+| T34 | Plane-averaged momentum budget | H2.4 | 1e-10 per step | H2.4 |
+| T35 | Gradient with respect to wall conductance and thickness | Hunt values of T3; secant between c_w 0.05 and 0.1: 4210.6 per unit c; limits: c → 0 is the insulating duct, c → ∞ the Dirichlet-wall duct (T19) | jax.grad against central difference (step 1e-3 c) within 1e-6 relative in float64; thickness derivative of a resolved layer equals the thin-wall chain rule to the roughly 1 % by which resolved and thin walls differ at c = 0.05 (check first); no recompilation when c changes | H4.2 |
+
+Regime assertions carry their tags: Shatrov's Ha_c = 12.25 belongs to a 2 pi box
+with a sixth-order code; the PRL threshold of 15 to a box of at least 16 pi at
+128² and second order; the PRL low resolution gives 14 (Supplement Table I). A
+test states which of these it exercises. Convention map for the docs: Zhao and
+Zikanov use the full gap for Ha and Re; Krasnov et al. 2010 use the centreline
+velocity; Boeck, Krasnov and Zienicke define R = U0 delta/nu; Kobayashi's
+Re 29,000 is KZB's 14,500.
+
+#### H.7 Considered and rejected
+
+| Candidate | Why not | Evidence |
+|---|---|---|
+| Augmented Lagrangian, PCD, LSC, `PCFIELDSPLIT` for the duct | The pressure is eliminated exactly by the projection, so the Schur complement they approximate and the grad-div term are already exact or inert. What is left is a projected Oseen solve that needs a convection-robust multigrid: weeks of work, unproven | report of the study; cheap variants (transport in the Helmholtz solve, line solves, damping, capped shift) gave −30 % at best |
+| Multigrid or Krylov-multigrid on stretched grids | The direct tensor-product solve does not depend on grading | CaNS-EIGEN: at Δmax/Δmin about 13.7, 3-D Krylov-multigrid is 14.3× and FFT plus 2-D multigrid 10.9× slower |
+| Pseudo-transient continuation with SER on an explicit-transport march | The step is capped by the explicit CFL whatever the shift is, so there is nothing to ramp; Kelley–Keyes' ramp is for a linearly implicit iteration. SER diverged once the shift stopped dominating transport | shifted solve 27 iterations at tau about 10 CFL, 760 at about 125 CFL, residual 0.026 to 12; PTC Newton 3,332 iterations at Re 40 (269 s) against 1,700 march steps (23 s) |
+| Krylov recycling and coarse spaces across Newton steps | Marginal or worse | #225: Re 20, 313 to 224 and 289 to 206 outer iterations; Ha 100, Re 33: 5,302 to 11,202. Two-level x-coarse Galerkin about 2× at a coarse dimension of 24 %, not Re-independent |
+| Host direct solvers (MUMPS, SuperLU_DIST, cuDSS) in the differentiable loop | Host callbacks break `jit`, adjoints and GPU residency; no gain over the separable direct solve on tensor-product ducts | codes survey; revisit only for a non-separable pressure (immersed walls) |
+| Approximate factorisation (ADI) of the implicit viscous and Lorentz operator | Adds O((nu dt)²) cross terms that grow when diffusion is stiff in two stretched directions; the unsplit Helmholtz is already solved | CaNS-EIGEN Section 3 |
+| First-order implicit-diffusion splitting; explicit Lorentz force | Limit accuracy; the explicit Lorentz force forces dt below rho/(sigma B²), far below any advective step at Ha 1,000 | jax-cfd, FreeMHD (2.4 % and 3.9 % flow-rate errors at Ha 20 and 100) |
+| Gradients through long turbulent windows | They diverge; even PICT and JAX-Fluids differentiate short windows only | checkpointed windows of a few eddy turnovers; shadowing after H5 |
+
+Kept on purpose: the dense eigenbasis on CPU (H.0), the Ni charge-conservative
+force (div J 1e-12 relative, adjoint-exact), Newton as `polish` below Re of
+about 20.
+
+#### H.8 Owner decisions and open questions (2026-10-21)
+
+Decided:
+
+1. The 2.0 API break is approved, on condition that it stays flexible for many
+   geometries and models, that TOML and Python are equally expressive, and that
+   beginners and advanced users are both served.
+2. The logger banner, footer and ETA text are kept (about 60 lines); H4.4
+   ports them into `Output.log`.
+3. Wall conductance, and the wall thickness where feasible, are differentiable
+   in 2.0 (H4.2, accepted when T35 passes).
+
+Open:
+
+1. Voltage-driven (Dirichlet-potential) walls and polar annuli: wanted at all,
+   and in which release? Today there are conductance walls only and the polar
+   kernel is separate.
+2. Budget for the long-box regime runs (T18 and T31, at least 16 pi, GPU days).
+
+#### H.9 References of the program
+
+KZB 2011: Krasnov, Zikanov, Boeck, Comput. Fluids 50:46 (2011). KZB 2012: J.
+Fluid Mech. 704:421 (2012). PRL: Krasnov, Thess, Boeck, Zhao, Zikanov, Phys. Rev.
+Lett. 110:084501 (2013), with its Supplemental Material. TCFD: Zikanov, Krasnov,
+Li, Boeck, Thess, Theor. Comput. Fluid Dyn. 28:319 (2014). AMR: Zikanov, Krasnov,
+Boeck, Thess, Rossi, Appl. Mech. Rev. 66:030802 (2014). BKZ: Boeck, Krasnov,
+Zienicke, J. Fluid Mech. 572:179 (2007). SG: Shatrov, Gerbeth, Phys. Fluids
+22:084101 (2010). ZZ: Zhao, Zikanov, J. Fluid Mech. 692:288 (2012). Optimal
+growth: Krasnov, Zikanov, Rossi, Boeck, J. Fluid Mech. 653:273 (2010). Kobayashi,
+Phys. Fluids 20:015102 (2008). Krasnov, Akhtari, Zikanov, Schumacher, J. Comput.
+Phys. 474:111784 (2023) (tensor-product Thomas elliptic solver). Ni et al., J.
+Comput. Phys. 227:174 and 227:205 (2007); Ni and Li, J. Comput. Phys. 231:281
+(2012). Morinishi, Lund, Vasilyev, Moin, J. Comput. Phys. 143:90 (1998).
+Spalart, Moser, Rogers, J. Comput. Phys. 96:297 (1991). Kelley, Keyes, SIAM J.
+Numer. Anal. 35:508 (1998). Costa et al., CaNS-EIGEN, arXiv:2603.09528 (2026);
+CaNS, arXiv:2001.05234. Blondel et al., arXiv:2105.15183 (implicit
+differentiation). Ni and Wang, J. Comput. Phys. 347:56 (2017); Ni and Talnikar,
+arXiv:1801.08674 (shadowing). Kay, Loghin, Wathen, SIAM J. Sci. Comput. 24:237
+(2002) and Elman et al., SIAM J. Sci. Comput. 27:1651 (2006) (PCD, LSC);
+Benzi, Olshanskii, SIAM J. Sci. Comput. 28:2095 (2006) (augmented Lagrangian).
+Optional sources not yet in hand: Vasilyev (2000); Krasnov et al., Phys.
+Fluids 20:095105 (2008); Krasnov et al., J. Fluid Mech. 504:183 (2004);
+Uhlmann et al., J. Fluid Mech. 588:153 (2007); Priede et al., J. Fluid Mech.
+649:115 (2010); Zhao, Zikanov, Krasnov, Phys. Fluids 23:084103 (2011).
+
 ---
 
 ## 7. Validation ladder
@@ -1763,3 +2058,4 @@ Process: pyOpenSci README guide · JOSS review criteria · Google small CLs · D
 | 2026-10-20 | Literature anchors of the #253 audit, Section 3.8.6 (c)–(e). (d) Ni et al. 2007 Part I, Tables 2–4, run in `tests/test_table_i.py` (`table_i_flow_rate` takes the layer thickness factor 2 for the paper's meshes): LMhdX flow-rate errors against Ni's on 38², 46², 62² at Ha 50/500/1000 (2.6/3.4, 0.8–1.3/0.9–1.1, 0.35–1.1/0.27–0.47 %), Ni's analytic Hunt ∇p·Re 5854.302 and 9531.4475 vs the spectral solve (+4.9e-4, +4.2e-4); not reproduced: Table 1 orders and the 0.06 % 3-D error. (c) `validation/q2d_campaigns.py`: row 15 Re_c 7.694 (+1.2 % from 7.60), q_c 0.462, gated in `test_q2d_identities` (7 s); row 13 vortex lattice C 4.2–6.3 at Re_α 28–66 and 2.8–2.9 at 14, 1.3 at 6.7, condensation not reached; docs/validation/q2d.md. (e) row 7: the 1/B floor is not the cause of order 1.63 (cap 1e3 → 1e6: 8e-6); cross-section-only order 2.05 and axis-only 1.97 cancel in the joint sequence, separable value 0.017805; `test_coreflow` gates it; no code change. Audit budgets raised by what was added | rows 13 (upper Re_α only), 14, 16; rows 6/7 anchors still wait on #225 |
 | 2026-10-20 | Row 6 sensitivity (lane row 6, branch fringe-row6-sensitivity; `pipe.py`, tests, docs, plan only; `axial.py` untouched). Measured runs of the ALEX B1 open pipe: field interpolant (monotone cubic, linear, spline) changes the side-wall RMS by 0.03; table ±0.03 and a ±0.5 ramp shift give 0.51–1.17 there and 2.1–2.7 for the section mean; c 0.020 / 0.035 / 0.054 miss the upstream gradient by 18 % / 39 % / 108 % and score 2.2 / 2.5 / 7.8 at the wall (Ha 1600). The finding: the section-mean pressure was the wrong observable for a tap. `lmhdx.pipe.wall_pressure_gradient` reads the wall cell: at Ha 6600 (48×64×76, 11,250 CG iterations, 618 s on the Mac CPU) RMS / L∞ are 0.86 / 1.39 at the walls parallel to the field, 3.11 / 6.60 at the walls normal to it, 1.79 / 3.82 for the ring and 2.43 / 5.08 for the section mean. Row 6 is therefore met station by station at the side-wall tap, conditional on ALEX having taps there (the digitized table does not say; the scanned report must be read). Inertia is not needed for the shape. Open: tap position; finite-thickness wall and B_x (need `axial.py`) | the tap position; confirm at Ha 6600 on the GPU |
 | 2026-10-21 | 1.9d, #225: the inertial share fitted on the uniform-buffer 124×32² mesh at Ha 100 (Re 10, 20, 33) and Ha 200 (Re 10, 20, 40): 0.42–2.11 % and 0.40–2.33 %, share ≈ 0.045 %·Re^1.31·Ha^-0.16; `solve_open_duct` cycle 120 and inner tolerance 1e-1, `fringe_duct(growth=)`. Krylov recycling across Newton steps and continuation measured and rejected (Re 20: 313 to 224 and 289 to 206 outer iterations; Ha 100, Re 33: 5,302 to 11,202); outer iterations still grow faster than Re. Row 6 inertia bounded at about 30× too small, consistent with the wall-tap finding of #282 (the shape does not need inertia). No tolerance changed, no test moved; budgets raised by the lines added. |
+| 2026-10-21 | High-Re and 2.0 plan (docs and plan only; ADR 0010, DH1–DH8, Program H in Section 6 and goal G13). Audit of `d137209` with the measured baseline of H.0; one IMEX RK3-CN stepper for steady and unsteady runs, Newton demoted to polish; separable eigenbasis kept; AL/PCD/LSC, multigrid, SER on an explicit march, recycling and host direct solvers rejected with evidence (H.7); API 2.0 (`Problem`, `Solver`, `Output`, TOML schema 3, wall conductance and thickness differentiable, logger text kept) approved by the owner; test matrix T1–T35 with reference numbers (Table H.T). Open for the owner: voltage-driven walls and annuli, budget for the long-box runs | H0.1–H0.4, H1 and H4.1 in parallel (three lanes); H2.1 beside them |
