@@ -117,4 +117,5 @@ adr/0005-review-2026-09-13
 adr/0006-review-2026-09-22
 adr/0007-rename-lmhdx
 adr/0008-thermal-first-stage
+adr/0009-magnetoconvection-benchmark
 ```
