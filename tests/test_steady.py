@@ -1621,9 +1621,9 @@ def test_the_magnetoconvection_section_converges_to_its_pinned_gradient():
 
 def test_the_magnetoconvection_section_meets_figure_13s_core():
     """The independent check of 5.4a's section: on the pin's 96/12 cells, the profile at y = 0 against Figure 13's
-    analytical markers. In the core, |z| <= 0.7 a, every marker is within the record's digitizing uncertainty (2.44
-    px; 1.86 measured) and the section lies under 1 % below them on average (0.65 %). The jets' flanks differ by
-    about 10 px, which is reported, not gated."""
+    analytical markers. In the core, |z| <= 0.7 a, each marker column is within the record's digitizing uncertainty
+    (2.44 px; 2.09 measured over 37 columns) and the section lies under 1 % below them on average (0.62 %). The jets'
+    flanks differ by about 10 px, which is reported, not gated."""
     import json
 
     from validation import mistrangelo
@@ -1692,9 +1692,12 @@ def test_the_band_misfit_interpolates_as_plotted_and_widens_by_both_uncertaintie
 
 
 def test_the_digitizer_reads_a_drawn_figure(tmp_path):
-    """A synthetic xmgrace-like figure: a frame with outward ticks, a solid green line, a dashed orange line and red
-    rings. The calibration, the lines and rings within 1.5 px, and the band closed over the dashes are recovered; the
-    compact record keeps the band within 0.6 px (half a pixel, and the rounding); a wrong tick label is refused."""
+    """A synthetic xmgrace-like figure: a frame with outward ticks, a solid green line, a dashed orange line, red
+    rings, and a blue line with a spike two pixels wide and 20 tall and a step of 46. The calibration, the lines and
+    rings within 1.5 px, and the band closed over the dashes are recovered. Against every raw pixel column, spike
+    and step included, the compact record keeps the band within 0.6 px (half a pixel, and the rounding): the
+    extraction is not decimated before the bounded simplification, which could drop the spike. A wrong tick label is
+    refused."""
     import copy
 
     from PIL import Image, ImageDraw
@@ -1718,10 +1721,14 @@ def test_the_digitizer_reads_a_drawn_figure(tmp_path):
         draw.line([(px(x), py(2.5 + x)) for x in dash], fill=(255, 165, 0), width=2)
     for x in np.arange(0.5, 4.6, 0.5):
         draw.ellipse([px(x) - 3, py(1) - 3, px(x) + 3, py(1) + 3], outline=(255, 0, 0))
+    blue = [(px(x), py(3 + x + 2.0 * (x > 3.5))) for x in np.linspace(0.2, 4.8, 400)]
+    spike = int(px(2.0))
+    blue = [(a, b - 20 * (spike <= a < spike + 2)) for a, b in blue]
+    draw.line(blue, fill=(0, 0, 255), width=2)
     path = tmp_path / "x1.png"
     image.save(path)
     spec = dict(pdf_page=0, xref=1, x=((0, 50), (5, 350), 1), y=((0, 250), (10, 20), 2), quantity="synthetic",
-                agree=("OF_KIT", "FLUENT_UK"), cite="drawn", circles=True)  # fmt: skip
+                agree=("OF_KIT", "FLUENT_UK", "OF_ORNL"), cite="drawn", circles=True)  # fmt: skip
     record = digitizer.digitize(path, 0, {0: spec})
     compact = digitizer._compact(record)
     _check_reference_record(compact)
@@ -1730,7 +1737,10 @@ def test_the_digitizer_reads_a_drawn_figure(tmp_path):
     for curve, offset in ((green, 2.0), (orange, 2.5), (record["curves"]["analytical"], None)):
         error = np.array(curve["y"]) - (offset + np.array(curve["x"]) if offset else 1.0)
         assert np.max(np.abs(error)) <= 1.5 * pixel and abs(np.mean(error)) <= pixel
-    assert orange["coverage"] < 0.95 and record["band"]["codes"].count(2) > 0.9 * len(record["band"]["codes"])
+    assert orange["coverage"] < 0.95 and record["band"]["codes"].count(3) > 0.9 * len(record["band"]["codes"])
+    upper, columns = np.array(record["band"]["upper"]), np.array(record["band"]["x"]) / record["per_pixel"][0]
+    assert np.allclose(np.diff(columns), 1.0, atol=1e-3), "the band is not every pixel column"
+    assert np.max(upper - (3.0 + np.array(record["band"]["x"]))) > 15 * pixel  # the raw band holds the spike
     for edge in ("lower", "upper"):
         kept = np.interp(record["band"]["x"], compact["band"]["x"], compact["band"][edge])
         assert np.max(np.abs(kept - np.array(record["band"][edge]))) <= 0.6 * pixel, edge

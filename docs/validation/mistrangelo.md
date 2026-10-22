@@ -156,11 +156,16 @@ Figures 6–13, 15–19 and 38, read by `scripts/digitize_mistrangelo.py`.
   - whether the y axis is logarithmic (`y_scale`);
   - the codes it omits, and why;
   - whether the paper or my reading chose the band's codes (`agree_basis`).
-- The file is compact, 33 KB for these figures. A record keeps the band, and
-  the curves that are not one of the six codes: Figure 13's analytical
-  markers and Figure 11's stations. Each is simplified to within half a pixel
-  and rounded to a tenth of one. The per-code curves are not shipped: they
-  are in the release asset.
+- The file is 52 KB for these figures. A record keeps the band and the curves
+  that are not one of the six codes: Figure 13's analytical markers and
+  Figure 11's stations.
+  - Each is simplified to within half a pixel of every extracted pixel column,
+    with nothing decimated before. The kept vertices keep their extracted x,
+    and the values are rounded to a tenth of a pixel.
+  - Against the full extraction, every record is within 0.51 px, log axes in
+    decades.
+  - The per-code curves, every column of them, are not shipped: they are in
+    the release asset.
 
 **How a figure is read.**
 - **Frame and ticks.** The plot frame, its legend and the major ticks outside
@@ -228,8 +233,8 @@ mesh, time-step, tolerance and outlet-length studies. For scale:
     (−566.9 Pa/m).
 - **The developed section against Figure 13's analytical solution.**
   - In the core (|z| ≤ 0.7 a) the section on the pin's 96/12 mesh lies within
-    1.86 px of every marker, 0.65 % low on average. This is gated, within the
-    record's uncertainty (2.44 px) and 1 %.
+    2.09 px of each of the markers' 37 columns, 0.62 % low on average. This is
+    gated, within the record's uncertainty (2.44 px) and 1 %.
   - On the steep flanks of the jets, one value per column is a poor trace.
   - The section's jets are 0.0841 m/s. The codes' band peaks at 0.0850 on the
     heated side and 0.0821 on the other, at x = 0, where buoyancy makes them
