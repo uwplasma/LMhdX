@@ -1437,7 +1437,8 @@ input:
 | heat source and axial gradient `γ` | `developed_heat` | stated in `docs/physics/thermal.md`, not yet tested |
 | velocity (initial, or the held flow) | `advance_thermal`, in the state | supported, not yet tested |
 | conductivity, heat capacity, `σ`, `β`, `g`, `T_r`, the magnetic field, density, viscosity, `dt`, geometry, boundary data | rebuild only | not differentiable through a prepared step: rebuild the problem and the step (and `thermal_boundary` when `k` or a flux changes, since a flux is stored as `q/k`) |
-| a solid wall's thickness, cells, `k` and `ρc_p` (and `σ` with 5.4b part 3) | rebuild only | bound on the host by `ThermalProblem(..., walls=...)` and `problem.conduction()`: no gradient in a wall's thickness or properties; rebuild the problem and the step |
+| a solid wall's `k` and `ρc_p` (and `σ` with 5.4b part 3) | planned | leaves of the conduction solve already (`ConjugateGrid.cells(..., walls=...)`, `VariableHelmholtz.with_coefficients`; a gradient test to the derivative standard); in the thermal step bound by `problem.conduction()` until the wall-conductance work |
+| a solid wall's thickness and cell count | rebuild only | static: they place the extended grid's faces |
 
 **Size.** The 2026-10-19 log row's remaining target, about 1,100 lines in
 `thermal.py`, is retired. A thermal change is judged on:

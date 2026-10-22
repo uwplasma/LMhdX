@@ -452,8 +452,10 @@ included: a heat flux there is built with the `k` of each boundary cell, an
 array where fluid and wall cells meet the surface. The walls' end faces take
 the axis-0 conditions, so an inflow-outflow axis holds them at the inlet
 temperature and insulates them at the outlet. The walls carry no flow, and
-Joule heat is deposited in the fluid only. Each step solves for its increment,
-as above. The ledger covers the fluid and its walls: storage and sensible heat
+**Joule heat in the walls is omitted.** `joule_heating` deposits the fluid's
+Joule heat. A solid wall only stores and conducts heat, with no source of its
+own: no Joule heat, as the benchmark's eq. 4 has none. Each step solves for its
+increment, as above. The ledger covers the fluid and its walls: storage and sensible heat
 weigh each cell by its own $\rho c_p$, the conduction out is the solve's own
 flux through the outer surface, and `conduction_iterations` reports the PCG
 iterations, zero without walls. The extremes span every cell; the Boussinesq
@@ -495,13 +497,36 @@ state, history = advance_thermal(step, state, heat, 40)
 print(int(history.conduction_iterations.max()), float(jnp.max(jnp.abs(history.heat_balance_residual))))
 ```
 
-**Tested** (`tests/test_timeloop.py`): a held flow through a duct walled on
-four sides and heated through its outer bottom closes every step's ledger, at
-300 K, to 1e-10 of its largest term, its sensible heat growing by the storage;
-walls of the fluid's own material, of unequal cells, reproduce the separable
-step on the extended grid to 1e-10, upwind and van Leer; a moving walled flow
-steps exactly as `core3d.step`, and a hot wall cell leaves its buoyancy alone;
-and the run differentiates in its heat source and its start.
+One `conduct` serves both solves: PCG through the walls, or the fast-diagonal
+inverse of one material, which stays for a duct without walls. The ledger is
+computed once, for either.
+
+**Tested** (`tests/test_timeloop.py`):
+- **The ledger.** A held flow through a duct walled on four sides and heated
+  through its outer bottom closes every step's ledger, at 300 K, to 1e-10 of
+  its largest term. Its sensible heat grows by the storage.
+- **Fluid and solid energy, region by region.**
+  - Each region stores what its face fluxes bring in, to PCG's tolerance.
+  - The fluid's inflow is the interface flux its walls hand it, plus what
+    crosses its ends. The walls' inflow is the heated face's, 3.3 to rounding,
+    less that same interface flux: equal and opposite.
+  - In the sum the interface cancels.
+- **Time order.** The conjugate step is backward Euler in conduction and
+  explicit in transport. Against a run at a 64th of the step it converges at
+  first order as the step halves.
+- **Walls of the fluid's own material,** of unequal cells, reproduce the
+  separable step on the extended grid to 1e-10, upwind and van Leer.
+- **A moving walled flow** steps exactly as `core3d.step`, and a hot wall cell
+  leaves its buoyancy alone.
+- **Derivatives.** The run differentiates in its heat source and its start.
+  A wall's `k` and `ρc_p` are leaves of the conduction solve
+  (`ConjugateGrid.cells(..., walls=...)`); in the step they are planned, bound
+  for now by `problem.conduction()`.
+
+**The gate and the independent check.** No conjugate-heat anchor other than
+Mistrangelo et al. has been found, so the exact two-material series and contact
+transient stay the CI gate, and step 5.4c's heated duct is the independent
+check.
 
 ## The thermally fully developed duct
 
