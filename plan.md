@@ -46,7 +46,7 @@ serve one benchmark; *gate* = a measured condition with a stated tolerance.
 | G5 | Parallelised with strong scaling | **not met, measured**: two A4000s run the Q2D solve to a bit-identical answer but at 0.25 efficiency in float64 and 0.14 in float32 at 2048², because the cards are PCIe-joined with no NVLink and the unaided partitioning of a 2-D transform all-gathers every step. Split from 2026-09-13: **G5a** ensembles across the two cards (Ha sweeps, design, gradient checks) at ≥ 0.9 efficiency; **G5b** spatial decomposition only where a run does not fit one card, or ≥ 0.6 measured at 256³ with an explicit slab (step 2.4b) |
 | G6 | FreeMHD, OpenFOAM and other codes as inspiration | Ni et al. consistent-and-conservative scheme (FreeMHD, HIMAG, epotFoam, MHD-UCLA); CaNS / CaNS-EIGEN and Oceananigans for mixed transform–tridiagonal Poisson solves; Krasnov et al. 2023 for the thin wall inside a direct solver; jax-cfd solver architecture; jaxDecomp for distributed transforms |
 | G7 | B1/B2 validation | **tiered (D20)**: ANL analytic fringe within 1 %; B2 axial pressure gradient within 5–10 % of experiment through the inertialess core-flow model with the measured field and the pressure-tap correction, transverse Δp by shape and sign; code-to-code (FreeMHD, core-flow model, 3-D core at moderate N) within 1–2 %; B1 through the core-flow model; a resolved 3-D B2 only as a cost-bounded cross-check |
-| G8 | Retire experimental lanes | The B1/B2 and generic extruded lanes (6,002 lines) deleted from `main` after the new core carries the fully developed cases at parity (1.10b) and the fringing rows 6–7 (1.9); history kept at `lmx-b2-lane-v1` |
+| G8 | Retire experimental lanes | The B1/B2 and generic extruded lanes (6,002 lines) deleted from `main` after the new core carries the fully developed cases at parity (1.10b) and the fringing rows 6–7 (1.9); history kept at `lmx-b2-lane-v1`, a record of the retired lane, not a production claim |
 | G9 | Useful design results | A fully developed inverse-design example and a device-informed channel example with verified gradients |
 | G10 | Thermal channel physics | Passive-scalar energy equation with conjugate walls on the new core, verified against laminar limits |
 | G11 | Steady solves and adjoints at blanket Ha | Certified adjoints to Ha 1000 in the regression tier (today the tests stop at Ha 5 and the shipped tangent solve fails at Ha 300); a 3-D 128³ steady solve within 16 GB; Krylov iterations reported against Ha |
@@ -98,6 +98,11 @@ loop, explicit precision, VJP NaN) or superseded by the rows below.
 | Benchmark provenance | `benchmarks/results/*.json` name commit `a0b2c2b-dirty`, which no longer exists after the #122 history rewrite; the office nightly of #75 is not deployed; GPU step times vary 2× between runs on the shared box (128³ float32: 4.0 ms recorded, 8.7 ms on 2026-09-13) | 2.0, 2.3 — **partly resolved: #142 carries provenanced GPU reports; the CPU pair and the JSON on `main` remain** |
 
 ### 2.3 Pull-request state after this review
+
+*Historical, as of 2026-09-13.* By 2026-10-22, #130 and #75 are closed, #142
+is closed without merging and #123 is merged. The current state is the
+capability table and its open blockers in the thermal status section below,
+and plan H.10.9 once Program H lands.
 
 | PR / issue | Disposition |
 |---|---|
@@ -1410,6 +1415,25 @@ The statuses are:
 | Thermal design (5.5) | pending | — | — |
 | Conjugate walls, evolving open coupling, Mistrangelo et al. 2025 | pending | — | 5.4a–5.4f, scoped by ADR 0009 (proposed) |
 
+**Open blockers** (known defects that bound the claims above):
+- the stabilised transient momentum step does not keep a pressure-balanced
+  state at rest with the field along `y`: it picks up a spurious velocity that
+  shrinks with the time step;
+- the momentum reconstruction on stretched and periodic grids uses raw index
+  differences and mirrored end widths.
+
+Steady and held-flow results are not affected: thermal transport on a held
+flow is supported, and the validation of thermal transport on a moving flow is
+blocked on the corrected momentum step.
+
+**Unresolved, kept visible:**
+- ALEX B1's pressure tap: row 6 is met at a side-wall tap (0.86 / 1.39) and not
+  for the section-mean pressure (2.4 / 5.1). Which one the experiment used is
+  to be confirmed from its record, since choosing the tap by agreement would be
+  calibration.
+- The thermal references: H2's 3.091 is a secondary citation, and Shah &
+  London's tables are not inspected.
+
 **Interfaces of a thermal run (5.6, after #267).**
 
 - `lmhdx.io.thermal_run_from_toml` reads a parsed TOML document and checks
@@ -1428,15 +1452,17 @@ bound on the host to its problem's properties, time step, boundary data and
 precision. A gradient is supported only in what the step or solve takes as
 input:
 
-| Input | Path | Tested against |
-|---|---|---|
-| initial temperature | `advance_thermal`, plain and checkpointed | central differences within 1e-5, upwind and van Leer; the checkpointed gradient equal to the plain one within 1e-12 |
-| external heat source | `advance_thermal` | central differences within 1e-5, both schemes |
-| reservoir temperature | open duct on a held flow | central differences within 1e-8 (upwind) and 1e-7 (van Leer) |
-| field scale, through the steady velocity | `developed_heat` after `solve_steady_state` | central differences within 1e-5 (`dNu`) |
-| heat source and axial gradient `γ` | `developed_heat` | stated in `docs/physics/thermal.md`, not yet tested |
-| velocity (initial, or the held flow) | `advance_thermal`, in the state | supported, not yet tested |
-| conductivity, heat capacity, `σ`, `β`, `g`, `T_r`, the magnetic field, density, viscosity, `dt`, geometry, boundary data | rebuild only | not differentiable through a prepared step: rebuild the problem and the step (and `thermal_boundary` when `k` or a flux changes, since a flux is stored as `q/k`) |
+| Input | Kind | Path | Tested against |
+|---|---|---|---|
+| initial temperature | leaf | `advance_thermal`, plain and checkpointed | central differences within 1e-5, upwind and van Leer; the checkpointed gradient equal to the plain one within 1e-12 |
+| external heat source | leaf | `advance_thermal` | central differences within 1e-5, both schemes |
+| reservoir temperature | leaf | open duct on a held flow | central differences within 1e-8 (upwind) and 1e-7 (van Leer) |
+| field scale, through the steady velocity | leaf | developed duct after the steady solve | central differences within 1e-5 (`dNu`) |
+| heat source and axial gradient `γ` | leaf | developed duct | stated in `docs/physics/thermal.md`, not yet tested |
+| velocity (initial, or the held flow) | leaf | the thermal state | supported, not yet tested |
+| the flow, for the developed duct at a uniform wall temperature (pending) | leaf | its eigenvalue | the first derivative of Nu at a converged solve only; no profile sensitivity, no second derivative |
+| wall conductance and wall thickness | planned | the 2.0 problem, as traced leaves | — |
+| conductivity, heat capacity, `σ`, `β`, `g`, `T_r`, the magnetic field, density, viscosity, `dt`, geometry, boundary data | rebuild only | bound on the host by a prepared step | not differentiable through it: rebuild the problem and the step (and the boundary data when `k` or a flux changes, since a flux is stored as `q/k`) |
 
 **Size.** The 2026-10-19 log row's remaining target, about 1,100 lines in
 `thermal.py`, is retired. A thermal change is judged on:
@@ -1571,7 +1597,7 @@ Everything else still waits (D21): no thermal or device work before 1.10b and
 | 3 | Shercliff | Ha 20–10⁴ | Table I flow rates (Smolentsev 2015) | 0.5 % | 1.7 |
 | 4 | Hunt | Ha 20–10⁴, c 0.01–0.1 | series; Table I | 0.5 %; wall current 1 % | 1.7 |
 | 5 | Conducting pipe | Ha 100–6600, c 0.027 | Chang–Lundgren / Gold | 0.5 % | 1.8 |
-| 6 | Fringing duct, code-to-code and experiment (D27) | Mistrangelo et al. 2025 six-code benchmark (Ha 235, fringe of the KIT MaPLE magnet); ALEX pipe as in Ni et al. 2007 Part II (Ha 6640, domain −20a/+15a) | published code-to-code scatter; uniform-region ∂p/∂x −0.0863 analytic (the Mistrangelo part moves to row 19, ADR 0009 D35) | inside the published scatter; 1 % on the uniform-region gradient | 1.9d *Status (2026-10-05)*: run on the ALEX B1 pipe (packaged data; the 2025 case needs buoyancy and has no packaged reference), with `lmhdx.axial.solve_open_pipe` in the Stokes limit at Ha 6600, c 0.027, the measured field table: cross-section and axial mesh converged (≤ 3e-5 per station); upstream gradient 0.0266 against 0.0250 (inside the 0.002 uncertainty), integrated excess −3.3 % (frozen gate 10 %), station-wise weighted RMS 2.4 and L∞ 5.1 (frozen 1 and 2): **not met station by station**. The model peaks at x = −3 and falls faster than the data downstream (x ≥ −1), where the local N b² drops to 600–40 at Re ≈ 4,100; inertia there is the named candidate, not tested *Revised (2026-10-20)*: the shape gap is the observable, not the model: the wall pressure at the walls parallel to the field gives RMS 0.86 / L∞ 1.39 (met), the section mean 2.4 / 5.1; the tap position is not in the packaged data and must be confirmed from the ALEX report; interpolant, table uncertainty and c do not move it (log 2026-10-20) *Scope (R3, 2026-10-15)*: not met station by station; the inertia hypothesis is untested (Newton on the open axis costs hours, #225) |
+| 6 | Fringing duct, code-to-code and experiment (D27) | Mistrangelo et al. 2025 six-code benchmark (Ha 235, fringe of the KIT MaPLE magnet); ALEX pipe as in Ni et al. 2007 Part II (Ha 6640, domain −20a/+15a) | published code-to-code scatter; uniform-region ∂p/∂x −0.0863 analytic (the Mistrangelo part moves to row 19, ADR 0009 D35) | inside the published scatter; 1 % on the uniform-region gradient | 1.9d *Status (2026-10-05)*: run on the ALEX B1 pipe (packaged data; the 2025 case needs buoyancy and has no packaged reference), with `lmhdx.axial.solve_open_pipe` in the Stokes limit at Ha 6600, c 0.027, the measured field table: cross-section and axial mesh converged (≤ 3e-5 per station); upstream gradient 0.0266 against 0.0250 (inside the 0.002 uncertainty), integrated excess −3.3 % (frozen gate 10 %), station-wise weighted RMS 2.4 and L∞ 5.1 (frozen 1 and 2): **not met station by station**. The model peaks at x = −3 and falls faster than the data downstream (x ≥ −1), where the local N b² drops to 600–40 at Re ≈ 4,100; inertia there is the named candidate, not tested *Revised (2026-10-20)*: the shape gap is the observable, not the model: the wall pressure at the walls parallel to the field gives RMS 0.86 / L∞ 1.39 (met), the section mean 2.4 / 5.1; the tap position is not in the packaged data and must be confirmed from the ALEX report; interpolant, table uncertainty and c do not move it (log 2026-10-20) *Scope (R3, 2026-10-15)*: not met station by station; the inertia hypothesis is untested (Newton on the open axis costs hours, #225) *Revised (2026-10-21, #225)*: inertia is demoted: where N b² ≥ 125 it changes the local gradient by at most 2.3 %, about 30 times too small for the gap. |
 | 7 | ANL fringe (inertialess SOR solution, 0.1 % stopping; TM-228 verified 2026-09-22) | square duct, x0 = 3, c = 0.02, `B_y = ½(1 − sin(πx/2x0))`, x ∈ [−6, 2] | ΔP_total 0.0932, locally fully developed 0.0754; gated: the excess 0.0178 (D27a) | 1 % on the excess Δp − Δp_FD, both from LMX on one mesh; absolute Δp reported, not gated (D27a) | 1.9c, 1.9d *Status (Lane A, 2026-10-04)*: not met, and not reachable on the 3-D core at c 0.02: the excess at Ha 2e4 is 33 % above 0.0178 because of the layers' conductance (1 % needs c sqrt(Ha) ≳ 70, Ha ≳ 1e7); Ha → ∞ fits in Ha^-1/2 and Ha^-1 give 0.0183–0.0211. Restating the gate as the layer-corrected comparison of row 24 is the owner's call **Final (owner, 2026-10-04): closed as not reachable on the 3-D core; physical model difference.** Evidence (#204): converged meshes (Ha 1e4 192² 0.025772, 128² 0.02576, axial spacing halved 0.025783; Ha 2e4 0.023749, 33 % above 0.0178); the layers add k/(c sqrt(Ha)) = 55 % to the side-wall conductance at Ha 1e4; 1 % needs c sqrt(Ha) ≳ 70 (Ha ≳ 1e7). Not waived; the finite-Ha comparison is row 24 *Scope (R3, 2026-10-15)*: TM-228's 0.0178 is an inertialess thin-layer Ha → ∞ asymptote; LMhdX's Ha → ∞ fits give 0.0183–0.0211, 3–18 % above it: a fit band, not a 1 % check |
 | 8 | Manufactured 3-D | non-uniform grid, convection on | MMS | second order | 1.5 |
 | 9 | FreeMHD Shercliff/Hunt | Ha 20–1000 | long-run FreeMHD | 3 % | 4.2 |
