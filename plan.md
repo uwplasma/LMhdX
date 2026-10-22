@@ -1414,6 +1414,14 @@ Steady and held-flow results are not affected: thermal transport on a held
 flow is supported, and the validation of thermal transport on a moving flow is
 blocked on the corrected momentum step.
 
+**Unresolved, kept visible:**
+- ALEX B1's pressure tap: row 6 is met at a side-wall tap (0.86 / 1.39) and not
+  for the section-mean pressure (2.4 / 5.1). Which one the experiment used is
+  to be confirmed from its record, since choosing the tap by agreement would be
+  calibration.
+- The thermal references: H2's 3.091 is a secondary citation, and Shah &
+  London's tables are not inspected.
+
 **Interfaces of a thermal run (5.6, after #267).**
 
 - `lmhdx.io.thermal_run_from_toml` reads a parsed TOML document and checks
