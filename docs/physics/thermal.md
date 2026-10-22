@@ -468,9 +468,84 @@ its discrete answer is exactly $12/(1+h^2/2)$. The public four-wall
 `nusselt` of that fixture averages in the insulated ends, and is a different
 number.
 
+**The uniform wall temperature.** With every wall held at one temperature, the
+T condition, the excess over the wall decays along the duct in a fixed shape,
+$T-T_w=\theta\,e^{-\lambda x}$. Without axial conduction or internal heat,
+$\theta$ is the eigenfunction of $-L(\theta)=\Lambda f\theta$ with the smallest
+eigenvalue, $f=u/\bar u$. `developed_wall_temperature(problem, velocity)` finds
+it by inverse iteration with the same fast-diagonal factorization, and returns:
+- the decay rate $\lambda=\Lambda\alpha/\bar u$;
+- the profile scaled to a unit bulk excess, $(T-T_w)/(T_b-T_w)$;
+- $Nu_T=\Lambda D_hA/P_w$, which is $\Lambda D_h^2/4$ when every wall is held, with
+  the wall flux averaged over the held perimeter $P_w$.
+
+```python
+import lmhdx
+from lmhdx.core3d import ChannelProblem
+from lmhdx.grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces
+from lmhdx.steady import solve_steady_state
+from lmhdx.thermal import ThermalProblem, developed_wall_temperature, thermal_boundary
+
+lmhdx.enable_x64()
+periodic, wall, held = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN), thermal_boundary("temperature")
+grid = Grid(uniform_faces(1, 0.0, 1.0), uniform_faces(32, -1.0, 1.0), uniform_faces(32, -1.0, 1.0))
+flow = ChannelProblem(grid, (periodic, wall, wall), forcing=(1.0, 0.0, 0.0))  # one periodic axial cell
+thermal = ThermalProblem(
+    flow, (periodic, held, held), specific_heat=1.0, thermal_conductivity=1.0, reference_temperature=0.0
+)
+result = developed_wall_temperature(thermal, solve_steady_state(flow).velocity)
+print(f"Nu_T {float(result.nusselt):.4f} in {int(result.iterations)} iterations")  # 2.9823 in 13
+```
+
+The iteration stops once `eigen_residual` is below `tolerance` (1e-10 in
+float64, 1e-4 in float32), or after `max_iterations`. Each iteration gains the
+ratio of the two smallest eigenvalues of the section's symmetric modes: the
+square duct takes 13 iterations, a 1:8 duct about 150.
+
+$\Lambda$ is the Rayleigh quotient of the converged $\theta$. The quotient is
+stationary at an eigenfunction, so its derivative in the velocity needs none of
+the iteration's; the gradient through the steady solve's field scale meets
+central differences to 1e-5, with a Taylor remainder of second order. **The
+supported derivative** is the first derivative of $\Lambda$, the decay rate and
+$Nu_T$ at a converged solve.
+- **The profile** comes under `stop_gradient`, with a zero gradient, since its
+  sensitivity needs an implicit eigenvector solve. Second derivatives are not
+  supported either. ADR 0010's 2.0 contract, that an unsupported derivative
+  raises, is not implemented here.
+- **Convergence is certified on the raw flow**, in traced arithmetic:
+  - a finite, positive mean flow;
+  - every cell forward;
+  - the same axial velocity on both axial faces;
+  - no transverse velocity.
+
+  A fully reversed flow has positive speeds over its mean, so the raw sign is
+  what rules it out.
+- **Otherwise** the solve returns NaN for $\Lambda$ and $Nu_T$ with `converged`
+  false: when it is unconverged, when the flow is reversed in any cell or
+  overall, when there is no flow, or when it has a transverse component or
+  uneven faces.
+- **The controls are checked on the host.** `tolerance` must be positive and
+  finite (`inf` would skip the loop), and `max_iterations` a positive integer.
+
+A heat-flux wall must be adiabatic, and sources and Joule heat are left out,
+since the T condition has none.
+
+| Duct | Reference | 16 / 32 / 64 cells | Order |
+|:--|--:|:--|:--|
+| square, slug flow | $\pi^2/2=4.93480$; discretely $(8/h^2)\sin^2(\pi h/4)$ | exact to 3e-16 at each | — |
+| square | 2.97753 | +0.63 % / +0.16 % / +0.040 % | 1.97 |
+| plates, Poiseuille (32 / 64 / 128) | 7.54070 | −4.6e‑4 / −1.1e‑4 / −2.9e‑5 | 2.0 |
+| plates, Ha 10 (32 / 64 / 128) | 8.96255 | −6.5e‑4 / −1.6e‑4 / −4.1e‑5 | 2.0 |
+
+The square duct's reference is a Chebyshev collocation of the same
+eigenproblem, extrapolated from 40, 48 and 56 nodes at its observed order 2.0.
+The package's own Richardson value, 2.97749, agrees with it to 1.5e-5. Shah &
+London (1978) list 2.976, 0.05 % below both. The sampled sines of slug flow are
+exact eigenfunctions of the cell-centred Dirichlet Laplacian, which is why that
+row is exact. The plates carry the cell means of the analytical velocity, with
+the plates' own $D_h=4a$; their references are one-dimensional Chebyshev solves.
+
 Not covered:
-- the uniform-wall-temperature condition, an eigenvalue problem ($Nu_T = 2.976$
-  for the square duct);
 - the pipe;
 - an MHD duct against a published $Nu$, for example a square insulating duct
   near Ha 100 (Tao & Ni 2013; Smolentsev et al.). That is a documentation
