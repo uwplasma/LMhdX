@@ -1513,6 +1513,115 @@ def test_the_uniform_wall_temperature_refuses_an_ill_posed_duct():
             developed_wall_temperature(thermal, velocity, max_iterations=count)
 
 
+# The developed pipe on its polar grid.
+
+
+def _pipe(radial: int, *, slug: bool = False, wall: str = "heat_flux"):
+    """A pipe of unit radius carrying the package's Poiseuille flow (or a uniform one), its wall taking in a
+    unit heat flux or held at one temperature; no Joule heat."""
+    from lmhdx.pipe import pipe_problem, solve_pipe
+    from lmhdx.thermal import ThermalProblem, thermal_boundary
+
+    problem = pipe_problem(hartmann=0.0, radial=radial, azimuthal=16)
+    flow = ChannelProblem(problem.grid, (_WALL, _WRAP, _WRAP))
+    rest = zero_velocity(flow)
+    axial = jnp.ones(rest[2].shape) if slug else jnp.broadcast_to(solve_pipe(problem)[0].data, rest[2].shape)
+    if wall == "heat_flux":
+        held = thermal_boundary("heat_flux", -1.0, -1.0, conductivity=1.0)
+    else:
+        held = thermal_boundary("temperature")
+    thermal = ThermalProblem(flow, (held, _WRAP, _WRAP), 1.0, 1.0, 0.0, joule_heating=False)
+    zero = Field(jnp.zeros(problem.grid.shape), (CENTER,) * 3, problem.grid)
+    return thermal, (*rest[:2], rest[2].replace_data(axial)), zero
+
+
+def _pipe_t_nusselt(count: int = 63) -> float:
+    """``Nu_T = Lambda`` of the Poiseuille pipe, ``D_h = 2R``: ``-(r phi')'/r = Lambda 2(1 - r^2) phi`` by Chebyshev
+    collocation across the diameter (odd ``count``: no node on the axis), with no discrete operator of the package."""
+    from scipy.linalg import eig
+
+    from validation.shercliff import _differentiation_matrix
+
+    derivative, nodes = _differentiation_matrix(count)
+    radial = (derivative @ derivative + np.diag(1.0 / nodes) @ derivative)[1:-1, 1:-1]
+    values = eig(-radial, np.diag(2.0 * (1.0 - nodes[1:-1] ** 2)), right=False)
+    return float(np.min(values[np.isfinite(values) & (values.real > 0.0)].real))
+
+
+def test_the_developed_pipe_meets_its_exact_nusselt_numbers():
+    """The pipe on its polar grid (the polar Poisson factorization; the azimuth wraps and the axis face has no
+    area, so the wall is the outer radius alone and ``D_h = 2R``). A uniform wall flux: 48/11 on the package's
+    Poiseuille flow, 8 on slug flow. One wall temperature: 3.65679, a radial Chebyshev solve, and ``j_{0,1}^2``
+    on slug flow. Each converges at second order, within 0.1 % on 64 radial cells."""
+    from scipy.special import jn_zeros
+
+    from lmhdx.thermal import developed_heat, developed_wall_temperature
+
+    cases = {
+        ("heat_flux", False): 48.0 / 11.0,
+        ("heat_flux", True): 8.0,
+        ("temperature", False): _pipe_t_nusselt(),
+        ("temperature", True): float(jn_zeros(0, 1)[0]) ** 2,
+    }
+    assert cases[("temperature", False)] == pytest.approx(3.656793, abs=1e-6)
+    for (wall, slug), exact in cases.items():
+        errors = []
+        for radial in (16, 32, 64):
+            thermal, velocity, zero = _pipe(radial, slug=slug, wall=wall)
+            if wall == "heat_flux":
+                result = developed_heat(thermal, velocity, zero)
+            else:
+                result = developed_wall_temperature(thermal, velocity)
+            assert result.hydraulic_diameter == pytest.approx(2.0, rel=1e-12)
+            errors.append(abs(float(result.nusselt) / exact - 1.0))
+        orders = np.log2(np.divide(errors[:-1], errors[1:]))
+        assert errors[-1] < 1e-3 and np.all((orders > 1.8) & (orders < 2.3)), (wall, slug, errors, orders)
+
+
+def test_the_pipe_snippet_runs_as_written():
+    """The pipe recipe of docs/physics/thermal.md, run from the page."""
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[1] / "docs/physics/thermal.md").read_text()
+    code = page.split("**The pipe.**", 1)[1].split("```python\n", 1)[1].split("```", 1)[0]
+    namespace = {"__name__": "pipe"}
+    exec(compile(code, "thermal.md", "exec"), namespace)
+    assert namespace["flux"] == pytest.approx(48.0 / 11.0, rel=1e-3)
+    assert namespace["held"] == pytest.approx(3.65679, rel=1e-3)
+
+
+def test_a_pipe_steps_no_time_and_forms_no_current_of_its_own(tmp_path):
+    """A polar grid serves the developed solves only: the time step, its validation, its state and its records
+    refuse it, and Joule heat is refused there, since a pipe's currents come from lmhdx.pipe. Compiled whole, the
+    pipe equals the eager result."""
+    from lmhdx.thermal import (
+        ThermalState,
+        build_thermal_step,
+        developed_heat,
+        initial_thermal_state,
+        load_thermal_record,
+        validate_thermal_inputs,
+        write_thermal_record,
+    )
+
+    thermal, velocity, zero = _pipe(8)
+    state = ThermalState(velocity, zero, jnp.asarray(0.0))
+    for refused in (
+        lambda: build_thermal_step(thermal, dtype=jnp.float64),
+        lambda: validate_thermal_inputs(thermal, state, zero, divergence_tolerance=1e-9),
+        lambda: initial_thermal_state(thermal, 0.0),
+        lambda: write_thermal_record(tmp_path / "pipe", thermal, state, units="SI"),
+        lambda: load_thermal_record(tmp_path / "pipe", thermal, units="SI"),
+    ):
+        with pytest.raises(ValueError, match="polar grid is not qualified"):
+            refused()
+    with pytest.raises(ValueError, match="joule_heating=False"):
+        developed_heat(dataclasses.replace(thermal, joule_heating=True), velocity, zero)
+    eager = developed_heat(thermal, velocity, zero).nusselt
+    jitted = jax.jit(lambda flow: developed_heat(thermal, flow, zero).nusselt)(velocity)
+    assert float(jitted) == pytest.approx(float(eager), rel=1e-13)
+
+
 # Review corrections, part 5b: the reduction's guards, an undefined Nu and physical temperatures (D33).
 
 
