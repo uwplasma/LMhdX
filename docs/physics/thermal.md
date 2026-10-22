@@ -507,11 +507,28 @@ stationary at an eigenfunction, so its derivative in the velocity needs none of
 the iteration's; the gradient through the steady solve's field scale meets
 central differences to 1e-5, with a Taylor remainder of second order. **The
 supported derivative** is the first derivative of $\Lambda$, the decay rate and
-$Nu_T$ at a converged solve. The profile comes without a gradient (its
-sensitivity needs an implicit eigenvector solve), and second derivatives are not
-supported. An unconverged solve, or a flow that runs backward in a cell, returns
-NaN for $\Lambda$ and $Nu_T$, with `converged` false. A heat-flux wall must be adiabatic, and sources
-and Joule heat are left out, since the T condition has none.
+$Nu_T$ at a converged solve.
+- **The profile** comes under `stop_gradient`, with a zero gradient, since its
+  sensitivity needs an implicit eigenvector solve. Second derivatives are not
+  supported either. ADR 0010's 2.0 contract, that an unsupported derivative
+  raises, is not implemented here.
+- **Convergence is certified on the raw flow**, in traced arithmetic:
+  - a finite, positive mean flow;
+  - every cell forward;
+  - the same axial velocity on both axial faces;
+  - no transverse velocity.
+
+  A fully reversed flow has positive speeds over its mean, so the raw sign is
+  what rules it out.
+- **Otherwise** the solve returns NaN for $\Lambda$ and $Nu_T$ with `converged`
+  false: when it is unconverged, when the flow is reversed in any cell or
+  overall, when there is no flow, or when it has a transverse component or
+  uneven faces.
+- **The controls are checked on the host.** `tolerance` must be positive and
+  finite (`inf` would skip the loop), and `max_iterations` a positive integer.
+
+A heat-flux wall must be adiabatic, and sources and Joule heat are left out,
+since the T condition has none.
 
 | Duct | Reference | 16 / 32 / 64 cells | Order |
 |:--|--:|:--|:--|
