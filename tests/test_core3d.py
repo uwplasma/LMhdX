@@ -1040,36 +1040,34 @@ def test_a_solid_wall_s_electrical_conductivity_is_a_leaf_of_the_charge_solve():
 
 
 @pytest.mark.slow
-def test_solid_walls_of_conductance_0_05_meet_hunt_s_duct_at_ha_300():
+def test_solid_walls_meet_ni_2007_table_3_hunts_duct_at_ha_300():
     """A published number for the solid wall. Hunt's duct at Ha 300 has conducting Hartmann walls of
-    c = sigma_w t / (sigma a) = 0.05 and insulating side walls. Rogerio's digest attributes dp/dx = 374.897 at Re 10
-    to Ni et al. (2007), not checked against the paper: that is (Ha^2/Re) K for K = dp/dx / (sigma u B^2) =
-    0.0416552, and the spectral solve of validation.shercliff gives 0.0416622, 0.017 % away. On 48 cells the
-    thin-wall model is 0.48 % below it, converging from 1.1 % on 32. Solid walls of that c, 0.1 and 0.05 of the
-    half-width thick, sit 2.7 % and 0.74 % below the thin-wall model, approaching it at second order in the
-    thickness."""
+    c = sigma_w t / (sigma a) = 0.1 and insulating side walls: Ni et al. (2007) Table 3 gives its analytic
+    Re dp/dx at a flow rate of 4 as 5854.302 (``tests/test_table_i.py``, which checks it against the spectral
+    solve). On 48 cells the thin-wall model is 0.66 % below it, converging from 1.6 % on 32. Solid walls of that
+    c, a/10, a/20 and a/40 thick, sit 2.3 %, 0.64 % and 0.16 % below the thin-wall model, approaching it at second
+    order in the thickness."""
     from lmhdx.core3d import SolidWall
     from lmhdx.fully_developed import channel_flow_rate
     from lmhdx.steady import solve_steady_state
 
-    hartmann, digest = 300.0, 374.897 / (300.0**2 / 10.0)
+    table = 5854.302
 
-    def pressure_gradient(problem):
-        rate = float(channel_flow_rate(problem, solve_steady_state(problem).velocity[0].data[0]))
-        return 1.0 / (hartmann**2 * rate / 4.0)
+    def scaled_gradient(problem):  # Re dp/dx at unit mean velocity, the forcing being one
+        return 4.0 / float(channel_flow_rate(problem, solve_steady_state(problem).velocity[0].data[0]))
 
-    thin = duct_problem(hartmann=hartmann, cells=48, wall_conductance=0.05)
-    reference = pressure_gradient(thin)
-    assert abs(reference / digest - 1.0) < 6e-3
+    thin = duct_problem(hartmann=300.0, cells=48, wall_conductance=0.1)
+    reference = scaled_gradient(thin)
+    assert reference / table - 1.0 == pytest.approx(-6.55e-3, abs=1e-3)
     below = []
-    for thickness in (0.1, 0.05):
-        wall = SolidWall(thickness, 3, 1.0, 1.0, 0.05 / thickness)
+    for thickness in (0.1, 0.05, 0.025):
+        wall = SolidWall(thickness, 3, 1.0, 1.0, 0.1 / thickness)
         solid = dataclasses.replace(
             thin, wall_conductance=(0.0,) * 3, solid_walls=((None, None), (wall, wall), (None, None))
         )
-        below.append(1.0 - pressure_gradient(solid) / reference)
-    assert below == pytest.approx([0.0267, 0.0074], rel=0.05)
-    assert 3.3 < below[0] / below[1] < 4.3
+        below.append(1.0 - scaled_gradient(solid) / reference)
+    assert below == pytest.approx([0.0232, 0.00635, 0.00164], rel=0.05)
+    assert all(3.3 < coarse / fine < 4.3 for coarse, fine in zip(below, below[1:]))
 
 
 def test_solid_walls_lift_the_one_axial_cell_limit_and_conserve_charge_in_3d():

@@ -96,15 +96,15 @@ would raise the bulk temperature by under 1e-3 K of its 10 K, far inside
 Figure 6's digitizing uncertainty of 0.064 K.
 
 **A published number.** Hunt's duct at Ha 300 has conducting Hartmann walls of
-$c = 0.05$ and insulating side walls.
-- Rogerio's digest attributes $dp/dx = 374.897$ at Re 10 to Ni et al. (2007),
-  not checked against the paper here. That is
-  $(Ha^2/Re)\,K$ for $K = dp/dx/(\sigma u B^2) = 0.0416552$, and the
-  spectral solve of `validation.shercliff` gives 0.0416622, 0.017 % away.
-- On 48 cells the thin-wall model is 0.48 % below the number.
-- Solid walls of that $c$, $a/10$ and $a/20$ thick, sit 2.7 % and 0.74 % below
-  the thin-wall model, approaching it at second order in the thickness. That is
-  the finite thickness's order-1 % effect.
+$c = 0.1$ and insulating side walls.
+- Ni et al. (2007) Table 3 gives its analytic $Re\,dp/dx$, at a flow rate of 4,
+  as 5854.302. The [validation index](../validation/index.md) checks it against
+  the spectral solve.
+- On 48 cells the thin-wall model is 0.66 % below it, converging from 1.6 % on
+  32 cells.
+- Solid walls of that $c$, $a/10$, $a/20$ and $a/40$ thick, sit 2.3 %, 0.64 % and
+  0.16 % below the thin-wall model, approaching it at second order in the
+  thickness. That is the finite thickness's order-1 % effect.
 
 This runs with the scheduled tests.
 
