@@ -672,6 +672,7 @@ def fast_diagonal_poisson(
             operator,
             np.asarray(grid.widths[axis]),
             f"axis {axis} operator is not symmetric under the cell widths",
+            _constant_null(CENTER, condition),
         )
         vectors.append(eigenvectors)
         values.append(eigenvalues)
@@ -744,8 +745,14 @@ def _eigh(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return values[order], vectors[:, order]
 
 
-def _symmetric_eigen(operator: np.ndarray, weights: np.ndarray, message: str):
-    """Return the eigenvalues, eigenvectors and weight roots of an operator symmetric under ``weights``."""
+def _symmetric_eigen(operator: np.ndarray, weights: np.ndarray, message: str, null: bool):
+    """Return the eigenvalues, eigenvectors and weight roots of an operator symmetric under ``weights``.
+
+    ``null`` says, from the axis's boundary conditions, whether the constants are its null space
+    (:func:`_constant_null`): only then is the eigenvalue nearest zero set to zero. A small row sum is not
+    that certificate: a Dirichlet axis whose smallest cells lie far from its ends has row sums of 8e-8 of
+    its largest entry in float32, and a real eigenvalue near -8 that must not be zeroed.
+    """
     root = np.sqrt(weights)
     symmetric = root[:, None] * operator / root[None, :]
     asymmetry = _relative_asymmetry(symmetric)
@@ -754,12 +761,33 @@ def _symmetric_eigen(operator: np.ndarray, weights: np.ndarray, message: str):
             f"{message} (relative asymmetry {asymmetry:.3e}); fast diagonalization does not apply"
         )
     eigenvalues, eigenvectors = _eigh(0.5 * (symmetric + symmetric.T))
-    if np.max(np.abs(operator @ np.ones(len(weights)))) <= _SINGULAR_TOLERANCE * np.max(np.abs(operator)):
+    if null:
         # Constants are in the null space, so that eigenvalue is zero. Computed, it carries round-off
         # of the largest one (5e-10 across a Hartmann layer at Ha 100), which the lowest mode of a
-        # long inflow-outflow axis (0.04) cannot absorb: the pressure drop then drifts at 1e-8.
+        # long inflow-outflow axis (0.04) cannot absorb: the pressure drop then drifts at 1e-8. A
+        # Helmholtz factorization needs it too: assembled in float32 it came out +4e-6 or -1e-5 on a
+        # stretched insulated axis, and at a large coefficient the shifted operator lost its sign.
+        # Every row must annihilate the constants to rounding of its own entries, or the conditions and
+        # the operator disagree.
+        tolerance = max(_SINGULAR_TOLERANCE, 100.0 * float(np.finfo(operator.dtype).eps))  # float32: 1.2e-5
+        rows = np.abs(operator @ np.ones(len(weights)))
+        if np.any(rows > tolerance * np.sum(np.abs(operator), axis=1)):
+            raise ValueError(
+                f"{message}: its conditions are insulated or periodic, but it does not annihilate constants"
+            )
         eigenvalues[np.argmin(np.abs(eigenvalues))] = 0.0
     return eigenvalues, eigenvectors, root
+
+
+def _constant_null(offset_value: float, condition: BoundaryCondition) -> bool:
+    """Whether an axis's homogeneous operator has the constants as its null space, from its conditions alone.
+
+    A periodic axis has. A cell-centred axis has unless an end is Dirichlet; a face-centred one has not, since
+    its wall faces are prescribed.
+    """
+    if condition.is_periodic:
+        return True
+    return offset_value == CENTER and DIRICHLET not in condition.kinds
 
 
 def assemble_thin_wall_operator(
@@ -1062,7 +1090,9 @@ def fast_diagonal_thin_wall_poisson(
         else:
             operator, weight = assemble_axis_laplacian(grid, axis, condition), np.asarray(grid.widths[axis])
         message = f"axis {axis} thin-wall operator is not symmetric under its weights"
-        eigenvalues, eigenvectors, root = _symmetric_eigen(operator, weight, message)
+        eigenvalues, eigenvectors, root = _symmetric_eigen(
+            operator, weight, message, _constant_null(CENTER, condition)
+        )
         for store, item in zip(
             (operators, vectors, values, scales, weights), (operator, eigenvectors, eigenvalues, root, weight)
         ):
@@ -1359,19 +1389,11 @@ def fast_diagonal_helmholtz(
         operator = assemble_staggered_axis_operator(grid, axis, offset, condition)
         selection = free_slice(grid, axis, offset[axis], condition)
         weights = _axis_weights(grid, axis, offset[axis], condition)[selection]
-        root = np.sqrt(weights)
-        symmetric = root[:, None] * operator / root[None, :]
-        asymmetry = _relative_asymmetry(symmetric)
-        if asymmetry > _symmetry_tolerance(symmetric):
-            raise ValueError(
-                f"axis {axis} operator is not symmetric under its cell weights "
-                f"(relative asymmetry {asymmetry:.3e}); fast diagonalization does not apply"
-            )
-        eigenvalues, eigenvectors = _eigh(0.5 * (symmetric + symmetric.T))
+        message = f"axis {axis} operator is not symmetric under its cell weights"
+        null = _constant_null(offset[axis], condition)
+        eigenvalues, eigenvectors, root = _symmetric_eigen(operator, weights, message, null)
         vectors.append(eigenvectors)
-        # The Laplacian is negative semidefinite: a positive null mode is rounding, +3e-5 when probed in float32,
-        # and at a large coefficient it would turn the shifted operator indefinite.
-        values.append(np.minimum(eigenvalues, 0.0))
+        values.append(eigenvalues)
         scales.append(root)
         slices.append(selection)
     return FastDiagonalHelmholtz(
