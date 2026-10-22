@@ -305,15 +305,15 @@
       "extracted": "2026-10-20, from the PDF of mistrangelo-2025 (its DOI and SHA-256 above) with pymupdf Document.extract_image(xref); each image's SHA-256 is in its record",
       "extraction": {
         "asset": "mistrangelo2025-case2-extraction.zip",
-        "contents": "the 13 figure images, unmodified (CC BY 4.0, with the paper's attribution), and mistrangelo2025-case2-curves.json: every code's curve with each figure's calibration and image SHA-256",
-        "curves_sha256": "86ce5ccbf3c4642641566d69aef04056ca69d191b69c655eb5d04a83c63f133d",
+        "contents": "the 13 figure images, unmodified (CC BY 4.0, with the paper's attribution), and mistrangelo2025-case2-curves.json: every code's curve, one value per pixel column with nothing decimated, with each figure's calibration and image SHA-256",
+        "curves_sha256": "dc3aa29d1ce75fbf40520e3b41f6a186839aafbbe1e89e8d9be6f1fd09519806",
         "release": "https://github.com/uwplasma/LMhdX/releases/tag/mistrangelo2025-references",
-        "sha256": "6bff1dc10ab7e1038bfaf32fe1c7fe73d893727e167b3c6a1238f4e1a579e5d7"
+        "sha256": "fb9c424d5e8487968952c6146b3eecad5edff5f06058ef65b3d7c2f1d739cd8a"
       },
       "id": "mistrangelo2025-case2",
       "kind": "reference_data",
       "path": "lmhdx/data/benchmarks/references/mistrangelo2025-case2.json",
-      "sha256": "75d1a31722643f6d1a0b03b231d4239d0a7439716f27a4dddd37e744183f4ad2",
+      "sha256": "146ce07108e7157586bb537509501702a1fe2cb08f89ae6505aac70c5c87658b",
       "title": "Mistrangelo et al. 2025, Case 2: figures digitized by scripts/digitize_mistrangelo.py"
     }
   ]

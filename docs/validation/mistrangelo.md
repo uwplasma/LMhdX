@@ -85,7 +85,7 @@ rows nearest the midplane on each side.
 ## The digitized figures
 
 `src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json` (90 KB) and
-`-case2.json` (31 KB) hold the figures, read by
+`-case2.json` (77 KB) hold the figures, read by
 `python scripts/digitize_mistrangelo.py DIR`. The figures are xmgrace plots
 embedded in the PDF as images, extracted with `pymupdf`
 (`Document.extract_image(xref)`). They are not in the repository, so the
@@ -200,7 +200,7 @@ are part of the codes' spread. Each code chose its own domain, inlet and outlet:
 Every inlet is at 300 °C. No code reports a burn-in or a measure of its
 averages' statistical convergence, and the windows differ ninefold.
 
-**LMhdX's Case 2 protocol, declared before any run.**
+**LMhdX's proposed Case 2 protocol, declared before any run.** It is a proposal for the owner to settle, not yet a decision.
 - **The set-up.** Each result records its solver, time step, mesh, domain,
   inlet and outlet: the configuration that 5.4d's outlet-length study settles
   (ADR 0009 D37).
@@ -212,9 +212,17 @@ averages' statistical convergence, and the windows differ ninefold.
   equal batches.
 - **The statistical error** is the standard error of the five batch means,
   quoted with every averaged observable.
+  - That assumes the batches are independent, which the window does not
+    guarantee.
+  - Before any statistical precision is quoted, the batch means'
+    autocorrelation and the result's sensitivity to the window length are
+    inspected, and recorded with the result.
+  - If either shows the batches are not independent, the window is
+    lengthened, under the rule below.
 - **The comparison** is against the codes' spread, widened by the digitizing
-  uncertainty and by LMhdX's discretization and statistical errors. It is
-  reported, not gated.
+  uncertainty and by LMhdX's discretization and statistical errors. The
+  spread is the envelope of the codes chosen, not a confidence interval. The
+  comparison is reported, not gated.
 - **Fixed in advance.** If the burn-in or the window changes after a first
   comparison, the old outcome and the reason stay in the record.
 - **Not before the corrected momentum step.** Case 2 is a moving, buoyant flow.
@@ -244,11 +252,11 @@ the jets are compared with Figure 13 only.
 
 **Checks of Case 2's figures** (`tests/test_steady.py`):
 - **The velocity, 0.01 m/s.** Figure 30's slope over \|x\| < 0.4 m is
-  −191.4 Pa/m, against −189.9 Pa/m for the developed −0.0863 σu₀B₀² at that
-  velocity: 0.8 %. The slope scales with u₀ alone, so this fixes it.
+  −191.2 Pa/m, against −189.9 Pa/m for the developed −0.0863 σu₀B₀² at that
+  velocity: 0.7 %. The slope scales with u₀ alone, so this fixes it.
 - **The flux, 10 W/cm².** Over 0.5 < x < 0.9 m, the top of Figure 34's band is
-  375.78–375.90 °C, against 375.93 °C for the energy balance, within the
-  record's uncertainty (0.45 K). The window starts
+  375.71–375.99 °C, every column read, against 375.93 °C for the energy
+  balance: at most 0.22 K off, within the record's uncertainty (0.45 K). The window starts
   past the settling of the bulk temperature after the heated zone, about 0.1 m.
   FLUENT_UK's plateau, 4.5 K lower, sets the band's lower edge.
 
