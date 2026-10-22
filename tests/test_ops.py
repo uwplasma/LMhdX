@@ -1490,6 +1490,54 @@ def test_without_a_shift_one_material_is_the_singular_fast_diagonal_inverse():
         variable_helmholtz(STRETCHED, (WRAP, WALL, thermal_boundary("temperature")), 2.0, None, 1.0)
 
 
+@pytest.mark.parametrize("ratio", [1e-2, 1.0, 1e2, 1e4])
+def test_the_gauged_charge_solve_meets_its_primal_tangent_and_transpose_equations(ratio):
+    """The singular charge solve and its implicit derivatives, through walls ``ratio`` times as conducting as the
+    fluid, each checked by the residual of its own equation. With ``A`` the operator and ``V`` the cell volumes:
+    - primal: ``A x = V b`` for a compatible ``b``, with the gauge ``V . x = 0``;
+    - tangent in the cells' conductivity: ``A dx = -dA x``, with ``V . dx = 0``;
+    - transpose: the gradient of ``g . x`` in ``b``, over ``V``, is the ``m`` with ``A m = g - V (1 . g)/sum V``
+      and ``V . m = 0``; the gauge's rank-one term drops out, since that right-hand side sums to zero;
+    and the JVP and VJP in the conductivity agree. Unconverged, the value and both derivatives are NaN."""
+    walled, _, _ = _walled()
+    fluid = np.zeros(walled.grid.shape, dtype=bool)
+    fluid[walled.fluid] = True
+    conductivity = jnp.asarray(np.where(fluid, 1.0, ratio))
+    charge = variable_helmholtz(walled.grid, (WRAP, WALL, WALL), conductivity, None, 1.0, max_steps=400)
+    rng = np.random.default_rng(11)
+    rhs, weights, pattern = (jnp.asarray(rng.standard_normal(walled.grid.shape)) for _ in range(3))
+    rhs, direction = rhs - charge.defect(rhs), jnp.where(fluid, 0.0, ratio * pattern)  # a change in the walls
+    volumes = jnp.asarray(walled.grid.cell_volumes())
+
+    def solve(sigma, b=rhs, operator=charge):
+        return operator.with_coefficients(conductivity=sigma).solve(b)[0]
+
+    def residual(a, b):
+        return float(jnp.linalg.norm(a - b) / jnp.linalg.norm(b))
+
+    def gauge(values):
+        return abs(float(jnp.vdot(volumes, values))) / float(jnp.sum(volumes) * jnp.max(jnp.abs(values)))
+
+    def applied(sigma, values):
+        return charge.with_coefficients(conductivity=sigma).apply(values)
+
+    potential, tangent = jax.jvp(solve, (conductivity,), (direction,))
+    assert residual(charge.apply(potential), volumes * rhs) < 1e-10 and gauge(potential) < 1e-12
+    change = jax.jvp(lambda sigma: applied(sigma, potential), (conductivity,), (direction,))[1]
+    assert residual(charge.apply(tangent), -change) < 1e-9 and gauge(tangent) < 1e-12
+    adjoint = jax.grad(lambda b: jnp.vdot(weights, solve(conductivity, b)))(rhs) / volumes
+    projected = weights - volumes * jnp.sum(weights) / jnp.sum(volumes)
+    assert residual(charge.apply(adjoint), projected) < 1e-9 and gauge(adjoint) < 1e-12
+    gradient = jax.grad(lambda sigma: jnp.vdot(weights, solve(sigma)))(conductivity)
+    assert float(jnp.vdot(gradient, direction)) == pytest.approx(float(jnp.vdot(weights, tangent)), rel=1e-9)
+    if ratio == 1.0:
+        return  # one material converges in one iteration, its preconditioner being the exact inverse
+    unconverged = dataclasses.replace(charge, max_steps=1)
+    assert np.isnan(float(jnp.vdot(weights, solve(conductivity, operator=unconverged))))
+    stalled = jax.grad(lambda sigma: jnp.vdot(weights, solve(sigma, operator=unconverged)))(conductivity)
+    assert np.all(np.isnan(np.asarray(stalled)))
+
+
 def test_a_float32_fast_diagonal_helmholtz_stays_definite_at_a_large_coefficient():
     """Probed in float32, an insulated axis's null mode came out +3e-5, so at a large coefficient the shifted
     operator turned indefinite and PCG broke down at once. The null eigenvalue is now zero, read from the axis's
