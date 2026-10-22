@@ -580,10 +580,29 @@ Each shape takes its cheapest flow that keeps the developed peaks within
 | Open duct, 12–48 axial cells (v2) | ≥ 99.96 % delivered; wall face 624.936 ± 0.003 K | ≥ 99.96 % delivered; wall face 624.952 ± 0.001 K |
 
 Nine of Stage 3's ten gates pass, and every one of v2's. The failure stays
-open: the fixed-flux optimum's stationarity, 1.8e-6 against 1e-6. The
-hydrodynamic entrance, buoyancy and solid walls are outside the study. It is a
+open: the fixed-flux optimum's stationarity, 1.8e-6 against 1e-6. It is a
 study, not a library feature: `examples/duct_design_law.py` still sizes a duct
 by its velocity bound, `MIN_VELOCITY`.
+
+**What its limits are.**
+- **The model.** About a 0.48 T illustrative field cap, insulating electrical
+  walls, fixed properties, and fully developed inertialess flow. The
+  hydrodynamic entrance, buoyancy and solid walls are outside the study. The
+  small margins to 625 K leave out the walls, buoyancy and the properties'
+  uncertainty, so they are not a design margin.
+- **The `Re/Ha ≤ 200` filter mixes length scales.** Re is on $D_h$ and Ha on
+  $a$. The Hartmann-layer Reynolds number is $(Re/Ha)(a/D_h)$, with
+  $D_h/a = 4\beta/(1+\beta)$, so the filter does not hold it at one value
+  across aspect ratios. The study is to be rerun with each threshold in its own
+  definition; that changes the feasible region.
+- **What is differentiated.** The area enters through the constant-property
+  scaling and the Hartmann-number dependence, so its derivative is legitimate.
+  The aspect ratio is optimized by derivative-free bracketing on rebuilt
+  meshes. The study scans its design variables; gradients with respect to them
+  come with LMhdX 2.0.
+- **Next, for a blanket design:** the objective's heated fluid width becomes the
+  gross channel pitch with its walls and ribs, and the total heat removal and
+  the coverage become constraints.
 
 Re-evaluated on LMhdX 1.11.0, the four designs reproduce the values in
 stage3-v1's results.json exactly. The release lists each asset's SHA-256;
