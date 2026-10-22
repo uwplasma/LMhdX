@@ -1617,3 +1617,127 @@ def test_the_magnetoconvection_section_converges_to_its_pinned_gradient():
     ratio = record["properties"]["steel"]["conductivity_ratio_pinned"]
     flow = mistrangelo.section_flow(ratio, record=record, cells=48, cells_in_layer=6, wall_cells=6)
     assert flow["gradient"] == pytest.approx(mistrangelo.developed_gradient(record), rel=5e-3)
+
+
+def test_the_magnetoconvection_section_meets_figure_13s_core():
+    """The independent check of 5.4a's section: on the pin's 96/12 cells, the profile at y = 0 against Figure 13's
+    analytical markers. In the core, |z| <= 0.7 a, each marker column is within the record's digitizing uncertainty
+    (2.44 px; 2.09 measured over 37 columns) and the section lies under 1 % below them on average (0.62 %). The jets'
+    flanks differ by about 10 px, which is reported, not gated."""
+    import json
+
+    from validation import mistrangelo
+
+    record = mistrangelo.spec()
+    ratio = record["properties"]["steel"]["conductivity_ratio_pinned"]
+    a, u0 = record["geometry"]["half_width_m"], record["cases"]["case1"]["mean_velocity_m_per_s"]
+    figure = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES.read_text())["figures"]}[13]
+    markers, pixel = figure["curves"]["analytical"], figure["per_pixel"][1]
+    z, u = np.array(markers["x"]) / a, np.array(markers["y"]) / u0
+    flow = mistrangelo.section_flow(ratio, record=record, **mistrangelo.PIN_MESH)
+    offset = (np.interp(z, flow["z"], flow["u_over_u0"]) - u)[np.abs(z) <= 0.7] * u0
+    assert len(offset) >= 10 and np.max(np.abs(offset)) <= figure["uncertainty"]["y"], offset / pixel
+    assert -0.01 < np.mean(offset) / (np.mean(u[np.abs(z) <= 0.7]) * u0) < 0.0
+
+
+def _check_reference_record(record):
+    """One digitized figure as shipped: its image hashed; both axes on their label lattice, three ticks at least and
+    within 0.6 px (the worst measured is 0.54), the misfit and the digitizing uncertainty also in the axis's units;
+    whether the paper or my reading chose the band's codes; the kept curves ordered and visible, and the band ordered
+    and inside its window."""
+    assert len(record["sha256"]) == 64 and record["agree_basis"] in ("the paper", "my reading")
+    for axis, scale in zip("xy", record["per_pixel"]):
+        fit, spread = record["calibration"][axis], record["uncertainty"]["px"][axis]
+        assert fit["misfit_px"] <= 0.6 and fit["ticks"] >= 3
+        assert fit["misfit"] == pytest.approx(fit["misfit_px"] * scale, rel=1e-2)
+        assert spread == pytest.approx(2.1 + fit["misfit_px"], abs=0.01)
+        assert record["uncertainty"][axis] == pytest.approx(spread * scale, rel=1e-2)
+    assert record["curves"] or "band" in record
+    for curve in record["curves"].values():
+        assert np.all(np.diff(curve["x"]) > 0) and curve["coverage"] >= 0.01
+    if "band" in record:
+        band = record["band"]
+        assert np.all(np.array(band["lower"]) <= np.array(band["upper"])) and min(band["codes"]) >= 1
+        if record["window"]:
+            assert record["window"][0] <= band["x"][0] and band["x"][-1] <= record["window"][1]
+
+
+def test_the_digitizer_reads_a_drawn_figure(tmp_path):
+    """A synthetic xmgrace-like figure: a frame with outward ticks, a solid green line, a dashed orange line, red
+    rings, and a blue line with a spike two pixels wide and 20 tall and a step of 46. The calibration, the lines and
+    rings within 1.5 px, and the band closed over the dashes are recovered. Against every raw pixel column, spike
+    and step included, the compact record keeps the band within 0.6 px (half a pixel, and the rounding): the
+    extraction is not decimated before the bounded simplification, which could drop the spike. A wrong tick label is
+    refused."""
+    import copy
+
+    from PIL import Image, ImageDraw
+
+    from scripts import digitize_mistrangelo as digitizer
+
+    image = Image.new("RGB", (400, 300), "white")
+    draw = ImageDraw.Draw(image)
+    left, right, top, bottom = 50, 350, 20, 250
+    draw.rectangle([left, top, right, bottom], outline="black", width=2)
+    for k in range(6):  # x from 0 to 5 by 1, y from 0 to 10 by 2
+        x_px, y_px = left + 60 * k, bottom - 46 * k
+        draw.line([x_px, bottom + 1, x_px, bottom + 12], fill="black", width=1)
+        draw.line([left - 12, y_px, left - 1, y_px], fill="black", width=1)
+    px = lambda x: left + 60 * x  # noqa: E731
+    py = lambda y: bottom - 23 * y  # noqa: E731
+    xs = np.linspace(0.2, 4.8, 200)
+    draw.line([(px(x), py(2 + x)) for x in xs], fill=(0, 255, 0), width=2)
+    for start in np.arange(0.2, 4.8, 0.25):  # 15 px on, 3 px off
+        dash = np.linspace(start, start + 0.2, 10)
+        draw.line([(px(x), py(2.5 + x)) for x in dash], fill=(255, 165, 0), width=2)
+    for x in np.arange(0.5, 4.6, 0.5):
+        draw.ellipse([px(x) - 3, py(1) - 3, px(x) + 3, py(1) + 3], outline=(255, 0, 0))
+    blue = [(px(x), py(3 + x + 2.0 * (x > 3.5))) for x in np.linspace(0.2, 4.8, 400)]
+    spike = int(px(2.0))
+    blue = [(a, b - 20 * (spike <= a < spike + 2)) for a, b in blue]
+    draw.line(blue, fill=(0, 0, 255), width=2)
+    path = tmp_path / "x1.png"
+    image.save(path)
+    spec = dict(pdf_page=0, xref=1, x=((0, 50), (5, 350), 1), y=((0, 250), (10, 20), 2), quantity="synthetic",
+                agree=("OF_KIT", "FLUENT_UK", "OF_ORNL"), cite="drawn", circles=True)  # fmt: skip
+    record = digitizer.digitize(path, 0, {0: spec})
+    compact = digitizer._compact(record)
+    _check_reference_record(compact)
+    pixel = record["per_pixel"][1]  # aliased 2-px lines: half a pixel off centre, and a half-pixel staircase
+    green, orange = record["curves"]["OF_KIT"], record["curves"]["FLUENT_UK"]
+    for curve, offset in ((green, 2.0), (orange, 2.5), (record["curves"]["analytical"], None)):
+        error = np.array(curve["y"]) - (offset + np.array(curve["x"]) if offset else 1.0)
+        assert np.max(np.abs(error)) <= 1.5 * pixel and abs(np.mean(error)) <= pixel
+    assert orange["coverage"] < 0.95 and record["band"]["codes"].count(3) > 0.9 * len(record["band"]["codes"])
+    upper, columns = np.array(record["band"]["upper"]), np.array(record["band"]["x"]) / record["per_pixel"][0]
+    assert np.allclose(np.diff(columns), 1.0, atol=1e-3), "the band is not every pixel column"
+    assert np.max(upper - (3.0 + np.array(record["band"]["x"]))) > 15 * pixel  # the raw band holds the spike
+    for edge in ("lower", "upper"):
+        kept = np.interp(record["band"]["x"], compact["band"]["x"], compact["band"][edge])
+        assert np.max(np.abs(kept - np.array(record["band"][edge]))) <= 0.6 * pixel, edge
+    wrong = copy.deepcopy(spec)
+    wrong["y"] = ((0, 250), (12, 20), 2)
+    with pytest.raises(ValueError, match="lattice"):
+        digitizer.digitize(path, 0, {0: wrong})
+
+
+def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale():
+    """The reference curves, read from the paper's figures: each record as ``_check_reference_record``, and Fig. 8's
+    slope over |x| < 0.4 m is the printed -0.0855 in sigma u0 B0^2 (with the pinned PbLi; Martelli's sigma is 0.4 %
+    away, which the figure cannot tell apart)."""
+    import json
+
+    from scripts import digitize_mistrangelo as digitizer
+    from validation import mistrangelo
+
+    figures = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES.read_text())["figures"]}
+    assert sorted(figures) == sorted(digitizer.FIGURES)
+    for record in figures.values():
+        _check_reference_record(record)
+    record, case = mistrangelo.spec(), mistrangelo.spec()["cases"]["case1"]
+    band = figures[8]["band"]
+    x, middle = np.array(band["x"]), (np.array(band["lower"]) + np.array(band["upper"])) / 2
+    inside = np.abs(x) < 0.4
+    scale = mistrangelo.pinned_pbli(record)["electrical_conductivity_S_per_m"] * case["mean_velocity_m_per_s"]
+    scale *= record["field"]["peak_T"] ** 2
+    assert np.polyfit(x[inside], middle[inside], 1)[0] / scale == pytest.approx(-0.0855, rel=0.01)
