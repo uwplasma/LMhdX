@@ -1739,7 +1739,7 @@ def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressu
     scale *= record["field"]["peak_T"] ** 2
     assert np.polyfit(x[inside], middle[inside], 1)[0] / scale == pytest.approx(-0.0855, rel=0.01)
     # Fig. 17's outlet bulk temperature is the specification's energy balance (the full outer width heated), and
-    # Fig. 38's temperatures give Fig. 18's Nu with L = a (L = 2a would double it), both within 2 px.
+    # Fig. 38's temperatures give Fig. 18's Nu with L = a inside its acceptance band; L = 2a would double it.
     pbli, a = mistrangelo.pinned_pbli(record), record["geometry"]["half_width_m"]
     q, u0, wall = (
         case["heat_flux_W_per_m2"],
@@ -1762,6 +1762,14 @@ def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressu
     curves = figures[38]["curves"]
     wall_t, bulk_t = (np.interp(0.29, curves[k]["x"], curves[k]["y"]) for k in ("T_w case1", "T_b case1"))
     nusselt = q * a / (pbli["thermal_conductivity_W_per_m_K"] * (wall_t - bulk_t))
-    band, pixel = figures[18]["band"], figures[18]["per_pixel"][1]
-    lower, upper = (np.interp(0.29, band["x"], band[k]) for k in ("lower", "upper"))
-    assert lower - 2 * pixel <= nusselt <= upper + 2 * pixel
+    assert mistrangelo.band_misfit(0.29, nusselt, figures[18]) == 0.0  # inside Fig. 18's acceptance band
+    assert mistrangelo.band_misfit(0.29, 2.0 * nusselt, figures[18]) > 1.0  # L = 2a is far outside it
+    energy = figures[19]["band"]  # a log axis: the band's geometric middle is inside it
+    assert (
+        mistrangelo.band_misfit(
+            energy["x"], np.sqrt(np.multiply(energy["lower"], energy["upper"])), figures[19]
+        )
+        == 0
+    )
+    with pytest.raises(ValueError, match="outside"):
+        mistrangelo.band_misfit(2.0, nusselt, figures[18])

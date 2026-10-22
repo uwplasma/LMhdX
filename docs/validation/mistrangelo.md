@@ -146,15 +146,17 @@ Figures 6–13, 15–19 and 38, read by `scripts/digitize_mistrangelo.py`.
   `DIR/mistrangelo2025-case1-curves.json`. The images are not in the
   repository, so the digitizer is not in the package or in `validation/`.
 - The images and the per-code curves, the extraction's intermediates, are a
-  release asset, since the paper is CC BY 4.0. Part 2 records them in
-  `benchmarks/provenance.json` with their SHA-256s.
+  release asset, `mistrangelo2025-case1-extraction.zip` on the release
+  `mistrangelo2025-references`, since the paper is CC BY 4.0.
+  `benchmarks/provenance.json` records the archive's and the curves' SHA-256s
+  (`extraction`).
 - Each record carries:
   - the image's PDF page (the journal's is one less), xref and SHA-256;
   - the axis calibration;
   - whether the y axis is logarithmic (`y_scale`);
   - the codes it omits, and why;
   - whether the paper or my reading chose the band's codes (`agree_basis`).
-- The file is compact, 32 KB for these figures. A record keeps the band, and
+- The file is compact, 33 KB for these figures. A record keeps the band, and
   the curves that are not one of the six codes: Figure 13's analytical
   markers and Figure 11's stations. Each is simplified to within half a pixel
   and rounded to a tenth of one. The per-code curves are not shipped: they
@@ -207,7 +209,10 @@ the axis's units. It sums three parts, 2.3–2.5 px in all:
   (`misfit`).
 
 The band's spread is the codes', apart from it. A comparison's acceptance band
-is the two combined (ADR 0009 D35). For scale:
+is the two combined: `validation.mistrangelo.band_misfit(x, y, figure)` takes
+arrays and numbers and returns the largest excess beyond it, zero inside. At
+5.4e, ADR 0009 D35's band also takes in LMhdX's discretization error, from its
+mesh, time-step, tolerance and outlet-length studies. For scale:
 
 | | x per px | y per px |
 |:--|--:|--:|
@@ -236,6 +241,8 @@ is the two combined (ADR 0009 D35). For scale:
 - every record, with `_check_reference_record`: its hash, its calibration
   within 0.6 px, its uncertainty, its band and curves;
 - the developed section's core against Figure 13;
+- the heated width against Figure 17, and Figure 38's Nu inside Figure 18's
+  acceptance band;
 - the digitizer itself, on a synthetic figure in CI. It is a drawn frame with
   ticks, a solid and a dashed line and rings. The compact record must keep the
   band within 0.6 px, and a wrong tick label must be refused.
@@ -249,13 +256,14 @@ is the two combined (ADR 0009 D35). For scale:
 - **The length in Nu.**
   - From Figure 38's OF_KIT temperatures at x = 0.29 m, `T_w − T_b` is
     19.23 K, so `Nu = q'' a / (k (T_w − T_b))` is 2.34 with L = a.
-  - That lies inside Figure 18's band there, 2.24–2.42.
+  - That lies inside Figure 18's band there, 2.24–2.42 (Nu on L = a), and
+    inside its acceptance band (`band_misfit`, tested).
   - L = 2a would double it.
 
-**The printed asymptote.** "Nu → 2.45" (p. 10) matches Figure 18's codes near
-x = 0.3 m, where their band reaches 2.48. It is about 4 % above OF_KIT's value
-from Figure 38, within the digitizing uncertainty: 2 px on each temperature is
-about ±0.11 in Nu.
+**The printed asymptote.** "Nu → 2.45" (p. 10, on L = a) matches Figure 18's
+codes near x = 0.3 m, where their band reaches 2.48. It is about 4 % above
+OF_KIT's value from Figure 38, within the digitizing uncertainty: Figure 38's,
+2.5 px on each temperature, is about ±0.14 in Nu.
 
 Case 2's curves follow in a later part. The sources are in
 `benchmarks/provenance.json`: the paper's DOI and SHA-256, and each reference

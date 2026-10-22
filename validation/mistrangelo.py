@@ -32,6 +32,7 @@ __all__ = [
     "PIN_MESH",
     "REFERENCES",
     "SPEC",
+    "band_misfit",
     "developed_gradient",
     "developed_section",
     "field",
@@ -114,6 +115,21 @@ def developed_section(
         dt=1.0,
         wall_layers=(None, (layer, layer), (layer, layer)),
     )
+
+
+def band_misfit(x, y, figure: dict) -> float:
+    """How far ``y(x)`` lies outside a figure's acceptance band: the codes' spread widened on both sides by the
+    record's digitizing uncertainty (ADR 0009 D35). Arrays and numbers in, the largest excess out, zero inside, in
+    the figure's y units (decades on a log axis); points outside the band's x range are refused."""
+    x, y = np.atleast_1d(np.asarray(x, float)), np.atleast_1d(np.asarray(y, float))
+    band = {key: np.asarray(band, float) for key, band in figure["band"].items()}
+    if np.any((x < band["x"][0]) | (x > band["x"][-1])):
+        raise ValueError(f"x outside Figure {figure['figure']}'s band, {band['x'][0]} to {band['x'][-1]}")
+    lower, upper = (np.interp(x, band["x"], band[key]) for key in ("lower", "upper"))
+    if figure["y_scale"] == "log10":
+        y, lower, upper = np.log10(y), np.log10(lower), np.log10(upper)
+    spread = figure["uncertainty"]["y"]
+    return float(np.max(np.maximum(np.maximum(lower - spread - y, y - upper - spread), 0.0)))
 
 
 def _peak(z, u) -> tuple[float, float]:
