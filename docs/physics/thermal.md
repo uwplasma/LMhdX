@@ -541,7 +541,10 @@ and its developed limit, 140/17.
 long, takes in a unit flux through one side wall downstream of a cold inlet,
 without Joule heat. With conducting Hartmann walls ($c=0.05$) the side layers
 carry jets at 8.4 times the mean velocity along that wall, and its hottest point
-rises 25 % less above the inlet temperature than in the insulating duct. The
+rises 25 % less above the inlet temperature than in the insulating duct: 25.0 %
+on 32 cells across and 64 along, and 25.0 % again on 40 and 80.
+`python scripts/make_showcase_figures.py --only heated-duct` runs both meshes,
+in about two minutes on a laptop GPU. The
 hot strips left along its corners are where the jet meets the Hartmann layers.
 
 ```{image} ../_static/thermal_heated_duct.webp

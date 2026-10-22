@@ -608,7 +608,10 @@ def thermal_onset(chandrasekhar_numbers: tuple[float, ...] = (0.0, 10.0, 100.0, 
 
 
 def thermal_convection(rayleigh: float = 1.0e4, prandtl: float = 0.1, chandrasekhar: float = 1000.0) -> None:
-    """A liquid-metal layer heated from below: cells without a field, rolls along a horizontal one."""
+    """A liquid-metal layer heated from below: cells without a field, rolls along a horizontal one.
+
+    Three minutes on a laptop GPU (an RTX 3060, float64), about a quarter of an hour on its CPU.
+    """
     lmhdx.enable_x64()
     # Free-fall units, with d, U_ff = sqrt(g beta Delta T d) and rho one; Q = sigma B^2 d^2 / (rho nu).
     field = np.sqrt(chandrasekhar * np.sqrt(prandtl / rayleigh))
@@ -623,7 +626,7 @@ def thermal_convection(rayleigh: float = 1.0e4, prandtl: float = 0.1, chandrasek
     )
     frames = []
     with plt.rc_context(PAPER):
-        for index in range(3, shape[0], 2):  # every 5 d/U_ff, from when the instability has grown
+        for index in range(3, shape[0], 4):  # every 10 d/U_ff, from when the instability has grown
             fig = plt.figure(figsize=(8.0, 4.1), dpi=160)
             for column, (title, (temperatures, nusselt)) in enumerate(runs.items()):
                 axis = fig.add_axes((0.5 * column, 0.16, 0.5, 0.68), **SOLID)
@@ -639,7 +642,7 @@ def thermal_convection(rayleigh: float = 1.0e4, prandtl: float = 0.1, chandrasek
             fig.text(0.5, 0.95, f"t = {2.5 * (index + 1):.0f} $d/U_{{ff}}$", ha="center", va="top")
             _colorbar(fig, (0.32, 0.115, 0.36, 0.022), cmap, norm, label, (-0.5, 0, 0.5))
             frames.append(_rgb(fig))
-    _animate(frames, STATIC / "thermal_convection_3d.webp", width=720, duration=160)
+    _animate(frames, STATIC / "thermal_convection_3d.webp", width=480, duration=320, quality=40)
 
 
 def thermal_heated_duct(hartmann: float = 1000.0, peclet: float = 2000.0) -> None:
@@ -648,13 +651,15 @@ def thermal_heated_duct(hartmann: float = 1000.0, peclet: float = 2000.0) -> Non
     cases = {0.0: _heated_duct(0.0, hartmann, peclet), 0.05: _heated_duct(0.05, hartmann, peclet)}
     peaks = {conductance: float(case["wall"][-1].max()) for conductance, case in cases.items()}
     jet, cooler = cases[0.05]["inlet"].max(), 1 - peaks[0.05] / peaks[0.0]
+    finer = {c: float(_heated_duct(c, hartmann, peclet, cells=40)["wall"][-1].max()) for c in cases}
     print(f"heated duct: jet {jet:.2f} x mean; hottest kT_w/(qa) {peaks}, {cooler:.1%} lower")
+    print(f"  on 40 cells across instead of 32: {finer}, {1 - finer[0.05] / finer[0.0]:.1%} lower")
     cmap, norm = plt.get_cmap("YlOrRd"), Normalize(0.0, max(peaks.values()))
     titles = {0.0: ("Insulating walls", "Insulating")}
     titles[0.05] = ("Conducting Hartmann walls, c = 0.05", "c = 0.05")
     frames = []
     with plt.rc_context(PAPER):
-        for frame, time in enumerate(cases[0.0]["time"]):
+        for frame, time in list(enumerate(cases[0.0]["time"]))[1::2]:  # every 3 a/u, to the steady state
             fig = plt.figure(figsize=(9.6, 4.6), dpi=150)
             profiles, walls = fig.add_axes((0.67, 0.6, 0.31, 0.32)), fig.add_axes((0.67, 0.12, 0.31, 0.32))
             for row, (color, (conductance, case)) in enumerate(zip(SERIES, cases.items())):
@@ -673,9 +678,7 @@ def thermal_heated_duct(hartmann: float = 1000.0, peclet: float = 2000.0) -> Non
             walls.set_title(rf"Heated wall, Pe = {peclet:g},  t = {time:.0f} $a/\bar u$", fontsize=10)
             walls.legend(loc="upper left")
             frames.append(_rgb(fig))
-    _animate(
-        frames, STATIC / "thermal_heated_duct.webp", width=760, duration=150, quality=70
-    )  # keeps the gradient
+    _animate(frames, STATIC / "thermal_heated_duct.webp", width=480, duration=300, quality=50)
 
 
 def _developed_flow(grid, hartmann: float = 0.0, periodic_span: bool = False):
@@ -749,10 +752,15 @@ def _entrance(hartmann: float, peclet: float = 400.0, cells: int = 64, extent: f
     return xplus, nusselt, conductivity * (temperature - bulk[:, None]), grid.centers[1]
 
 
-def _heated_duct(conductance: float, hartmann: float, peclet: float, length: float = 24.0) -> dict:
-    """A square duct whose side wall z = -a takes in a unit flux: ``kT/(q a)`` at 40 frames to t = 60 a/u."""
-    section = duct_problem(hartmann=hartmann, cells=32, wall_conductance=conductance).grid
-    grid = Grid(uniform_faces(64, 0.0, length), section.y_faces, section.z_faces)
+def _heated_duct(
+    conductance: float, hartmann: float, peclet: float, length: float = 24.0, cells: int = 32
+) -> dict:
+    """A square duct whose side wall z = -a takes in a unit flux: ``kT/(q a)`` at 40 frames to t = 60 a/u.
+
+    ``cells`` across the section, on ``duct_problem``'s layer-resolving mesh, and twice as many along it.
+    """
+    section = duct_problem(hartmann=hartmann, cells=cells, wall_conductance=conductance).grid
+    grid = Grid(uniform_faces(2 * cells, 0.0, length), section.y_faces, section.z_faces)
     conductivity = 2.0 / peclet  # D_h = 2a
     walls = tuple(thermal_boundary("heat_flux", q, 0.0, conductivity=conductivity) for q in (0.0, -1.0))
     temperature, times, inlet = _held_heat(grid, hartmann, conductance, walls, conductivity, 60.0, frames=40)
@@ -1087,8 +1095,8 @@ def _save_webp(fig: plt.Figure, path: Path, dpi: int = 120, palette: bool = Fals
     fig.savefig(png, dpi=dpi)
     image = Image.open(png).convert("RGB")
     if palette:
-        # 256 colors, losslessly: a colormap has 256. Median cut keeps a near-white apart from the page.
-        image = image.quantize(256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+        # 128 colors, losslessly, to keep the Git media budget. Median cut keeps a near-white apart from the page.
+        image = image.quantize(128, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
         image.save(path, lossless=True, quality=100, method=6)
     else:
         image.save(path, quality=82, method=6)
