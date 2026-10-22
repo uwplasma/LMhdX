@@ -168,23 +168,26 @@ python examples/fringe_duct_example.py
 
 ![A liquid-metal layer heated from below, without a field and in a horizontal field](docs/_static/thermal_convection_3d.webp)
 
-*Liquid metal heated from below, Ra = 10⁴, Pr = 0.1. Without a field the
-convection cells keep rearranging; a horizontal field (the arrow) leaves
-straight rolls along it, as in liquid-metal experiments (Burr & Müller 2002).*
+*Liquid metal heated from below, Ra = 10⁴, Pr = 0.1. Without a field the convection cells keep rearranging; a horizontal
+field (the arrow) leaves straight rolls along it, as in liquid-metal
+experiments (Burr & Müller 2002). It illustrates the evolution and is not a
+quantitative claim.*
 
 `lmhdx.thermal` adds temperature: heat conducts, is carried by the flow, is
 released by the currents (Joule heating) and can drive buoyant flow, and every
 step checks that the heat budget balances. It is research stage. Its
 [page](https://lmhdx.readthedocs.io/en/latest/physics/thermal.html) shows each
-comparison:
-- along a long duct, the Nusselt number is within 0.35 % of the exact series
-  for rectangular ducts of every aspect ratio, and within 0.2 % of the closed
-  form between Hartmann plates from Ha 1 to 1000, at second order;
+comparison, all of them verifications against exact or independent solutions:
+- along a long duct, the mean H1 Nusselt number on $D_h$ is within 0.35 % of
+  the exact series for rectangular ducts of every aspect ratio, and the plates'
+  own uniform-flux Nu on $D_h = 4a$ within 0.2 % of the closed form between
+  Hartmann plates from Ha 1 to 1000, at second order;
 - a vertical field delays convection in a layer heated from below, and LMhdX
   follows Chandrasekhar's tenfold rise of the critical Rayleigh number from
-  Q = Ha² = 0 to 1000 within 0.9 %;
-- in a duct at Ha 1000 heated through one side wall, conducting Hartmann walls
-  drive side-layer jets that lower the wall's hottest rise by about a quarter.
+  Q = Ha² = 0 to 1000 within 0.9 %, extrapolated from two time steps;
+- in a duct at Ha 1000 heated through one side wall, with the flow held,
+  conducting Hartmann walls drive side-layer jets that lower the wall's
+  hottest rise by about a quarter.
 
 The tests gate the developed ducts and plates on fixed meshes, the onset at
 Q = 0 and the references themselves ([`validation/thermal.py`](validation/thermal.py)).
