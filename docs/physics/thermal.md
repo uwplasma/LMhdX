@@ -553,7 +553,10 @@ in about two minutes on a laptop GPU. The
 hot strips left along its corners are where the jet meets the Hartmann layers.
 
 The flow is held: the movie is a heat-transfer result in a given flow, not a
-coupled momentum and heat result.
+coupled momentum and heat result. The 25 % holds at that flow rate, with thin
+electrical walls and no conduction through solid walls. It is not a lower
+pumping cost: at the same flow rate, conducting walls raise the MHD pressure
+drop. Nor is it a conjugate-wall result.
 
 ```{image} ../_static/thermal_heated_duct_preview.webp
 :alt: Heated wall, floor and outlet temperatures of an insulating and a Hunt duct in 3-D as heat enters from one side wall

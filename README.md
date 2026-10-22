@@ -188,7 +188,8 @@ comparison, all of them verifications against exact or independent solutions:
   Q = Ha² = 0 to 1000 within 0.9 %, extrapolated from two time steps;
 - in a duct at Ha 1000 heated through one side wall, with the flow held,
   conducting Hartmann walls drive side-layer jets that lower the wall's
-  hottest rise by about a quarter.
+  hottest rise by about a quarter. That holds at that flow rate; the same walls
+  raise the pressure drop.
 
 The tests gate the developed ducts and plates on fixed meshes, the onset at
 Q = 0 and the references themselves ([`validation/thermal.py`](validation/thermal.py)).
