@@ -921,6 +921,9 @@ def _summary_exit_code(summary: dict[str, object]) -> int:
     """Return failure for a recorded unconverged steady result or a rejected thermal run."""
 
     if summary.get("solver_mode") == "thermal":
+        if not summary.get("accepted"):
+            rejected = summary["rejected"]
+            print(f"rejected at step {rejected['step']}: {', '.join(rejected['reasons'])}", file=sys.stderr)
         return 0 if summary.get("accepted") else 2
     return 2 if summary.get("solver_mode") == "steady" and summary.get("converged") is False else 0
 
@@ -1036,6 +1039,26 @@ def _thermal_rejection(history, limits: dict, done: int) -> dict | None:
     return {"step": done + sample + 1, "reasons": reasons, **values}
 
 
+_LARGEST = ("heat_balance_residual", "advective_cfl", "buoyancy_courant", "boussinesq_measure")
+
+
+def _fold_chunk(extremes: dict, history) -> dict:
+    """The summary's finite flag, largest magnitude of each of ``_LARGEST`` and last sample, with one chunk more.
+
+    Only floats are kept: the summary's retention, not every output of a run, does not grow with the step count.
+    A NaN, once seen, stays, as a maximum over the whole history would give.
+    """
+    largest = {}
+    for name in _LARGEST:
+        chunk = np.max(np.abs(np.asarray(getattr(history, name))))  # NaN if any sample is
+        largest[name] = float(np.maximum(extremes["largest"].get(name, chunk), chunk))  # and NaN stays
+    return {
+        "finite": extremes["finite"] and bool(np.all(np.asarray(history.finite))),
+        "last": {name: float(np.asarray(values)[-1]) for name, values in history._asdict().items()},
+        "largest": largest,
+    }
+
+
 def run_thermal(run) -> dict[str, object]:
     """Run a :class:`lmhdx.thermal.ThermalRun` in compiled chunks, accepting each before recording it.
 
@@ -1076,11 +1099,12 @@ def run_thermal(run) -> dict[str, object]:
     )
     thermal_step = build_thermal_step(problem, dtype=jnp.result_type(float), hold_flow=run.hold_flow)
     chunk = jax.jit(lambda start: advance_thermal(thermal_step, start, heat, run.chunk))
-    first, frames, histories, rejected = round(float(state.time) / float(problem.flow.dt)), [], [], None
+    first, frames, rejected = round(float(state.time) / float(problem.flow.dt)), [], None
     accepted, done = state, first
+    extremes = {"finite": True, "last": {}, "largest": {}}
     for index in range(run.steps // run.chunk):
         state, history = chunk(accepted)
-        histories.append(history)
+        extremes = _fold_chunk(extremes, history)  # the chunk's arrays are then dropped
         rejected, label = _thermal_rejection(history, limits, done), f"{run.name}_{done + run.chunk:06d}"
         if rejected is not None:
             rejected["chunk"] = index
@@ -1099,11 +1123,6 @@ def run_thermal(run) -> dict[str, object]:
             frames.append((float(state.time), write_vtr(run.directory / label, grid.faces, **cells).name))
     if frames:
         write_pvd(frames, run.directory, name=run.name if first == 0 else f"{run.name}_from_{first:06d}")
-    history = jax.tree_util.tree_map(
-        lambda *parts: np.concatenate([np.asarray(p) for p in parts]), *histories
-    )
-    last = {name: float(np.asarray(values)[-1]) for name, values in history._asdict().items()}
-    largest = ("heat_balance_residual", "advective_cfl", "buoyancy_courant", "boussinesq_measure")
     summary = {
         "case": run.name,
         "solver_mode": "thermal",
@@ -1114,9 +1133,7 @@ def run_thermal(run) -> dict[str, object]:
         "restart": run.restart,
         "steps": done - first,
         "time": float(state.time),
-        "finite": bool(np.all(history.finite)),
-        "last": last,
-        "largest": {name: float(np.max(np.abs(getattr(history, name)))) for name in largest},
+        **extremes,
     }
     run.directory.mkdir(parents=True, exist_ok=True)
     (run.directory / "thermal_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
