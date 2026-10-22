@@ -430,6 +430,42 @@ flux through the outer surface, and `conduction_iterations` reports the PCG
 iterations, zero without walls. The extremes span every cell; the Boussinesq
 measure and the buoyancy Courant number are the fluid's.
 
+A duct walled on four sides with steel-like walls, heated through part of its
+outer bottom, as the ledger test runs it:
+
+```python
+import jax.numpy as jnp
+import numpy as np
+
+import lmhdx
+from lmhdx.core3d import ChannelProblem, SolidWall, zero_velocity
+from lmhdx.grid import CENTER, DIRICHLET, NEUMANN, BoundaryCondition, Field, Grid, uniform_faces
+from lmhdx.thermal import ThermalProblem, advance_thermal, build_thermal_step, initial_thermal_state, thermal_boundary
+
+lmhdx.enable_x64()
+cells, axial = 6, 8
+fluid = Grid(uniform_faces(axial, 0.0, 1.0), uniform_faces(cells, -1.0, 1.0), uniform_faces(cells, -1.0, 1.0))
+opening = BoundaryCondition(DIRICHLET, lower=np.ones((cells, cells)), upper_kind=NEUMANN)
+flow = ChannelProblem(fluid, (opening, *(BoundaryCondition(NEUMANN),) * 2), forcing=(0.0, 0.0, 0.0), dt=0.5 / axial)
+steel = SolidWall(0.1, 2, 0.18, 2.3)  # 0.1 thick in 2 cells; k 0.9 and rho c_p 2.3 times the fluid's
+patch = np.abs(np.asarray(fluid.centers[0]) - 0.5) < 0.25
+heated = np.where(patch, -3.0, 0.0)[:, None] * np.ones(cells + 4)  # a flux into the outer bottom, walls included
+conditions = (
+    thermal_boundary("temperature", 0.0, upper_kind="heat_flux", conductivity=0.2),
+    thermal_boundary("heat_flux", conductivity=0.18),  # the outer surface takes the wall's k
+    thermal_boundary("heat_flux", heated, 0.0, conductivity=0.18),
+)
+walls = ((None, None), (steel, steel), (steel, steel))
+thermal = ThermalProblem(flow, conditions, 1.0, 0.2, 0.0, joule_heating=False, walls=walls)
+rest = zero_velocity(flow)
+plug = (rest[0].replace_data(jnp.ones_like(rest[0].data)), *rest[1:])  # held, on the fluid's grid
+state = initial_thermal_state(thermal, 0.0, plug)  # the temperature lives on thermal.thermal_grid
+heat = Field(jnp.zeros(thermal.thermal_grid.shape), (CENTER,) * 3, thermal.thermal_grid)
+step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+state, history = advance_thermal(step, state, heat, 40)
+print(int(history.conduction_iterations.max()), float(jnp.max(jnp.abs(history.heat_balance_residual))))
+```
+
 **Tested** (`tests/test_timeloop.py`): a held flow through a duct walled on
 four sides and heated through its outer bottom closes every step's ledger, at
 300 K, to 1e-10 of its largest term, its sensible heat growing by the storage;
