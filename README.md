@@ -174,15 +174,17 @@ step checks that the heat budget balances. It is research stage
 
 ![Velocity and temperature of a square duct at Ha 0 and 100 in 3-D, Nusselt numbers against aspect ratio and Hartmann number, and mesh convergence](docs/_static/thermal_developed_duct.webp)
 
-Along a long duct, Nu is within 0.35 % of the exact series for rectangular
-ducts of every aspect ratio, and within 0.2 % of the closed form between
-Hartmann plates from Ha 1 to 1000, at second order.
+Along a long duct, the mean H1 Nusselt number on $D_h$ is within 0.35 % of the
+exact series for rectangular ducts of every aspect ratio, and the plates' own Nu
+(uniform flux, on $D_h = 4a$) within 0.2 % of the closed form between Hartmann
+plates from Ha 1 to 1000, at second order.
 
 ![Critical Rayleigh number against the field strength, the critical rolls at Q = 0 and 1000, and the error against the time step](docs/_static/thermal_magnetoconvection.webp)
 
 A vertical field delays convection in a layer heated from below: LMhdX follows
 Chandrasekhar's tenfold rise of the critical Rayleigh number from Q = Ha² = 0
-to 1000 within 0.9 %.
+to 1000 within 0.9 %, extrapolated from two time steps. These are verifications
+against exact or independent solutions, not comparisons with experiment.
 
 The tests gate the developed ducts and plates on fixed meshes, the onset at
 Q = 0 and the references themselves ([`validation/thermal.py`](validation/thermal.py)).
