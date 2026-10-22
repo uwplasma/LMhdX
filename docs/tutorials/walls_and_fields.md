@@ -39,9 +39,11 @@ end of the wall-bounded axes 1 and 2: a thickness in equal cells, with its
 `electrical_conductivity` (absolute, not over the fluid's) beside the
 `thermal_conductivity` and `heat_capacity` a thermal problem uses. The walls
 become cells of an extended grid (`core3d.conjugate_grid`), and the charge
-balance is solved through fluid and walls by SOLVAX `pcg`, preconditioned by
-the fast-diagonal Poisson inverse at the volume-mean conductivity
-(`poisson.variable_helmholtz` with no shift). The velocity and pressure stay on
+balance is solved through fluid and walls by `solvax.pcg_linear_solve`,
+preconditioned by the fast-diagonal Poisson inverse
+(`poisson.variable_helmholtz` with no shift). The balance is singular, its null
+mode the constants; a rank-one term on them makes it positive definite, and the
+volume mean is removed after. The velocity and pressure stay on
 the fluid's grid. The currents into the walls heat the fluid's half cells and
 are left out of the Lorentz force, as a resolved wall's are; the walls' own
 Joule heat is not deposited.
