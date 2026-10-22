@@ -433,16 +433,40 @@ uniform slug:
 | square, slug flow | 7.11354 | −1.5 % / −0.38 % / −0.094 % | 1.98, 1.99 |
 | square, H2 (uniform flux on every wall) | 3.091 | +1.3 % / +0.24 % / −0.027 % | 1.97 |
 
-The H2 gate exercises the heat-flux path the design workflow uses. Its 3.091 is
-Shah & London's (1978), as cited in the review of #240; Richardson extrapolation
-gives 3.0873, 0.12 % below. The H1 numbers' comparison with the book's tables
-waits for the book.
-The aspect-0.5 duct is gated at 64 cells; the square ducts carry the
-refinement study.
+The H2 case tests the heat-flux path that the design workflow uses. Its 3.091
+is Shah & London's (1978) value, as cited in the review of #240; Richardson
+extrapolation gives 3.0873, 0.12 % below it. The H1 values lie on Shah &
+London's polynomial fit for rectangular ducts, with the coefficients taken from
+the `ht` library; they have not yet been checked against the book's own tables.
+The tests check the aspect-0.5 duct at 64 cells only, and the refinement study
+uses the square ducts.
 
 A transverse field flattens the core. On 32 cells with Joule heat off, the H1
 Nusselt number of the square duct rises from 3.62 at Ha 0 to 4.56 at Ha 10 and
 5.35 at Ha 30, toward the slug value of 7.09.
+
+```{image} ../_static/thermal_developed_duct.webp
+:alt: Velocity and temperature of an H1 square duct at Ha 0 and 100 in 3-D, Nusselt numbers against aspect ratio and Hartmann number, and mesh convergence
+:align: center
+```
+
+The figure below compares LMhdX with exact results over a wider range than the
+tests cover; `python scripts/make_showcase_figures.py --only developed` redraws
+it. Its inputs and results are saved in `docs/_static/data/`, as are those of the
+entrance and onset figures further down, so each figure can be checked or
+replotted from the stored numbers. Every value is a mean Nusselt number: the
+wall heat flux averaged over the heated perimeter, made dimensionless with the
+hydraulic diameter $D_h$. The ducts use the H1 condition, and the plates their
+own uniform-flux Nusselt number with $D_h = 4a$.
+- For rectangular ducts with aspect ratios from 1 down to 1/8, LMhdX agrees with
+  the exact series to within 0.35 %, with 32 cells across the short side.
+- For the square duct on the meshes of `duct_problem` (48 cells, with the layers
+  resolved), Nu rises from Ha 0 to 1000 and is still 6 % below the slug-flow
+  value at Ha 1000.
+- For the plates described next, driven by the solver's own steady Hartmann
+  flow rather than the exact cell means, Nu matches the closed form to within
+  0.2 % from Ha 1 to 1000 on 128 layer-resolving cells, and converges at second
+  order on uniform cells.
 
 **An MHD reference.** Hartmann flow between plates at $y=\pm a$, each taking
 in a uniform heat flux with no source and no Joule heat, has
@@ -502,6 +526,30 @@ not for a Nusselt number.
 A plug flow carrying a uniform source converges to its exact steady profile at
 first order, 0.81 and then 0.91, at $Pe_h/2$ of 0.16, 0.08 and 0.04.
 
+**The thermal entrance.** Near a duct's inlet the temperature profile is still
+developing, and the local Nusselt number falls along the duct towards its
+developed value. The test case is a pair of plates heated with a uniform flux
+downstream of an inlet at temperature 0. They carry the developed Hartmann
+flow, held fixed in an open duct, with van Leer transport. Leaving out axial
+conduction, the Graetz eigen-expansion gives the local Nusselt number;
+`validation.thermal.graetz` evaluates it on 4,000 finite volumes, and for slug
+flow it has the closed form
+$Nu=4/\left(1/3-(2/\pi^2)\sum_n e^{-16n^2\pi^2x^+}/n^2\right)$.
+
+At $Pe=400$, with 64 cells across and 135 along, LMhdX stays within 1.3 % of the
+expansion beyond $x^+=10^{-3}$, and within 0.3 % beyond $10^{-2}$, at Ha 0, 10
+and 50. Closer to the inlet the remaining difference is axial conduction, which
+the expansion leaves out. At $Pe=1600$ the difference at $x^+=10^{-3}$ drops
+from 1.3 % to 0.14 %, while refining the mesh across or along the duct leaves
+it unchanged. The tests check the expansion itself against its slug-flow
+closed form and its developed limit, 140/17; the sweep is rerun with
+`python scripts/make_showcase_figures.py --only entrance`.
+
+```{image} ../_static/thermal_entrance.webp
+:alt: Temperature above the bulk in 3-D, local Nusselt number along heated Hartmann plates against the Graetz expansion, and its error
+:align: center
+```
+
 **Crediting a load.** A design that must remove a given duty is judged on what
 the duty itself does, not on the gross outlet enthalpy. Joule heat and a
 recirculating hot flow also raise the gross figure.
@@ -533,6 +581,44 @@ diffusion, at $Pe_h/2 = 0.08$. A conductive fluid ($\lambda=0.5$) stays coolest 
 79 % of its load through the inlet. A field's Joule heat multiplies the gross
 outlet enthalpy, from 7.9 to 32.8 as the flow doubles, but adds nothing to the
 load's credit.
+
+## Buoyant convection
+
+A fluid layer between rigid plates held at fixed temperatures, heated from below,
+becomes unstable at $Ra_c=1707.76$, and a vertical field delays the onset
+(Chandrasekhar 1961, Ch. IV). `python scripts/make_showcase_figures.py --only
+onset` measures the growth rate of the critical roll just below and just above
+Chandrasekhar's critical Rayleigh number, at his critical wavenumber, for
+$Q=Ha^2$ from 0 to 1000. It does so at two time steps,
+$\Delta t_0=0.05/(Q+Ra_c^{1/2})$ and $\Delta t_0/2$.
+
+The growth rate comes from power iteration on the time stepper. Every half time
+unit the perturbation of the conducting state is scaled back to $10^{-6}$, and
+the rate settles to five digits by the third rescaling. Letting the
+perturbation decay towards $10^{-10}$ instead does not work: it reaches a floor
+of round-off from the hydrostatic balance on the layer-resolving mesh, and near
+onset its rate then depends on that noise.
+
+The reference is Chandrasekhar's eigenproblem solved by Chebyshev collocation
+(`validation.thermal.chandrasekhar_onset`). It reproduces his tabulated values
+for $Q\le100$, as quoted by Basak & Kumar (2015), to within 0.01 %, which the
+tests check. LMhdX's onset converges at first order in the time step, and the
+extrapolated value is within 0.9 % of the reference across the tenfold rise of
+$Ra_c$. The tests run the Bénard onset at $Q=0$ and require it within 4 % of
+1707.76; the full sweep is rerun by the figure script.
+
+These runs use the stabilised momentum step, which damps each velocity
+component without matching the damping in its pressure correction. With the
+field vertical the fluid at rest stays at rest, but the perturbations are still
+affected at a finite time step. In a trial with a corrected stage, the Q = 1000
+onset at $\Delta t_0$ moved from 4.5 % to 0.8 % low, while the extrapolated
+values moved by less than 0.1 %. The figure will be regenerated once the
+corrected step is merged; the Q = 0 result does not change.
+
+```{image} ../_static/thermal_magnetoconvection.webp
+:alt: Critical Rayleigh number against the Chandrasekhar number, the critical rolls at Q = 0 and 1000, and the error against the time step
+:align: center
+```
 
 ## A worked example
 
