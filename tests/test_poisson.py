@@ -136,6 +136,30 @@ def test_solution_is_differentiable_and_jits():
     assert abs(float(jnp.sum(gradient * direction)) - float(difference)) < 1e-6 * abs(float(difference))
 
 
+def test_a_float32_helmholtz_factorization_keeps_its_null_mode_at_zero():
+    """Assembled in a float32 process, a stretched insulated axis's null eigenvalue came out +4e-6 or -1e-5, so at
+    a large coefficient ``shift - coefficient L`` solved a uniform right-hand side, which ``L`` does not see, to
+    4.2 or 0.31 times ``1/shift``. The null mode is zeroed as the Poisson factorization's is. In float64 it was
+    1e-17 of the largest eigenvalue, and a solve moves by 2e-14 at a unit coefficient, 1e-9 at 1e5."""
+    import subprocess
+    import sys
+
+    code = """
+import numpy as np, jax.numpy as jnp
+from lmhdx.grid import CENTER, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid, tanh_faces, uniform_faces
+from lmhdx.poisson import fast_diagonal_helmholtz
+for cells in (24, 32):
+    grid = Grid(uniform_faces(2, 0.0, 1.0), *(tanh_faces(cells, -1.0, 1.0, 2.0) for _ in range(2)))
+    walls = (BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN), BoundaryCondition(NEUMANN))
+    inverse = fast_diagonal_helmholtz(grid, (CENTER,) * 3, walls, shift=1.0, coefficient=1.0e5)
+    assert all(float(np.max(values)) == 0.0 for values in inverse.values)
+    x = inverse.solve(Field(jnp.ones(grid.shape, jnp.float32), (CENTER,) * 3, grid)).data
+    assert x.dtype == jnp.float32 and np.allclose(np.asarray(x), 1.0, rtol=1e-4), (cells, float(np.min(x)))
+"""
+    env = {key: value for key, value in __import__("os").environ.items() if key != "JAX_ENABLE_X64"}
+    subprocess.run([sys.executable, "-c", code], check=True, env=env, timeout=300)
+
+
 def test_single_precision_solves_at_single_precision_accuracy():
     grid, conditions = SMALL, (FIXED, FIXED, FIXED)
     factorization = fast_diagonal_poisson(grid, conditions)

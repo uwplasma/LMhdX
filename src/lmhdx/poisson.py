@@ -749,10 +749,13 @@ def _symmetric_eigen(operator: np.ndarray, weights: np.ndarray, message: str):
             f"{message} (relative asymmetry {asymmetry:.3e}); fast diagonalization does not apply"
         )
     eigenvalues, eigenvectors = _eigh(0.5 * (symmetric + symmetric.T))
-    if np.max(np.abs(operator @ np.ones(len(weights)))) <= _SINGULAR_TOLERANCE * np.max(np.abs(operator)):
+    tolerance = max(_SINGULAR_TOLERANCE, 100.0 * float(np.finfo(operator.dtype).eps))  # float32: 1.2e-5
+    if np.max(np.abs(operator @ np.ones(len(weights)))) <= tolerance * np.max(np.abs(operator)):
         # Constants are in the null space, so that eigenvalue is zero. Computed, it carries round-off
         # of the largest one (5e-10 across a Hartmann layer at Ha 100), which the lowest mode of a
-        # long inflow-outflow axis (0.04) cannot absorb: the pressure drop then drifts at 1e-8.
+        # long inflow-outflow axis (0.04) cannot absorb: the pressure drop then drifts at 1e-8. A
+        # Helmholtz factorization needs it too: assembled in float32 it came out +4e-6 or -1e-5 on a
+        # stretched insulated axis, and at a large coefficient the shifted operator lost its sign.
         eigenvalues[np.argmin(np.abs(eigenvalues))] = 0.0
     return eigenvalues, eigenvectors, root
 
@@ -1344,15 +1347,8 @@ def fast_diagonal_helmholtz(
         operator = assemble_staggered_axis_operator(grid, axis, offset, condition)
         selection = free_slice(grid, axis, offset[axis], condition)
         weights = _axis_weights(grid, axis, offset[axis], condition)[selection]
-        root = np.sqrt(weights)
-        symmetric = root[:, None] * operator / root[None, :]
-        asymmetry = _relative_asymmetry(symmetric)
-        if asymmetry > _symmetry_tolerance(symmetric):
-            raise ValueError(
-                f"axis {axis} operator is not symmetric under its cell weights "
-                f"(relative asymmetry {asymmetry:.3e}); fast diagonalization does not apply"
-            )
-        eigenvalues, eigenvectors = _eigh(0.5 * (symmetric + symmetric.T))
+        message = f"axis {axis} operator is not symmetric under its cell weights"
+        eigenvalues, eigenvectors, root = _symmetric_eigen(operator, weights, message)
         vectors.append(eigenvectors)
         values.append(eigenvalues)
         scales.append(root)
