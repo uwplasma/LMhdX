@@ -1184,7 +1184,9 @@ class DevelopedWallTemperature(NamedTuple):
 
     ``temperature`` is the shape at a unit bulk excess, ``(T - T_w)/(T_b - T_w)``; ``eigenvalue`` is ``Lambda`` in
     ``-L(theta) = Lambda f theta``, ``f = u/u_mean``; ``nusselt`` averages the wall flux over the held walls.
-    ``eigen_residual`` is ``max |L(theta) + Lambda f theta| / max |Lambda f theta|`` after ``iterations``.
+    ``eigen_residual`` is ``max |L(theta) + Lambda f theta| / max |Lambda f theta|`` after ``iterations``, and
+    ``converged`` whether it reached the tolerance with the flow forward in every cell; if not, the eigenvalue,
+    the decay rate and the Nusselt number are NaN.
     """
 
     temperature: Field
@@ -1195,6 +1197,7 @@ class DevelopedWallTemperature(NamedTuple):
     nusselt: jnp.ndarray
     eigen_residual: jnp.ndarray
     iterations: jnp.ndarray
+    converged: jnp.ndarray
 
 
 def developed_wall_temperature(
@@ -1211,6 +1214,10 @@ def developed_wall_temperature(
     ``max_iterations``. Each iteration gains the ratio of the two smallest eigenvalues of the section's symmetric
     modes: a square duct reaches 1e-10 in 13, a 1:8 duct in about 150. ``Lambda`` is the Rayleigh quotient
     of the result, stationary at an eigenfunction, so its derivative in the velocity needs none of the iteration.
+
+    The supported derivative is the first derivative of the eigenvalue, the decay rate and the Nusselt number at a
+    converged solve. The profile is returned under ``stop_gradient``: its sensitivity needs an implicit
+    eigenvector solve, and second derivatives are not supported either.
 
     The duct is as for :func:`developed_heat`. The held walls share one temperature, which does not enter; a
     heat-flux wall must be adiabatic. Sources and Joule heat are left out. Compiled whole by :func:`jax.jit`.
@@ -1256,6 +1263,8 @@ def developed_wall_temperature(
     )
     theta = jax.lax.stop_gradient(theta)
     eigenvalue, residual = quotient(theta, weight)
+    converged = (residual <= tolerance) & jnp.all(fixed > 0.0)
+    eigenvalue = jnp.where(converged, eigenvalue, jnp.nan)
     perimeter, held_perimeter = 0.0, 0.0  # wall areas over the axial length
     length = float(np.sum(grid.widths[axial]))
     for (axis, end), kind in zip(walls, kinds):
@@ -1264,7 +1273,7 @@ def developed_wall_temperature(
     area = float(np.sum(grid.cell_volumes())) / length
     bulk = jnp.sum(volumes * weight * theta.data) / jnp.sum(volumes)
     return DevelopedWallTemperature(
-        theta.replace_data(theta.data / bulk),
+        theta.replace_data(jax.lax.stop_gradient(theta.data / bulk)),
         eigenvalue,
         eigenvalue * problem.diffusivity / mean,
         mean * area,
@@ -1272,6 +1281,7 @@ def developed_wall_temperature(
         eigenvalue * (4.0 * area / perimeter) * area / held_perimeter,
         residual,
         count,
+        converged,
     )
 
 
