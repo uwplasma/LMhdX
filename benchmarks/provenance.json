@@ -162,6 +162,44 @@
       "workflows": [
         "validation/freemhd.py"
       ]
+    },
+    {
+      "acceptance": {
+        "conjugate_comparison": false,
+        "developed_section": true,
+        "reference_curves_case1": true,
+        "specification_frozen": true
+      },
+      "id": "M1-magnetoconvection-horizontal-duct",
+      "primary_observables": [
+        "developed pressure gradient",
+        "velocity profiles",
+        "wall and bulk temperature",
+        "Nusselt number"
+      ],
+      "runtime_lane": "external-data",
+      "source_ids": [
+        "mistrangelo-2025",
+        "martelli-2019",
+        "matolich-1965",
+        "aries-ss316",
+        "mistrangelo2025-case1"
+      ],
+      "spec_path": "lmhdx/data/benchmarks/specs/mistrangelo2025.toml",
+      "status": "specification-frozen",
+      "tests": [
+        "tests/test_steady.py::test_the_magnetoconvection_specification_reproduces_its_printed_numbers",
+        "tests/test_steady.py::test_the_magnetoconvection_section_converges_to_its_pinned_gradient",
+        "tests/test_steady.py::test_the_magnetoconvection_section_meets_figure_13s_core",
+        "tests/test_steady.py::test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale",
+        "tests/test_steady.py::test_the_digitizer_reads_a_drawn_figure"
+      ],
+      "tier": "C",
+      "title": "Heated conducting square duct in a fringing field",
+      "workflows": [
+        "validation/mistrangelo.py",
+        "scripts/digitize_mistrangelo.py"
+      ]
     }
   ],
   "schema_version": 1,
@@ -205,6 +243,57 @@
       "id": "freemhd",
       "kind": "software",
       "title": "FreeMHD"
+    },
+    {
+      "availability": "open-access",
+      "doi": "10.1088/1741-4326/ae0800",
+      "filename": "paper_references/mistrangelo2025/mistrangelo2025_nf65_116006.pdf",
+      "id": "mistrangelo-2025",
+      "kind": "article",
+      "sha256": "04068bebcc7619a71fd1bee74c91d53be9bf3fa2cae4a3851e0c9a3dbd56c155",
+      "title": "A code-to-code benchmark for magneto-convection in a horizontal duct",
+      "year": 2025
+    },
+    {
+      "availability": "external",
+      "doi": "10.1016/j.fusengdes.2018.11.028",
+      "id": "martelli-2019",
+      "kind": "article",
+      "title": "Literature review of lead-lithium thermophysical properties",
+      "year": 2019
+    },
+    {
+      "availability": "open-access",
+      "id": "matolich-1965",
+      "kind": "report",
+      "title": "Thermal conductivity and electrical resistivity of Type 316 stainless steel from 0 to 1800 F (NASA CR-54151)",
+      "url": "https://ntrs.nasa.gov/citations/19650024830",
+      "year": 1965
+    },
+    {
+      "availability": "open-access",
+      "id": "aries-ss316",
+      "kind": "web-database",
+      "title": "ARIES/UCSD material properties: austenitic stainless steel (316)",
+      "url": "https://qedfusion.org/LIB/PROPS/PANOS/ss.html"
+    },
+    {
+      "availability": "repository",
+      "digitizer": "scripts/digitize_mistrangelo.py",
+      "digitizer_sha256": "27e9beb2ce39979c66121447266d9f90ea8bc2b5e031082f6e8169f139bda8ab",
+      "extracted": "2026-10-20, from the PDF of mistrangelo-2025 (its DOI and SHA-256 above) with pymupdf Document.extract_image(xref); each image's SHA-256 is in its record",
+      "extraction": {
+        "asset": "mistrangelo2025-case1-extraction.zip",
+        "contents": "the 14 figure images, unmodified (CC BY 4.0, with the paper's attribution), and mistrangelo2025-case1-curves.json: every code's curve, one value per pixel column with nothing decimated, with each figure's calibration and image SHA-256",
+        "curves_sha256": "7ad4329c357847afb147526290bba2a8967ae50a6eece12f6d239d676e64415c",
+        "release": "https://github.com/uwplasma/LMhdX/releases/tag/mistrangelo2025-references",
+        "sha256": "3c940a2a697735020f4b8247cce583d9e77c834fc2e6070b9d5da6ecd2beb822"
+      },
+      "id": "mistrangelo2025-case1",
+      "kind": "reference_data",
+      "path": "lmhdx/data/benchmarks/references/mistrangelo2025-case1.json",
+      "sha256": "ee939b2e4e552a664317d9d1a50140378eca9fa1d79bf73926224445b3e5158e",
+      "title": "Mistrangelo et al. 2025, Case 1: figures digitized by scripts/digitize_mistrangelo.py"
     }
   ]
 }

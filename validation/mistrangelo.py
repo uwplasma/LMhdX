@@ -32,6 +32,7 @@ __all__ = [
     "PIN_MESH",
     "REFERENCES",
     "SPEC",
+    "band_misfit",
     "developed_gradient",
     "developed_section",
     "field",
@@ -114,6 +115,34 @@ def developed_section(
         dt=1.0,
         wall_layers=(None, (layer, layer), (layer, layer)),
     )
+
+
+def band_misfit(x, y, figure: dict) -> float:
+    """How far ``y(x)`` lies outside a figure's acceptance band: the codes' spread widened by the record's digitizing
+    uncertainty in both axes (ADR 0009 D35). Arrays and numbers in, the largest excess out, zero inside.
+
+    The band is interpolated in the plotted coordinates, as it was drawn and compacted: on a log axis in decades,
+    where a value that is not positive and finite is refused, and the excess is in decades. Each edge is taken at its
+    extreme over ``x`` plus or minus the x uncertainty (the window kept inside the band), then widened by the y
+    uncertainty. Points outside the band's x range are refused.
+    """
+    x, y = np.atleast_1d(np.asarray(x, float)), np.atleast_1d(np.asarray(y, float))
+    band = {key: np.asarray(band, float) for key, band in figure["band"].items()}
+    if np.any((x < band["x"][0]) | (x > band["x"][-1])):
+        raise ValueError(f"x outside Figure {figure['figure']}'s band, {band['x'][0]} to {band['x'][-1]}")
+    lower, upper = band["lower"], band["upper"]
+    if figure["y_scale"] == "log10":
+        if not all(np.all(np.isfinite(v) & (v > 0.0)) for v in (lower, upper, y)):
+            raise ValueError(f"Figure {figure['figure']}'s log axis takes positive, finite values only")
+        y, lower, upper = np.log10(y), np.log10(lower), np.log10(upper)
+    across, along = figure["uncertainty"]["x"], figure["uncertainty"]["y"]
+    excess = 0.0
+    for at, value in zip(x, y):
+        ends = np.clip([at - across, at + across], band["x"][0], band["x"][-1])
+        window = np.concatenate([ends, band["x"][(band["x"] > ends[0]) & (band["x"] < ends[1])]])
+        low, high = np.min(np.interp(window, band["x"], lower)), np.max(np.interp(window, band["x"], upper))
+        excess = max(excess, low - along - value, value - high - along)
+    return float(excess)
 
 
 def _peak(z, u) -> tuple[float, float]:
