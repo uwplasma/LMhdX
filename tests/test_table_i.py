@@ -13,6 +13,7 @@ from importlib.resources import files
 import pytest
 
 from validation.gci import TABLE_I_MESHES, TABLE_I_RATIO, grid_convergence, table_i_flow_rate
+from validation.shercliff import quadrant_flow_rate
 
 try:
     import tomllib
@@ -80,3 +81,62 @@ def test_table_i_converges_at_second_order_to_the_analytic_flow_rate(row, hartma
     assert abs(convergence.extrapolated - reference) / reference < (1.0e-3 if hartmann <= 5000 else 5.0e-3)
     # The analytic value lies inside the fine mesh's uncertainty band (Celik 2008, safety factor 1.25).
     assert abs(rates[2] - reference) / reference < convergence.gci_fine
+
+
+# Ni, Munipalli, Huang, Morley and Abdou 2007 Part I (J. Comput. Phys. 227, 174): their published tables.
+#
+# Section 4 of the paper validates its consistent and conservative current scheme on
+# fully developed duct flow. LMhdX's staggered scheme conserves charge exactly, so it
+# is a different scheme with the same property, and the paper's numbers are a
+# code-to-code band, not an exact target. Three anchors, all run from the paper's data:
+#
+# * Table 2: mass flow rate of Shercliff's duct (insulating walls) at Ha 50, 500 and
+#   1000 on three meshes of 38^2, 46^2 and 62^2 cells (4, 8 and 16 cells across 2/Ha
+#   and 2/sqrt(Ha), 30 in the core), the pressure gradient chosen so that the exact
+#   rate is 4. LMhdX meshes follow that recipe with ``wall_resolving_faces``; the
+#   paper does not give the stretching, so the match is of layer resolution.
+# * Tables 3 and 4: the analytic pressure gradient of Hunt's duct (Ha 300, c 0.1 and
+#   Ha 500, c 0.05, Hartmann walls conducting), quoted as ``Re * dp/dx``. The
+#   independent spectral solve of ``validation.shercliff`` is compared with them.
+# * Table 3's own 3-D error, 0.06 %, is not reproduced at 47^2: see the documentation.
+
+# Table 2, Mesh-1 to Mesh-3: 38^2, 46^2 and 62^2 cells (4, 8 and 16 layer cells), coarse to fine.
+NI_TABLE_2 = {
+    50: (4.13534, 4.03574, 4.01075),
+    500: (4.14244, 4.04400, 4.01862),
+    1000: (4.13525, 4.03927, 4.01476),
+}
+# Tables 3 and 4: Re x analytic pressure gradient, equal in every column of a table.
+NI_TABLE_3_4 = {(300, 0.1): 5854.302, (500, 0.05): 9531.4475}
+
+
+@pytest.mark.parametrize("hartmann", [50, 500, 1000])
+def test_table_2_flow_rates_of_shercliffs_duct_on_the_papers_layer_resolutions(hartmann):
+    """LMhdX errors are 0.3-4 % and monotone, below Ni's on the coarsest mesh, within 1.4x on the middle one and 3.5x on the finest.
+
+    Measured (error of the flow rate, LMhdX against Ni): Ha 50 2.7/3.4, 0.77/0.89, 0.35/0.27 %;
+    Ha 500 2.6/3.6, 1.1/1.1, 0.86/0.47 %; Ha 1000 2.6/3.4, 1.3/0.98, 1.1/0.37 %.
+    """
+    reference = quadrant_flow_rate(hartmann)
+    ours, theirs = [], []
+    for layer_cells, published in zip((4, 8, 16), NI_TABLE_2[hartmann], strict=True):
+        count = 30 + 2 * layer_cells
+        rate = table_i_flow_rate(hartmann, 0.0, count, layer_cells, count, layer_cells, 2.0) / reference
+        ours.append(rate / 4.0 - 1.0)
+        theirs.append(published / 4.0 - 1.0)
+    assert ours[0] > ours[1] > ours[2] > 0.0
+    assert ours[0] < theirs[0] and ours[1] < 1.4 * theirs[1]
+    assert all(0.3 < mine / paper < 3.5 for mine, paper in zip(ours, theirs, strict=True) if paper > 0.0)
+
+
+@pytest.mark.parametrize(("hartmann", "wall"), sorted(NI_TABLE_3_4))
+def test_tables_3_and_4_analytic_pressure_gradient_of_hunts_duct(hartmann, wall):
+    """The paper's analytic ``Re dp/dx`` agrees with the independent spectral solve to 6e-4.
+
+    Measured: the spectral values are 5857.20 and 9535.10 (converged to 1e-5 with 80 points),
+    against Ni's 5854.302 and 9531.4475: +4.9e-4 and +4.2e-4. These are the size of Ni's own
+    reported 3-D errors (0.016-0.075 %), so their error is partly the reference.
+    """
+    # With unit mean velocity the dimensionless gradient is 1 / (flow rate per unit forcing / area).
+    spectral = 1.0 / quadrant_flow_rate(hartmann, 64, hartmann_wall=wall)
+    assert spectral / NI_TABLE_3_4[(hartmann, wall)] - 1.0 == pytest.approx(4.5e-4, abs=2e-4)

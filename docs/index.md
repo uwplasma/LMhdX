@@ -90,6 +90,7 @@ physics/thermal
 :caption: Validation
 
 validation/index
+validation/q2d
 validation/freemhd
 validation/mistrangelo
 ```
