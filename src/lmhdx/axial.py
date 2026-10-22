@@ -149,7 +149,7 @@ def fully_developed_inlet(
         if any(np.ptp(slab) > 1e-12 * max(1.0, float(np.max(np.abs(slab)))) for slab in slabs):
             raise ValueError("the inlet field must be uniform over the inlet cross-section")
         field = tuple(float(slab.flat[0]) for slab in slabs)
-    periodic = dataclasses.replace(  # the duct's walls, thin, resolved or solid, with the rest
+    periodic = dataclasses.replace(  # the duct's own walls, thin, resolved or solid, with every other field
         problem,
         grid=section,
         conditions=(BoundaryCondition(PERIODIC), *problem.conditions[1:]),

@@ -526,7 +526,7 @@ def test_walls_resolved_in_cells_solve_the_dense_conductivity_jump():
 def test_the_corners_of_walls_of_equal_cells_are_shared_alike():
     """Walls of the same cells on both axes but of different materials: the corner cells' depths tie exactly, and
     every tie goes to the first axis alike, so a mirror-symmetric charge has a mirror-symmetric potential. The
-    rounding of the cells' centres split the ties unevenly before (plan step 5.4b)."""
+    rounding of the cells' centres split the ties unevenly before."""
     from lmhdx.poisson import fast_diagonal_thin_wall_poisson
 
     grid = Grid(uniform_faces(1, 0.0, 1.0), uniform_faces(6, -1.0, 1.0), uniform_faces(6, -1.0, 1.0))

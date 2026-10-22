@@ -265,30 +265,41 @@ class ConjugateGrid(NamedTuple):
     fluid: tuple[slice, slice, slice]
     walls: tuple
 
-    def cells(self, name: str, fluid: float) -> np.ndarray:
+    def cells(self, name: str, fluid, walls: dict | None = None):
         """Each cell's value of the walls' property ``name``, with ``fluid`` in the fluid's cells.
 
-        A corner cell lies in a wall of both transverse axes and takes the nearer wall's value, the first axis's
-        when they are equally near, as the corner cells of resolved walls do
-        (:func:`lmhdx.poisson.fast_diagonal_thin_wall_poisson`).
+        ``walls`` maps a wall, ``(axis, side)``, to a value in place of its own. The values may then be traced: the
+        result is a ``jnp`` array and which cell is which stays static, so a wall's conductivity or heat capacity can
+        be a leaf of a solve and a new value does not recompile. A corner cell lies in a wall of both transverse axes
+        and takes the nearer wall's value, the first axis's when they are equally near, as the corner cells of
+        resolved walls do (:func:`lmhdx.poisson.fast_diagonal_thin_wall_poisson`).
         """
-        values, depths = [], []
+        slots = [(axis, side) for axis in (1, 2) for side in (0, 1)]
+        own = [
+            fluid if self.walls[axis][side] is None else getattr(self.walls[axis][side], name)
+            for axis, side in slots
+        ]
+        if not walls:
+            return np.asarray([fluid, *own], dtype=float)[self._labels()]
+        if any(slot not in slots or self.walls[slot[0]][slot[1]] is None for slot in walls):
+            raise ValueError("a wall's value is given by (axis, side) of a solid wall of the grid")
+        table = [walls.get(slot, value) for slot, value in zip(slots, own)]
+        return jnp.stack([jnp.asarray(value, dtype=float) for value in (fluid, *table)])[self._labels()]
+
+    def _labels(self) -> np.ndarray:
+        """Each cell's material: 0 the fluid's, ``1 + 2 (axis - 1) + side`` a wall's; a corner the nearer wall's."""
+        labels, depths = [], []
         for axis in (1, 2):
-            (lower, upper), block = self.walls[axis], self.fluid[axis]
+            block = self.fluid[axis]
             faces, centres = np.asarray(self.grid.faces[axis]), np.asarray(self.grid.centers[axis])
-            value = np.full(centres.size, np.nan)
-            if lower is not None:
-                value[: block.start] = getattr(lower, name)
-            if upper is not None:
-                value[block.stop :] = getattr(upper, name)
-            values.append(value)
+            label = np.zeros(centres.size, dtype=int)
+            label[: block.start], label[block.stop :] = 2 * axis - 1, 2 * axis
+            labels.append(label)
             inside = (faces[block.start], faces[block.stop])
             depths.append(np.maximum(inside[0] - centres, 0.0) + np.maximum(centres - inside[1], 0.0))
-        first, second = values[0][:, None], values[1][None, :]
-        nearer = _nearer_first_wall(depths[0], depths[1])
-        takes_first = ~np.isnan(first) & (np.isnan(second) | nearer)
-        plane = np.where(takes_first, first, np.where(np.isnan(second), float(fluid), second))
-        return np.array(np.broadcast_to(plane, self.grid.shape))
+        first, second = labels[0][:, None], labels[1][None, :]
+        takes_first = (first > 0) & ((second == 0) | _nearer_first_wall(depths[0], depths[1]))
+        return np.broadcast_to(np.where(takes_first, first, second), self.grid.shape)
 
     def padded(self, data: jnp.ndarray, axes: tuple[int, ...] = (0, 1, 2)) -> jnp.ndarray:
         """Fluid data on the cells, or on the faces, of ``axes``, padded with zeros onto the extended grid."""

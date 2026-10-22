@@ -768,35 +768,38 @@ def build_thermal_step(
     def total(data):
         return cell_inner_product(Field(data, _CELL, grid), Field(jnp.ones_like(data), _CELL, grid))
 
+    # One ledger for both solves: PCG through the walls' cells, or the fast-diagonal inverse of one material. The
+    # cells' rho c_p weigh what each cell stores; what it keeps is the state's own change, rounded to its precision.
     if walled:
         conduction = problem.conduction()
         lift, cells = conduction.lift(problem.thermal_conditions), jnp.asarray(conduction.shift, compute)
 
-        def conduct(temperature, transport, sources):
+        def solve(temperature, transport, sources):
             # c d - dt div(k grad d) = dt (q - C div(u T) + div(k grad T)) for the increment d, so PCG's tolerance
             # is relative to the step's change, not to the temperature.
             increment = dt * (sources - capacity * transport + conduction.divergence(temperature.data) + lift)
             change, iterations = conduction.solve(increment)
-            heated = temperature.replace_data(temperature.data + change)
-            stored = heated.data - temperature.data  # what the state keeps, rounded to its precision
-            conducted = conduction.divergence(heated.data) + lift
-            balance = (cells * stored / dt + capacity * transport - conducted - sources) / cells
-            storage, sensible = total(cells * stored) / dt, total(cells * (heated.data - reference))
-            return heated, storage, sensible, balance, iterations
+            return temperature.replace_data(temperature.data + change), iterations
+
+        def conducted(heated):
+            return conduction.divergence(heated.data) + lift
 
     else:
-        diffusion, lift = problem.diffusion_factorization(), problem.boundary_lift()
+        diffusion, lift, cells = problem.diffusion_factorization(), problem.boundary_lift(), capacity
 
-        def conduct(temperature, transport, sources):
-            sources = sources / capacity
-            rhs = temperature.data + dt * (sources - transport + alpha * lift.data)
-            heated = diffusion.solve(temperature.replace_data(rhs))
-            change = heated.data - temperature.data
-            balance = (
-                change / dt + transport - alpha * laplacian(heated, problem.thermal_conditions).data - sources
-            )
-            storage, sensible = capacity * total(change) / dt, capacity * total(heated.data - reference)
-            return heated, storage, sensible, balance, jnp.zeros((), jnp.int32)
+        def solve(temperature, transport, sources):
+            rhs = temperature.data + dt * (sources / capacity - transport + alpha * lift.data)
+            return diffusion.solve(temperature.replace_data(rhs)), jnp.zeros((), jnp.int32)
+
+        def conducted(heated):
+            return capacity * alpha * laplacian(heated, problem.thermal_conditions).data
+
+    def conduct(temperature, transport, sources):
+        heated, iterations = solve(temperature, transport, sources)
+        stored = heated.data - temperature.data
+        balance = (cells * stored / dt + capacity * transport - conducted(heated) - sources) / cells
+        storage, sensible = total(cells * stored) / dt, total(cells * (heated.data - reference))
+        return heated, storage, sensible, balance, iterations
 
     def thermal_step(
         state: ThermalState, heat_source: Field, *, backflow_temperature: float | jnp.ndarray | None = None

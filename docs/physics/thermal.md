@@ -376,15 +376,21 @@ step 5.4 (ADR 0009 D36): a conduction solve, and the thermal step on it.
 `ConjugateGrid` it returns holds the extended grid, whose fluid block keeps the
 given faces exactly, the block's slices, and the walls, whose properties
 `cells(name, fluid_value)` spreads over every cell. A corner cell takes the
-nearer wall's material, the first axis's when equally near, as the corners of
-resolved electrical walls do.
+nearer wall's material, the first axis's when equally near to rounding, as the
+corners of resolved electrical walls do.
 
 **The solve.** `poisson.variable_helmholtz(grid, conditions, conductivity,
 shift, coefficient)` is $V\,(s\,x - \tau\,\nabla\cdot(k\nabla x))$ for cell-wise
-$k$ and $s$. A face's conductance is the harmonic mean of its half cells,
-$G = A/(\delta_1/k_1 + \delta_2/k_2)$, so the heat that leaves one cell enters the
-next; a boundary face takes its cell's $k$, which a heat flux there is built
-with (`thermal_boundary(..., conductivity=...)`). One implicit step solves for
+$k$ and $s$.
+
+**The face-conductance contract.** Between two cells with half widths
+$\delta_1$, $\delta_2$ and conductivities $k_1$, $k_2$, the flux per unit area
+is $(T_2 - T_1)/(\delta_1/k_1 + \delta_2/k_2)$, the half cells' series
+resistance, at a material interface as anywhere else. The face area and the
+cell volume enter once, in the divergence; the conductance does not carry the
+area a second time. So the heat that leaves one cell enters the next. A
+boundary face takes its cell's $k$, which a heat flux there is built with
+(`thermal_boundary(..., conductivity=...)`). One implicit step solves for
 the increment $\delta = T^{n+1} - T^n$,
 
 $$
@@ -395,13 +401,36 @@ $$
 $b$ the boundary data's `lift`, so PCG's tolerance is the change's.
 `solvax.pcg_linear_solve` is preconditioned by the fast-diagonal inverse at the
 volume-mean $k$ and $s$, and differentiates implicitly, its tangent and adjoint
-solves from zero. The operator is generic numerics, to move to SOLVAX
-(uwplasma/SOLVAX#158).
+solves from zero. Unconverged, it returns NaN, and NaN derivatives. The
+operator is generic numerics, to move to SOLVAX (uwplasma/SOLVAX#158).
 
-**Tested** (`tests/test_ops.py`): two materials in series, exact with the same
-flux through every face; steel brought into contact with fluid, the exact
-effusivity-weighted contact temperature at second order; the benchmark's steel
-and PbLi walled on four sides, symmetric and conservative.
+**What is differentiable.**
+- **The walls' conductivity and heat capacity.** `cells(name, fluid_value,
+  walls={(axis, side): value})` puts a wall's value into the cells in the
+  trace. `VariableHelmholtz.with_coefficients(conductivity, shift)` builds the
+  face conductances from it, and the preconditioner keeps its built means. So a
+  wall's $k$ or $\rho c_p$ is a leaf, and a new value does not recompile.
+- **Static:** a wall's thickness, its cell count, and which cell belongs to
+  which material.
+
+**Tested** (`tests/test_ops.py`):
+- two materials in series, exact, with the same flux through every face;
+- steel brought into contact with fluid: the exact effusivity-weighted contact
+  temperature, at second order;
+- the benchmark's steel and PbLi walled on four sides: symmetric and
+  conservative;
+- **an independent high-contrast check.** Walls of 1000 times the fluid's $k$,
+  held at 0 outside, around a uniformly heated square. The fluid's mean
+  temperature tends to the Dirichlet Poisson series, 0.140577, raised by the
+  walls' own drop $q a t/(2k_w)$. The error falls at about second order, and the
+  Richardson value meets the series within 1e-4.
+- **a wall conductivity's derivative,** to the derivative standard:
+  - central differences at two steps;
+  - a Taylor remainder of second order;
+  - a tighter tolerance and a finer mesh;
+  - the JVP/VJP identity in two walls at once;
+  - no recompilation for a new value;
+  - NaN when PCG has not converged.
 
 | Walls ($k$ and $\rho c_p$ over the fluid's) | PCG iterations, 6 to 24 cells across, $\Delta t$ 0.05 and 100 |
 |:--|:--|
@@ -423,8 +452,10 @@ included: a heat flux there is built with the `k` of each boundary cell, an
 array where fluid and wall cells meet the surface. The walls' end faces take
 the axis-0 conditions, so an inflow-outflow axis holds them at the inlet
 temperature and insulates them at the outlet. The walls carry no flow, and
-Joule heat is deposited in the fluid only. Each step solves for its increment,
-as above. The ledger covers the fluid and its walls: storage and sensible heat
+**Joule heat in the walls is omitted.** `joule_heating` deposits the fluid's
+Joule heat. A solid wall only stores and conducts heat, with no source of its
+own: no Joule heat, as the benchmark's eq. 4 has none. Each step solves for its
+increment, as above. The ledger covers the fluid and its walls: storage and sensible heat
 weigh each cell by its own $\rho c_p$, the conduction out is the solve's own
 flux through the outer surface, and `conduction_iterations` reports the PCG
 iterations, zero without walls. The extremes span every cell; the Boussinesq
@@ -466,13 +497,36 @@ state, history = advance_thermal(step, state, heat, 40)
 print(int(history.conduction_iterations.max()), float(jnp.max(jnp.abs(history.heat_balance_residual))))
 ```
 
-**Tested** (`tests/test_timeloop.py`): a held flow through a duct walled on
-four sides and heated through its outer bottom closes every step's ledger, at
-300 K, to 1e-10 of its largest term, its sensible heat growing by the storage;
-walls of the fluid's own material, of unequal cells, reproduce the separable
-step on the extended grid to 1e-10, upwind and van Leer; a moving walled flow
-steps exactly as `core3d.step`, and a hot wall cell leaves its buoyancy alone;
-and the run differentiates in its heat source and its start.
+One `conduct` serves both solves: PCG through the walls, or the fast-diagonal
+inverse of one material, which stays for a duct without walls. The ledger is
+computed once, for either.
+
+**Tested** (`tests/test_timeloop.py`):
+- **The ledger.** A held flow through a duct walled on four sides and heated
+  through its outer bottom closes every step's ledger, at 300 K, to 1e-10 of
+  its largest term. Its sensible heat grows by the storage.
+- **Fluid and solid energy, region by region.**
+  - Each region stores what its face fluxes bring in, to PCG's tolerance.
+  - The fluid's inflow is the interface flux its walls hand it, plus what
+    crosses its ends. The walls' inflow is the heated face's, 3.3 to rounding,
+    less that same interface flux: equal and opposite.
+  - In the sum the interface cancels.
+- **Time order.** The conjugate step is backward Euler in conduction and
+  explicit in transport. Against a run at a 64th of the step it converges at
+  first order as the step halves.
+- **Walls of the fluid's own material,** of unequal cells, reproduce the
+  separable step on the extended grid to 1e-10, upwind and van Leer.
+- **A moving walled flow** steps exactly as `core3d.step`, and a hot wall cell
+  leaves its buoyancy alone.
+- **Derivatives.** The run differentiates in its heat source and its start.
+  A wall's `k` and `ρc_p` are leaves of the conduction solve
+  (`ConjugateGrid.cells(..., walls=...)`); in the step they are planned, bound
+  for now by `problem.conduction()`.
+
+**The gate and the independent check.** No conjugate-heat anchor other than
+Mistrangelo et al. has been found, so the exact two-material series and contact
+transient stay the CI gate, and step 5.4c's heated duct is the independent
+check.
 
 ## The thermally fully developed duct
 

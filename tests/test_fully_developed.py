@@ -294,8 +294,8 @@ def test_resolved_walls_on_both_axes_match_the_cell_centred_corners():
     Office, float64, mean velocity at Ha 20, core 32/64/96/128 0.0123907/0.0123487/0.0123297/0.0123234,
     cell-centred 32/64/96 0.0123993/0.0123538/0.0123333; Ha 100 core 0.00078544/0.00078017/0.00077984/
     0.00077940, cell-centred 0.00073014/0.00075151/0.00076372 (converging from below). Thin walls
-    of the same conductance sit 0.16 % (Ha 20) and 0.45 % (Ha 100) lower. Measured before step 5.4b gave
-    tied corners to the first axis: core 32 is now 0.0123900 at Ha 20 and 0.00078533 at Ha 100.
+    of the same conductance sit 0.16 % (Ha 20) and 0.45 % (Ha 100) lower. Measured before tied corners went to
+    the first axis alike: core 32 is now 0.0123900 at Ha 20 and 0.00078533 at Ha 100.
     """
     base = lmhdx.make_hunt_case(ha=20.0, ny=32, nz=32, wall_thickness=0.05, wall_cells=8)
     case = _resolved(

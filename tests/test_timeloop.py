@@ -1391,6 +1391,67 @@ def test_solid_walls_close_the_ledger_of_fluid_and_walls():
     assert hottest[2] < 2
 
 
+def test_the_fluid_and_its_walls_exchange_one_interface_flux():
+    """Fluid and solid energy, region by region, over one walled step at rest. Each region stores what its
+    conductive face fluxes bring in, to PCG's tolerance. The fluid's inflow is the interface flux its walls hand it
+    plus what crosses its own ends; the walls' is the heated face's less that same interface flux, equal and
+    opposite. In the sum the interface cancels, and the duct stores what crosses its outer boundary."""
+    from lmhdx.core3d import conjugate_grid
+    from lmhdx.thermal import build_thermal_step, initial_thermal_state
+
+    thermal, _ = _walled_duct()
+    grid, dt, conduction = thermal.thermal_grid, float(thermal.flow.dt), thermal.conduction()
+    start = initial_thermal_state(thermal, 0.0, zero_velocity(thermal.flow))
+    after, _ = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)(start, _cells(thermal, 0.0))
+    heated, volumes = np.asarray(after.temperature.data), grid.cell_volumes()
+    stored = np.asarray(conduction.shift) * heated / dt * volumes
+    fluxes = conduction.face_fluxes(jnp.asarray(heated), thermal.thermal_conditions)
+    inflow = np.asarray(divergence(fluxes).data) * volumes
+    fluid = np.zeros(grid.shape, dtype=bool)
+    fluid[conjugate_grid(thermal.flow.grid, thermal.walls).fluid] = True
+    interface, boundary = 0.0, {True: 0.0, False: 0.0}
+    for axis, flux in enumerate(fluxes):
+        area = np.asarray(flux.data) * grid.face_areas(axis)
+        if axis == 2:  # the outer bottom face, heated over the patch
+            patch = -np.sum(np.moveaxis(area, axis, 0)[0])
+        lower, upper = (np.moveaxis(fluid, axis, 0)[index] for index in (slice(None, -1), slice(1, None)))
+        inner = np.moveaxis(area, axis, 0)[1:-1]
+        interface += np.sum(np.where(upper & ~lower, -inner, 0.0)) + np.sum(
+            np.where(lower & ~upper, inner, 0.0)
+        )
+        for side, sign in ((0, -1.0), (-1, 1.0)):
+            ends, cells = np.moveaxis(area, axis, 0)[side], np.moveaxis(fluid, axis, 0)[side]
+            for region in (True, False):
+                boundary[region] += sign * np.sum(np.where(cells == region, ends, 0.0))
+    for region, exchanged in ((True, interface), (False, -interface)):
+        assert np.sum(stored[fluid == region]) == pytest.approx(np.sum(inflow[fluid == region]), rel=1e-9)
+        assert np.sum(inflow[fluid == region]) == pytest.approx(exchanged + boundary[region], rel=1e-12)
+    assert interface > 0.0 and patch == pytest.approx(3.0 * 0.5 * 2.2, rel=1e-12)
+    assert np.sum(stored) == pytest.approx(boundary[True] + boundary[False], rel=1e-9)
+
+
+def test_the_walled_step_is_first_order_in_time():
+    """The conjugate step is backward Euler in conduction and explicit in transport. From 0, the walled duct's
+    temperature at t = 0.25 against a run at a 64th of the coarsest step falls at first order as the step halves."""
+    import dataclasses
+
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
+
+    thermal, plug = _walled_duct()
+
+    def run(steps):
+        problem = dataclasses.replace(thermal, flow=dataclasses.replace(thermal.flow, dt=0.25 / steps))
+        thermal_step = build_thermal_step(problem, dtype=jnp.float64, hold_flow=True)
+        start = initial_thermal_state(problem, 0.0, plug)
+        state, _ = advance_thermal(thermal_step, start, _cells(problem, 0.0), steps)
+        return np.asarray(state.temperature.data)
+
+    reference = run(256)
+    errors = [np.max(np.abs(run(steps) - reference)) for steps in (4, 8, 16)]
+    orders = np.log2(np.divide(errors[:-1], errors[1:]))
+    assert np.all((0.9 < orders) & (orders < 1.2)), (errors, orders)
+
+
 @pytest.mark.parametrize("advection", ["upwind", "van_leer"])
 def test_walls_of_the_fluids_own_material_reproduce_the_step_without_walls(advection):
     """Walls of the fluid's ``k`` and ``rho c_p``, of 1 and 3 cells on axis 1 and 2 on axis 2, make one medium at
