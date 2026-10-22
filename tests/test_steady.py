@@ -1616,12 +1616,34 @@ def test_the_magnetoconvection_section_converges_to_its_pinned_gradient():
     assert flow["gradient"] == pytest.approx(mistrangelo.developed_gradient(record), rel=5e-3)
 
 
+def test_the_magnetoconvection_section_meets_figure_13s_core():
+    """The independent check of 5.4a's section: on the pin's 96/12 cells, the profile at y = 0 against Figure 13's
+    analytical markers. In the core, |z| <= 0.7 a, every marker is within 2 px (1.86 measured) and the section lies
+    under 1 % below them on average (0.65 %). The jets' flanks differ by about 10 px, which is reported, not gated."""
+    import json
+
+    from validation import mistrangelo
+
+    record = mistrangelo.spec()
+    ratio = record["properties"]["steel"]["conductivity_ratio_pinned"]
+    a, u0 = record["geometry"]["half_width_m"], record["cases"]["case1"]["mean_velocity_m_per_s"]
+    figure = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES.read_text())["figures"]}[13]
+    markers, pixel = figure["curves"]["analytical"], figure["per_pixel"][1]
+    z, u = np.array(markers["x"]) / a, np.array(markers["y"]) / u0
+    flow = mistrangelo.section_flow(ratio, record=record, **mistrangelo.PIN_MESH)
+    offset = (np.interp(z, flow["z"], flow["u_over_u0"]) - u)[np.abs(z) <= 0.7] * u0 / pixel
+    assert len(offset) >= 10 and np.max(np.abs(offset)) <= 2.0, offset
+    assert -0.01 < np.mean(offset) * pixel / (np.mean(u[np.abs(z) <= 0.7]) * u0) < 0.0
+
+
 def _check_reference_record(record):
-    """One digitized figure: its image hashed, both axes on their label lattice (three ticks at least, under 1 px),
-    curves ordered and visible, the band ordered and inside its window."""
-    assert len(record["sha256"]) == 64 and record["curves"]
+    """One digitized figure as shipped: its image hashed; both axes on their label lattice, three ticks at least and
+    within 0.6 px (the worst measured is 0.54); whether the paper or my reading chose the band's codes; the kept
+    curves ordered and visible, and the band ordered and inside its window."""
+    assert len(record["sha256"]) == 64 and record["agree_basis"] in ("the paper", "my reading")
     for axis in ("x", "y"):
-        assert record["calibration"][axis]["misfit_px"] <= 1.0 and record["calibration"][axis]["ticks"] >= 3
+        assert record["calibration"][axis]["misfit_px"] <= 0.6 and record["calibration"][axis]["ticks"] >= 3
+    assert record["curves"] or "band" in record
     for curve in record["curves"].values():
         assert np.all(np.diff(curve["x"]) > 0) and curve["coverage"] >= 0.01
     if "band" in record:
@@ -1633,13 +1655,13 @@ def _check_reference_record(record):
 
 def test_the_digitizer_reads_a_drawn_figure(tmp_path):
     """A synthetic xmgrace-like figure: a frame with outward ticks, a solid green line, a dashed orange line and red
-    rings. The calibration, the lines and rings within 1.5 px, and the band closed over the dashes are recovered; a
-    wrong tick label is refused."""
+    rings. The calibration, the lines and rings within 1.5 px, and the band closed over the dashes are recovered; the
+    compact record keeps the band within 0.6 px (half a pixel, and the rounding); a wrong tick label is refused."""
     import copy
 
     from PIL import Image, ImageDraw
 
-    from validation import mistrangelo
+    from scripts import digitize_mistrangelo as digitizer
 
     image = Image.new("RGB", (400, 300), "white")
     draw = ImageDraw.Draw(image)
@@ -1662,18 +1684,22 @@ def test_the_digitizer_reads_a_drawn_figure(tmp_path):
     image.save(path)
     spec = dict(pdf_page=0, xref=1, x=((0, 50), (5, 350), 1), y=((0, 250), (10, 20), 2), quantity="synthetic",
                 agree=("OF_KIT", "FLUENT_UK"), cite="drawn", circles=True)  # fmt: skip
-    record = mistrangelo.digitize(path, 0, {0: spec})
-    _check_reference_record(record)
+    record = digitizer.digitize(path, 0, {0: spec})
+    compact = digitizer._compact(record)
+    _check_reference_record(compact)
     pixel = record["per_pixel"][1]  # aliased 2-px lines: half a pixel off centre, and a half-pixel staircase
     green, orange = record["curves"]["OF_KIT"], record["curves"]["FLUENT_UK"]
     for curve, offset in ((green, 2.0), (orange, 2.5), (record["curves"]["analytical"], None)):
         error = np.array(curve["y"]) - (offset + np.array(curve["x"]) if offset else 1.0)
         assert np.max(np.abs(error)) <= 1.5 * pixel and abs(np.mean(error)) <= pixel
     assert orange["coverage"] < 0.95 and record["band"]["codes"].count(2) > 0.9 * len(record["band"]["codes"])
+    for edge in ("lower", "upper"):
+        kept = np.interp(record["band"]["x"], compact["band"]["x"], compact["band"][edge])
+        assert np.max(np.abs(kept - np.array(record["band"][edge]))) <= 0.6 * pixel, edge
     wrong = copy.deepcopy(spec)
     wrong["y"] = ((0, 250), (12, 20), 2)
     with pytest.raises(ValueError, match="lattice"):
-        mistrangelo.digitize(path, 0, {0: wrong})
+        digitizer.digitize(path, 0, {0: wrong})
 
 
 def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale():
@@ -1682,10 +1708,11 @@ def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressu
     away, which the figure cannot tell apart)."""
     import json
 
+    from scripts import digitize_mistrangelo as digitizer
     from validation import mistrangelo
 
     figures = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES.read_text())["figures"]}
-    assert sorted(figures) == sorted(mistrangelo.FIGURES)
+    assert sorted(figures) == sorted(digitizer.FIGURES)
     for record in figures.values():
         _check_reference_record(record)
     record, case = mistrangelo.spec(), mistrangelo.spec()["cases"]["case1"]
