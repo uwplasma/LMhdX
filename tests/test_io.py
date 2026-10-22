@@ -1123,7 +1123,9 @@ def test_a_chunk_is_rejected_at_any_sample_past_its_limits():
         ("buoyancy_courant_limit = 9.0e-5", "buoyancy_courant over 9e-05"),
     ],
 )
-def test_a_thermal_run_stops_at_the_first_sample_past_a_limit(tmp_path: Path, limit: str, reason: str):
+def test_a_thermal_run_stops_at_the_first_sample_past_a_limit(
+    tmp_path: Path, limit: str, reason: str, capsys
+):
     """The page's case with its z walls held at zero: from rest and a uniform temperature the start passes either
     limit, and the flow and the buoyancy outgrow it inside the second chunk. The run exits 2 after the first
     chunk's record, writes the second as rejected and names its first sample; that record imports, not resumes."""
@@ -1141,6 +1143,7 @@ def test_a_thermal_run_stops_at_the_first_sample_past_a_limit(tmp_path: Path, li
     summary = json.loads((out / "thermal_summary.json").read_text())
     assert not summary["accepted"] and summary["steps"] == 10 and summary["rejected"]["chunk"] == 1
     assert 10 < summary["rejected"]["step"] < 20 and summary["rejected"]["reasons"] == [reason]
+    assert capsys.readouterr().err.strip() == f"rejected at step {summary['rejected']['step']}: {reason}"
     assert summary["limits"]["advective_cfl_override"] == limit.startswith("advective")
     written = {path.name for path in out.iterdir()}
     assert {"heated_duct_000010.npz", "heated_duct_000020_rejected.npz", "heated_duct.pvd"} <= written
@@ -1195,6 +1198,22 @@ def test_the_run_summary_reduces_each_chunk_as_the_whole_history_would():
         assert extremes["finite"] is False
         np.testing.assert_equal(extremes["largest"], largest)
         np.testing.assert_equal(extremes["last"], last)
+
+
+def test_the_run_summary_does_not_grow_with_the_step_count():
+    """200 chunks of 50 samples are 1.7 MB of diagnostics if kept; the fold holds a few floats."""
+    import tracemalloc
+
+    from lmhdx.thermal import ThermalDiagnostics
+
+    rng, extremes = np.random.default_rng(5), {"finite": True, "last": {}, "largest": {}}
+    tracemalloc.start()
+    for _ in range(200):
+        chunk = _diagnostics({name: rng.standard_normal(50) for name in ThermalDiagnostics._fields})
+        extremes = cli._fold_chunk(extremes, chunk)
+    held, _ = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert held < 64 * 1024 < 200 * 50 * len(ThermalDiagnostics._fields) * 8 / 10, held
 
 
 def test_a_thermal_run_reports_the_same_at_any_chunk_size(tmp_path: Path):

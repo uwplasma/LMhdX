@@ -921,6 +921,9 @@ def _summary_exit_code(summary: dict[str, object]) -> int:
     """Return failure for a recorded unconverged steady result or a rejected thermal run."""
 
     if summary.get("solver_mode") == "thermal":
+        if not summary.get("accepted"):
+            rejected = summary["rejected"]
+            print(f"rejected at step {rejected['step']}: {', '.join(rejected['reasons'])}", file=sys.stderr)
         return 0 if summary.get("accepted") else 2
     return 2 if summary.get("solver_mode") == "steady" and summary.get("converged") is False else 0
 
