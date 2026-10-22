@@ -10,16 +10,22 @@ are compared against two references:
 
 LMhdX runs on the 128-cell meshes of `duct_problem`. The thermal conditions
 are:
-- H1: the wall at one temperature around the section, with a uniform axial
-  heat input;
-- H2: a uniform wall flux;
-- T: the wall at one temperature along the duct.
+- H1: a uniform axial heat input, the wall at one temperature around the
+  section;
+- H2: a uniform wall flux, axially and around the section;
+- T: the wall at one temperature everywhere, the excess decaying along the duct.
 
-`python -m validation.mhd_nusselt` prints every number on this page, in about
-ten minutes on a laptop CPU. One point is gated in `tests/test_steady.py`:
-48 cells at Ha 10, within 0.3 % of the spectral solve in each condition.
+Each Nu is the section's mean Nusselt number, the wall flux averaged over the
+whole perimeter against the wall-to-bulk difference, on $D_h=2a$.
 
-| Ha | H1: LMhdX / spectral | H2: LMhdX / spectral | T: LMhdX / spectral |
+**Two kinds of statement.** LMhdX against the spectral solve is verification:
+one point is gated in `tests/test_steady.py`, 48 cells at Ha 10 within 0.3 % of
+the spectral solve in each condition. The published curves are a reading from a
+figure, reported with its uncertainty. `python -m validation.mhd_nusselt`
+regenerates every number on this page on demand, in about ten minutes on a
+laptop CPU.
+
+| Ha on $a$ | H1 mean Nu on $D_h$: LMhdX / spectral | H2: LMhdX / spectral | T: LMhdX / spectral |
 |--:|:--|:--|:--|
 | 1 | 3.6360 / 3.6352 | 3.1098 / 3.1091 | 2.9971 / 2.9968 |
 | 10 | 4.5249 / 4.5221 | 3.8006 / 3.7985 | 3.6034 / 3.6023 |
@@ -49,17 +55,22 @@ paths of the accepted manuscript.
 - **A check.** The H1 curve's plateau reads 3.60678, against their tabulated
   Ha 0 value of 3.6068. The H2 plateau reads 3.0824, against their 3.0871.
 
-The two curves read as different Ha conventions:
-- **H1** reads as Ha on the half-width. It is then within 0.03 % of the
+The two figures use different Ha conventions, by exactly the factor of 2
+between the half-width and the full width:
+- **H1**, Figure 4, is on the half-width. It is then within 0.03 % of the
   spectral value at Ha 1 and 0.07 % at Ha 10, falling to 0.19 % low at
   Ha 31.6, 0.49 % at 100 and 1.2 % at 316. On $D_h$ it would lie 3–12 % above.
-- **H2** reads as Ha on $D_h=2a$, as their eq. (8) defines it. It is then
+- **H2**, Figure 6, is on the full width, $D_h=2a$, as their eq. (8) defines
+  it. It is then
   0.17 % low at an equivalent Ha 0.5, and 0.22 %, 0.43 %, 1.0 % and 2.0 % low at
   5, 15.8, 50 and 158. On the half-width it would lie up to 10 % below.
 
-That the two figures use different conventions is an inference from this fit,
-not something the paper states. A value the authors tabulate at a nonzero Ha,
-or another published number for this duct at a stated Ha, would settle it.
+Read on the other scale, each would be off by 3–12 %, so the factor of 2 is
+clear from the fit, though the paper does not say it of Figure 4. **The
+reading's own uncertainty** comes from the figures, not from digitizing, since
+the vertices are the authors' points. Figure 4's plateau equals their table to
+1e-5, and Figure 6's lies 0.15 % below theirs, so the H2 percentages carry
+about 0.15 %.
 
 Both curves fall below the reference as Ha grows. The authors note that their
 series' hyperbolic terms overflow double precision at large Ha, and they
