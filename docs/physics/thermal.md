@@ -389,19 +389,27 @@ $$
 = \Delta t\,\bigl(q + \nabla\cdot(k\nabla T^n) + b\bigr),
 $$
 
-$b$ the boundary data's `lift`, so PCG's tolerance is the change's. SOLVAX
-`pcg` is preconditioned by the fast-diagonal inverse at the volume-mean $k$ and
-$s$, so the iterations are bounded by the coefficients' spread, not by the mesh
-or $\Delta t$. It differentiates through a symmetric `custom_linear_solve`.
+$b$ the boundary data's `lift`, so PCG's tolerance is the change's.
+`solvax.pcg_linear_solve` is preconditioned by the fast-diagonal inverse at the
+volume-mean $k$ and $s$, and differentiates implicitly, its tangent and adjoint
+solves from zero. The operator is generic numerics, to move to SOLVAX
+(uwplasma/SOLVAX#158).
 
 **Tested** (`tests/test_ops.py`): two materials in series, exact with the same
 flux through every face; steel brought into contact with fluid, the exact
 effusivity-weighted contact temperature at second order; the benchmark's steel
-and PbLi walled on four sides, symmetric, conservative, and under 10 PCG
-iterations on 6 and 24 cells across at $\Delta t$ 0.05 and 100. Probed in
-float32, an insulated axis's null eigenvalue came out $+3\times10^{-5}$, which
-turned every shifted fast-diagonal operator indefinite at a large $\Delta t\,k$;
-the eigenvalues are clamped to the Laplacian's sign.
+and PbLi walled on four sides, symmetric and conservative.
+
+| Walls ($k$ and $\rho c_p$ over the fluid's) | PCG iterations, 6 to 24 cells across, $\Delta t$ 0.05 and 100 |
+|:--|:--|
+| the benchmark's steel and PbLi (0.9, 2.3) | 7–8 |
+| copper-like (19, 1.85) | 14–33 |
+| 100, 1.85 | 21–63 |
+
+At a high contrast the count grows as the mesh refines; the copper case is
+tested. In float32 an insulated axis's null eigenvalue came out positive, which
+turned the shifted fast-diagonal operator indefinite at a large $\Delta t\,k$;
+its eigenvalues are clamped to the Laplacian's sign.
 
 ## The thermally fully developed duct
 
