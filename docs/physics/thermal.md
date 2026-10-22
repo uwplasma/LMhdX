@@ -439,9 +439,11 @@ operator is generic numerics, to move to SOLVAX (uwplasma/SOLVAX#158).
 | 100, 1.85 | 21–63 |
 
 At a high contrast the count grows as the mesh refines; the copper case is
-tested. In float32 an insulated axis's null eigenvalue came out positive, which
-turned the shifted fast-diagonal operator indefinite at a large $\Delta t\,k$;
-its eigenvalues are clamped to the Laplacian's sign.
+tested. These counts are measurements at those contrasts and meshes, not a
+conditioning bound for others. In float32 an insulated axis's null eigenvalue
+came out positive, which turned the shifted fast-diagonal operator indefinite at
+a large $\Delta t\,k$. That eigenvalue is now set to zero, read from the axis's
+conditions, as the Poisson factorization's is.
 
 **In the thermal step.** `ThermalProblem(..., walls=...)` takes a `SolidWall`
 or `None` for each end of the wall-bounded axes 1 and 2. The temperature and
