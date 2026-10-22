@@ -1045,8 +1045,8 @@ _LARGEST = ("heat_balance_residual", "advective_cfl", "buoyancy_courant", "bouss
 def _fold_chunk(extremes: dict, history) -> dict:
     """The summary's finite flag, largest magnitude of each of ``_LARGEST`` and last sample, with one chunk more.
 
-    Only floats are kept, so a run's memory does not grow with its step count. A NaN, once seen, stays, as a
-    maximum over the whole history would give.
+    Only floats are kept: the summary's retention, not every output of a run, does not grow with the step count.
+    A NaN, once seen, stays, as a maximum over the whole history would give.
     """
     largest = {}
     for name in _LARGEST:

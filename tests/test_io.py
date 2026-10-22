@@ -1200,8 +1200,9 @@ def test_the_run_summary_reduces_each_chunk_as_the_whole_history_would():
         np.testing.assert_equal(extremes["last"], last)
 
 
-def test_the_run_summary_does_not_grow_with_the_step_count():
-    """200 chunks of 50 samples are 1.7 MB of diagnostics if kept; the fold holds a few floats."""
+def test_the_summary_reducer_holds_a_few_floats_at_any_step_count():
+    """Reducer-memory evidence, not a whole-CLI memory bound: 200 chunks of 50 samples are 1.7 MB of diagnostics if
+    kept, and the summary's fold holds a few floats."""
     import tracemalloc
 
     from lmhdx.thermal import ThermalDiagnostics
