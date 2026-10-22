@@ -191,7 +191,8 @@ Thin conducting walls take much of the dissipation away from the fluid. In the
 developed duct at Ha 20 with $c = 0.05$ the walls dissipate 56 % of it, at
 Ha 100 76 %, and at Ha 20 with $c = 0.5$ 43 % (`energy_budget(...).wall` against
 `.joule`, unchanged from 24 to 48 cells). The fluid-only model leaves that heat
-out until conjugate walls arrive.
+out. So do solid walls (below): the benchmark they are built for has no Joule
+heat.
 
 **Buoyancy** is averaged onto the velocity faces as the Lorentz force is, and
 zeroed on wall faces. It is added before the division by density and the
@@ -344,12 +345,13 @@ block's intermediates dominate. The figures are for this grid and step; they
 scale with the cells, and the ratio is what carries over.
 
 **Not included**
-- Conjugate wall conduction.
+- Conjugate wall conduction in the thermal step. The conduction solve it needs
+  exists (below), but the step does not use it yet.
 - A flow that evolves in an open duct with the heat. There the flow is held.
 - Transport above second order. The open-duct results below use first-order
   upwinding and quote $Pe_h/2$, its numerical diffusivity over the physical one;
   `advection="van_leer"` removes most of it.
-- Variable properties.
+- Temperature-dependent properties.
 - A steady solve of the coupled equations. The developed duct below is the one steady thermal solve, for a given flow.
 - An inflow-outflow axis read from TOML. A run from TOML (below) covers closed
   ducts; an open one runs from Python.
@@ -358,6 +360,87 @@ scale with the cells, and the ratio is what carries over.
 A closed domain with net heating has no steady temperature. The state returned
 is not a `cases.MHDState` or an archive-compatible `Solution`. The final
 electric fields come from `core3d.face_currents(state.velocity, flow)`.
+
+## Conduction through solid walls
+
+Plan step 5.4b builds conduction through solid walls for the heated duct of
+step 5.4 (ADR 0009 D36). This first part is the solve; the thermal step does
+not use it yet.
+
+**The grid.** `core3d.conjugate_grid(grid, walls)` adds a `core3d.SolidWall`
+(a thickness, a whole number of equal cells, a `thermal_conductivity` and a
+`heat_capacity` $\rho c_p$) at either end of the transverse axes 1 and 2. The
+`ConjugateGrid` it returns holds the extended grid, whose fluid block keeps the
+given faces exactly, the block's slices, and the walls, whose properties
+`cells(name, fluid_value)` spreads over every cell. A corner cell takes the
+nearer wall's material, the first axis's when equally near to rounding, as the
+corners of resolved electrical walls do.
+
+**The solve.** `poisson.variable_helmholtz(grid, conditions, conductivity,
+shift, coefficient)` is $V\,(s\,x - \tau\,\nabla\cdot(k\nabla x))$ for cell-wise
+$k$ and $s$.
+
+**The face-conductance contract.** Between two cells with half widths
+$\delta_1$, $\delta_2$ and conductivities $k_1$, $k_2$, the flux per unit area
+is $(T_2 - T_1)/(\delta_1/k_1 + \delta_2/k_2)$, the half cells' series
+resistance, at a material interface as anywhere else. The face area and the
+cell volume enter once, in the divergence; the conductance does not carry the
+area a second time. So the heat that leaves one cell enters the next. A
+boundary face takes its cell's $k$, which a heat flux there is built with
+(`thermal_boundary(..., conductivity=...)`). One implicit step solves for
+the increment $\delta = T^{n+1} - T^n$,
+
+$$
+\rho c_p\,\delta - \Delta t\,\nabla\cdot(k\nabla\delta)
+= \Delta t\,\bigl(q + \nabla\cdot(k\nabla T^n) + b\bigr),
+$$
+
+$b$ the boundary data's `lift`, so PCG's tolerance is the change's.
+`solvax.pcg_linear_solve` is preconditioned by the fast-diagonal inverse at the
+volume-mean $k$ and $s$, and differentiates implicitly, its tangent and adjoint
+solves from zero. Unconverged, it returns NaN, and NaN derivatives. The
+operator is generic numerics, to move to SOLVAX (uwplasma/SOLVAX#158).
+
+**What is differentiable.**
+- **The walls' conductivity and heat capacity.** `cells(name, fluid_value,
+  walls={(axis, side): value})` puts a wall's value into the cells in the
+  trace. `VariableHelmholtz.with_coefficients(conductivity, shift)` builds the
+  face conductances from it, and the preconditioner keeps its built means. So a
+  wall's $k$ or $\rho c_p$ is a leaf, and a new value does not recompile.
+- **Static:** a wall's thickness, its cell count, and which cell belongs to
+  which material.
+
+**Tested** (`tests/test_ops.py`):
+- two materials in series, exact, with the same flux through every face;
+- steel brought into contact with fluid: the exact effusivity-weighted contact
+  temperature, at second order;
+- the benchmark's steel and PbLi walled on four sides: symmetric and
+  conservative;
+- **an independent high-contrast check.** Walls of 1000 times the fluid's $k$,
+  held at 0 outside, around a uniformly heated square. The fluid's mean
+  temperature tends to the Dirichlet Poisson series, 0.140577, raised by the
+  walls' own drop $q a t/(2k_w)$. The error falls at about second order, and the
+  Richardson value meets the series within 1e-4.
+- **a wall conductivity's derivative,** to the derivative standard:
+  - central differences at two steps;
+  - a Taylor remainder of second order;
+  - a tighter tolerance and a finer mesh;
+  - the JVP/VJP identity in two walls at once;
+  - no recompilation for a new value;
+  - NaN when PCG has not converged.
+
+| Walls ($k$ and $\rho c_p$ over the fluid's) | PCG iterations, 6 to 24 cells across, $\Delta t$ 0.05 and 100 |
+|:--|:--|
+| the benchmark's steel and PbLi (0.9, 2.3) | 7–8 |
+| copper-like (19, 1.85) | 14–33 |
+| 100, 1.85 | 21–63 |
+
+At a high contrast the count grows as the mesh refines; the copper case is
+tested. These counts are measurements at those contrasts and meshes, not a
+conditioning bound for others. In float32 an insulated axis's null eigenvalue
+came out positive, which turned the shifted fast-diagonal operator indefinite at
+a large $\Delta t\,k$. That eigenvalue is now set to zero, read from the axis's
+conditions, as the Poisson factorization's is.
 
 ## The thermally fully developed duct
 

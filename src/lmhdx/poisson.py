@@ -61,6 +61,9 @@ from .grid import (
     uniform_faces,
 )
 from .ops import (
+    divergence,
+    face_conductivity,
+    face_gradient,
     foldable,
     laplacian,
     staggered_laplacian,
@@ -71,6 +74,7 @@ __all__ = [
     "FastDiagonalPoisson",
     "FastDiagonalPolarPoisson",
     "FastDiagonalThinWallPoisson",
+    "VariableHelmholtz",
     "assemble_axis_laplacian",
     "assemble_radial_laplacian",
     "assemble_staggered_axis_operator",
@@ -82,6 +86,7 @@ __all__ = [
     "fast_diagonal_polar_poisson",
     "fast_diagonal_thin_wall_poisson",
     "free_slice",
+    "variable_helmholtz",
 ]
 
 _SINGULAR_TOLERANCE = 1.0e-9
@@ -667,6 +672,7 @@ def fast_diagonal_poisson(
             operator,
             np.asarray(grid.widths[axis]),
             f"axis {axis} operator is not symmetric under the cell widths",
+            _constant_null(CENTER, condition),
         )
         vectors.append(eigenvectors)
         values.append(eigenvalues)
@@ -739,8 +745,14 @@ def _eigh(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return values[order], vectors[:, order]
 
 
-def _symmetric_eigen(operator: np.ndarray, weights: np.ndarray, message: str):
-    """Return the eigenvalues, eigenvectors and weight roots of an operator symmetric under ``weights``."""
+def _symmetric_eigen(operator: np.ndarray, weights: np.ndarray, message: str, null: bool):
+    """Return the eigenvalues, eigenvectors and weight roots of an operator symmetric under ``weights``.
+
+    ``null`` says, from the axis's boundary conditions, whether the constants are its null space
+    (:func:`_constant_null`): only then is the eigenvalue nearest zero set to zero. A small row sum is not
+    that certificate: a Dirichlet axis whose smallest cells lie far from its ends has row sums of 8e-8 of
+    its largest entry in float32, and a real eigenvalue near -8 that must not be zeroed.
+    """
     root = np.sqrt(weights)
     symmetric = root[:, None] * operator / root[None, :]
     asymmetry = _relative_asymmetry(symmetric)
@@ -749,12 +761,33 @@ def _symmetric_eigen(operator: np.ndarray, weights: np.ndarray, message: str):
             f"{message} (relative asymmetry {asymmetry:.3e}); fast diagonalization does not apply"
         )
     eigenvalues, eigenvectors = _eigh(0.5 * (symmetric + symmetric.T))
-    if np.max(np.abs(operator @ np.ones(len(weights)))) <= _SINGULAR_TOLERANCE * np.max(np.abs(operator)):
+    if null:
         # Constants are in the null space, so that eigenvalue is zero. Computed, it carries round-off
         # of the largest one (5e-10 across a Hartmann layer at Ha 100), which the lowest mode of a
-        # long inflow-outflow axis (0.04) cannot absorb: the pressure drop then drifts at 1e-8.
+        # long inflow-outflow axis (0.04) cannot absorb: the pressure drop then drifts at 1e-8. A
+        # Helmholtz factorization needs it too: assembled in float32 it came out +4e-6 or -1e-5 on a
+        # stretched insulated axis, and at a large coefficient the shifted operator lost its sign.
+        # Every row must annihilate the constants to rounding of its own entries, or the conditions and
+        # the operator disagree.
+        tolerance = max(_SINGULAR_TOLERANCE, 100.0 * float(np.finfo(operator.dtype).eps))  # float32: 1.2e-5
+        rows = np.abs(operator @ np.ones(len(weights)))
+        if np.any(rows > tolerance * np.sum(np.abs(operator), axis=1)):
+            raise ValueError(
+                f"{message}: its conditions are insulated or periodic, but it does not annihilate constants"
+            )
         eigenvalues[np.argmin(np.abs(eigenvalues))] = 0.0
     return eigenvalues, eigenvectors, root
+
+
+def _constant_null(offset_value: float, condition: BoundaryCondition) -> bool:
+    """Whether an axis's homogeneous operator has the constants as its null space, from its conditions alone.
+
+    A periodic axis has. A cell-centred axis has unless an end is Dirichlet; a face-centred one has not, since
+    its wall faces are prescribed.
+    """
+    if condition.is_periodic:
+        return True
+    return offset_value == CENTER and DIRICHLET not in condition.kinds
 
 
 def assemble_thin_wall_operator(
@@ -1057,7 +1090,9 @@ def fast_diagonal_thin_wall_poisson(
         else:
             operator, weight = assemble_axis_laplacian(grid, axis, condition), np.asarray(grid.widths[axis])
         message = f"axis {axis} thin-wall operator is not symmetric under its weights"
-        eigenvalues, eigenvectors, root = _symmetric_eigen(operator, weight, message)
+        eigenvalues, eigenvectors, root = _symmetric_eigen(
+            operator, weight, message, _constant_null(CENTER, condition)
+        )
         for store, item in zip(
             (operators, vectors, values, scales, weights), (operator, eigenvectors, eigenvalues, root, weight)
         ):
@@ -1123,7 +1158,7 @@ def _corner_fix(factorization: FastDiagonalThinWallPoisson, grid: Grid, axes: li
             )
         )
     corner = wall[0][:, None] & wall[1][None, :]
-    nearer_first = depth[0][:, None] <= depth[1][None, :]
+    nearer_first = _nearer_first_wall(depth[0], depth[1])
     sigma = np.where(
         corner,
         np.where(nearer_first, ratio[0][:, None], ratio[1][None, :]),
@@ -1176,6 +1211,16 @@ def _corner_fix(factorization: FastDiagonalThinWallPoisson, grid: Grid, axes: li
     projected = solved.reshape(basis.shape[1], -1)[:, indices] @ basis
     capacitance = np.linalg.inv(np.diag(1.0 / eigenvalues) + projected)
     return indices, basis, capacitance, difference
+
+
+def _nearer_first_wall(first: np.ndarray, second: np.ndarray) -> np.ndarray:
+    """Where a corner cell at depths ``first`` and ``second`` into two axes' walls is nearer the first axis's wall.
+
+    Depths equal to rounding are ties, which go to the first axis: walls of equal cells on both axes would
+    otherwise split their corners by the rounding of their centres, unevenly about the duct's middle.
+    """
+    scale = np.maximum(np.abs(first)[:, None], np.abs(second)[None, :])
+    return first[:, None] <= second[None, :] + 1e-9 * scale
 
 
 def _corner_gain(vectors, values, scales, edge: int) -> np.ndarray | None:
@@ -1344,15 +1389,9 @@ def fast_diagonal_helmholtz(
         operator = assemble_staggered_axis_operator(grid, axis, offset, condition)
         selection = free_slice(grid, axis, offset[axis], condition)
         weights = _axis_weights(grid, axis, offset[axis], condition)[selection]
-        root = np.sqrt(weights)
-        symmetric = root[:, None] * operator / root[None, :]
-        asymmetry = _relative_asymmetry(symmetric)
-        if asymmetry > _symmetry_tolerance(symmetric):
-            raise ValueError(
-                f"axis {axis} operator is not symmetric under its cell weights "
-                f"(relative asymmetry {asymmetry:.3e}); fast diagonalization does not apply"
-            )
-        eigenvalues, eigenvectors = _eigh(0.5 * (symmetric + symmetric.T))
+        message = f"axis {axis} operator is not symmetric under its cell weights"
+        null = _constant_null(offset[axis], condition)
+        eigenvalues, eigenvectors, root = _symmetric_eigen(operator, weights, message, null)
         vectors.append(eigenvectors)
         values.append(eigenvalues)
         scales.append(root)
@@ -1386,6 +1425,150 @@ def _axis_weights(grid: Grid, axis: int, offset_value: float, condition: Boundar
         return np.concatenate(([wrap], 0.5 * (widths[:-1] + widths[1:]), [wrap]))
     ends = (0.5 * widths[0], 0.5 * widths[-1]) if condition.is_mixed else (widths[0], widths[-1])
     return np.concatenate(([ends[0]], 0.5 * (widths[:-1] + widths[1:]), [ends[1]]))
+
+
+_CELL = (CENTER, CENTER, CENTER)
+_PCG_TOLERANCE = {"float64": 1.0e-11, "float32": 1.0e-5}
+
+
+@dataclass(frozen=True)
+class VariableHelmholtz:
+    """``V (shift x - coefficient div(G grad x))`` on cell-wise coefficients, solved by SOLVAX (plan D5).
+
+    Generic numerics, to move to SOLVAX (uwplasma/SOLVAX#158, ADR 0009 D36); LMhdX keeps the materials and
+    ``conjugate_grid``.
+
+    The face-conductance contract, stated once. ``G`` is each face's conductance per unit area, the harmonic mean of
+    its two half cells (:func:`lmhdx.ops.face_conductivity`), so ``G`` times the gradient over the centre distance is
+    the series resistance of the two half cells: what leaves one cell enters the next, and a material interface is
+    a series resistance. The face area and the cell volume enter once, in the divergence. A boundary face takes its
+    cell's conductivity, which a Neumann datum, a gradient, is multiplied by. With a positive ``shift`` the operator
+    is symmetric positive definite. It is an implicit conduction step through solid walls: ``shift`` the cells'
+    ``rho c_p``, ``coefficient`` the time step. ``conditions`` are homogeneous; boundary data enter through
+    :meth:`lift`. :meth:`with_coefficients` takes other cell values in the trace.
+    """
+
+    grid: Grid
+    conditions: tuple[BoundaryCondition, BoundaryCondition, BoundaryCondition]
+    shift: np.ndarray
+    coefficient: float
+    conductances: tuple[np.ndarray, np.ndarray, np.ndarray]
+    preconditioner: FastDiagonalHelmholtz
+    max_steps: int = 200
+    tolerance: float | None = None  # PCG's relative tolerance; by default 1e-11 in float64, 1e-5 in float32
+
+    def with_coefficients(self, conductivity=None, shift=None) -> VariableHelmholtz:
+        """The operator at other cell conductivities or shifts, built in the trace from ``jnp`` arrays.
+
+        Either may be traced, so a wall's conductivity or heat capacity is a leaf of :meth:`solve` and a new value
+        does not recompile. The preconditioner keeps the volume means it was built at: it only steers the iteration.
+        """
+        conductances = self.conductances
+        if conductivity is not None:
+            conductances = _face_conductances(self.grid, self.conditions, conductivity)
+        return replace(self, conductances=conductances, shift=self.shift if shift is None else shift)
+
+    def face_fluxes(self, values: jnp.ndarray, conditions=None) -> tuple[Field, Field, Field]:
+        """``G grad x`` on the faces of each axis, under ``conditions``, the homogeneous ones by default."""
+        conditions = self.conditions if conditions is None else conditions
+        field, fluxes = Field(values, _CELL, self.grid), []
+        for axis in range(3):
+            gradient = face_gradient(field, axis, conditions[axis])
+            conductance = jnp.asarray(self.conductances[axis], values.dtype)
+            fluxes.append(gradient.replace_data(conductance * gradient.data))
+        return tuple(fluxes)
+
+    def divergence(self, values: jnp.ndarray, conditions=None) -> jnp.ndarray:
+        """``div(G grad x)`` per unit volume, under ``conditions``."""
+        return divergence(self.face_fluxes(values, conditions)).data
+
+    def lift(self, conditions) -> jnp.ndarray:
+        """What the boundary data of ``conditions``, of the operator's own kinds, add to :meth:`divergence`."""
+        if tuple(condition.homogeneous() for condition in conditions) != self.conditions:
+            raise ValueError("the lift's conditions must be of the operator's own kinds")
+        with jax.ensure_compile_time_eval():
+            return self.divergence(jnp.zeros(self.grid.shape, dtype=jnp.result_type(float)), conditions)
+
+    def apply(self, values: jnp.ndarray) -> jnp.ndarray:
+        """The operator, ``V (shift x - coefficient div(G grad x))``."""
+        volumes = jnp.asarray(self.grid.cell_volumes(), values.dtype)
+        shift = jnp.asarray(self.shift, values.dtype)
+        return volumes * (shift * values - self.coefficient * self.divergence(values))
+
+    def solve(self, rhs: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Return ``x`` with ``shift x - coefficient div(G grad x) = rhs``, and the PCG iterations; NaN unconverged.
+
+        PCG starts from zero and stops at 1e-11 of ``rhs`` in float64, 1e-5 in float32, so a time step solves for its
+        increment. :func:`solvax.pcg_linear_solve` differentiates it implicitly, its tangent and adjoint solves also
+        from zero.
+        """
+        volumes = jnp.asarray(self.grid.cell_volumes(), rhs.dtype)
+
+        def precondition(residual):
+            return self.preconditioner.solve(Field(residual / volumes, _CELL, self.grid)).data
+
+        tolerance = _PCG_TOLERANCE[jnp.dtype(rhs.dtype).name] if self.tolerance is None else self.tolerance
+        steps = self.max_steps
+        result = solvax.pcg_linear_solve(
+            self.apply, volumes * rhs, precond=precondition, rtol=tolerance, max_steps=steps
+        )
+        failed = ~(result.converged & jnp.isfinite(result.residual_norm))
+        # Unconverged, the value is NaN and so are its derivatives in the right-hand side and the coefficients. The
+        # implicit adjoint alone returns a zero gradient for a NaN cotangent, since its PCG starts from zero.
+        inputs = jnp.sum(rhs) + jnp.sum(jnp.asarray(self.shift)) + sum(jnp.sum(g) for g in self.conductances)
+        return jnp.where(failed, jnp.nan, result.x) + jnp.where(
+            failed, jnp.nan, 0.0
+        ) * inputs, result.iterations
+
+
+def _face_conductances(grid: Grid, conditions, conductivity) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Each axis's face conductances from a cell conductivity, in the trace; a boundary face takes its cell's."""
+    pads = tuple(
+        BoundaryCondition(PERIODIC if condition.is_periodic else NEUMANN) for condition in conditions
+    )
+    cells = Field(jnp.broadcast_to(jnp.asarray(conductivity), grid.shape), _CELL, grid)
+    return tuple(face_conductivity(cells, axis, pads[axis]).data for axis in range(3))
+
+
+def variable_helmholtz(
+    grid: Grid,
+    conditions: tuple[BoundaryCondition, BoundaryCondition, BoundaryCondition],
+    conductivity: float | np.ndarray,
+    shift: float | np.ndarray,
+    coefficient: float,
+    *,
+    precision: str = "state",
+    max_steps: int = 200,
+) -> VariableHelmholtz:
+    """Build :class:`VariableHelmholtz` on the host; ``conductivity`` and ``shift`` are numbers or cell arrays.
+
+    The preconditioner is the fast-diagonal inverse at their volume means, in ``precision``. On a duct walled on
+    four sides, 6 to 24 cells across, at ``dt`` 0.05 and 100: 7-8 iterations at the benchmark's steel and PbLi (``k``
+    ratio 0.9, ``rho c_p`` 2.3), 14-33 at copper's ``k`` ratio of 19, and 21-63 at 100. A high contrast costs more
+    iterations as the mesh refines.
+    """
+    if grid.is_polar:
+        raise ValueError("a variable-coefficient solve needs a Cartesian grid")
+    k, s = (np.broadcast_to(np.asarray(value, dtype=float), grid.shape) for value in (conductivity, shift))
+    if not (np.all(np.isfinite(k) & (k > 0.0)) and np.all(np.isfinite(s) & (s > 0.0))):
+        raise ValueError("conductivity and shift must be positive and finite in every cell")
+    if not (np.isfinite(coefficient) and float(coefficient) > 0.0):
+        raise ValueError("coefficient must be positive and finite")
+    homogeneous = tuple(condition.homogeneous() for condition in conditions)
+    with jax.ensure_compile_time_eval():
+        conductances = tuple(np.asarray(g) for g in _face_conductances(grid, homogeneous, k))
+    weights = grid.cell_volumes() / np.sum(grid.cell_volumes())
+    preconditioner = fast_diagonal_helmholtz(
+        grid,
+        _CELL,
+        homogeneous,
+        shift=float(np.sum(weights * s)),
+        coefficient=float(coefficient) * float(np.sum(weights * k)),
+        precision=precision,
+    )
+    return VariableHelmholtz(
+        grid, homogeneous, s.copy(), float(coefficient), conductances, preconditioner, max_steps
+    )
 
 
 _PIPE_NAMES = ("PipeProblem", "flow_rate", "pipe_grid", "pipe_problem", "pipe_residual", "solve_pipe")

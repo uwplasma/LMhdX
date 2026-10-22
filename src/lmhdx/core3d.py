@@ -86,6 +86,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -123,6 +124,7 @@ from .poisson import (
     FastDiagonalHelmholtz,
     FastDiagonalPoisson,
     FastDiagonalThinWallPoisson,
+    _nearer_first_wall,
     _wall_cells,
     fast_diagonal_helmholtz,
     fast_diagonal_poisson,
@@ -131,10 +133,13 @@ from .poisson import (
 
 __all__ = [
     "ChannelProblem",
+    "ConjugateGrid",
     "EnergyBudget",
     "ImposedField",
+    "SolidWall",
     "Trajectory",
     "advance",
+    "conjugate_grid",
     "duct_problem",
     "electric_state",
     "energy_budget",
@@ -223,6 +228,105 @@ class ImposedField:
 
     def __eq__(self, other: object) -> bool:
         return self._key() == other._key() if isinstance(other, ImposedField) else NotImplemented
+
+
+@dataclass(frozen=True)
+class SolidWall:
+    """A solid wall on one end of a transverse axis: ``thickness`` in ``cells`` equal cells of one material.
+
+    ``thermal_conductivity`` and ``heat_capacity``, its ``rho c_p``, are what it conducts and stores heat with
+    (plan step 5.4b, ADR 0009 D36).
+    """
+
+    thickness: float
+    cells: int
+    thermal_conductivity: float
+    heat_capacity: float
+
+    def __post_init__(self) -> None:
+        if isinstance(self.cells, bool) or int(self.cells) != self.cells or self.cells < 1:
+            raise ValueError("a solid wall has a whole, positive number of cells")
+        object.__setattr__(self, "cells", int(self.cells))
+        for name in ("thickness", "thermal_conductivity", "heat_capacity"):
+            value = float(getattr(self, name))
+            if not (np.isfinite(value) and value > 0.0):
+                raise ValueError(f"a solid wall's {name} must be positive and finite")
+            object.__setattr__(self, name, value)
+
+
+class ConjugateGrid(NamedTuple):
+    """A grid with solid walls added as cells (:func:`conjugate_grid`): the grid, the fluid's block, the walls."""
+
+    grid: Grid
+    fluid: tuple[slice, slice, slice]
+    walls: tuple
+
+    def cells(self, name: str, fluid, walls: dict | None = None):
+        """Each cell's value of the walls' property ``name``, with ``fluid`` in the fluid's cells.
+
+        ``walls`` maps a wall, ``(axis, side)``, to a value in place of its own. The values may then be traced: the
+        result is a ``jnp`` array and which cell is which stays static, so a wall's conductivity or heat capacity can
+        be a leaf of a solve and a new value does not recompile. A corner cell lies in a wall of both transverse axes
+        and takes the nearer wall's value, the first axis's when they are equally near, as the corner cells of
+        resolved walls do (:func:`lmhdx.poisson.fast_diagonal_thin_wall_poisson`).
+        """
+        slots = [(axis, side) for axis in (1, 2) for side in (0, 1)]
+        own = [
+            fluid if self.walls[axis][side] is None else getattr(self.walls[axis][side], name)
+            for axis, side in slots
+        ]
+        if not walls:
+            return np.asarray([fluid, *own], dtype=float)[self._labels()]
+        if any(slot not in slots or self.walls[slot[0]][slot[1]] is None for slot in walls):
+            raise ValueError("a wall's value is given by (axis, side) of a solid wall of the grid")
+        table = [walls.get(slot, value) for slot, value in zip(slots, own)]
+        return jnp.stack([jnp.asarray(value, dtype=float) for value in (fluid, *table)])[self._labels()]
+
+    def _labels(self) -> np.ndarray:
+        """Each cell's material: 0 the fluid's, ``1 + 2 (axis - 1) + side`` a wall's; a corner the nearer wall's."""
+        labels, depths = [], []
+        for axis in (1, 2):
+            block = self.fluid[axis]
+            faces, centres = np.asarray(self.grid.faces[axis]), np.asarray(self.grid.centers[axis])
+            label = np.zeros(centres.size, dtype=int)
+            label[: block.start], label[block.stop :] = 2 * axis - 1, 2 * axis
+            labels.append(label)
+            inside = (faces[block.start], faces[block.stop])
+            depths.append(np.maximum(inside[0] - centres, 0.0) + np.maximum(centres - inside[1], 0.0))
+        first, second = labels[0][:, None], labels[1][None, :]
+        takes_first = (first > 0) & ((second == 0) | _nearer_first_wall(depths[0], depths[1]))
+        return np.broadcast_to(np.where(takes_first, first, second), self.grid.shape)
+
+
+def conjugate_grid(grid: Grid, walls) -> ConjugateGrid:
+    """Return ``grid`` with solid walls added as cells beyond its faces on the transverse axes 1 and 2.
+
+    ``walls`` gives each axis ``(lower, upper)``, each ``None`` or a :class:`SolidWall`; axis 0 must be the
+    flow's and takes none. A wall spans the extended tangential extent, so walls on both axes meet in corner
+    cells. The fluid's faces are kept exactly, so the fluid's block of the new grid is ``grid`` itself.
+    """
+    if grid.is_polar:
+        raise ValueError("solid walls need a Cartesian grid")
+    walls = tuple((None, None) if pair is None else tuple(pair) for pair in walls)
+    if len(walls) != 3 or any(
+        len(pair) != 2 or any(not (wall is None or isinstance(wall, SolidWall)) for wall in pair)
+        for pair in walls
+    ):
+        raise ValueError("solid walls are a (lower, upper) pair per axis, each None or a SolidWall")
+    if any(walls[0]):
+        raise ValueError("solid walls go on the transverse axes 1 and 2; axis 0 is the flow's")
+    faces, fluid = [np.asarray(grid.faces[0])], [slice(0, grid.shape[0])]
+    for axis in (1, 2):
+        edges, (lower, upper) = np.asarray(grid.faces[axis]), walls[axis]
+        below = (
+            [] if lower is None else edges[0] - lower.thickness * (1.0 - np.arange(lower.cells) / lower.cells)
+        )
+        above = (
+            [] if upper is None else edges[-1] + upper.thickness * np.arange(1, upper.cells + 1) / upper.cells
+        )
+        faces.append(np.concatenate([below, edges, above]))
+        fluid.append(slice(len(below), len(below) + grid.shape[axis]))
+    return ConjugateGrid(Grid(*faces), tuple(fluid), walls)
 
 
 @dataclass(frozen=True)
