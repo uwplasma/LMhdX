@@ -280,3 +280,11 @@ composition. The thermal chain is finished in a fixed order before moving open
 flow and the Mistrangelo comparison. The test matrix grows by T36–T49. The
 source size estimates under Consequences above are unchanged; the new loans are listed
 in `plan.md` H.10.8.
+
+*Answered (owner, 2026-10-22), `plan.md` H.10.12:* re-pinning the transient
+reference results after the constrained-stage fix is approved (DH9). #275's
+tenfold timing assertion is not a hard target and a factor of 3 is acceptable;
+the ratio leaves the PR gate in favour of controlled performance runs or a
+"not slower" check, and the memory bound stays the gate (DH16). The loan rule is
+approved with no hard thresholds; each budget change is deliberate and justified
+in its PR (DH15).
