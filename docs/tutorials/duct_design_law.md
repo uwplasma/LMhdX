@@ -594,7 +594,10 @@ by its velocity bound, `MIN_VELOCITY`.
   $a$. The Hartmann-layer Reynolds number is $(Re/Ha)(a/D_h)$, with
   $D_h/a = 4\beta/(1+\beta)$, so the filter does not hold it at one value
   across aspect ratios. The study is to be rerun with each threshold in its own
-  definition; that changes the feasible region.
+  definition; that changes the feasible region. The two reported designs stay
+  feasible under the corrected filter, but that does not show they stay
+  optimal: until the rerun is recorded, the results here are the screening
+  study's, under its original filter.
 - **What is differentiated.** The area enters through the constant-property
   scaling and the Hartmann-number dependence, so its derivative is legitimate.
   The aspect ratio is optimized by derivative-free bracketing on rebuilt
