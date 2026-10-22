@@ -1569,6 +1569,9 @@ def test_the_magnetoconvection_specification_reproduces_its_printed_numbers():
 
     record = mistrangelo.spec()
     assert record["status"] == "frozen" and mistrangelo.developed_gradient(record) == 0.0863
+    calibration = record["calibration"]
+    assert "pressure gradient" in calibration["not_acceptance"]
+    assert not any("pressure" in check for check in calibration["independent"])
     case, a, b0 = record["cases"]["case1"], record["geometry"]["half_width_m"], record["field"]["peak_T"]
     u0, q, g = (
         case["mean_velocity_m_per_s"],
@@ -1618,8 +1621,9 @@ def test_the_magnetoconvection_section_converges_to_its_pinned_gradient():
 
 def test_the_magnetoconvection_section_meets_figure_13s_core():
     """The independent check of 5.4a's section: on the pin's 96/12 cells, the profile at y = 0 against Figure 13's
-    analytical markers. In the core, |z| <= 0.7 a, every marker is within 2 px (1.86 measured) and the section lies
-    under 1 % below them on average (0.65 %). The jets' flanks differ by about 10 px, which is reported, not gated."""
+    analytical markers. In the core, |z| <= 0.7 a, every marker is within the record's digitizing uncertainty (2.44
+    px; 1.86 measured) and the section lies under 1 % below them on average (0.65 %). The jets' flanks differ by
+    about 10 px, which is reported, not gated."""
     import json
 
     from validation import mistrangelo
@@ -1631,18 +1635,23 @@ def test_the_magnetoconvection_section_meets_figure_13s_core():
     markers, pixel = figure["curves"]["analytical"], figure["per_pixel"][1]
     z, u = np.array(markers["x"]) / a, np.array(markers["y"]) / u0
     flow = mistrangelo.section_flow(ratio, record=record, **mistrangelo.PIN_MESH)
-    offset = (np.interp(z, flow["z"], flow["u_over_u0"]) - u)[np.abs(z) <= 0.7] * u0 / pixel
-    assert len(offset) >= 10 and np.max(np.abs(offset)) <= 2.0, offset
-    assert -0.01 < np.mean(offset) * pixel / (np.mean(u[np.abs(z) <= 0.7]) * u0) < 0.0
+    offset = (np.interp(z, flow["z"], flow["u_over_u0"]) - u)[np.abs(z) <= 0.7] * u0
+    assert len(offset) >= 10 and np.max(np.abs(offset)) <= figure["uncertainty"]["y"], offset / pixel
+    assert -0.01 < np.mean(offset) / (np.mean(u[np.abs(z) <= 0.7]) * u0) < 0.0
 
 
 def _check_reference_record(record):
     """One digitized figure as shipped: its image hashed; both axes on their label lattice, three ticks at least and
-    within 0.6 px (the worst measured is 0.54); whether the paper or my reading chose the band's codes; the kept
-    curves ordered and visible, and the band ordered and inside its window."""
+    within 0.6 px (the worst measured is 0.54), the misfit and the digitizing uncertainty also in the axis's units;
+    whether the paper or my reading chose the band's codes; the kept curves ordered and visible, and the band ordered
+    and inside its window."""
     assert len(record["sha256"]) == 64 and record["agree_basis"] in ("the paper", "my reading")
-    for axis in ("x", "y"):
-        assert record["calibration"][axis]["misfit_px"] <= 0.6 and record["calibration"][axis]["ticks"] >= 3
+    for axis, scale in zip("xy", record["per_pixel"]):
+        fit, spread = record["calibration"][axis], record["uncertainty"]["px"][axis]
+        assert fit["misfit_px"] <= 0.6 and fit["ticks"] >= 3
+        assert fit["misfit"] == pytest.approx(fit["misfit_px"] * scale, rel=1e-2)
+        assert spread == pytest.approx(2.1 + fit["misfit_px"], abs=0.01)
+        assert record["uncertainty"][axis] == pytest.approx(spread * scale, rel=1e-2)
     assert record["curves"] or "band" in record
     for curve in record["curves"].values():
         assert np.all(np.diff(curve["x"]) > 0) and curve["coverage"] >= 0.01

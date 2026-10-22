@@ -12,6 +12,17 @@ page records the frozen specification and the first check.
 numerics. Each value is marked *printed* (quoted, with its page), *inferred*
 (deduced, with the reason) or *pinned* (chosen to reproduce a printed number).
 The paper prints no material properties, so two choices carry the comparison.
+The file is metadata, read by `validation.mistrangelo` and the tests, and not a
+case that `lmhdx` runs.
+
+**Conventions** (`[conventions]`).
+- `Ha`, `Re` and `Gr` are on the half-width `a` = 23 mm, as Table 1 defines
+  them (printed).
+- `Nu` is on `L = a` (inferred: Figures 18 and 38 would double on `2a`).
+- The pressure is in `σ u₀ B₀²` (inferred: Figure 8's slope gives the printed
+  −0.0855 in it).
+- Joule heat is omitted in the fluid and in the walls. That is printed for the
+  fluid (eq. 4) and inferred for the walls, which are given no source.
 
 **PbLi.**
 - The properties are Martelli et al. (2019) at 573 K, the paper's reference
@@ -59,6 +70,19 @@ The paper prints no material properties, so two choices carry the comparison.
 - the reference levels of the potential and the pressure;
 - the inlet profile and domain length, which each code chose for itself;
 - the wall model of the analytical solution.
+
+**What is calibrated, and what checks it** (`[calibration]`, ADR 0009 D35).
+- **Calibrated:** the PbLi `μ`, `σ` and `β`, on the printed groups; the wall's
+  effective conductivity ratio, on the developed gradient −0.0863.
+- **Not acceptance:** the developed pressure gradient, which the calibrated
+  ratio meets by construction.
+- **Independent:**
+  - the side jets and the axial velocity (Figures 7, 12 and 13);
+  - the temperatures, the bulk temperature and `Nu` (Figures 6, 9–11, 17, 18
+    and 38);
+  - the potential (Figures 15 and 16) and the transverse energy (Figure 19).
+- **A known miss:** Matolich's measured ratio gives a gradient 4.1 % below
+  −0.0863. It is recorded, and nothing is tuned against it.
 
 **No gate yet.** The specification is frozen, but Case 1's gate (ADR 0009
 D35) is declared before step 5.4e, so
@@ -118,8 +142,12 @@ Figures 6–13, 15–19 and 38, read by `scripts/digitize_mistrangelo.py`.
 - The figures are xmgrace plots embedded in the PDF as images.
 - They are extracted with `pymupdf` (`Document.extract_image(xref)`).
   `python scripts/digitize_mistrangelo.py DIR` regenerates the file from them
-  byte for byte. The images are not in the repository, so the digitizer is not
-  in the package or in `validation/`.
+  byte for byte, and writes every code's curve to
+  `DIR/mistrangelo2025-case1-curves.json`. The images are not in the
+  repository, so the digitizer is not in the package or in `validation/`.
+- The images and the per-code curves, the extraction's intermediates, are a
+  release asset, since the paper is CC BY 4.0. Part 2 records them in
+  `benchmarks/provenance.json` with their SHA-256s.
 - Each record carries:
   - the image's PDF page (the journal's is one less), xref and SHA-256;
   - the axis calibration;
@@ -129,8 +157,8 @@ Figures 6–13, 15–19 and 38, read by `scripts/digitize_mistrangelo.py`.
 - The file is compact, 32 KB for these figures. A record keeps the band, and
   the curves that are not one of the six codes: Figure 13's analytical
   markers and Figure 11's stations. Each is simplified to within half a pixel
-  and rounded to a tenth of one. The per-code curves are not shipped; the
-  digitizer regenerates them.
+  and rounded to a tenth of one. The per-code curves are not shipped: they
+  are in the release asset.
 
 **How a figure is read.**
 - **Frame and ticks.** The plot frame, its legend and the major ticks outside
@@ -170,7 +198,16 @@ Figures 6–13, 15–19 and 38, read by `scripts/digitize_mistrangelo.py`.
   Where curves coincide, the one drawn on top hides the rest, so
   FLUENT_CIEMAT's black is seldom visible.
 
-**The uncertainty is about 2 px:**
+**The digitizing uncertainty** is in each record, `uncertainty`, per axis in
+the axis's units. It sums three parts, 2.3–2.5 px in all:
+- the read line, within 1.5 px;
+- the compact record, within 0.6 px of it (both bounds are from the synthetic
+  figure below);
+- the axis's calibration misfit, which each axis also carries in its units
+  (`misfit`).
+
+The band's spread is the codes', apart from it. A comparison's acceptance band
+is the two combined (ADR 0009 D35). For scale:
 
 | | x per px | y per px |
 |:--|--:|--:|
@@ -186,8 +223,8 @@ Figures 6–13, 15–19 and 38, read by `scripts/digitize_mistrangelo.py`.
     (−566.9 Pa/m).
 - **The developed section against Figure 13's analytical solution.**
   - In the core (|z| ≤ 0.7 a) the section on the pin's 96/12 mesh lies within
-    1.86 px of every marker, 0.65 % low on average. This is gated, within 2 px
-    and 1 %.
+    1.86 px of every marker, 0.65 % low on average. This is gated, within the
+    record's uncertainty (2.44 px) and 1 %.
   - On the steep flanks of the jets, one value per column is a poor trace.
   - The section's jets are 0.0841 m/s. The codes' band peaks at 0.0850 on the
     heated side and 0.0821 on the other, at x = 0, where buoyancy makes them
@@ -197,7 +234,7 @@ Figures 6–13, 15–19 and 38, read by `scripts/digitize_mistrangelo.py`.
 
 `tests/test_steady.py` checks:
 - every record, with `_check_reference_record`: its hash, its calibration
-  within 0.6 px, its band and curves;
+  within 0.6 px, its uncertainty, its band and curves;
 - the developed section's core against Figure 13;
 - the digitizer itself, on a synthetic figure in CI. It is a drawn frame with
   ticks, a solid and a dashed line and rings. The compact record must keep the
