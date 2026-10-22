@@ -40,6 +40,12 @@ Core references used by the implemented models and validation contracts include:
   [doi:10.1016/j.nme.2025.101965](https://doi.org/10.1016/j.nme.2025.101965) —
   the fixed-area optimum aspect ratio of an insulated duct, before the duct
   design law stated it.
+- M. J. Bluck, M. J. Wolfendale and A. J. Marquis, “An analytical solution to
+  the heat transfer problem in Shercliff flow,” *International Journal of Heat
+  and Mass Transfer* 86, 2015, 542–549 (accepted manuscript in Imperial
+  College's Spiral repository) — the published H1 and H2 Nusselt numbers of
+  the square insulating duct in the MHD Nusselt campaign of
+  `docs/physics/thermal.md`.
 - I. Celik et al., “Procedure for estimation and reporting of uncertainty due
   to discretization in CFD applications,” *Journal of Fluids Engineering* 130,
   2008, [doi:10.1115/1.2960953](https://doi.org/10.1115/1.2960953) — the
