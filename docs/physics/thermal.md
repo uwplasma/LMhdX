@@ -505,7 +505,12 @@ square duct takes 13 iterations, a 1:8 duct about 150.
 $\Lambda$ is the Rayleigh quotient of the converged $\theta$. The quotient is
 stationary at an eigenfunction, so its derivative in the velocity needs none of
 the iteration's; the gradient through the steady solve's field scale meets
-central differences to 1e-5. A heat-flux wall must be adiabatic, and sources
+central differences to 1e-5, with a Taylor remainder of second order. **The
+supported derivative** is the first derivative of $\Lambda$, the decay rate and
+$Nu_T$ at a converged solve. The profile comes without a gradient (its
+sensitivity needs an implicit eigenvector solve), and second derivatives are not
+supported. An unconverged solve, or a flow that runs backward in a cell, returns
+NaN for $\Lambda$ and $Nu_T$, with `converged` false. A heat-flux wall must be adiabatic, and sources
 and Joule heat are left out, since the T condition has none.
 
 | Duct | Reference | 16 / 32 / 64 cells | Order |
