@@ -248,17 +248,15 @@ def face_interpolate(field: Field, axis: int | str, condition: BoundaryCondition
     index = grid.axis_index(axis)
     _require_cell_centred(field)
     padded = pad(field.data, index, condition, grid=grid)
-    weight = host_array(grid, _interpolation_weight, index, dtype=field.dtype)
+    weight = host_array(grid, _interpolation_weight, index, condition, dtype=field.dtype)
     lower = _take(padded, index, slice(None, -1))
     upper = _take(padded, index, slice(1, None))
     offset = tuple(FACE if position == index else CENTER for position in range(3))
     return Field(weight * lower + (1.0 - weight) * upper, offset, grid)
 
 
-def _interpolation_weight(grid: Grid, axis: int) -> np.ndarray:
-    widths = np.asarray(grid.widths[axis])
-    ghosted = np.concatenate(([widths[0]], widths, [widths[-1]]))
-    return _shaped(ghosted[1:] / (ghosted[:-1] + ghosted[1:]), axis)
+def _interpolation_weight(grid: Grid, axis: int, condition: BoundaryCondition) -> np.ndarray:
+    return _shaped(_lower_weight(np.asarray(grid.widths[axis]), condition), axis)
 
 
 def face_average(field: Field, axis: int | str, condition: BoundaryCondition) -> Field:
@@ -338,11 +336,12 @@ def _half_cell_weight(grid: Grid, axis: int, side: int) -> np.ndarray:
     return _half_cell_weights(grid, axis)[side]
 
 
-def _ghosted_widths(widths: np.ndarray, condition: BoundaryCondition) -> np.ndarray:
-    """Cell widths with the ghost cell on each end: the wrapped cell, or the mirrored wall cell."""
-    if condition.is_periodic:
-        return np.concatenate(([widths[-1]], widths, [widths[0]]))
-    return np.concatenate(([widths[0]], widths, [widths[-1]]))
+def _ghosted_widths(widths: np.ndarray, condition: BoundaryCondition, layers: int = 1) -> np.ndarray:
+    """Cell widths with ``layers`` ghost cells on each end: the wrapped cells, or the mirrored wall cell.
+
+    The one place a face weight or a stencil distance learns what lies beyond the first and last cell.
+    """
+    return np.pad(widths, layers, mode="wrap" if condition.is_periodic else "edge")
 
 
 def _half_cell_weights(grid: Grid, axis: int) -> tuple[np.ndarray, np.ndarray]:
@@ -662,7 +661,8 @@ def _along_own_axis(field: Field, axis: int, condition: BoundaryCondition, limit
     data = field.data
     carrier = 0.5 * (_take(data, axis, slice(None, -1)) + _take(data, axis, slice(1, None)))
     stencil = _wide(data, axis, condition, field.grid, layers=1, duplicated=True)
-    flux = carrier * _face_value(stencil, carrier, axis, 0.5, limited)
+    gaps = _ghosted_widths(np.asarray(field.grid.widths[axis]), condition)
+    flux = carrier * _face_value(stencil, carrier, axis, 0.5, limited, gaps)
     difference = _take(flux, axis, slice(1, None)) - _take(flux, axis, slice(None, -1))
     if condition.is_periodic:
         wrap = _take(flux, axis, slice(None, 1)) - _take(flux, axis, slice(-1, None))
@@ -681,22 +681,29 @@ def _across_axis(
     conditions: tuple[BoundaryCondition, ...],
     limited: bool,
 ) -> jnp.ndarray:
-    """Difference the flux at the two edges bounding one velocity face along ``axis``."""
+    """Difference the flux at the two edges bounding one velocity face along ``axis``.
+
+    The carrier is the own-width (mass-flux) average and the convected value the arithmetic mean, the pair for which
+    the central flux does no net work on a divergence-free state, on a stretched periodic mesh as on a uniform one.
+    The limiter alone reads the distances between centres.
+    """
     field = velocity[component]
     grid = field.grid
     carrier = _interpolate(velocity[axis].data, component, conditions[component], grid)
     stencil = _wide(field.data, axis, conditions[axis], grid, layers=2, duplicated=False)
-    weight = _lower_weight(np.asarray(grid.widths[axis]))
-    flux = carrier * _face_value(stencil, carrier, axis, _broadcast(weight, axis, field.dtype), limited)
+    ghosted = _ghosted_widths(np.asarray(grid.widths[axis]), conditions[axis], layers=2)
+    flux = carrier * _face_value(stencil, carrier, axis, 0.5, limited, 0.5 * (ghosted[:-1] + ghosted[1:]))
     difference = _take(flux, axis, slice(1, None)) - _take(flux, axis, slice(None, -1))
     return difference / _broadcast(np.asarray(grid.widths[axis]), axis, field.dtype)
 
 
-def _face_value(stencil, carrier, axis: int, weight, limited: bool):
+def _face_value(stencil, carrier, axis: int, weight, limited: bool, gaps):
     """Return the transported value at every flux point of ``axis``.
 
     ``stencil`` holds the four values each flux point needs, so it is three
-    entries longer along ``axis`` than the number of flux points.
+    entries longer along ``axis`` than the number of flux points, and ``gaps`` the
+    distances between its neighbours. The limiter compares slopes over those
+    distances, not raw differences, so a linear profile is reproduced on any mesh.
     """
     far_lower = _take(stencil, axis, slice(None, -3))
     lower = _take(stencil, axis, slice(1, -2))
@@ -705,8 +712,13 @@ def _face_value(stencil, carrier, axis: int, weight, limited: bool):
     central = weight * lower + (1.0 - weight) * upper
     if not limited:
         return central
-    ahead = upper - lower
-    behind = jnp.where(carrier >= 0.0, lower - far_lower, far_upper - upper)
+    gaps = _broadcast(gaps, axis, stencil.dtype)
+    ahead = (upper - lower) / _take(gaps, axis, slice(1, -1))
+    behind = jnp.where(
+        carrier >= 0.0,
+        (lower - far_lower) / _take(gaps, axis, slice(None, -2)),
+        (far_upper - upper) / _take(gaps, axis, slice(2, None)),
+    )
     upwind = jnp.where(carrier >= 0.0, lower, upper)
     safe = jnp.where(ahead == 0.0, 1.0, ahead)
     ratio = jnp.where(ahead == 0.0, 0.0, behind / safe)
@@ -739,16 +751,17 @@ def _van_leer(ratio):
 
 
 def _interpolate(data, axis: int, condition: BoundaryCondition, grid) -> jnp.ndarray:
-    """Move a field from cell centres to faces along ``axis``, weighted by distance."""
+    """Move a field from cell centres to faces along ``axis``, weighted by each cell's own width: the carrier."""
     padded = pad(data, axis, condition, grid=grid)
-    weight = _broadcast(_lower_weight(np.asarray(grid.widths[axis])), axis, data.dtype)
+    weight = _broadcast(1.0 - _lower_weight(np.asarray(grid.widths[axis]), condition), axis, data.dtype)
     return weight * _take(padded, axis, slice(None, -1)) + (1.0 - weight) * _take(
         padded, axis, slice(1, None)
     )
 
 
-def _lower_weight(widths: np.ndarray) -> np.ndarray:
-    ghosted = np.concatenate(([widths[0]], widths, [widths[-1]]))
+def _lower_weight(widths: np.ndarray, condition: BoundaryCondition) -> np.ndarray:
+    """The distance weight of the lower cell at every face: the opposite cell's share of the two widths."""
+    ghosted = _ghosted_widths(widths, condition)
     return ghosted[1:] / (ghosted[:-1] + ghosted[1:])
 
 
@@ -787,7 +800,7 @@ def face_conductivity(sigma: Field, axis: int | str, condition: BoundaryConditio
     lower = padded[(slice(None),) * index + (slice(None, -1),)]
     upper = padded[(slice(None),) * index + (slice(1, None),)]
     lower_half, upper_half = (
-        host_array(grid, _half_widths, index, side, dtype=sigma.dtype) for side in (0, 1)
+        host_array(grid, _half_widths, index, condition, side, dtype=sigma.dtype) for side in (0, 1)
     )
     total = lower_half + upper_half
     resistance = lower_half / lower + upper_half / upper
@@ -795,10 +808,9 @@ def face_conductivity(sigma: Field, axis: int | str, condition: BoundaryConditio
     return Field(total / resistance, offset, grid)
 
 
-def _half_widths(grid: Grid, axis: int, side: int) -> np.ndarray:
-    """Half the width of the cell below (``side`` 0) or above each face, the wall cell mirrored."""
-    widths = np.asarray(grid.widths[axis])
-    ghosted = np.concatenate(([widths[0]], widths, [widths[-1]]))
+def _half_widths(grid: Grid, axis: int, condition: BoundaryCondition, side: int) -> np.ndarray:
+    """Half the width of the cell below (``side`` 0) or above each face: wrapped, or the wall cell mirrored."""
+    ghosted = _ghosted_widths(np.asarray(grid.widths[axis]), condition)
     half = 0.5 * (ghosted[1:] if side else ghosted[:-1])
     return half.reshape([-1 if position == axis else 1 for position in range(3)])
 
