@@ -1,5 +1,7 @@
 """Fully developed pipe flow: the other geometry of the validation ladder."""
 
+from importlib.resources import files
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -315,3 +317,37 @@ def test_the_tabulated_field_is_monotone_and_not_extrapolated():
     assert np.all(np.diff(values) <= 1e-14) and values.min() >= 0.0
     with pytest.raises(ValueError, match="not extrapolated"):
         field([3.5])
+
+
+def test_the_alex_b1_pipe_matches_at_the_wall_parallel_to_the_field_not_in_the_section_mean():
+    """Row 6: the same Ha 400 solve scored against the digitized ALEX B1 gradient by two observables."""
+    from lmhdx.axial import fringe_pipe, monotone_interpolant, pipe_station_pressure, solve_open_pipe
+    from lmhdx.pipe import wall_pressure_gradient
+
+    data = np.loadtxt(
+        files("lmhdx") / "data/benchmarks/references/alex-b1-pipe.csv", delimiter=",", skiprows=1
+    )
+    stations, table, observed, sigma = data[:, 0], data[:, 1], data[:, 3], data[:, 4]
+    pipe = fringe_pipe(
+        hartmann=400.0,
+        field=monotone_interpolant(stations, table),
+        wall_conductance=0.027,
+        core=(-6.0, 7.5),
+        spacing=0.5,
+        radial=24,
+        azimuthal=32,
+    )
+    pressure = solve_open_pipe(pipe).pressure
+
+    def score(x, gradient):
+        excess = gradient - gradient[x >= 7.5].mean()
+        z = (np.interp(stations, x, excess) - observed) / sigma
+        return float(np.sqrt(np.mean(z**2))), float(np.abs(z).max())
+
+    centres, mean = pipe_station_pressure(pipe, pressure)
+    mean_rms, _ = score(
+        0.5 * (centres[1:] + centres[:-1]), -np.diff(np.asarray(mean)) / np.diff(centres) / 400.0**2
+    )
+    side_rms, side_max = score(*wall_pressure_gradient(pipe.grid, pressure, np.pi / 2, 400.0))
+    assert mean_rms > 2.4  # measured 2.51
+    assert side_rms < 1.05 and side_max < 2.2  # measured 1.00 / 2.09; the Ha 6600 campaign gives 0.86 / 1.39
