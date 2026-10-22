@@ -280,19 +280,19 @@
     {
       "availability": "repository",
       "digitizer": "scripts/digitize_mistrangelo.py",
-      "digitizer_sha256": "f23b79146d29a4b7d8b342c3e0aa28c56f61a60535174e4786a2e31fae72aef2",
+      "digitizer_sha256": "27e9beb2ce39979c66121447266d9f90ea8bc2b5e031082f6e8169f139bda8ab",
       "extracted": "2026-10-20, from the PDF of mistrangelo-2025 (its DOI and SHA-256 above) with pymupdf Document.extract_image(xref); each image's SHA-256 is in its record",
       "extraction": {
         "asset": "mistrangelo2025-case1-extraction.zip",
-        "contents": "the 14 figure images, unmodified (CC BY 4.0, with the paper's attribution), and mistrangelo2025-case1-curves.json: every code's curve with each figure's calibration and image SHA-256",
-        "curves_sha256": "4af85c15084a90b59fbcdb471badb721df3b23b42a5e4f980feb1b2f44369ecd",
+        "contents": "the 14 figure images, unmodified (CC BY 4.0, with the paper's attribution), and mistrangelo2025-case1-curves.json: every code's curve, one value per pixel column with nothing decimated, with each figure's calibration and image SHA-256",
+        "curves_sha256": "7ad4329c357847afb147526290bba2a8967ae50a6eece12f6d239d676e64415c",
         "release": "https://github.com/uwplasma/LMhdX/releases/tag/mistrangelo2025-references",
-        "sha256": "0e8db1db486a1601b7babb53bb2567e209b39f07577c8f9aa14b06d82834c33a"
+        "sha256": "3c940a2a697735020f4b8247cce583d9e77c834fc2e6070b9d5da6ecd2beb822"
       },
       "id": "mistrangelo2025-case1",
       "kind": "reference_data",
       "path": "lmhdx/data/benchmarks/references/mistrangelo2025-case1.json",
-      "sha256": "092a9796f2c620595154ca4f43d897bc5788b8a67ed2533bea199631523ef2a3",
+      "sha256": "ee939b2e4e552a664317d9d1a50140378eca9fa1d79bf73926224445b3e5158e",
       "title": "Mistrangelo et al. 2025, Case 1: figures digitized by scripts/digitize_mistrangelo.py"
     }
   ]

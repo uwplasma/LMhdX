@@ -149,14 +149,17 @@ Figures 6–13, 15–19 and 38, read by `scripts/digitize_mistrangelo.py`.
   release asset, `mistrangelo2025-case1-extraction.zip` on the release
   `mistrangelo2025-references`, since the paper is CC BY 4.0.
   `benchmarks/provenance.json` records the archive's and the curves' SHA-256s
-  (`extraction`).
+  (`extraction`). The release is a draft until the owner publishes it. Until
+  then the archive is reachable only to the repository's maintainers, so the
+  extraction is reproducible publicly from the paper's PDF and this script,
+  not yet from the archive.
 - Each record carries:
   - the image's PDF page (the journal's is one less), xref and SHA-256;
   - the axis calibration;
   - whether the y axis is logarithmic (`y_scale`);
   - the codes it omits, and why;
   - whether the paper or my reading chose the band's codes (`agree_basis`).
-- The file is 52 KB for these figures. A record keeps the band and the curves
+- The file is 90 KB for these figures. A record keeps the band and the curves
   that are not one of the six codes: Figure 13's analytical markers and
   Figure 11's stations.
   - Each is simplified to within half a pixel of every extracted pixel column,
@@ -213,11 +216,17 @@ the axis's units. It sums three parts, 2.3–2.5 px in all:
 - the axis's calibration misfit, which each axis also carries in its units
   (`misfit`).
 
-The band's spread is the codes', apart from it. A comparison's acceptance band
-is the two combined: `validation.mistrangelo.band_misfit(x, y, figure)` takes
-arrays and numbers and returns the largest excess beyond it, zero inside. At
-5.4e, ADR 0009 D35's band also takes in LMhdX's discretization error, from its
-mesh, time-step, tolerance and outlet-length studies. For scale:
+The band's spread is the codes', apart from it. It is the envelope of the
+codes chosen to agree, not a statistical confidence interval. A comparison's
+acceptance band is the two combined:
+- `validation.mistrangelo.band_misfit(x, y, figure)` takes arrays and numbers,
+  and returns the largest excess beyond the band, zero inside.
+- It interpolates the band as plotted, in decades on a log axis.
+- Each edge is taken at its extreme over x ± the x uncertainty, then widened by
+  the y uncertainty.
+
+At 5.4e, ADR 0009 D35's band also takes in LMhdX's discretization error, from
+its mesh, time-step, tolerance and outlet-length studies. For scale:
 
 | | x per px | y per px |
 |:--|--:|--:|
@@ -226,7 +235,7 @@ mesh, time-step, tolerance and outlet-length studies. For scale:
 
 **Two checks.**
 - **The pressure scale.** Figure 8's band slope over |x| < 0.4 m is
-  −568.8 Pa/m. The printed −0.0855, taken in σu₀B₀² with the pinned PbLi,
+  −568.6 Pa/m. The printed −0.0855, taken in σu₀B₀² with the pinned PbLi,
   gives −564.5 Pa/m, 0.8 % apart.
   - This confirms the σu₀B₀² scale (`tests/test_steady.py`, within 1 %).
   - It cannot tell the pinned σ from Martelli's, which is 0.4 % away
@@ -255,13 +264,14 @@ mesh, time-step, tolerance and outlet-length studies. For scale:
 **Two inferences of the specification, confirmed by the figures:**
 - **The heated width.** Figure 17's outlet bulk temperature is 310.08–310.15 °C
   over 0.4 < x < 0.9 m. The specification's energy balance, with the full
-  50 mm outer width heated, gives 310.12 °C, at the band's upper edge: never
-  below its lower edge, and at most half a pixel (0.014 K) above its upper one.
-  The test allows one pixel, 0.03 K.
+  50 mm outer width heated, gives 310.12 °C. Over the plateau, every column
+  read, it lies inside the band to half a pixel: at most 0.002 K below its
+  lower edge and 0.012 K above its upper (0.08 and 0.42 px). The test allows
+  half a pixel either way, 0.014 K. A 46 mm patch would be 0.8 K off.
 - **The length in Nu.**
   - From Figure 38's OF_KIT temperatures at x = 0.29 m, `T_w − T_b` is
-    19.23 K, so `Nu = q'' a / (k (T_w − T_b))` is 2.34 with L = a.
-  - That lies inside Figure 18's band there, 2.24–2.42 (Nu on L = a), and
+    19.28 K, so `Nu = q'' a / (k (T_w − T_b))` is 2.34 with L = a.
+  - That lies inside Figure 18's band there, 2.23–2.41 (Nu on L = a), and
     inside its acceptance band (`band_misfit`, tested).
   - L = 2a would double it.
 
