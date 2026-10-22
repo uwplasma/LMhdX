@@ -12,7 +12,14 @@ both cases' digitized figures.
 `src/lmhdx/data/benchmarks/specs/mistrangelo2025.toml` is frozen before any new
 numerics. Each value is marked *printed* (quoted, with its page), *inferred*
 (deduced, with the reason) or *pinned* (chosen to reproduce a printed number),
-with its source. The paper prints no material properties.
+with its source. The paper prints no material properties. The file is
+metadata, read by `validation.mistrangelo` and the tests, and not a case that
+`lmhdx` runs.
+
+**Conventions** (`[conventions]`). `Ha`, `Re` and `Gr` are on the half-width
+`a` = 23 mm, as Table 1 defines them; `Nu` is on `L = a` (inferred, below); the
+pressure is in `σ u₀ B₀²` (inferred from Figure 8). Joule heat is omitted in the
+fluid (printed, eq. 4) and in the walls (inferred: they are given no source).
 
 **The values that are not printed:**
 - **PbLi, pinned.** Martelli et al. (2019) at 573 K give Ha 233.2, Re 3157 and
@@ -34,6 +41,16 @@ with its source. The paper prints no material properties.
 - **Unspecified by the paper:** the wall's end faces, the reference levels of
   the potential and the pressure, the inlet profile and domain length, and the
   analytical solution's wall model.
+
+**What is calibrated, and what checks it** (`[calibration]`, ADR 0009 D35).
+- **Calibrated:** the PbLi `μ`, `σ` and `β`, on the printed groups; the wall's
+  effective ratio, on the developed gradient −0.0863, which is therefore no
+  acceptance check.
+- **Independent:** the jets and the axial velocity (Figures 7, 12, 13), the
+  temperatures, bulk temperature and `Nu` (Figures 6, 9–11, 17, 18, 38), the
+  potential (15, 16) and the transverse energy (19).
+- **A known miss:** Matolich's measured ratio gives a gradient 4.1 % below
+  −0.0863; nothing is tuned against it.
 
 Case 1's gate is declared before step 5.4e (ADR 0009 D35), so
 `tolerances_frozen_before_production` is false.
@@ -59,19 +76,21 @@ rows nearest the midplane on each side.
 - **The core follows from the gradient.** The Hartmann walls' current balance
   gives `K(1 + c + 1/Ha)/(c + 1/Ha) = 0.853`, against the section's 0.850.
 - **The profile is the independent check**, against Figure 13's analytical
-  markers. On 96/12, the core (\|z\| ≤ 0.7 a) is within 1.86 px of every
-  marker and 0.65 % low on average. On the jets' steep flanks the difference is
+  markers. On 96/12, the core (\|z\| ≤ 0.7 a) is within 2.09 px of each of the
+  markers' 37 columns and 0.62 % low on average, gated within the record's
+  uncertainty (2.44 px) and 1 %. On the jets' steep flanks the difference is
   about 10 px. The paper puts the jets' maximum at 0.935 a (p. 12); the section
   has 0.929 a.
 
 ## The digitized figures
 
-`src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json` (32 KB) and
-`-case2.json` (30 KB) hold the figures, read by
+`src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json` (90 KB) and
+`-case2.json` (77 KB) hold the figures, read by
 `python scripts/digitize_mistrangelo.py DIR`. The figures are xmgrace plots
 embedded in the PDF as images, extracted with `pymupdf`
 (`Document.extract_image(xref)`). They are not in the repository, so the
-digitizer is not in the package or in `validation/`.
+digitizer is not in the package or in `validation/`. It also writes every
+code's curve to `DIR/mistrangelo2025-case1-curves.json` and `-case2-curves.json`.
 
 **How a figure is read.**
 - **Calibration.** The frame and the major ticks outside it are detected. Two
@@ -86,15 +105,41 @@ digitizer is not in the package or in `validation/`.
   `agree_basis` records whether the paper chose those codes or my reading did.
 - **What is shipped.** Per figure: the image's page, xref and SHA-256, the
   calibration, the band, and the curves that are not a code's (Figure 13's
-  markers, Figure 11's stations, Figure 38's branches). Each is simplified to
-  within half a pixel and rounded to a tenth of one. The per-code curves are
-  not shipped; the digitizer regenerates them.
+  markers, Figure 11's stations, Figure 38's branches).
+  - Each is simplified to within half a pixel of every extracted pixel column,
+    with nothing decimated before. The kept vertices keep their extracted x,
+    and the values are rounded to a tenth of a pixel.
+  - Against the full extraction, every record is within 0.53 px, log axes in
+    decades.
+  - The per-code curves, every column of them, are not shipped. With the figure
+    images (the paper is CC BY 4.0) they are the release assets
+    `mistrangelo2025-case1-extraction.zip` and `-case2-extraction.zip` on
+    `mistrangelo2025-references`.
+  - The release is a draft until the owner publishes it. Until then the
+    archives are reachable only to the repository's maintainers, so the
+    extraction is reproducible publicly from the paper's PDF and this script,
+    not yet from the archives.
 - **Provenance.** `benchmarks/provenance.json` records the paper's DOI and
   SHA-256, and each file's SHA-256 with the extraction date and the
-  digitizer's SHA-256. A test checks both hashes against the files.
+  digitizer's SHA-256, and the release asset's (`extraction`). A test checks
+  the file and digitizer hashes against the files.
 
-The uncertainty is about 2 px: for example 0.028 K per pixel in Figure 6 and
-2.3e-4 m/s in Figure 12.
+**The digitizing uncertainty** is in each record (`uncertainty`), per axis in
+the axis's units: the read line within 1.5 px, the compact record within 0.6 px
+of it (the synthetic figure's bounds), and the axis's calibration misfit, which
+each axis also carries in its units (`misfit`). That is 2.3–2.5 px, for example
+0.064 K in Figure 6 and 5.5e-4 m/s in Figure 12.
+
+**The band** is the envelope of the codes chosen to agree, not a statistical
+confidence interval. A comparison's acceptance band is that envelope widened by
+the digitizing uncertainty:
+- `validation.mistrangelo.band_misfit(x, y, figure)` takes arrays and numbers,
+  and returns the largest excess beyond it, zero inside.
+- It interpolates the band as plotted, in decades on a log axis.
+- Each edge is taken at its extreme over x ± the x uncertainty, then widened by
+  the y uncertainty.
+
+At 5.4e, ADR 0009 D35's band also takes in LMhdX's discretization error.
 
 ### Case 1
 
@@ -111,31 +156,79 @@ The uncertainty is about 2 px: for example 0.028 K per pixel in Figure 6 and
 | 15 | φ on the interface | none | most of the data fits well together (p. 10) | the paper |
 | 16 | φ across, x = 0 | FLUENT_UK | a slight deviation (p. 10) | the paper |
 | 17 | bulk T, eq. 6 | FLUENT_UK | non-physical (p. 10) | the paper |
-| 18 | Nu, eq. 7 | FLUENT_UK | as p. 10 says of Figure 16 | my reading |
+| 18 | Nu, eq. 7, on L = a | FLUENT_UK | as p. 10 says of Figure 16 | my reading |
 | 19 | E_t, eq. 8 (log) | FLUENT_UK, CFX; COMSOL not shown | as before (p. 10); CFX's diffusion (p. 16) | my reading |
 | 38 | OF_KIT's T_w and T_b, both cases | no band | one code (p. 16) | — |
 
 **Checks of Case 1's figures** (`tests/test_steady.py`):
-- **The pressure scale.** Figure 8's slope over \|x\| < 0.4 m is −569.0 Pa/m,
+- **The pressure scale.** Figure 8's slope over \|x\| < 0.4 m is −568.6 Pa/m,
   against −564.5 Pa/m for the printed −0.0855 σu₀B₀² with the pinned PbLi:
   0.8 %, gated within 1 %. It cannot tell the pinned σ from Martelli's, 0.4 %
   away.
 - **The heated width.** The energy balance with the full outer width heated
-  gives 310.12 °C. That is the upper edge of Figure 17's outlet band
-  (310.08–310.15 °C): never below its lower edge, and at most 0.014 K above
-  its upper one, within a pixel.
-- **The length in Nu.** Figure 38's `T_w − T_b` at x = 0.29 m is 19.23 K, so
+  gives 310.12 °C. Over Figure 17's outlet plateau (310.08–310.15 °C), every
+  column read, it lies inside the band to half a pixel either way: at most
+  0.08 px below its lower edge and 0.42 px above its upper. A 46 mm patch
+  would be 0.8 K off.
+- **The length in Nu.** Figure 38's `T_w − T_b` at x = 0.29 m is 19.28 K, so
   `Nu = q'' a / (k (T_w − T_b))` is 2.34 with L = a. That lies inside Figure
-  18's band there, 2.24–2.42; L = 2a would double it.
-- **The printed "Nu → 2.45"** (p. 10) matches Figure 18's codes near
+  18's band there, 2.23–2.41 (Nu on L = a), and inside its acceptance band
+  (`band_misfit`); L = 2a would double it.
+- **The printed "Nu → 2.45"** (p. 10, on L = a) matches Figure 18's codes near
   x = 0.3 m, where their band reaches 2.48. It is about 4 % above OF_KIT's
-  value, within the digitizing uncertainty of about ±0.11.
+  value, within Figure 38's digitizing uncertainty, about ±0.14 in Nu.
 
 ### Case 2
 
-Case 2 is reported, not gated (ADR 0009 D35). COMSOL's outlet backflow (pp. 12
-and 14) is kept out of the bands of Figures 23, 24 and 30–32, which stop at
-x = 0.7 m.
+Case 2 is a statistical target, reported and not gated (ADR 0009 D35): a
+time-dependent flow whose figures are time averages. COMSOL's outlet backflow
+(pp. 12 and 14) is kept out of the bands of Figures 23, 24 and 30–32, which stop
+at x = 0.7 m.
+
+**The reference runs differ** (Tables 2–5, section 4), and those differences
+are part of the codes' spread. Each code chose its own domain, inlet and outlet:
+
+| Code | Time scheme | Δt (s) | Axial cells | Inlet | Outlet | Length (m) | Averaged over (s) |
+|:--|:--|:--|:--|:--|:--|--:|--:|
+| FLUENT_CIEMAT | first-order implicit | not given | 141, uniform | developed laminar | p = 0; extra viscosity in the last 0.2 m; backflow allowed | 2.3 | 60 |
+| FLUENT_UK | second-order implicit | not given | 287 | ∂ₓu = 0, p = 0 | fixed mass flow | 3 | 50 |
+| CFX | backward Euler | 0.015, the adaptive step's final value | 450, uniform | uniform u | opening, backflow allowed; mean p = 0; T from the energy balance | 2.25 | 225 |
+| OF_ORNL | forward Euler | not given | 230, uniform | uniform u | ∂ₓu = 0, p = 0; extra viscosity in the last 0.2 m | 2.3 | 100 |
+| OF_KIT | second-order backward | 0.01 to 0.004, by mesh | 700 | developed turbulent | convective, ∂ₜu + u∂ₓu = 0 | 3 | 450 |
+| COMSOL | second-order backward | not given | 300 | uniform u | ∂ₓu = 0, p = 0 | 2.5 | 50 |
+
+Every inlet is at 300 °C. No code reports a burn-in or a measure of its
+averages' statistical convergence, and the windows differ ninefold.
+
+**LMhdX's proposed Case 2 protocol, declared before any run.** It is a proposal for the owner to settle, not yet a decision.
+- **The set-up.** Each result records its solver, time step, mesh, domain,
+  inlet and outlet: the configuration that 5.4d's outlet-length study settles
+  (ADR 0009 D37).
+- **Burn-in.** Averaging starts after one flow-through of the domain at u₀, and
+  once two consecutive 50 s means move by under 1 % of the bulk rise (0.76 K).
+  This applies to both the outlet bulk temperature and the heated wall's
+  temperature at x = 0.
+- **The window.** At least 450 s, the longest reference window, split into five
+  equal batches.
+- **The statistical error** is the standard error of the five batch means,
+  quoted with every averaged observable.
+  - That assumes the batches are independent, which the window does not
+    guarantee.
+  - Before any statistical precision is quoted, the batch means'
+    autocorrelation and the result's sensitivity to the window length are
+    inspected, and recorded with the result.
+  - If either shows the batches are not independent, the window is
+    lengthened, under the rule below.
+- **The comparison** is against the codes' spread, widened by the digitizing
+  uncertainty and by LMhdX's discretization and statistical errors. The
+  spread is the envelope of the codes chosen, not a confidence interval. The
+  comparison is reported, not gated.
+- **Fixed in advance.** If the burn-in or the window changes after a first
+  comparison, the old outcome and the reason stay in the record.
+- **Not before the corrected momentum step.** Case 2 is a moving, buoyant flow.
+  The stabilised transient step does not keep a pressure-balanced rest state
+  with the field along `y`. No Case 2 result is claimed until that step is
+  corrected, or until a time-step refinement shows the effect is small here.
 
 | Figure | Quantity | Left out of the band | Why (page) | Chosen by |
 |:--|:--|:--|:--|:--|
@@ -151,14 +244,19 @@ x = 0.7 m.
 | 33 | φ across, x = 0 | CFX | good agreement (p. 15), but CFX is offset | my reading |
 | 34 | bulk T, eq. 6 | OF_ORNL, COMSOL | unphysical (p. 15, caption; p. 16) | the paper |
 | 35 | E_t, eq. 8 (log, seven decades) | CFX, OF_ORNL, COMSOL | CFX differs; OF_ORNL and COMSOL unphysical in the kinetic energy (pp. 15–16) | the paper |
-| 37 | Nu, eq. 7 | CFX, OF_ORNL, COMSOL | CFX differs; the bulk temperatures of OF_ORNL and COMSOL fluctuate (p. 16) | my reading |
+| 37 | Nu, eq. 7, on L = a | CFX, OF_ORNL, COMSOL | CFX differs; the bulk temperatures of OF_ORNL and COMSOL fluctuate (p. 16) | my reading |
+
+**Withdrawn:** a comparison of the section's jets with Figure 26. What read as
+CFX's curve there is the analytical solution's markers, merged in the JPEG, so
+the jets are compared with Figure 13 only.
 
 **Checks of Case 2's figures** (`tests/test_steady.py`):
 - **The velocity, 0.01 m/s.** Figure 30's slope over \|x\| < 0.4 m is
-  −191.4 Pa/m, against −189.9 Pa/m for the developed −0.0863 σu₀B₀² at that
-  velocity: 0.8 %. The slope scales with u₀ alone, so this fixes it.
+  −191.2 Pa/m, against −189.9 Pa/m for the developed −0.0863 σu₀B₀² at that
+  velocity: 0.7 %. The slope scales with u₀ alone, so this fixes it.
 - **The flux, 10 W/cm².** Over 0.5 < x < 0.9 m, the top of Figure 34's band is
-  375.78–375.90 °C, against 375.93 °C for the energy balance. The window starts
+  375.71–375.99 °C, every column read, against 375.93 °C for the energy
+  balance: at most 0.22 K off, within the record's uncertainty (0.45 K). The window starts
   past the settling of the bulk temperature after the heated zone, about 0.1 m.
   FLUENT_UK's plateau, 4.5 K lower, sets the band's lower edge.
 

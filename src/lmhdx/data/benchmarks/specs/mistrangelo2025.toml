@@ -10,6 +10,28 @@ source_ids = ["mistrangelo-2025"]
 comparison = "code to code: six codes, no experiment; every profile in figures only"
 # Page, table, figure and equation numbers are the journal's (the PDF's page less one). "printed" values are quoted;
 # "inferred" values are deduced here, each with its reason; "pinned" values are chosen to reproduce printed numbers.
+# This file is metadata, the frozen specification that validation/mistrangelo.py and the tests read; it is not a
+# case file that `lmhdx` runs.
+
+[conventions]
+length_scale = "the half-width a, 0.023 m, for Ha, Re and Gr, as Table 1 defines them"  # printed
+nusselt_length = "a"  # inferred, eq. 7's L: confirmed by Figs. 18 and 38, where L = 2a would double Nu
+pressure_scale = "sigma u0 B0^2"  # inferred: Fig. 8's slope gives the printed -0.0855 in it
+joule_heating = "omitted in the fluid and in the walls"  # printed for the fluid, eq. 4; inferred for the walls: no source is given
+
+[calibration]
+# What is fitted to the paper, and what is left to check it independently (ADR 0009 D35).
+calibrated = [
+    "the wall's effective conductivity ratio, pinned on the developed pressure gradient -0.0863 (p. 8)",
+    "PbLi mu, sigma and beta, pinned on the printed Ha, Re and Gr",
+]
+independent = [
+    "the side jets' height and position, and the axial velocity (Figs. 7, 12, 13; p. 12)",
+    "the temperatures, the bulk temperature and Nu (Figs. 6, 9-11, 17, 18, 38)",
+    "the potential (Figs. 15, 16) and the transverse energy (Fig. 19)",
+]
+not_acceptance = "the developed pressure gradient, met by construction of the calibrated ratio"
+known_misses = ["Matolich's measured 316 ratio, 1.183, gives -0.0828 on 96/12, 4.1 % below -0.0863; not tuned against"]
 
 [sources]
 mistrangelo-2025 = "C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006, doi:10.1088/1741-4326/ae0800"
