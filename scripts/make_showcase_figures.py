@@ -426,6 +426,25 @@ def thermal_developed() -> None:
     print(f"developed: rectangles within {worst:.2%} of the series; square H1 Nu {np.round(square, 3)}")
     relative = np.round(plates / plate_nusselt(plate_fields) - 1, 4)
     print(f"developed: plates against the closed form {relative}")
+    _save_record(
+        "thermal_developed_duct",
+        "developed",
+        nusselt="H1 ducts: the mean Nu on D_h; plates: their own Nu (uniform flux, wall at its hottest), D_h = 4a",
+        rectangles={
+            "aspect": aspects,
+            "cells": 32,
+            "lmhdx": rectangles,
+            "series": [h1_series(1, a) for a in aspects],
+        },
+        square={"hartmann": duct_fields, "cells": 48, "lmhdx": square},
+        plates={
+            "hartmann": plate_fields,
+            "cells": 128,
+            "lmhdx": plates,
+            "closed_form": plate_nusselt(plate_fields),
+        },
+        convergence={"cells": counts, **errors},
+    )
 
     with plt.rc_context(PAPER):
         fig = plt.figure(figsize=(13.2, 8.4))
@@ -505,6 +524,13 @@ def thermal_entrance(hartmann_numbers: tuple[float, ...] = (0.0, 10.0, 50.0)) ->
     for hartmann, (xplus, error) in errors.items():
         within = [f"{np.max(np.abs(error[xplus > start])):.2%} past x+ = {start:g}" for start in (1e-3, 1e-2)]
         print(f"entrance Ha {hartmann:g}: within {', '.join(within)}")
+    _save_record(
+        "thermal_entrance",
+        "entrance",
+        nusselt="the plates' local Nu_x (uniform flux, the mean of the two walls), D_h = 4a, x+ = x/(D_h Pe)",
+        pe400={"xplus": cases[0.0][0], **{f"Ha {ha:g}": nusselt for ha, (_, nusselt, *_) in cases.items()}},
+        pe1600_ha0={"xplus": long[0], "lmhdx": long[1]},
+    )
 
     with plt.rc_context(PAPER):
         fig = plt.figure(figsize=(13.2, 4.3))
@@ -562,6 +588,13 @@ def thermal_onset(chandrasekhar_numbers: tuple[float, ...] = (0.0, 10.0, 100.0, 
             rows.append((q, exact, k, *onsets))
             print(f"onset Q {q:g}: Ra_c {exact:.1f}; LMhdX at dt, dt/2, Richardson {np.round(onsets, 1)}")
     rows = np.array(rows)
+    _save_record(
+        "thermal_magnetoconvection",
+        "onset",
+        columns=["Q", "Ra_c eigenproblem", "a_c", "LMhdX at dt0", "at dt0/2", "Richardson in dt"],
+        dt0="0.05/(Q + Ra_c^(1/2)), the field vertical, along gravity",
+        rows=rows,
+    )
 
     with plt.rc_context(PAPER):
         fig = plt.figure(figsize=(13.2, 4.4))
@@ -1097,6 +1130,31 @@ def benchmark_scaling() -> None:
     axes[2].set_title("Targets: 10x (3-D core), 20x (Q2D)", fontsize=11)
     axes[2].legend(frameon=False, fontsize=8)
     _save_webp(fig, STATIC / "device_scaling.webp", dpi=100)
+
+
+def _compact(value):
+    if isinstance(value, dict):
+        return {str(key): _compact(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, np.ndarray)):
+        return [_compact(item) for item in value]
+    if isinstance(value, (float, np.floating)):
+        return float(f"{float(value):.6g}")
+    return value.item() if isinstance(value, np.generic) else value
+
+
+def _save_record(name: str, only: str, **record) -> None:
+    """A figure's inputs and LMhdX results, to six digits, with the command that regenerates both."""
+    path = STATIC / "data" / f"{name}.json"
+    path.parent.mkdir(exist_ok=True)
+    payload = {
+        "figure": f"docs/_static/{name}.webp",
+        "command": f"python scripts/make_showcase_figures.py --only {only}",
+    }
+    lines = [
+        f" {json.dumps(key)}: {json.dumps(item)}" for key, item in {**payload, **_compact(record)}.items()
+    ]
+    path.write_text("{\n" + ",\n".join(lines) + "\n}\n")
+    print(f"wrote {path.name}: {path.stat().st_size / 1024:.1f} KiB")
 
 
 def _save_webp(fig: plt.Figure, path: Path, dpi: int = 120, palette: bool = False) -> None:

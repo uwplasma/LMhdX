@@ -451,7 +451,10 @@ Nusselt number of the square duct rises from 3.62 at Ha 0 to 4.56 at Ha 10 and
 ```
 
 `python scripts/make_showcase_figures.py --only developed` draws the
-comparison wider than the tests gate it. Every number is a mean Nusselt number,
+comparison wider than the tests gate it. Each of the three figures below has its
+inputs, its LMhdX results and that command in a small record,
+`docs/_static/data/<figure>.json`, so a figure can be redrawn or checked from
+the stored numbers. Every number is a mean Nusselt number,
 the wall flux averaged over the heated perimeter, on $D_h$; H1 for the ducts,
 and for the plates their own uniform-flux Nu on $D_h = 4a$:
 - rectangular H1 ducts from aspect ratio 1 to 1/8 within 0.35 % of the series,
