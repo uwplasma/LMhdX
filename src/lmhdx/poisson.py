@@ -1411,7 +1411,10 @@ _PCG_TOLERANCE = {"float64": 1.0e-11, "float32": 1.0e-5}
 
 @dataclass(frozen=True)
 class VariableHelmholtz:
-    """``V (shift x - coefficient div(G grad x))`` on cell-wise coefficients, solved by SOLVAX ``pcg`` (plan D5).
+    """``V (shift x - coefficient div(G grad x))`` on cell-wise coefficients, solved by SOLVAX (plan D5).
+
+    Generic numerics, to move to SOLVAX (uwplasma/SOLVAX#158, ADR 0009 D36); LMhdX keeps the materials and
+    ``conjugate_grid``.
 
     ``G`` is each face's conductance, the harmonic mean of its two half cells (:func:`lmhdx.ops.face_conductivity`),
     so what leaves one cell enters the next; a boundary face takes its cell's, which a Neumann datum, a gradient,
@@ -1463,32 +1466,33 @@ class VariableHelmholtz:
         """Return ``x`` with ``shift x - coefficient div(G grad x) = rhs``, and the PCG iterations; NaN unconverged.
 
         PCG starts from zero and stops at ``tolerance`` of ``rhs``, by default 1e-11 in float64 and 1e-5 in float32,
-        so a time step solves for its increment. Its tangent and adjoint solves, by a symmetric
-        :func:`jax.lax.custom_linear_solve`, start from zero too. Singular, each solve takes only the compatible
-        part of its right-hand side, its volume-weighted mean removed, and returns zero volume mean.
+        so a time step solves for its increment. :func:`solvax.pcg_linear_solve` differentiates it implicitly, its
+        tangent and adjoint solves also from zero. Singular, it solves the operator plus ``a V (V . x) / sum V``,
+        positive definite, with the preconditioner exact on the constants; removing the volume mean after leaves
+        the compatible part's solution, so every solve converges, a right-hand side compatible only to rounding
+        included.
         """
         volumes, singular = jnp.asarray(self.grid.cell_volumes(), rhs.dtype), self.shift is None
         tolerance = _PCG_TOLERANCE[jnp.dtype(rhs.dtype).name] if self.tolerance is None else self.tolerance
+        total = jnp.sum(volumes)
+        null = self.coefficient * float(np.mean([np.mean(g) for g in self.conductances]))  # c k, the scale
+
+        def operator(values):
+            applied = self.apply(values)
+            return applied + null * volumes * jnp.sum(volumes * values) / total if singular else applied
 
         def precondition(residual):
             solved = self.preconditioner.solve(Field(residual / volumes, _CELL, self.grid)).data
-            return -solved if singular else solved  # a positive scale does not change PCG's iterates
+            return jnp.sum(residual) / total - solved if singular else solved
 
-        def pcg(matvec, target):
-            if singular:  # the compatible part, in the primal, tangent and adjoint solves alike
-                target = target - volumes * jnp.sum(target) / jnp.sum(volumes)
-            result = solvax.pcg(
-                matvec, target, precond=precondition, rtol=tolerance, max_steps=self.max_steps
-            )
-            failed = ~(result.converged & jnp.isfinite(result.residual_norm))
-            return jnp.where(failed, jnp.nan, result.x), result.iterations
-
-        solution, iterations = jax.lax.custom_linear_solve(
-            self.apply, volumes * rhs, pcg, symmetric=True, has_aux=True
+        result = solvax.pcg_linear_solve(
+            operator, volumes * rhs, precond=precondition, rtol=tolerance, max_steps=self.max_steps
         )
+        failed = ~(result.converged & jnp.isfinite(result.residual_norm))
+        solution = jnp.where(failed, jnp.nan, result.x)
         if singular:
-            solution = solution - jnp.sum(volumes * solution) / jnp.sum(volumes)
-        return solution, iterations
+            solution = solution - jnp.sum(volumes * solution) / total
+        return solution, result.iterations
 
 
 def variable_helmholtz(
@@ -1504,9 +1508,12 @@ def variable_helmholtz(
 ) -> VariableHelmholtz:
     """Build :class:`VariableHelmholtz` on the host; ``conductivity`` and ``shift`` are numbers or cell arrays.
 
-    The preconditioner is the fast-diagonal inverse at their volume means, in ``precision``; without a
-    ``shift``, the singular Poisson inverse under conditions that are insulated or periodic everywhere.
-    ``tolerance`` replaces the dtype's default relative stop.
+    The preconditioner is the fast-diagonal inverse at their volume means, in ``precision``. On a duct walled on
+    four sides, 6 to 24 cells across, at ``dt`` 0.05 and 100: 7-8 iterations at the benchmark's steel and PbLi (``k``
+    ratio 0.9, ``rho c_p`` 2.3), 14-33 at copper's ``k`` ratio of 19, and 21-63 at 100. A high contrast costs more
+    iterations as the mesh refines.
+    Without a ``shift``, the preconditioner is the singular Poisson inverse, under conditions that are insulated
+    or periodic everywhere. ``tolerance`` replaces the dtype's default relative stop.
     """
     if grid.is_polar:
         raise ValueError("a variable-coefficient solve needs a Cartesian grid")

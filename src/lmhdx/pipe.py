@@ -66,7 +66,15 @@ from .ops import (
 )
 from .poisson import fast_diagonal_polar_poisson
 
-__all__ = ["PipeProblem", "flow_rate", "pipe_grid", "pipe_problem", "pipe_residual", "solve_pipe"]
+__all__ = [
+    "PipeProblem",
+    "flow_rate",
+    "pipe_grid",
+    "pipe_problem",
+    "pipe_residual",
+    "solve_pipe",
+    "wall_pressure_gradient",
+]
 
 _WALL = BoundaryCondition(DIRICHLET)
 _INSULATING = BoundaryCondition(NEUMANN)
@@ -261,3 +269,22 @@ def flow_rate(velocity: Field) -> float:
     """Return the mean axial velocity over the cross-section."""
     volumes = np.asarray(velocity.grid.cell_volumes())
     return float((np.asarray(velocity.data) * volumes).sum() / volumes.sum())
+
+
+def wall_pressure_gradient(grid: Grid, pressure, angle: float | None = None, hartmann: float = 1.0):
+    """Return the axial stations and ``-dp/dx / Ha**2`` of the wall pressure of an open pipe.
+
+    ``pressure`` is the cell pressure ``(r, theta, x)`` of :func:`lmhdx.axial.solve_open_pipe`; the wall
+    pressure is that of the outermost cell at the azimuth nearest ``angle`` (radians from the field
+    direction; ``None`` averages the ring). Behind a fringe the pressure is not uniform across the
+    section, so a wall tap and the area mean differ: the tap on the wall parallel to the field
+    (``angle = pi/2``) reproduces ALEX B1, the mean does not (docs/physics/numerics.md, row 6).
+    """
+    ring = np.asarray(pressure)[-1]
+    if angle is None:
+        wall = ring.mean(axis=0)
+    else:
+        offset = np.angle(np.exp(1j * (np.asarray(grid.centers[1]) - angle)))
+        wall = ring[int(np.argmin(np.abs(offset)))]
+    x = np.asarray(grid.centers[2])
+    return 0.5 * (x[1:] + x[:-1]), -np.diff(wall) / np.diff(x) / float(hartmann) ** 2

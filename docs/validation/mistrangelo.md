@@ -4,77 +4,46 @@ Mistrangelo et al., *A code-to-code benchmark for magneto-convection in a
 horizontal duct*, Nucl. Fusion 65 (2025) 116006, compares six codes on a heated
 PbLi duct with conducting steel walls in a fringing field. There is no
 experiment. Plan step 5.4 reproduces it in stages, as set out in ADR 0009. This
-page records the frozen specification and the first check.
+page records step 5.4a: the frozen specification, the developed section, and
+both cases' digitized figures.
 
 ## The specification
 
 `src/lmhdx/data/benchmarks/specs/mistrangelo2025.toml` is frozen before any new
 numerics. Each value is marked *printed* (quoted, with its page), *inferred*
-(deduced, with the reason) or *pinned* (chosen to reproduce a printed number).
-The paper prints no material properties, so two choices carry the comparison.
+(deduced, with the reason) or *pinned* (chosen to reproduce a printed number),
+with its source. The paper prints no material properties.
 
-**PbLi.**
-- The properties are Martelli et al. (2019) at 573 K, the paper's reference
-  and temperature.
-- Those values give Ha 233.2, Re 3157 and Gr 1.364e7, where Table 1 prints 235,
-  3220 and 1.42e7.
-- The codes' figures carry the printed groups, so `μ`, `σ` and `β` are pinned to
-  reproduce them, with `ρ`, `c_p` and `k` kept:
-  - `μ` moves −2.0 %;
-  - `σ` moves −0.4 %;
-  - `β` moves +0.1 %.
+**The values that are not printed:**
+- **PbLi, pinned.** Martelli et al. (2019) at 573 K give Ha 233.2, Re 3157 and
+  Gr 1.364e7, where Table 1 prints 235, 3220 and 1.42e7. `μ`, `σ` and `β` are
+  pinned to the printed groups (−2.0, −0.4 and +0.1 %), with `ρ`, `c_p` and `k`
+  kept.
+- **Steel, pinned.** The paper names neither a grade nor a value. Matolich
+  (1965) gives a 316 steel at 572 °F a conductivity ratio of 1.183 over the
+  pinned PbLi, and 18.3 W/(m K). The developed section reproduces the paper's
+  analytical gradient at an effective ratio of 1.246, 5.3 % higher, which is
+  pinned (`c = 0.108`). The paper does not say how its analytical solution
+  models the wall, so the 5.3 % absorbs that too.
+- **Inferred:**
+  - the heated width, the full 50 mm outer width (Figure 17 confirms it);
+  - Case 2's 10 W/cm² and 0.01 m/s, from the ratios of Gr and Re (Figures 34
+    and 30 confirm them);
+  - `L = a` in `Nu` (Figures 18 and 38 confirm it);
+  - `g = 9.81 m/s²`.
+- **Unspecified by the paper:** the wall's end faces, the reference levels of
+  the potential and the pressure, the inlet profile and domain length, and the
+  analytical solution's wall model.
 
-  That `β` stays within 0.1 % of Martelli's suggests the codes used these
-  properties with a slightly lower viscosity.
-- With the heated patch spanning the full 50 mm outer width, the bulk rises
-  10.12 K, which matches the printed exit temperature of about 310 °C (p. 10). A
-  46 mm patch would give 9.31 K.
-
-**Steel.**
-- The paper names neither a grade nor a value. Interpolated to 572 °F (300 °C)
-  from Matolich's (1965) smoothed Table 3 for a 316 steel (400 and 600 °F):
-  - the resistivity is 96.0 µΩ cm, so the electrical conductivity is
-    1.042e6 S/m, 1.183 times the pinned PbLi;
-  - the thermal conductivity is 18.3 W/(m K).
-- The developed section below reproduces the paper's analytical gradient at an
-  effective conductivity ratio of 1.246, and that is the pinned value. It is
-  1.097e6 S/m, 5.3 % above Matolich's.
-  - The paper does not say whether its analytical solution models the wall as
-    thin or as resolved. The 5.3 % therefore absorbs any model difference as
-    well as the material.
-  - The wall conductance ratio is then `c = σ_w t_w / (σ a) = 0.108`.
-- The steel's `ρ c_p` matters only in the start-up transient of a steady case.
-  It is 7850 × 544 J/(m³ K):
-  - the density is ARIES's 7.96 g/cm³ less the expansion to 573 K (its table
-    lists 8238 kg/m³ at 300 K);
-  - the heat capacity is from the ARIES table.
-
-**Inferred elsewhere:**
-- Case 2's 10 W/cm² and 0.01 m/s, from the ratios of Gr and Re;
-- `L = a` in `Nu`;
-- `g = 9.81 m/s²`.
-
-**Left unspecified by the paper:**
-- the conditions on the wall's end faces;
-- the reference levels of the potential and the pressure;
-- the inlet profile and domain length, which each code chose for itself;
-- the wall model of the analytical solution.
-
-**No gate yet.** The specification is frozen, but Case 1's gate (ADR 0009
-D35) is declared before step 5.4e, so
+Case 1's gate is declared before step 5.4e (ADR 0009 D35), so
 `tolerances_frozen_before_production` is false.
 
-## The first check: Case 1's developed section
+## Case 1's developed section
 
-In the uniform field the flow is developed. `validation.mistrangelo` solves it
-on a section one cell long, with the steel resolved in cells on both transverse
-axes, at Ha 235 (`python -m validation.mistrangelo`).
-
-**How the profile is read.**
-- The profile at `y = 0` is fitted as `a + b y²` through the two rows nearest
-  the midplane on each side, since an even cell count has no row on it.
-- Each jet's height and position come from the parabola through its largest
-  sample and that sample's two neighbours.
+`python -m validation.mistrangelo` solves the flow in the uniform field on a
+section one cell long, with the steel resolved in cells on both transverse
+axes, at Ha 235. The profile is read at `y = 0`, as `a + b y²` through the two
+rows nearest the midplane on each side.
 
 | Cells (fluid / layer / wall) | −dp/dx in σu₀B₀² | Side jet | Centre |
 |:--|--:|:--|--:|
@@ -82,178 +51,116 @@ axes, at Ha 235 (`python -m validation.mistrangelo`).
 | 72 / 9 / 8 | 0.08622 | 2.810 u₀ at 0.929 a | 0.8490 u₀ |
 | 96 / 12 / 10 | 0.08630 | 2.803 u₀ at 0.929 a | 0.8497 u₀ |
 
-**The pressure gradient is not an independent check here.**
-- The pinned ratio makes 96/12 meet the printed 0.0863 by construction.
-- The coarser meshes converge to it.
-- The codes' own value, 0.0855, is 0.9 % lower.
-- At Matolich's measured ratio, 1.183, the 96/12 section gives 0.0828, 4.1 %
-  below.
-- On 72/9 the gradient moves about 0.055 per unit of the ratio.
-- The paper's −0.0863 was validation row 6's 1 % check. With the ratio fitted
-  to it, that check is met by construction. Its Mistrangelo part moves to
+- **The gradient is not an independent check.** The pinned ratio makes 96/12
+  meet 0.0863 by construction; the codes' own value is 0.0855. At Matolich's
+  ratio the 96/12 section gives 0.0828, 4.1 % below. Validation row 6's 1 % on
+  −0.0863 is therefore met by construction, and its Mistrangelo part moves to
   row 19 (ADR 0009 D35).
+- **The core follows from the gradient.** The Hartmann walls' current balance
+  gives `K(1 + c + 1/Ha)/(c + 1/Ha) = 0.853`, against the section's 0.850.
+- **The profile is the independent check**, against Figure 13's analytical
+  markers. On 96/12, the core (\|z\| ≤ 0.7 a) is within 1.86 px of every
+  marker and 0.65 % low on average. On the jets' steep flanks the difference is
+  about 10 px. The paper puts the jets' maximum at 0.935 a (p. 12); the section
+  has 0.929 a.
 
-**The jets are the independent part.**
-- Once the gradient is fixed, the core follows from it: the Hartmann walls'
-  current balance gives about `K(1 + c + 1/Ha)/(c + 1/Ha) = 0.853` with
-  `c = 0.108`, and the section gives 0.850.
-- The jets' height and position are new information:
-  - the paper puts the side layers' velocity maximum at |z| = 0.0215 m,
-    0.935 a (p. 12);
-  - Figure 13 reads about 2.8 u₀ there;
-  - the section converges to about 2.80 u₀ at 0.929 a.
-- A digitized comparison follows with the reference curves.
+## The digitized figures
 
-`tests/test_steady.py` checks:
-- the specification's printed groups and anchors, and its recorded pinned
-  values;
-- the 48/6 section's gradient, within 0.5 % of 0.0863;
-- its jets and core.
-
-## Reference curves (Case 1)
-
-`src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json` holds
-Figures 6–13, 15–19 and 38, read by `validation.mistrangelo.digitize`.
-
-- The figures are xmgrace plots embedded in the PDF as images.
-- They are extracted with `pymupdf` (`Document.extract_image(xref)`).
-  `python -m validation.mistrangelo digitize DIR` regenerates the file from
-  them byte for byte.
-- Each record carries:
-  - the image's PDF page (the journal's is one less), xref and SHA-256;
-  - the axis calibration;
-  - whether the y axis is logarithmic (`y_scale`);
-  - the codes it omits, and why.
+`src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json` (32 KB) and
+`-case2.json` (30 KB) hold the figures, read by
+`python scripts/digitize_mistrangelo.py DIR`. The figures are xmgrace plots
+embedded in the PDF as images, extracted with `pymupdf`
+(`Document.extract_image(xref)`). They are not in the repository, so the
+digitizer is not in the package or in `validation/`.
 
 **How a figure is read.**
-- **Frame and ticks.** The plot frame, its legend and the major ticks outside
-  the frame are found in the image.
-- **Calibration.**
-  - Two labelled anchors per axis label the detected ticks.
-  - Every tick inside the frame must land on the axis's label lattice, and at
-    least three ticks must. A tick on a frame line counts only where it lands
-    on the lattice. A wrong anchor value is an error.
-  - The map is the least-squares fit to those ticks. Every axis fits within
-    0.4 px.
-- **Curves.** Each code is picked out by its colour: one value per pixel
-  column, the median of that colour's pixels, sampled to 60 points.
-  - A curve that covers under 1 % of the columns is omitted, as hidden.
-  - In Figure 13, the analytical solution's open red circles are split from the
-    rest of the red by shape. CFX's line cannot be separated from the markers,
-    so it is omitted there.
-  - The analytical solution has no samples at the jets' peaks: its markers
-    merge with the lines there.
-  - Figure 19's axis is in decades, and its record says so (`y_scale`). It
-    omits COMSOL, which its caption excludes.
-  - Figure 38 draws both cases in one pair of colours. Each colour is split
-    column by column into its lower curve (Case 1) and its upper (Case 2);
-    where only one is visible, it goes to the nearer of the two tracks.
+- **Calibration.** The frame and the major ticks outside it are detected. Two
+  labelled anchors per axis label the ticks, and every tick inside the frame
+  must land on the label lattice, at least three of them, or the digitizer
+  raises. Every axis fits within 0.54 px.
+- **Curves.** Each code is picked out by its colour, one median value per pixel
+  column. Figure 13's analytical markers are split from the red by shape, and
+  Figure 38's two cases by a branch split.
+- **The band** is the spread of the codes that agree, each code's dash gaps up
+  to 15 px closed first, within the paper's window where it gives one.
+  `agree_basis` records whether the paper chose those codes or my reading did.
+- **What is shipped.** Per figure: the image's page, xref and SHA-256, the
+  calibration, the band, and the curves that are not a code's (Figure 13's
+  markers, Figure 11's stations, Figure 38's branches). Each is simplified to
+  within half a pixel and rounded to a tenth of one. The per-code curves are
+  not shipped; the digitizer regenerates them.
+- **Provenance.** `benchmarks/provenance.json` records the paper's DOI and
+  SHA-256, and each file's SHA-256 with the extraction date and the
+  digitizer's SHA-256. A test checks both hashes against the files.
 
-**What each record holds.**
-- **A band.** The spread of the codes that the paper says agree, with the page
-  where it says so, or "as read" where it does not.
-  - Each code's curve has its gaps of up to 15 px (a dash period) closed
-    before the spread is taken.
-  - The band records how many codes it spans at each sample.
-  - Where the paper limits the agreement, as in Figure 6 (−0.75 < x < 0.8 m,
-    p. 7), the band keeps to that window. This is what a gate can use.
-- **The curves.** Each code's own curve where it is visible. Where curves
-  coincide, the one drawn on top hides the rest, so FLUENT_CIEMAT's black is
-  seldom visible.
+The uncertainty is about 2 px: for example 0.028 K per pixel in Figure 6 and
+2.3e-4 m/s in Figure 12.
 
-**The uncertainty is about 2 px:**
+### Case 1
 
-| | x per px | y per px |
-|:--|--:|--:|
-| Figure 6 | 0.0047 m | 0.028 K |
-| Figure 12 | 7.9e-5 m | 2.3e-4 m/s |
+| Figure | Quantity | Left out of the band | Why (page) | Chosen by |
+|:--|:--|:--|:--|:--|
+| 6 | T on the axis | FLUENT_UK; the band within −0.75 < x < 0.8 m | it deviates (p. 7) | the paper |
+| 7 | u on the axis | FLUENT_UK; Figure 6's window | its core velocity deviates (p. 8) | my reading |
+| 8 | p on the axis | FLUENT_UK | all agree but FLUENT_UK (p. 8) | the paper |
+| 9 | T across, x = −0.3 m | FLUENT_CIEMAT, OF_ORNL | their axial resolution (p. 8) | the paper |
+| 10 | T across, x = 0 | FLUENT_UK | it lies lower | my reading |
+| 11 | T across, OF_KIT at five stations | no band | one code (pp. 8–9) | — |
+| 12 | u across, x = −0.3 m | FLUENT_UK, CFX | as p. 9 says of Figure 13 | my reading |
+| 13 | u across, x = 0 | FLUENT_UK, CFX | the analytical solution agrees with the other four (p. 9); CFX is not separable from its markers | the paper |
+| 15 | φ on the interface | none | most of the data fits well together (p. 10) | the paper |
+| 16 | φ across, x = 0 | FLUENT_UK | a slight deviation (p. 10) | the paper |
+| 17 | bulk T, eq. 6 | FLUENT_UK | non-physical (p. 10) | the paper |
+| 18 | Nu, eq. 7 | FLUENT_UK | as p. 10 says of Figure 16 | my reading |
+| 19 | E_t, eq. 8 (log) | FLUENT_UK, CFX; COMSOL not shown | as before (p. 10); CFX's diffusion (p. 16) | my reading |
+| 38 | OF_KIT's T_w and T_b, both cases | no band | one code (p. 16) | — |
 
-**Two checks.**
-- **The pressure scale.** Figure 8's band slope over |x| < 0.4 m is
-  −568.8 Pa/m. The printed −0.0855, taken in σu₀B₀² with the pinned PbLi,
-  gives −564.5 Pa/m, 0.8 % apart.
-  - This confirms the σu₀B₀² scale (`tests/test_steady.py`, within 1 %).
-  - It cannot tell the pinned σ from Martelli's, which is 0.4 % away
-    (−566.9 Pa/m).
-- **The developed section against Figure 13's analytical solution.**
-  - In the core (|z| < 15 mm) the 96-cell section lies within 1.8 px of the
-    markers, 0.8 px (0.7 %) low on average.
-  - On the steep flanks of the jets, one value per column is a poor trace.
-  - The section's jets are 0.0841 m/s. The codes' band peaks at 0.0850 on the
-    heated side and 0.0821 on the other, at x = 0, where buoyancy makes them
-    unequal.
-  - At x = −0.3 m (Figure 12), only 0.1 m into the uniform field, the codes'
-    jets are 0.081 m/s: the flow there is still developing.
+**Checks of Case 1's figures** (`tests/test_steady.py`):
+- **The pressure scale.** Figure 8's slope over \|x\| < 0.4 m is −569.0 Pa/m,
+  against −564.5 Pa/m for the printed −0.0855 σu₀B₀² with the pinned PbLi:
+  0.8 %, gated within 1 %. It cannot tell the pinned σ from Martelli's, 0.4 %
+  away.
+- **The heated width.** The energy balance with the full outer width heated
+  gives 310.12 °C. That is the upper edge of Figure 17's outlet band
+  (310.08–310.15 °C): never below its lower edge, and at most 0.014 K above
+  its upper one, within a pixel.
+- **The length in Nu.** Figure 38's `T_w − T_b` at x = 0.29 m is 19.23 K, so
+  `Nu = q'' a / (k (T_w − T_b))` is 2.34 with L = a. That lies inside Figure
+  18's band there, 2.24–2.42; L = 2a would double it.
+- **The printed "Nu → 2.45"** (p. 10) matches Figure 18's codes near
+  x = 0.3 m, where their band reaches 2.48. It is about 4 % above OF_KIT's
+  value, within the digitizing uncertainty of about ±0.11.
 
-`tests/test_steady.py` has two tests here:
-- `_check_reference_record` checks every record;
-- a synthetic figure runs the digitizer itself in CI. It is a drawn frame with
-  ticks, a solid and a dashed line and rings, and a wrong tick label must be
-  refused.
+### Case 2
 
-**Two inferences of the specification, confirmed by the figures:**
-- **The heated width.** Figure 17's outlet bulk temperature is 310.08–310.15 °C
-  over 0.4 < x < 0.9 m. The specification's energy balance, with the full
-  50 mm outer width heated, gives 310.12 °C.
-- **The length in Nu.**
-  - From Figure 38's OF_KIT temperatures at x = 0.29 m, `T_w − T_b` is
-    19.24 K, so `Nu = q'' a / (k (T_w − T_b))` is 2.34 with L = a.
-  - That lies inside Figure 18's band there, 2.24–2.42.
-  - L = 2a would double it.
+Case 2 is reported, not gated (ADR 0009 D35). COMSOL's outlet backflow (pp. 12
+and 14) is kept out of the bands of Figures 23, 24 and 30–32, which stop at
+x = 0.7 m.
 
-**The printed asymptote.** "Nu → 2.45" (p. 10) matches Figure 18's codes near
-x = 0.3 m, where their band reaches 2.48. It is about 4 % above OF_KIT's value
-from Figure 38, within the digitizing uncertainty: 2 px on each temperature is
-about ±0.11 in Nu.
+| Figure | Quantity | Left out of the band | Why (page) | Chosen by |
+|:--|:--|:--|:--|:--|
+| 23 | u on the axis | CFX, OF_ORNL | CFX differs; OF_ORNL fluctuates, numerical problems (p. 12) | the paper |
+| 24 | T on the axis | CFX, OF_ORNL | CFX's steeper rise; OF_ORNL fluctuates (p. 12) | the paper |
+| 26 | u across, x = −0.3 m | CFX | all but CFX reproduce the analytical solution (p. 13); its markers merge with CFX's line | the paper |
+| 27 | u across, x = 0 | CFX | its profile differs, as p. 12 says of Figure 23 | my reading |
+| 28 | T across, x = −0.3 m | all but COMSOL and OF_KIT | the two fit well together (p. 13) | the paper |
+| 29 | T across, x = 0 | CFX | all predict the thicker layer (p. 13), but CFX's wall is 20 K hotter | my reading |
+| 30 | p on the axis | none | p. 14 | the paper |
+| 31 | φ, z = −0.023 m | FLUENT_CIEMAT, FLUENT_UK | their curves are instantaneous (p. 14) | the paper |
+| 32 | φ, z = 0.023 m | FLUENT_CIEMAT, FLUENT_UK | their curves are instantaneous (p. 14) | the paper |
+| 33 | φ across, x = 0 | CFX | good agreement (p. 15), but CFX is offset | my reading |
+| 34 | bulk T, eq. 6 | OF_ORNL, COMSOL | unphysical (p. 15, caption; p. 16) | the paper |
+| 35 | E_t, eq. 8 (log, seven decades) | CFX, OF_ORNL, COMSOL | CFX differs; OF_ORNL and COMSOL unphysical in the kinetic energy (pp. 15–16) | the paper |
+| 37 | Nu, eq. 7 | CFX, OF_ORNL, COMSOL | CFX differs; the bulk temperatures of OF_ORNL and COMSOL fluctuate (p. 16) | my reading |
 
-## Reference curves (Case 2)
-
-`src/lmhdx/data/benchmarks/references/mistrangelo2025-case2.json` holds
-Case 2's Figures 23, 24, 26–35 and 37, read the same way.
-
-- Every axis lands on its label lattice with four ticks at least, within
-  0.54 px.
-- Figure 35's axis spans seven decades.
-- In Figure 26 the analytical solution's markers merge into blobs in the
-  JPEG, so CFX's line cannot be separated from them. The record omits CFX and
-  stores no analytical curve.
-
-**The bands.** Case 2 is reported, not gated (ADR 0009 D35). Its bands follow
-the paper's verdicts, cited by journal page:
-
-| Figure | Excluded from the band | Reason (page) |
-|:--|:--|:--|
-| 23, 24 | CFX, OF_ORNL | CFX differs; OF_ORNL fluctuates (p. 12) |
-| 26 | CFX | all but CFX reproduce the analytical solution (p. 13) |
-| 28 | all but COMSOL and OF_KIT | only COMSOL and OF_KIT fit well together (p. 13) |
-| 31, 32 | FLUENT_CIEMAT, FLUENT_UK | their curves are instantaneous (p. 14) |
-| 34 | OF_ORNL, COMSOL | unphysical fluctuations (p. 15, caption; p. 16) |
-| 35 | CFX, OF_ORNL, COMSOL | CFX differs; OF_ORNL and COMSOL are unphysical in the kinetic energy (pp. 15–16) |
-
-**The windows.** COMSOL's outlet backflow (pp. 12 and 14) is kept out of the
-bands of Figures 23, 24 and 30–32, which stop at x = 0.7 m.
-
-**My readings, not the paper's:**
-- Figure 27 excludes CFX. Its profile differs, as p. 12 says of Figure 23.
-- Figure 29 excludes CFX. The text says that all codes predict the thicker
-  thermal layer, but CFX's wall is 20 K hotter.
-- Figure 33 excludes CFX for its offset, although the text reports good
-  agreement (p. 15).
-- Figure 37 keeps FLUENT_CIEMAT, FLUENT_UK and OF_KIT. CFX differs, and
-  OF_ORNL's and COMSOL's bulk temperatures fluctuate (p. 16).
-
-**The two inferred inputs, confirmed by the figures:**
-- **The velocity, 0.01 m/s.** Figure 30's slope over |x| < 0.4 m is
-  −191.2 Pa/m. The developed −0.0863 σu₀B₀² at that velocity gives
-  −189.9 Pa/m, 0.7 % apart. The slope scales with u₀ alone, so this fixes it.
-- **The flux, 10 W/cm².**
-  - Over 0.5 < x < 0.9 m, the top of Figure 34's band is 375.78–375.90 °C.
-    The energy balance at this flux and velocity gives 375.93 °C.
-  - FLUENT_UK's plateau, 4.5 K lower, sets the band's lower edge.
-
-`tests/test_steady.py` checks both, with every record's calibration.
-
-The sources are in `benchmarks/provenance.json`.
+**Checks of Case 2's figures** (`tests/test_steady.py`):
+- **The velocity, 0.01 m/s.** Figure 30's slope over \|x\| < 0.4 m is
+  −191.4 Pa/m, against −189.9 Pa/m for the developed −0.0863 σu₀B₀² at that
+  velocity: 0.8 %. The slope scales with u₀ alone, so this fixes it.
+- **The flux, 10 W/cm².** Over 0.5 < x < 0.9 m, the top of Figure 34's band is
+  375.78–375.90 °C, against 375.93 °C for the energy balance. The window starts
+  past the settling of the bulk temperature after the heated zone, about 0.1 m.
+  FLUENT_UK's plateau, 4.5 K lower, sets the band's lower edge.
 
 ## Sources
 

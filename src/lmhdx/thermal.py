@@ -206,17 +206,11 @@ class ThermalProblem:
     ``"reservoir_flux"`` brings in the reservoir temperature each step is given
     as ``backflow_temperature``, a prescribed total heat flux ``C u T_res``.
 
-    ``walls`` adds solid walls that conduct and store heat (plan step 5.4b, ADR 0009 D36): per axis
-    ``(lower, upper)``, each ``None`` or a :class:`lmhdx.core3d.SolidWall`, on the wall-bounded axes 1 and 2;
-    ``None`` for none. The temperature then lives on :attr:`thermal_grid`, the flow's grid with the walls'
-    cells added (:func:`lmhdx.core3d.conjugate_grid`), and ``thermal_conditions`` hold on its outer surface, an
-    inlet profile included: a heat flux there is built with the ``k`` of each boundary cell, an array where
-    fluid and wall cells meet the surface. The walls' end faces take the axis-0 conditions: an inflow-outflow
-    axis holds them at the inlet temperature and insulates them at the outlet. The flow and its pressure
-    stay on the flow's grid, and so do its currents, unless the flow's own ``solid_walls`` carry them: no heat
-    is carried in a wall, and Joule heat is deposited in the fluid only. A thin electrical wall on a walled axis is refused (D36), and resolved electrical ``wall_layers``
-    there must have the solid wall's cells. A flow with ``solid_walls`` gives them as the thermal walls, which
-    ``walls`` may repeat but not change: the charge and the heat share one extended grid.
+    ``walls`` adds solid walls that conduct and store heat (ADR 0009 D36): per axis ``(lower, upper)``, each
+    ``None`` or a :class:`lmhdx.core3d.SolidWall`, on axes 1 and 2. The temperature then lives on
+    :attr:`thermal_grid`, ``thermal_conditions`` hold on its outer surface, and the flow stays on its own grid
+    (``docs/physics/thermal.md``, "Conduction through solid walls"). A flow with ``solid_walls`` gives them as
+    the thermal walls, which ``walls`` may repeat but not change: the charge and the heat share one grid.
     """
 
     flow: ChannelProblem
@@ -329,6 +323,11 @@ class ThermalProblem:
         object.__setattr__(
             self, "_cells", (conductivity, conjugate.cells("heat_capacity", self.heat_capacity))
         )
+
+    @property
+    def has_walls(self) -> bool:
+        """Whether any solid wall is resolved, its cells then part of :attr:`thermal_grid`."""
+        return self._conjugate is not None
 
     @property
     def thermal_grid(self) -> Grid:
@@ -586,7 +585,7 @@ def _buoyancy_courant(temperature: Field, problem: ThermalProblem) -> jnp.ndarra
     gradients = [
         face_gradient(temperature, axis, c).data for axis, c in enumerate(problem.thermal_conditions)
     ]
-    if problem._conjugate is not None:
+    if problem.has_walls:
         # The fluid's faces, its interfaces among them: a wall feels no buoyancy.
         gradients = [
             data[tuple(slice(b.start, b.stop + 1) if a == axis else b for a, b in enumerate(block))]
@@ -764,7 +763,7 @@ def build_thermal_step(
     dt, alpha, capacity = float(flow.dt), problem.diffusivity, problem.heat_capacity
     reference, beta = float(problem.reference_temperature), float(problem.expansion_coefficient)
     upwind = problem.advection != "off"  # either scheme carries heat with the flow
-    walled, grid, block = problem._conjugate is not None, problem.thermal_grid, problem.fluid_block
+    walled, grid, block = problem.has_walls, problem.thermal_grid, problem.fluid_block
 
     def total(data):
         return cell_inner_product(Field(data, _CELL, grid), Field(jnp.ones_like(data), _CELL, grid))
@@ -944,7 +943,7 @@ def _described(problem: ThermalProblem) -> str:
         "thermal": {name: getattr(problem, name) for name in thermal},
         "thermal_conditions": [condition(item) for item in problem.thermal_conditions],
     }
-    if problem._conjugate is not None:  # absent without walls, so earlier records still load
+    if problem.has_walls:  # absent without walls, so earlier records still load
         described["solid_walls"] = [
             [None if wall is None else astuple(wall) for wall in pair] for pair in problem.walls
         ]

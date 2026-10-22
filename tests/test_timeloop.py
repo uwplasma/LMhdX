@@ -1352,6 +1352,19 @@ def _walled_duct(material=(0.18, 2.3), cells: int = 6, axial: int = 8, inlet: fl
     return thermal, (rest[0].replace_data(jnp.ones_like(rest[0].data)), *rest[1:])
 
 
+def test_the_walled_duct_snippet_runs_as_written():
+    """The walled-duct snippet of docs/physics/thermal.md: its PCG iterations and its ledger."""
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[1] / "docs/physics/thermal.md").read_text()
+    code = page.split("as the ledger test runs it:", 1)[1].split("```python\n", 1)[1].split("```", 1)[0]
+    namespace = {"__name__": "walled_duct"}
+    exec(compile(code, "thermal.md", "exec"), namespace)
+    history = namespace["history"]
+    assert int(history.conduction_iterations.max()) <= 20
+    assert float(np.max(np.abs(history.heat_balance_residual))) < 1e-6
+
+
 def test_solid_walls_close_the_ledger_of_fluid_and_walls():
     """The walled duct, in kelvin, to its steady state: every step's ledger over the fluid and the walls closes to
     PCG's tolerance, relative to the change, and the sensible heat grows by the storage the cells' own ``rho c_p``
