@@ -272,11 +272,13 @@ failing value is not repaired by clipping.
   - a held flow takes no buoyancy.
 - With momentum transport on (`ChannelProblem.advection` other than `"off"`), a
   periodic axis needs at least two cells.
-- Insulating, thin conducting and resolved electrical walls all work, with
-  their electrical dissipation kept outside the fluid. Resolved `wall_layers`
-  widen only the electric solve: the temperature lives on the fluid cells
-  alone, with the fluid's conductivity, and its conditions apply at the fluid's
-  wall faces, unless `walls=` adds thermal walls of the same cells (below).
+- Insulating, thin conducting, resolved and solid electrical walls all work,
+  with their electrical dissipation kept outside the fluid. Resolved
+  `wall_layers` widen only the electric solve: the temperature lives on the
+  fluid cells alone, with the fluid's conductivity, and its conditions apply at
+  the fluid's wall faces, unless `walls=` adds thermal walls of the same cells
+  (below). A flow's own `solid_walls` carry current and heat on one extended
+  grid, and become the thermal walls.
 
 **Precision.** The `dtype` given to `build_thermal_step` must be the core's
 compute dtype: float64 after `lmhdx.enable_x64()`, else float32. Set it before
@@ -347,9 +349,7 @@ block's intermediates dominate. The figures are for this grid and step; they
 scale with the cells, and the ratio is what carries over.
 
 **Not included**
-- Solid walls in the electric solve. A thermal wall (below) conducts heat only;
-  the potential keeps the flow's own walls. A thin electrical wall takes no
-  thermal cells (ADR 0009 D36).
+- Thermal cells under a thin electrical wall (ADR 0009 D36).
 - Solid walls read from TOML, and in the developed duct below.
 - A flow that evolves in an open duct with the heat. There the flow is held.
 - Transport above second order. The open-duct results below use first-order

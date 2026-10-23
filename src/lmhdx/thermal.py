@@ -209,7 +209,8 @@ class ThermalProblem:
     ``walls`` adds solid walls that conduct and store heat (ADR 0009 D36): per axis ``(lower, upper)``, each
     ``None`` or a :class:`lmhdx.core3d.SolidWall`, on axes 1 and 2. The temperature then lives on
     :attr:`thermal_grid`, ``thermal_conditions`` hold on its outer surface, and the flow stays on its own grid
-    (``docs/physics/thermal.md``, "Conduction through solid walls").
+    (``docs/physics/thermal.md``, "Conduction through solid walls"). A flow with ``solid_walls`` gives them as
+    the thermal walls, which ``walls`` may repeat but not change: the charge and the heat share one grid.
     """
 
     flow: ChannelProblem
@@ -279,6 +280,20 @@ class ThermalProblem:
     def _add_walls(self) -> None:
         """Keep ``walls`` as tuples and, with any, the extended grid and each cell's ``k`` and ``rho c_p``."""
         conjugate = conjugate_grid(self.flow.grid, ((None, None),) * 3 if self.walls is None else self.walls)
+        if not self.flow.has_solid_walls and any(
+            wall is not None and wall.electrical_conductivity is not None
+            for pair in conjugate.walls
+            for wall in pair
+        ):
+            raise ValueError(
+                "a wall's electrical_conductivity carries current only among the flow's solid_walls"
+            )
+        if self.flow.has_solid_walls:  # one extended grid for the charge and the heat
+            if any(wall is not None for pair in conjugate.walls for wall in pair) and (
+                conjugate.walls != self.flow.solid_walls
+            ):
+                raise ValueError("the flow's solid walls are the thermal walls too: give the same, or none")
+            conjugate = conjugate_grid(self.flow.grid, self.flow.solid_walls)
         object.__setattr__(self, "walls", conjugate.walls)
         if not any(wall is not None for pair in conjugate.walls for wall in pair):
             object.__setattr__(self, "_conjugate", None)
@@ -326,10 +341,7 @@ class ThermalProblem:
 
     def on_thermal_grid(self, data: jnp.ndarray, axes: tuple[int, ...] = (0, 1, 2)) -> jnp.ndarray:
         """Fluid data on the cells, or on the faces, of ``axes``, padded with zeros onto :attr:`thermal_grid`."""
-        if self._conjugate is None:
-            return data
-        shape, block = self.thermal_grid.shape, self.fluid_block
-        return jnp.pad(data, [(block[axis].start, shape[axis] - block[axis].stop) for axis in axes])
+        return data if self._conjugate is None else self._conjugate.padded(data, axes)
 
     def conduction(self) -> VariableHelmholtz:
         """The implicit conduction of the fluid and its walls on :attr:`thermal_grid`, built on the host."""
