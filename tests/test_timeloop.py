@@ -411,7 +411,7 @@ def _heated(flow: ChannelProblem, conditions=None, **settings):
 def _cells(thermal, values):
     from lmhdx.grid import CENTER, Field
 
-    grid = thermal.flow.grid
+    grid = thermal.thermal_grid
     return Field(jnp.broadcast_to(jnp.asarray(values, dtype=jnp.float64), grid.shape), (CENTER,) * 3, grid)
 
 
@@ -477,8 +477,8 @@ def test_the_thermal_step_keeps_its_structure_and_compute_dtype():
     state = initial_thermal_state(thermal, 300.0)
     leaves, tree = jax.tree_util.tree_flatten(state)
     new, record = jax.jit(thermal_step)(state, _cells(thermal, 1.0))
-    assert len(leaves) == 5 and jax.tree_util.tree_structure(new) == tree and len(record) == 20
-    flags = ("finite", "backflow_boundary_valid")
+    assert len(leaves) == 5 and jax.tree_util.tree_structure(new) == tree and len(record) == 21
+    flags = ("finite", "backflow_boundary_valid", "conduction_iterations")  # two flags and a count
     values = [value for name, value in record._asdict().items() if name not in flags]
     assert all(leaf.dtype == jnp.float64 for leaf in jax.tree_util.tree_leaves((new, values)))
     assert jax.tree_util.tree_structure(jax.eval_shape(thermal_step, state, _cells(thermal, 1.0))[0]) == tree
@@ -1305,3 +1305,287 @@ def test_the_buoyancy_courant_number_is_the_step_over_the_buoyancy_time():
             validate_thermal_inputs(
                 thermal, start, heat, divergence_tolerance=1e-12, buoyancy_courant_limit=limit
             )
+
+
+# Solid walls in the thermal step (plan step 5.4b, ADR 0009 D36).
+
+
+def _walled_duct(material=(0.18, 2.3), cells: int = 6, axial: int = 8, inlet: float = 0.0, **settings):
+    """A held plug flow along x on [0, 1] through [-1, 1]^2, in walls 0.1 thick on four sides, heated at 3 through
+    the outer bottom for 0.25 < x < 0.75, entering at ``inlet``; the walls' ``k`` and ``rho c_p`` are about the
+    benchmark's steel over its PbLi. ``settings`` go to the thermal problem, ``walls`` among them."""
+    from lmhdx.core3d import SolidWall
+    from lmhdx.thermal import ThermalProblem, thermal_boundary
+
+    fluid = Grid(
+        uniform_faces(axial, 0.0, 1.0), uniform_faces(cells, -1.0, 1.0), uniform_faces(cells, -1.0, 1.0)
+    )
+    opening = BoundaryCondition(DIRICHLET, lower=np.ones((cells, cells)), upper_kind=NEUMANN)
+    flow = ChannelProblem(fluid, (opening, WALL, WALL), forcing=(0.0, 0.0, 0.0), dt=0.5 / axial)
+    wall = SolidWall(0.1, 2, *material)
+    walls = settings.pop("walls", ((None, None), (wall, wall), (wall, wall)))
+    across = cells + sum(end.cells for end in walls[1] if end is not None)
+    patch = np.abs(np.asarray(fluid.centers[0]) - 0.5) < 0.25
+    heated = np.where(patch, -3.0, 0.0)[:, None] * np.ones(across)  # into the wall, over its outer width
+    conditions = (
+        thermal_boundary("temperature", inlet, upper_kind="heat_flux", conductivity=0.2),
+        thermal_boundary("heat_flux", conductivity=material[0]),
+        thermal_boundary("heat_flux", heated, 0.0, conductivity=material[0]),
+    )
+    thermal = ThermalProblem(flow, conditions, 1.0, 0.2, inlet, joule_heating=False, walls=walls, **settings)
+    rest = zero_velocity(flow)
+    return thermal, (rest[0].replace_data(jnp.ones_like(rest[0].data)), *rest[1:])
+
+
+def test_the_walled_duct_snippet_runs_as_written():
+    """The walled-duct snippet of docs/physics/thermal.md: its PCG iterations and its ledger."""
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[1] / "docs/physics/thermal.md").read_text()
+    code = page.split("as the ledger test runs it:", 1)[1].split("```python\n", 1)[1].split("```", 1)[0]
+    namespace = {"__name__": "walled_duct"}
+    exec(compile(code, "thermal.md", "exec"), namespace)
+    history = namespace["history"]
+    assert int(history.conduction_iterations.max()) <= 20
+    assert float(np.max(np.abs(history.heat_balance_residual))) < 1e-6
+
+
+def test_solid_walls_close_the_ledger_of_fluid_and_walls():
+    """The walled duct, in kelvin, to its steady state: every step's ledger over the fluid and the walls closes to
+    PCG's tolerance, relative to the change, and the sensible heat grows by the storage the cells' own ``rho c_p``
+    weigh. The hottest cell is in the heated bottom wall."""
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
+
+    thermal, plug = _walled_duct(inlet=300.0)
+    thermal_step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+    start = initial_thermal_state(thermal, 300.0, plug)
+    state, history = advance_thermal(thermal_step, start, _cells(thermal, 0.0), 400)
+    terms = (history.storage_rate, history.conductive_heat_out, history.advective_heat_out)
+    assert np.all(np.abs(np.asarray(history.heat_balance_residual)) <= 1e-10 * np.max(np.abs(terms), axis=0))
+    assert float(jnp.max(history.heat_solve_residual)) <= 1e-8 and bool(jnp.all(history.finite))
+    assert (
+        1 <= int(jnp.min(history.conduction_iterations)) <= int(jnp.max(history.conduction_iterations)) <= 20
+    )
+    gained, dt = np.diff(np.asarray(history.sensible_energy)), float(thermal.flow.dt)
+    assert gained == pytest.approx(dt * np.asarray(history.storage_rate)[1:], rel=1e-9, abs=1e-12)
+    heat_in = 3.0 * 0.5 * 2.2  # the patch: half the length, the wall's full outer width
+    assert abs(float(history.storage_rate[-1])) <= 1e-4 * heat_in
+    # The rest of the heat is conducted back to the inlet.
+    assert 0.5 * heat_in < float(history.advective_heat_out[-1]) < heat_in
+    hottest = np.unravel_index(np.argmax(np.asarray(state.temperature.data)), thermal.thermal_grid.shape)
+    assert hottest[2] < 2
+
+
+def test_the_fluid_and_its_walls_exchange_one_interface_flux():
+    """Fluid and solid energy, region by region, over one walled step at rest. Each region stores what its
+    conductive face fluxes bring in, to PCG's tolerance. The fluid's inflow is the interface flux its walls hand it
+    plus what crosses its own ends; the walls' is the heated face's less that same interface flux, equal and
+    opposite. In the sum the interface cancels, and the duct stores what crosses its outer boundary."""
+    from lmhdx.core3d import conjugate_grid
+    from lmhdx.thermal import build_thermal_step, initial_thermal_state
+
+    thermal, _ = _walled_duct()
+    grid, dt, conduction = thermal.thermal_grid, float(thermal.flow.dt), thermal.conduction()
+    start = initial_thermal_state(thermal, 0.0, zero_velocity(thermal.flow))
+    after, _ = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)(start, _cells(thermal, 0.0))
+    heated, volumes = np.asarray(after.temperature.data), grid.cell_volumes()
+    stored = np.asarray(conduction.shift) * heated / dt * volumes
+    fluxes = conduction.face_fluxes(jnp.asarray(heated), thermal.thermal_conditions)
+    inflow = np.asarray(divergence(fluxes).data) * volumes
+    fluid = np.zeros(grid.shape, dtype=bool)
+    fluid[conjugate_grid(thermal.flow.grid, thermal.walls).fluid] = True
+    interface, boundary = 0.0, {True: 0.0, False: 0.0}
+    for axis, flux in enumerate(fluxes):
+        area = np.asarray(flux.data) * grid.face_areas(axis)
+        if axis == 2:  # the outer bottom face, heated over the patch
+            patch = -np.sum(np.moveaxis(area, axis, 0)[0])
+        lower, upper = (np.moveaxis(fluid, axis, 0)[index] for index in (slice(None, -1), slice(1, None)))
+        inner = np.moveaxis(area, axis, 0)[1:-1]
+        interface += np.sum(np.where(upper & ~lower, -inner, 0.0)) + np.sum(
+            np.where(lower & ~upper, inner, 0.0)
+        )
+        for side, sign in ((0, -1.0), (-1, 1.0)):
+            ends, cells = np.moveaxis(area, axis, 0)[side], np.moveaxis(fluid, axis, 0)[side]
+            for region in (True, False):
+                boundary[region] += sign * np.sum(np.where(cells == region, ends, 0.0))
+    for region, exchanged in ((True, interface), (False, -interface)):
+        assert np.sum(stored[fluid == region]) == pytest.approx(np.sum(inflow[fluid == region]), rel=1e-9)
+        assert np.sum(inflow[fluid == region]) == pytest.approx(exchanged + boundary[region], rel=1e-12)
+    assert interface > 0.0 and patch == pytest.approx(3.0 * 0.5 * 2.2, rel=1e-12)
+    assert np.sum(stored) == pytest.approx(boundary[True] + boundary[False], rel=1e-9)
+
+
+def test_the_walled_step_is_first_order_in_time():
+    """The conjugate step is backward Euler in conduction and explicit in transport. From 0, the walled duct's
+    temperature at t = 0.25 against a run at a 64th of the coarsest step falls at first order as the step halves."""
+    import dataclasses
+
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
+
+    thermal, plug = _walled_duct()
+
+    def run(steps):
+        problem = dataclasses.replace(thermal, flow=dataclasses.replace(thermal.flow, dt=0.25 / steps))
+        thermal_step = build_thermal_step(problem, dtype=jnp.float64, hold_flow=True)
+        start = initial_thermal_state(problem, 0.0, plug)
+        state, _ = advance_thermal(thermal_step, start, _cells(problem, 0.0), steps)
+        return np.asarray(state.temperature.data)
+
+    reference = run(256)
+    errors = [np.max(np.abs(run(steps) - reference)) for steps in (4, 8, 16)]
+    orders = np.log2(np.divide(errors[:-1], errors[1:]))
+    assert np.all((0.9 < orders) & (orders < 1.2)), (errors, orders)
+
+
+@pytest.mark.parametrize("advection", ["upwind", "van_leer"])
+def test_walls_of_the_fluids_own_material_reproduce_the_step_without_walls(advection):
+    """Walls of the fluid's ``k`` and ``rho c_p``, of 1 and 3 cells on axis 1 and 2 on axis 2, make one medium at
+    rest around the plug: the walled step, PCG on the extended grid, gives the separable step's temperatures and
+    ledger on that grid, its plug placed there by hand."""
+    import dataclasses
+
+    from lmhdx.core3d import SolidWall
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
+
+    ends = (SolidWall(0.1, 1, 0.2, 1.0), SolidWall(0.2, 3, 0.2, 1.0), SolidWall(0.1, 2, 0.2, 1.0))
+    walls = ((None, None), ends[:2], (ends[2], ends[2]))
+    walled, plug = _walled_duct(material=(0.2, 1.0), walls=walls, advection=advection)
+    grid = walled.thermal_grid
+    inlet = np.zeros(grid.shape[1:])
+    inlet[1:7, 2:8] = 1.0
+    flow = dataclasses.replace(
+        walled.flow,
+        grid=grid,
+        conditions=(BoundaryCondition(DIRICHLET, lower=inlet, upper_kind=NEUMANN), WALL, WALL),
+    )
+    plain = dataclasses.replace(walled, flow=flow, walls=None)
+    rest = zero_velocity(flow)
+    padded = (rest[0].replace_data(jnp.broadcast_to(jnp.asarray(inlet), rest[0].shape)), *rest[1:])
+    runs = []
+    for thermal, velocity in ((walled, plug), (plain, padded)):
+        thermal_step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+        start = initial_thermal_state(thermal, 0.0, velocity)
+        runs.append(advance_thermal(thermal_step, start, _cells(thermal, 0.5), 40))
+    (state, history), (expected, reference) = runs
+    assert np.asarray(state.temperature.data) == pytest.approx(
+        np.asarray(expected.temperature.data), abs=1e-10
+    )
+    for name in ("sensible_energy", "storage_rate", "conductive_heat_out", "advective_heat_out"):
+        assert np.asarray(getattr(history, name)) == pytest.approx(
+            np.asarray(getattr(reference, name)), rel=1e-9, abs=1e-9
+        )
+    assert int(jnp.max(reference.conduction_iterations)) == 0 < int(jnp.min(history.conduction_iterations))
+
+
+def test_a_moving_walled_flow_steps_as_the_flow_does_and_feels_only_the_fluids_buoyancy():
+    """A closed duct walled on four sides, its flow moving: without buoyancy the walled step moves the flow exactly as
+    ``core3d.step`` does; with it, a hot outer wall cell changes neither the new velocity nor the Boussinesq measure
+    nor the buoyancy Courant number, which are the fluid's, while the extremes span every cell."""
+    import dataclasses
+
+    from lmhdx.core3d import SolidWall
+    from lmhdx.thermal import ThermalProblem, build_thermal_step, initial_thermal_state, thermal_boundary
+
+    flow = _uniform_duct(6, hartmann=4.0)
+    viscous = flow.viscous_factorizations()
+    velocity = advance(flow, 3, viscous=viscous).velocity
+    wall = SolidWall(0.1, 2, 0.18, 2.3)
+    insulated = thermal_boundary("heat_flux", conductivity=0.18)
+    walls = ((None, None), (wall, wall), (wall, wall))
+    passive = ThermalProblem(flow, (PERIODIC_AXIS, insulated, insulated), 2.0, 0.5, 300.0, walls=walls)
+    moved = build_thermal_step(passive, dtype=jnp.float64)(
+        initial_thermal_state(passive, 300.0, velocity), _cells(passive, 0.0)
+    )
+    expected = step(velocity, flow, flow.factorization(), viscous)[0]
+    assert all(np.array_equal(a.data, b.data) for a, b in zip(moved[0].velocity, expected))
+    buoyant = dataclasses.replace(passive, expansion_coefficient=1e-3, gravity=(0.0, 0.0, -1.0))
+    thermal_step = build_thermal_step(buoyant, dtype=jnp.float64)
+    warm = 300.0 + np.random.default_rng(3).random(buoyant.thermal_grid.shape)
+    hot = warm.copy()
+    hot[:, 0, :] = 400.0  # the outer cells of one wall, touching no fluid face
+    (cool, before), (heated, after) = (
+        thermal_step(initial_thermal_state(buoyant, start, velocity), _cells(buoyant, 0.0))
+        for start in (warm, hot)
+    )
+    assert all(np.array_equal(a.data, b.data) for a, b in zip(cool.velocity, heated.velocity))
+    for name in ("boussinesq_measure", "buoyancy_courant"):
+        assert float(getattr(after, name)) == float(getattr(before, name)) > 0.0
+    assert float(after.temperature_max) > 350.0 > float(before.temperature_max)  # the hot cell, cooling
+
+
+def test_a_walled_run_differentiates_in_its_heat_source_and_its_start():
+    """Forward and reverse derivatives of a walled run in a heat-source amplitude and in a perturbation of its start
+    match central differences: the PCG conduction differentiates through its symmetric ``custom_linear_solve``."""
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
+
+    thermal, plug = _walled_duct()
+    thermal_step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+    start = initial_thermal_state(thermal, 0.0, plug)
+    pattern = jnp.asarray(np.random.default_rng(54).random(thermal.thermal_grid.shape))
+
+    def objective(scale, perturbation):
+        heat = _cells(thermal, 0.0).replace_data(scale * pattern)
+        moved = start._replace(temperature=start.temperature.replace_data(perturbation * pattern))
+        state, history = advance_thermal(thermal_step, moved, heat, 6)
+        return jnp.sum(state.temperature.data**2) + history.advective_heat_out[-1]
+
+    # The held, upwind step is affine, so the objective is quadratic in each input: the central difference is exact.
+    for along in (lambda x: objective(x, 0.0), lambda x: objective(1.0, x - 1.0)):
+        difference = float(along(1.5) - along(0.5))
+        assert float(jax.grad(along)(1.0)) == pytest.approx(difference, rel=1e-9)
+        assert float(jax.jvp(along, (1.0,), (1.0,))[1]) == pytest.approx(difference, rel=1e-9)
+
+
+def test_solid_walls_are_refused_where_they_cannot_be_and_kept_in_records(tmp_path):
+    import dataclasses
+
+    from lmhdx.core3d import SolidWall
+    from lmhdx.thermal import (
+        ThermalProblem,
+        developed_heat,
+        initial_thermal_state,
+        load_thermal_record,
+        thermal_boundary,
+        write_thermal_record,
+    )
+
+    thermal, plug = _walled_duct()
+    wall = thermal.walls[1][0]
+    insulated, periodic = thermal_boundary("heat_flux", conductivity=0.18), BoundaryCondition(PERIODIC)
+    across = ChannelProblem(_uniform_duct(4).grid, (periodic, WALL, periodic))
+    for flow, conditions, walls, message in (
+        (thermal.flow, thermal.thermal_conditions, ((wall, None), (None, None), (None, None)), "transverse"),
+        (thermal.flow, thermal.thermal_conditions, ((None, None), (0.1, None), (None, None)), "SolidWall"),
+        (
+            across,
+            (periodic, insulated, periodic),
+            ((None, None), (None, None), (wall, wall)),
+            "takes no solid",
+        ),
+        (
+            _uniform_duct(4, conductance=0.05),
+            (periodic, insulated, insulated),
+            ((None, None), (wall, wall), (None, None)),
+            "thin electrical",
+        ),
+    ):
+        with pytest.raises(ValueError, match=message):
+            ThermalProblem(flow, conditions, 1.0, 0.2, 0.0, walls=walls)
+    state = initial_thermal_state(thermal, 1.0, plug)
+    assert state.temperature.grid == thermal.thermal_grid != thermal.flow.grid
+    path = write_thermal_record(tmp_path / "walled", thermal, state, units="SI")
+    loaded = load_thermal_record(path, thermal, units="SI")
+    assert np.array_equal(loaded.temperature.data, state.temperature.data)
+    thicker = SolidWall(0.2, 2, 0.18, 2.3)
+    bare = dataclasses.replace(
+        thermal, walls=None, thermal_conditions=(thermal.thermal_conditions[0], insulated, insulated)
+    )
+    assert bare.walls == ((None, None),) * 3
+    for other in (dataclasses.replace(thermal, walls=((None, None), (thicker, thicker), (wall, wall))), bare):
+        with pytest.raises(ValueError, match="solid_walls"):
+            load_thermal_record(path, other, units="SI")
+    flow = ChannelProblem(_uniform_duct(4).grid, (periodic, WALL, WALL), forcing=(1.0, 0.0, 0.0))
+    walls = ((None, None), (wall, wall), (None, None))
+    developed = ThermalProblem(flow, (periodic, insulated, insulated), 1.0, 0.2, 0.0, walls=walls)
+    with pytest.raises(ValueError, match="no solid walls"):
+        developed_heat(developed, zero_velocity(flow), _cells(developed, 0.0))
