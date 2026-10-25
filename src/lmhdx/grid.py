@@ -42,6 +42,7 @@ __all__ = [
     "NEUMANN",
     "PERIODIC",
     "POLAR",
+    "axis",
     "geometric_faces",
     "pad",
     "tanh_faces",
@@ -95,8 +96,10 @@ class Grid:
     geometry: str = CARTESIAN
 
     def __post_init__(self) -> None:
-        for axis in _AXES:
-            object.__setattr__(self, f"{axis}_faces", _validated(getattr(self, f"{axis}_faces"), name=axis))
+        for name in _AXES:
+            faces = getattr(self, f"{name}_faces")
+            faces = axis(**faces) if isinstance(faces, dict) else faces  # an axis may be the kwargs of axis()
+            object.__setattr__(self, f"{name}_faces", _validated(faces, name=name))
         if self.geometry not in _GEOMETRIES:
             raise ValueError(f"geometry must be one of {list(_GEOMETRIES)}, got {self.geometry!r}")
         if self.geometry == POLAR:
@@ -123,6 +126,8 @@ class Grid:
     @property
     def faces(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         return (self.x_faces, self.y_faces, self.z_faces)
+
+    x, y, z = (property(lambda self, name=name: getattr(self, f"{name}_faces")) for name in _AXES)
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -361,6 +366,53 @@ def wall_resolving_faces(
     widths *= half_width / reach
     half = np.concatenate([[0.0], np.cumsum(widths[:half_cells])])
     return np.concatenate([lower + half[: len(half) - 1 + count % 2], upper - half[::-1]])
+
+
+def axis(
+    cells: int,
+    lower: float,
+    upper: float,
+    *,
+    beta: float | None = None,
+    ratio: float | None = None,
+    blend: float | None = None,
+    layer_thickness: float | None = None,
+    cells_in_layer: int = 8,
+    max_ratio: float | None = 1.15,
+) -> np.ndarray:
+    """Return the faces of one axis: uniform, or the one stretching asked for.
+
+    ``beta`` is :func:`tanh_faces`, ``ratio`` :func:`geometric_faces`,
+    ``layer_thickness`` (with ``cells_in_layer`` and ``max_ratio``)
+    :func:`wall_resolving_faces`, and ``blend=a`` the Krasnov-Zikanov-Boeck grid
+    ``z = a sin(pi xi / 2) + (1 - a) xi`` of a uniform ``xi`` (``a = 0.96``): the
+    uniform part keeps the central cells and the Poisson conditioning in hand.
+    """
+    given = {"beta": beta, "ratio": ratio, "blend": blend, "layer_thickness": layer_thickness}
+    chosen = [name for name, value in given.items() if value is not None]
+    if len(chosen) > 1:
+        raise ValueError(f"axis takes one of {list(given)}, got {chosen}")
+    if beta is not None:
+        return tanh_faces(cells, lower, upper, beta)
+    if ratio is not None:
+        return geometric_faces(cells, lower, upper, ratio)
+    if layer_thickness is not None:
+        return wall_resolving_faces(
+            cells,
+            lower,
+            upper,
+            layer_thickness=layer_thickness,
+            cells_in_layer=cells_in_layer,
+            max_ratio=max_ratio,
+        )
+    if blend is None:
+        return uniform_faces(cells, lower, upper)
+    if not 0.0 < blend <= 1.0:
+        raise ValueError("blend must lie in (0, 1]")
+    xi = uniform_faces(cells, -1.0, 1.0)
+    faces = lower + 0.5 * (upper - lower) * (1.0 + blend * np.sin(0.5 * np.pi * xi) + (1.0 - blend) * xi)
+    faces[[0, -1]] = lower, upper
+    return faces
 
 
 def _fitted_ratio(count: int, half_width: float, layer_thickness: float, cells_in_layer: int) -> float:

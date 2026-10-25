@@ -106,3 +106,22 @@ def test_duct_design_law_example_finds_the_studys_optima(tmp_path: Path):
     design = summary["design"]
     assert design["beta_star"] == pytest.approx(0.14850, rel=1e-3)
     assert design["power_slope_in_ln_area_W"] < 0.0 < design["reduction"]
+
+
+def test_problem_example_solves_and_differentiates_the_duct(tmp_path: Path):
+    script = Path(__file__).resolve().parents[1] / "examples/problem_example.py"
+    done = subprocess.run(
+        [sys.executable, script], cwd=tmp_path, timeout=120, check=True, capture_output=True, text=True
+    )
+    values = {
+        line.split("=")[0].strip(): float(line.split("=")[1])
+        for line in done.stdout.splitlines()
+        if "=" in line and "Solving" not in line
+    }
+    assert values["flow rate"] == pytest.approx(4.0, rel=1e-12)
+    assert values["pressure gradient"] == pytest.approx(25.9527, rel=1e-5)
+    # The flux is fixed, so the field raises the drive, and the drive is linear in the flux.
+    assert 1.0 < values["d(pressure gradient)/d(field strength)"] < 1.2
+    assert values["d(pressure gradient)/d(flow rate)"] == pytest.approx(
+        values["pressure gradient"] / 4.0, rel=1e-6
+    )

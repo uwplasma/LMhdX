@@ -31,6 +31,7 @@ live in the module that owns their concepts.
 
 | Area | Names |
 |---|---|
+| Problems | `Problem`, `Wall`, `Sides`, `Open`, `Thermal`, `Uniform`, `Solver`, `Output`, `duct`, `channel`, `fringe_duct`, `configure`, `solve` |
 | Staggered core | `ChannelProblem`, `duct_problem`, `solve_steady_state`, `advance` |
 | Cases and solves | `make_hartmann_case`, `make_shercliff_case`, `make_hunt_case`, `make_q2d_case`, `solve_fully_developed_fields`, `evolve_q2d`, `Q2DProblem`, `solve` |
 | Meshes | `generate_rect_duct_mesh_from_faces` (the mesh a case's solution reports) |
@@ -39,7 +40,7 @@ live in the module that owns their concepts.
 | Evidence | The energy budget of `lmhdx.core3d` and the analytical, conservation, and packaged benchmark tools in `lmhdx.io` |
 | Runtime | `enable_compilation_cache` |
 
-`solve(model)` accepts a `ChannelProblem`, `CaseSpec` or `Q2DProblem`. A
+`solve(model)` accepts a `Problem`, a `Q2D`, a `ChannelProblem`, `CaseSpec` or `Q2DProblem`. A
 steady fully developed `CaseSpec` runs on the staggered core through
 `lmhdx.fully_developed`, as does `solve_fully_developed_fields`, and a transient
 `CaseSpec` runs implicit Euler steps there too. A duct with
@@ -54,6 +55,23 @@ runs the same physics as one compiled trajectory when the transient is what is
 wanted. The remaining result types expose `converged`, `status`, `steps`,
 `residual`, `fields`, and `diagnostics`; specialized solve functions provide
 restart, progress, logging, and timing hooks in their owning modules.
+
+## Problems, fields and the one verb
+
+`lmhdx.solve(problem, solver=None, output=None, start=None)` runs a `Problem` or a `Q2D`;
+the guide is [Problems, solvers and one verb](../getting_started/problem.md).
+`lmhdx.configure` sets the runtime choices that importing the package leaves alone.
+
+```{eval-rst}
+.. automodule:: lmhdx.problem
+   :members:
+.. automodule:: lmhdx.fields
+   :members: Uniform, Fringe, Table, Func
+.. automodule:: lmhdx.solver
+   :members:
+.. autofunction:: lmhdx.configure
+.. autofunction:: lmhdx.grid.axis
+```
 
 ## Cases: schema, builders, meshes, units and walls
 

@@ -353,7 +353,7 @@ scale with the cells, and the ratio is what carries over.
 - A steady solve of the coupled equations. The developed duct below is the one steady thermal solve, for a given flow.
 - An inflow-outflow axis read from TOML. A run from TOML (below) covers closed
   ducts; an open one runs from Python.
-- Dispatch through `lmhdx.solve`.
+- Dispatch of a `ThermalProblem` through `lmhdx.solve`; a `Problem` with `thermal=Thermal(...)` and `Solver(dt=, steps=)` runs the same step there.
 
 A closed domain with net heating has no steady temperature. The state returned
 is not a `cases.MHDState` or an archive-compatible `Solution`. The final
