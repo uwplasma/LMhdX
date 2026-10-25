@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -70,6 +71,7 @@ assert os.environ["XLA_FLAGS"].count("xla_gpu_enable_triton_gemm") == 1 and "tri
         key: value
         for key, value in os.environ.items()
         if key not in ("JAX_ENABLE_X64", "JAX_DEFAULT_MATMUL_PRECISION")
+        and not key.startswith(("JAX_COMPILATION_CACHE", "JAX_PERSISTENT_CACHE"))
     }
     environment["LMHDX_COMPILATION_CACHE"] = "0"
     subprocess.run([sys.executable, "-c", code], check=True, timeout=120, env=environment)
@@ -154,20 +156,30 @@ def test_a_flow_rate_sets_the_drive_of_the_stokes_duct_exactly():
         lmhdx.solve(duct(20, 32, flow_rate=4.0, advection="central"))
 
 
-def test_the_fringe_duct_preset_is_the_older_open_duct_and_differentiates_in_the_field():
-    settings = dict(
-        wall_conductance=0.02, upstream=3.0, downstream=3.0, spacing=0.5, cells=8, cells_in_layer=2
-    )
-    new = fringe_duct(10.0, **settings)
-    old = old_fringe_duct(hartmann=10.0, **settings)
-    found, expected = lmhdx.solve(new), solve_open_duct(old)
+_SMALL_FRINGE = dict(
+    wall_conductance=0.02,
+    half_length=1.0,
+    upstream=2.0,
+    downstream=2.0,
+    spacing=1.0,
+    cells=8,
+    cells_in_layer=2,
+)
+
+
+def test_the_fringe_duct_preset_is_the_older_open_duct_bit_for_bit():
+    found = lmhdx.solve(fringe_duct(10.0, **_SMALL_FRINGE))
+    expected = solve_open_duct(old_fringe_duct(hartmann=10.0, **_SMALL_FRINGE))
     assert _same(
-        (found.velocity, found.pressure, found.potential),
-        (expected.velocity, expected.pressure, expected.potential),
+        (found.velocity, found.pressure, found.potential, found.fields["currents"]),
+        (expected.velocity, expected.pressure, expected.potential, expected.currents),
     )
-    drop = found.pressure_drop(-1.0, 1.0)
-    assert float(drop) == float(pressure_drop(expected.pressure, -1.0, 1.0))
+    assert float(found.pressure_drop(-1.0, 1.0)) == float(pressure_drop(expected.pressure, -1.0, 1.0))
     assert float(found.flow_rate) == pytest.approx(4.0, rel=1e-8)
+
+
+def test_the_fringe_duct_gradient_is_the_older_field_scale_derivative():
+    new, old = fringe_duct(10.0, **_SMALL_FRINGE), old_fringe_duct(hartmann=10.0, **_SMALL_FRINGE)
 
     def old_drop(scale):
         return pressure_drop(solve_open_duct(old, field_scale=scale).pressure, -1.0, 1.0)
@@ -176,7 +188,8 @@ def test_the_fringe_duct_preset_is_the_older_open_duct_and_differentiates_in_the
     gradient = jax.grad(lambda q: lmhdx.solve(q).pressure_drop(-1.0, 1.0))(new)
     assert float(gradient.B.strength) == pytest.approx(float(jax.grad(old_drop)(1.0)) / 10.0, rel=1e-10)
     # The Stokes solution is linear in the flow rate, so its derivative is the drop over the rate.
-    assert float(gradient.flow_rate) == pytest.approx(float(drop) / 4.0, rel=1e-8)
+    drop = float(lmhdx.solve(new).pressure_drop(-1.0, 1.0))
+    assert float(gradient.flow_rate) == pytest.approx(drop / 4.0, rel=1e-8)
     with pytest.raises(NotImplementedError, match="flow rate"):
         jax.grad(lambda q: lmhdx.solve(q).pressure_drop(-1.0, 1.0))(new.replace(advection="central"))
 
@@ -381,7 +394,7 @@ def test_ha_derivative_has_a_second_order_taylor_remainder_and_matches_central_d
     assert remainders[2] > 1e-6  # well above the solver's noise: the ratio is the curvature, not round-off
 
 
-def test_the_problem_gradient_pairs_forward_and_reverse_mode_and_follows_the_physics():
+def test_the_problem_gradient_pairs_forward_and_reverse_mode():
     base = duct(20, 32)
 
     def response(problem):
@@ -400,6 +413,10 @@ def test_the_problem_gradient_pairs_forward_and_reverse_mode_and_follows_the_phy
         float(jnp.vdot(a, b)) for a, b in zip(jax.tree.leaves(tangent), jax.tree.leaves(reverse), strict=True)
     )
     assert left == pytest.approx(right, rel=1e-9)
+
+
+def test_the_problem_gradient_follows_the_physics():
+    base = duct(20, 32)
     # The flux is linear in the drive and falls with the field: both leaves of the gradient follow.
     gradient = jax.grad(lambda p: lmhdx.solve(p).flow_rate)(base)
     flux = float(lmhdx.solve(base).flow_rate)
@@ -572,3 +589,21 @@ def test_a_spanwise_field_leaves_the_laminar_channel_a_parabola_and_a_wall_norma
     assert 1.95 < result.order < 2.05 and result.extrapolated == pytest.approx(3.0, rel=1e-5)
     with pytest.raises(NotImplementedError, match="net current"):
         lmhdx.solve(channel(R=700, ha=20.0, cells=(1, 1, 33)))
+
+
+def test_the_beginner_example_solves_and_differentiates_the_duct(tmp_path):
+    script = Path(__file__).resolve().parents[1] / "examples/problem_example.py"
+    done = subprocess.run(
+        [sys.executable, script], cwd=tmp_path, timeout=250, check=True, capture_output=True, text=True
+    )
+    values = {
+        line.split("=")[0].strip(): float(line.split("=")[1])
+        for line in done.stdout.splitlines()
+        if "=" in line and "Solving" not in line
+    }
+    assert values["flow rate"] == pytest.approx(4.0, rel=1e-12)
+    assert values["pressure gradient"] == pytest.approx(25.9527, rel=1e-5)
+    # The flux is fixed, so the field raises the drive, and the drive is linear in the flux.
+    assert 1.0 < values["d(pressure gradient)/d(field strength)"] < 1.2
+    drive = values["d(pressure gradient)/d(flow rate)"]
+    assert drive == pytest.approx(values["pressure gradient"] / 4.0, rel=1e-6)

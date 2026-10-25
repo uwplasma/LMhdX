@@ -84,7 +84,8 @@ _TEST_SHARDS = {
         "tests/test_physics.py",
         "tests/test_q2d_identities.py",
     ),
-    "api": ("tests/test_problem.py", "tests/test_laminar_anchors.py"),
+    "api": ("tests/test_problem.py",),
+    "anchors": ("tests/test_laminar_anchors.py",),
 }
 
 _ALL_TESTS = tuple(dict.fromkeys(path.split("::")[0] for shard in _TEST_SHARDS.values() for path in shard))
