@@ -40,6 +40,7 @@ the same preconditioned Krylov solves.
 from __future__ import annotations
 
 import dataclasses
+import functools
 from typing import NamedTuple
 
 import jax
@@ -68,6 +69,7 @@ from .steady import (
     _projection_solves,
     _stokes_limit_root,
     momentum_terms,
+    solve_compiled,
     solve_steady_state,
     steady_residual,
     with_inflow,
@@ -161,7 +163,11 @@ def fully_developed_inlet(
         wall_conductance=problem.wall_conductance,
         precision=problem.precision,
     )
-    solution = solve_steady_state(periodic, tolerance=tolerance, **controls)
+    # A compiled program (shared by problems of one shape), not hundreds of eagerly dispatched operations.
+    if tolerance == 1.0e-9 and not controls:
+        solution = solve_compiled(periodic)
+    else:
+        solution = solve_steady_state(periodic, tolerance=tolerance, **controls)
     axial = np.asarray(solution.velocity[0].data[0])
     unit = float(np.sum(axial * section.face_areas(0)[0]))
     return axial * (flow_rate / unit), -flow_rate / unit
@@ -244,7 +250,7 @@ def fringe_duct(
     return open_duct(walled, flow_rate, **controls)
 
 
-def solve_open_duct(
+def _solve(
     problem: ChannelProblem,
     *,
     field_scale: float | jnp.ndarray = 1.0,
@@ -313,7 +319,7 @@ def solve_open_duct(
             precond,
             field_scale=field_scale,
             tolerance=tolerance,
-            continuation=tuple(float(value) for value in continuation),
+            continuation=continuation,
             max_steps=max_newton_steps,
             inner_tolerance=inner_tolerance,
             inner_iterations=inner_iterations,
@@ -330,6 +336,26 @@ def solve_open_duct(
     return OpenDuctSolution(
         velocity, pressure, potential, currents, field, _norm(residual), _norm(rhs), iterations
     )
+
+
+_compiled = jax.jit(
+    _solve,
+    static_argnames="problem tolerance max_iterations continuation max_newton_steps inner_tolerance "
+    "inner_iterations krylov_dimension".split(),
+)
+
+
+@functools.wraps(_solve, assigned=("__doc__",), updated=())
+def solve_open_duct(*arguments, **controls) -> OpenDuctSolution:
+    # Eagerly, one compiled program per problem and controls (some 700 small eager ones before), the
+    # same whether or not ``field_scale`` is passed; under a trace the solve joins the caller's
+    # program as before. A rejected solve is nonfinite under any trace and raises here.
+    controls = {"field_scale": 1.0, **controls}
+    traced = isinstance(controls["field_scale"], jax.core.Tracer)
+    solution = (_solve if traced else _compiled)(*arguments, **controls)
+    if not isinstance(solution.residual_norm, jax.core.Tracer) and not np.isfinite(solution.residual_norm):
+        raise RuntimeError("the open-duct solve did not converge")
+    return solution
 
 
 def _stokes_inverse(stokes, factorization, precond, field_scale, tolerance, max_steps):
@@ -421,7 +447,7 @@ def _newton_root(
         )
         return result.x, result.iterations, result.converged & jnp.isfinite(result.residual_norm)
 
-    def newton(function, guess, fraction):
+    def newton(function, guess):
         # Relative to the residual of the lift, as the Stokes-limit solve is.
         scale = jnp.linalg.norm(function(jnp.zeros_like(guess)))
 
@@ -450,14 +476,16 @@ def _newton_root(
 
         return jax.lax.custom_linear_solve(linear, target, solve, transpose_solve)
 
-    total = jnp.asarray(0)
+    def stage(carry, fraction):
+        # The fraction is a traced scalar: one Newton program serves every step of the continuation.
+        w, total, previous = carry
+        w, count, accepted = newton(residual_at(fraction, fixed), w * (fraction / previous))
+        return (_certified(w, accepted, "Newton solve"), total + count, fraction), None
+
     w = inside(jax.lax.stop_gradient(ravel_pytree(velocity)[0] - lift))
-    previous = 1.0
-    for fraction in continuation:
-        w = w * (fraction / previous)
-        w, count, accepted = newton(residual_at(fraction, fixed), w, fraction)
-        w = _certified(w, accepted, f"Newton solve at flow-rate fraction {fraction:g}")
-        total, previous = total + count, fraction
+    (w, total, _), _ = jax.lax.scan(
+        stage, (w, jnp.zeros((), jnp.int32), jnp.ones((), w.dtype)), jnp.asarray(continuation, w.dtype)
+    )
     root = solvax.root_solve(
         residual_at(1.0, field_scale), w, lambda function, guess: guess, tangent_solve=tangent_solve
     )
