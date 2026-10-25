@@ -122,9 +122,58 @@ def test_a_longer_trajectory_costs_no_extra_live_state():
     # Only scalar diagnostics are stacked per step; the fields ride in the carry. Stacking the
     # pressure and potential held 3.1 GiB over 100 steps at 128^3 to return the last pair.
     # Read the stacked outputs off their shapes: JAX 0.11 replaced the scan's num_carry parameter.
-    scan = next(equation for equation in long.eqns if equation.primitive.name == "scan")
+    # The compiled run is a call in the caller's program; its scan is inside.
+    call = next(equation for equation in long.eqns if "jaxpr" in equation.params)
+    scan = next(equation for equation in call.params["jaxpr"].eqns if equation.primitive.name == "scan")
     stacked = [var.aval.shape for var in scan.outvars if var.aval.shape[:1] == (64,)]
     assert stacked and all(shape == (64,) for shape in stacked)
+
+
+def test_a_second_run_of_the_same_shape_compiles_nothing_and_a_chunked_restart_loses_nothing():
+    """H0.2: the compiled trajectory is kept; the state is its only argument."""
+    compiles = []
+    jax.monitoring.register_event_duration_secs_listener(
+        lambda event, duration, **_: (
+            compiles.append(event) if event.endswith("backend_compile_duration") else None
+        )
+    )
+    problem = _problem(cells=5)
+    factorization, viscous = problem.factorization(), problem.viscous_factorizations()
+    whole = advance(problem, 8, factorization=factorization, viscous=viscous)
+    built = len(compiles)
+    first = advance(problem, 4, factorization=factorization, viscous=viscous)
+    second = advance(problem, 4, first.velocity, factorization=factorization, viscous=viscous)
+    again = advance(problem, 4, factorization=factorization, viscous=viscous)
+    equal = advance(_problem(cells=5), 4, factorization=factorization, viscous=viscous)
+    assert len(compiles) == built + 1  # the four-step program, once
+    assert all(np.array_equal(a.data, b.data) for a, b in zip(again.velocity, equal.velocity, strict=True))
+    assert core3d._compiled_trajectory.cache_info().hits >= 3
+    # The compiled run is the scan it replaces (to 1e-33, in entries that are zero to round-off), and
+    # restarting at a step boundary loses nothing.
+    inline = core3d._trajectory(problem, 8, factorization, viscous, True)(zero_velocity(problem))
+    for chunked, complete, plain in zip(second.velocity, whole.velocity, inline.velocity, strict=True):
+        assert np.max(np.abs(np.asarray(complete.data) - np.asarray(plain.data))) <= 1e-30
+        assert np.max(np.abs(np.asarray(chunked.data) - np.asarray(complete.data))) < 1e-14
+
+
+def test_the_trajectory_is_a_pytree_that_jits_and_vmaps_over_the_state():
+    problem = _problem(cells=5)
+    rng = np.random.default_rng(1)
+    starts = [
+        tuple(
+            f.replace_data(f.data + 1e-2 * jnp.asarray(rng.standard_normal(f.data.shape)))
+            for f in zero_velocity(problem)
+        )
+        for _ in range(3)
+    ]
+    batch = jax.tree.map(lambda *leaves: jnp.stack(leaves), *starts)
+    mapped = jax.vmap(lambda start: advance(problem, 3, start))(batch)
+    jitted = jax.jit(lambda start: advance(problem, 3, start))
+    for index, start in enumerate(starts):
+        single = jitted(start)
+        assert single.steps == 3 and mapped.kinetic_energy.shape == (3, 3)
+        assert np.allclose(mapped.kinetic_energy[index], single.kinetic_energy, rtol=1e-13)
+        assert np.allclose(mapped.velocity[0].data[index], single.velocity[0].data, atol=1e-14)
 
 
 def test_diagnostics_match_a_direct_evaluation():

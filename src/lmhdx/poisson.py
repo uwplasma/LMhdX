@@ -580,7 +580,7 @@ def fast_diagonal_polar_poisson(
     )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class FastDiagonalPoisson:
     """A factorized Laplacian that solves ``laplacian(u) = rhs`` in three contractions.
 
@@ -877,7 +877,7 @@ def _wall_cells(layer) -> tuple[np.ndarray, np.ndarray]:
     return ratios, widths
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class FastDiagonalThinWallPoisson(FastDiagonalPoisson):
     """The potential Laplacian closed by thin conducting walls, factorized exactly.
 
@@ -1272,7 +1272,7 @@ def _staggered_axis_operator(
     )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class FastDiagonalHelmholtz:
     """A factorized ``shift * I - coefficient * laplacian`` for one staggered position.
 
