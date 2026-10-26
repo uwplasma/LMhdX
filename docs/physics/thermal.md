@@ -224,8 +224,10 @@ The coupling's time error is set by the step over the buoyancy time scale,
 `buoyancy_courant` $=\Delta t\sqrt{\beta|\mathbf g|\,G}$, reported beside
 `advective_cfl`, with $G$ the largest absolute face-normal gradient on any face,
 one component rather than a colocated gradient magnitude. In the Bénard onset of
-#252 the critical Rayleigh number is about 15 % low near 0.2 and under 3 % near
-0.025, at first order. That calibrates that case; it is not a general bound.
+#252 the critical Rayleigh number reads 1675.9 near 0.4 and 1675.6 near 0.025,
+flat to 0.02 % in the step and 1.9 % below 1707.76 (the 16-cell mesh). The
+momentum stage before it was first order and read 15 % low near 0.2 and under
+3 % near 0.025. That calibrates that case; it is not a general bound.
 `validate_thermal_inputs(..., buoyancy_courant_limit=...)` refuses a start
 above a chosen limit.
 

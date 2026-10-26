@@ -185,8 +185,8 @@ def _low_entry(factorization, name: str, axis: int | None = None) -> np.ndarray:
 
 
 def _eigenvalues(factorization, axis: int) -> np.ndarray:
-    """One axis's eigenvalues, scaled by the axis weight of a weighted Laplacian (Helmholtz has none)."""
-    return getattr(factorization, "axis_weights", (1.0, 1.0, 1.0))[axis] * factorization.values[axis]
+    """One axis's eigenvalues."""
+    return factorization.values[axis]
 
 
 def _denominator_of(factorization, single: bool, dtype) -> jnp.ndarray:
@@ -582,11 +582,7 @@ def fast_diagonal_polar_poisson(
 
 @dataclass(frozen=True, eq=False)
 class FastDiagonalPoisson:
-    """A factorized Laplacian that solves ``laplacian(u) = rhs`` in three contractions.
-
-    ``axis_weights`` scale each axis's flux, ``sum_a w_a d_a^2``: the Schur operator ``D H^-1 G`` of a diagonal ``H``
-    that damps each velocity component at its own rate, which the same eigenvectors diagonalize.
-    """
+    """A factorized Laplacian that solves ``laplacian(u) = rhs`` in three contractions."""
 
     grid: Grid
     conditions: tuple[BoundaryCondition, BoundaryCondition, BoundaryCondition]
@@ -597,7 +593,6 @@ class FastDiagonalPoisson:
     precision: str = "state"
     refinements: int = 2
     corrections: int = 0
-    axis_weights: tuple[float, float, float] = (1.0, 1.0, 1.0)
     _low: dict | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -613,7 +608,7 @@ class FastDiagonalPoisson:
             raise ValueError("right-hand side must be cell centred")
 
         def operator(values):
-            return laplacian(rhs.replace_data(values), self.conditions, self.axis_weights).data
+            return laplacian(rhs.replace_data(values), self.conditions).data
 
         volumes = (self.grid, _cell_volumes) if self.singular else None
         result = _refined(self, self._direct, operator, rhs.data, volumes)
@@ -638,7 +633,7 @@ class FastDiagonalPoisson:
 
     def residual_norm(self, solution: Field, rhs: Field) -> jnp.ndarray:
         """Return the maximum absolute residual of a candidate solution."""
-        applied = laplacian(solution, self.conditions, self.axis_weights)
+        applied = laplacian(solution, self.conditions)
         difference = applied.data - rhs.data
         if self.singular:
             difference = _volume_mean_removed(difference, (self.grid, _cell_volumes))

@@ -99,13 +99,18 @@ def _mean(problem: ChannelProblem, velocity) -> float:
     return float((np.asarray(velocity[0].data)[0] * volumes).sum() / volumes.sum())
 
 
-def test_the_residual_vanishes_exactly_at_a_fixed_point_of_the_step():
-    """The two have to agree on what steady means, or the solve answers a different question."""
-    problem = _duct(8, 5.0, dt=0.02)
+@pytest.mark.parametrize(("dt", "steps"), [(0.02, 300), (0.2, 100)])
+def test_the_residual_vanishes_exactly_at_a_fixed_point_of_the_step(dt, steps):
+    """The two have to agree on what steady means, or the solve answers a different question.
+
+    The damping is 25 on two components and 0 on the third, and ``dt lambda`` is 0.5 and 5: the fixed
+    point is the same steady state on both sides of ``dt lambda = 1``.
+    """
+    problem = _duct(8, 5.0, dt=dt)
     factorization = problem.factorization()
     viscous = problem.viscous_factorizations()
     velocity = zero_velocity(problem)
-    for _ in range(300):
+    for _ in range(steps):
         velocity, _, _ = step(velocity, problem, factorization, viscous)
     residual = steady_residual(velocity, problem, factorization)
     size = max(float(jnp.max(jnp.abs(velocity[0].data))), 1.0)
@@ -134,7 +139,14 @@ def test_the_steady_solve_reproduces_the_marched_state_far_faster(monkeypatch):
         jax.debug.callback(bump)
         return project(*args, **kwargs)
 
+    stage = lmhdx.core3d._advance_momentum
+
+    def counted_stage(*args, **kwargs):
+        jax.debug.callback(bump)  # one constrained stage, one pressure solve, per marched step
+        return stage(*args, **kwargs)
+
     monkeypatch.setattr(lmhdx.core3d, "project", counted_project)
+    monkeypatch.setattr(lmhdx.core3d, "_advance_momentum", counted_stage)
     monkeypatch.setattr(lmhdx.steady, "project", counted_project)
 
     problem = _duct(12, 5.0, dt=0.02)
