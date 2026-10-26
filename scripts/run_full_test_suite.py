@@ -78,6 +78,7 @@ _TEST_SHARDS = {
             "test_the_adjoint_matches_finite_differences_in_a_varying_field",
             "test_a_rejected_root_cannot_produce_a_finite_objective_or_gradient",
             "test_a_failed_tangent_solve_is_rejected_eagerly_and_under_jit",
+            "test_the_wall_adjoint_matches_finite_differences_in_a_varying_field",
         )
     ),
     "physics": (
@@ -85,7 +86,7 @@ _TEST_SHARDS = {
         "tests/test_q2d_identities.py",
         "tests/test_stepper.py",
     ),
-    "api": ("tests/test_problem.py",),
+    "api": ("tests/test_problem.py", "tests/test_toml.py"),
     "anchors": ("tests/test_laminar_anchors.py",),
 }
 
@@ -99,14 +100,15 @@ _CHANGE_TEST_NAMES = {
     "coreflow": "coreflow freemhd",
     "fully_developed": "fully_developed design config example_runner",
     "steady": "steady fully_developed axial",
-    "grid": "grid ops core3d timeloop steady pipe axial",
-    "problem": "problem laminar_anchors example_runner",
-    "fields": "problem laminar_anchors",
-    "solver": "problem laminar_anchors example_runner",
+    "grid": "grid ops core3d timeloop steady pipe axial toml",
+    "problem": "problem laminar_anchors example_runner toml",
+    "fields": "problem laminar_anchors toml",
+    "solver": "problem laminar_anchors example_runner toml",
+    "config": "toml",
     "ops": "ops em core3d timeloop steady pipe axial",
     "poisson": "poisson core3d timeloop steady pipe axial",
     "pipe": "pipe poisson axial em",
-    "io": "io benchmarks physics example_runner config",
+    "io": "io benchmarks physics example_runner config toml",
     "q2d": "physics q2d_identities example_runner",
 }
 _CHANGE_TESTS = {

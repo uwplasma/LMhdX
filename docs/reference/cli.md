@@ -28,7 +28,53 @@ validation metrics. `benchmark` reports cold time, warm median, and warm
 coefficient of variation for a bounded Hartmann case; it is a local performance
 diagnostic, not a hardware-independent performance claim.
 
-## TOML sections
+## TOML schema 3
+
+A table is a constructor call: `[problem]` is `Problem(**table)`, `[solver]` is `Solver(**table)`, a
+nested table is a nested object, and `kind` picks the class where several fit. Python and TOML build
+the same objects, so a file and a script give the same result bit for bit. `examples/heated_duct.toml`
+is the template:
+
+```{literalinclude} ../../examples/heated_duct.toml
+:language: toml
+```
+
+| Table | Is | Notes |
+|---|---|---|
+| `[problem]` | `Problem(**table)`, or `preset = "duct"` with the arguments of `duct`, `channel`, `fringe_duct`, `pipe` or `q2d` | `kind = "q2d"` is the Q2D problem |
+| `[problem.grid]` | `Grid(x, y, z)` | each axis is a list of faces or the arguments of `lmhdx.grid.axis` |
+| `[problem.bc]` | one entry per axis | `"periodic"`, `"wall"`, or a table: `Wall` keys, `lower`/`upper` for `Sides`, `kind = "open"` |
+| `[problem.B]` | `kind` is `uniform` (`value = [bx, by, bz]`), `fringe`, `table` or `func` | a `func` has `fn = "module:function"` or `"file.py:function"` and `params` |
+| `[problem.thermal]` | `Thermal(**table)` | |
+| `[solver]` | `Solver(**table)` | |
+| `[start]` | `state = "rest"` or `"steady"` | |
+
+Relative paths (`Table.path`, `file.py:function`) resolve against the file. An unknown key, a missing
+key, a wrong TOML type and an unknown `kind` are refused before anything is solved, with the table path
+in the message: an integer stands for a number, a float or a boolean never for an integer. `[output]`
+takes no keys until `Output` exists (plan step H4.4).
+
+```console
+lmhdx examples/heated_duct.toml solver.steps=20 problem.B.value=[0,20,0]
+lmhdx upgrade old.toml > new.toml
+```
+
+Any `table.key=value` after the file replaces a value (the value is TOML; a bare word is a string).
+`lmhdx upgrade` converts a schema 1 (thermal) or schema 2 (case) file; settings schema 3 cannot hold yet
+(output, logging, restart, run limits) are listed as comments, and a schema 2 case other than a
+rectangular duct of one fluid with a constant field and insulating walls is refused with the tables to
+write by hand. From Python:
+
+```python
+import lmhdx
+from lmhdx.config import dumps, load
+
+case = load("examples/heated_duct.toml")      # a Case: problem, solver, start, name
+solution = lmhdx.solve(case)
+print(dumps(case.problem, case.solver))       # the same text back: any problem without a lambda
+```
+
+## Schema 1 and 2 sections
 
 The schema maps directly to the Python dataclasses:
 

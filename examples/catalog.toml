@@ -80,3 +80,12 @@ status = "stable"
 runtime = "portable"
 outputs = ["pressure gradient", "flow rate", "gradient with respect to the field", "diagnostics"]
 docs = "docs/getting_started/problem.md"
+
+[[example]]
+id = "heated-duct-toml"
+path = "examples/heated_duct.toml"
+command = "lmhdx examples/heated_duct.toml"
+status = "stable"
+runtime = "portable"
+outputs = ["summary", "heat balance diagnostics"]
+docs = "docs/reference/cli.md"
