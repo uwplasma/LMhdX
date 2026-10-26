@@ -99,13 +99,18 @@ def _mean(problem: ChannelProblem, velocity) -> float:
     return float((np.asarray(velocity[0].data)[0] * volumes).sum() / volumes.sum())
 
 
-def test_the_residual_vanishes_exactly_at_a_fixed_point_of_the_step():
-    """The two have to agree on what steady means, or the solve answers a different question."""
-    problem = _duct(8, 5.0, dt=0.02)
+@pytest.mark.parametrize(("dt", "steps"), [(0.02, 300), (0.2, 100)])
+def test_the_residual_vanishes_exactly_at_a_fixed_point_of_the_step(dt, steps):
+    """The two have to agree on what steady means, or the solve answers a different question.
+
+    The damping is 25 on two components and 0 on the third, and ``dt lambda`` is 0.5 and 5: the fixed
+    point is the same steady state on both sides of ``dt lambda = 1``.
+    """
+    problem = _duct(8, 5.0, dt=dt)
     factorization = problem.factorization()
     viscous = problem.viscous_factorizations()
     velocity = zero_velocity(problem)
-    for _ in range(300):
+    for _ in range(steps):
         velocity, _, _ = step(velocity, problem, factorization, viscous)
     residual = steady_residual(velocity, problem, factorization)
     size = max(float(jnp.max(jnp.abs(velocity[0].data))), 1.0)
@@ -134,7 +139,14 @@ def test_the_steady_solve_reproduces_the_marched_state_far_faster(monkeypatch):
         jax.debug.callback(bump)
         return project(*args, **kwargs)
 
+    stage = lmhdx.core3d._advance_momentum
+
+    def counted_stage(*args, **kwargs):
+        jax.debug.callback(bump)  # one constrained stage, one pressure solve, per marched step
+        return stage(*args, **kwargs)
+
     monkeypatch.setattr(lmhdx.core3d, "project", counted_project)
+    monkeypatch.setattr(lmhdx.core3d, "_advance_momentum", counted_stage)
     monkeypatch.setattr(lmhdx.steady, "project", counted_project)
 
     problem = _duct(12, 5.0, dt=0.02)
@@ -1005,12 +1017,14 @@ def test_the_shared_program_holds_no_value_of_the_problem(family, route):
         shared = jax.tree.leaves(programs[0].bind(problem)(*values))
         embedded = jax.tree.leaves(jax.jit(build(problem))(*values))
         # Fields against the largest one (the transverse velocities are round-off); the varying
-        # field stops CG at 1e-9, which amplifies round-off to about 1e-11. Of the numbers, the
-        # residual norms are where CG stopped, round-off themselves, and the flow rate is compared.
+        # field stops CG at 1e-9, so two lowerings of the same program may stop one iteration apart
+        # and differ by that much (1.6e-10 on the hosted runner). Of the numbers, the residual
+        # norms are where CG stopped, round-off themselves, and the flow rate is compared.
         scale = max(float(np.max(np.abs(leaf))) for leaf in embedded)
+        atol = (1e-9 if family == "varying field" else 1e-10) * scale
         for got, expected in zip(shared, embedded, strict=True):
             if np.ndim(expected):
-                np.testing.assert_allclose(got, expected, rtol=0.0, atol=1e-10 * scale)
+                np.testing.assert_allclose(got, expected, rtol=0.0, atol=atol)
             elif abs(float(expected)) > 1e-6 * scale:
                 np.testing.assert_allclose(got, expected, rtol=1e-10)
 
