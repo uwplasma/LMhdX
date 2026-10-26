@@ -1017,12 +1017,14 @@ def test_the_shared_program_holds_no_value_of_the_problem(family, route):
         shared = jax.tree.leaves(programs[0].bind(problem)(*values))
         embedded = jax.tree.leaves(jax.jit(build(problem))(*values))
         # Fields against the largest one (the transverse velocities are round-off); the varying
-        # field stops CG at 1e-9, which amplifies round-off to about 1e-11. Of the numbers, the
-        # residual norms are where CG stopped, round-off themselves, and the flow rate is compared.
+        # field stops CG at 1e-9, so two lowerings of the same program may stop one iteration apart
+        # and differ by that much (1.6e-10 on the hosted runner). Of the numbers, the residual
+        # norms are where CG stopped, round-off themselves, and the flow rate is compared.
         scale = max(float(np.max(np.abs(leaf))) for leaf in embedded)
+        atol = (1e-9 if family == "varying field" else 1e-10) * scale
         for got, expected in zip(shared, embedded, strict=True):
             if np.ndim(expected):
-                np.testing.assert_allclose(got, expected, rtol=0.0, atol=1e-10 * scale)
+                np.testing.assert_allclose(got, expected, rtol=0.0, atol=atol)
             elif abs(float(expected)) > 1e-6 * scale:
                 np.testing.assert_allclose(got, expected, rtol=1e-10)
 
