@@ -30,8 +30,9 @@ _TEST_SHARDS = {
         "tests/test_freemhd.py",
         "tests/test_benchmarks.py",
         "tests/test_example_runner.py",
-        "tests/test_design.py",
     ),
+    # Split from support: the design studies are most of its unit time.
+    "design": ("tests/test_design.py",),
     "operators": (
         "tests/test_grid.py",
         "tests/test_ops.py",
@@ -40,7 +41,7 @@ _TEST_SHARDS = {
         "tests/test_em.py",
         "tests/test_momentum_placement_oracle.py",
     ),
-    "channel": ("tests/test_core3d.py", "tests/test_pipe.py", "tests/test_axial.py", "tests/test_table_i.py"),
+    "channel": ("tests/test_core3d.py", "tests/test_pipe.py"),
     "plane": (
         *(
             f"tests/test_core3d.py::{name}"
@@ -52,6 +53,8 @@ _TEST_SHARDS = {
             )
         ),
         "tests/test_coreflow.py",
+        "tests/test_axial.py",
+        "tests/test_table_i.py",
     ),
     "steady": ("tests/test_steady.py",),
     # The shared-program tests of 2b.1, split from steady to keep both inside their budgets.

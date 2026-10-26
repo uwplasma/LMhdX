@@ -102,7 +102,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [support, operators, physics, channel, plane, steady, programs, fully_developed, gradients]
+        shard: [support, design, operators, physics, channel, plane, steady, programs, fully_developed, gradients]
         include:
           # Coverage on the steady shard peaks near 12 GB of resident memory with four
           # workers, against 16 GB on a hosted runner; two workers keep it well inside.
@@ -113,6 +113,8 @@ jobs:
             cache: steady
           # A split shard starts from its parent's compilation cache.
           - shard: operators
+            cache: support
+          - shard: design
             cache: support
           - shard: plane
             cache: channel
@@ -163,6 +165,12 @@ jobs:
         with:
           path: artifacts/test-evidence/support
           key: lmx-test-evidence-${{ github.run_id }}-support
+          fail-on-cache-miss: true
+      - name: Restore design evidence
+        uses: actions/cache/restore@v6
+        with:
+          path: artifacts/test-evidence/design
+          key: lmx-test-evidence-${{ github.run_id }}-design
           fail-on-cache-miss: true
       - name: Restore physics evidence
         uses: actions/cache/restore@v6
@@ -233,6 +241,10 @@ jobs:
           - tier: unit
             shard: support
             workers: 4
+            budget: 300
+            cache: pr-unit
+          - tier: unit
+            shard: design
             budget: 300
             cache: pr-unit
           - tier: unit
