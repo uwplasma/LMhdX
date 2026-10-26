@@ -1158,18 +1158,12 @@ def test_the_summed_lorentz_force_is_the_boundary_term_and_the_current_is_diverg
     boundary = np.zeros(3)
     for axis, current in enumerate(currents):
         area = np.asarray(grid.face_areas(axis))
-        for end, outward in ((slice(0, 1), -1.0), (slice(-1, None), 1.0)):
-            at = tuple(end if position == axis else slice(None) for position in range(3))
-            flux = outward * np.asarray(current.data)[at] * area[at]
+        for end, outward in ((0, -1.0), (-1, 1.0)):
+            flux = outward * np.take(np.asarray(current.data) * area, [end], axis)
             for component in range(3):
-                shape = [1, 1, 1]
-                shape[component] = -1
-                position = (
-                    np.asarray(grid.faces[axis][end]).reshape(1, 1, 1)
-                    if component == axis
-                    else np.asarray(grid.centers[component]).reshape(shape)
-                )
-                boundary[component] += np.sum(flux * position)
+                position = grid.faces[axis][[end]] if component == axis else grid.centers[component]
+                other = tuple(index for index in range(3) if index != component)
+                boundary[component] += np.sum(flux * np.expand_dims(position, other))
     assert np.max(np.abs(summed - np.cross(boundary, field))) <= 1e-12 * scale
     assert (np.max(np.abs(summed)) > 1e-3 * scale) == periodic
     charge = float(jnp.max(jnp.abs(divergence(currents).data)))
