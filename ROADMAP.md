@@ -14,6 +14,11 @@ below are planning targets, not validation or release promises.
    FreeMHD evidence. Add measured CPU/GPU scaling, Q2D and passive heat in their
    documented envelopes. Use exterior ESSOS fields and independent blanket
    geometry for device channels; do not extrapolate VMEX interior fields.
+4. **High Reynolds number and the 2.0 API — from October 2026.** One IMEX
+   Runge–Kutta stepper for steady and unsteady flow, energy-conserving
+   transport on stretched grids, Hartmann-channel validation on the GPU, and a
+   new `Problem`/`Solver`/`Output` interface with TOML and differentiable wall
+   conductance, released as 2.0.0 ([plan.md](plan.md) Program H, ADR 0010).
 
 No release until the plan's acceptance gates pass. No speed, turbulence or heat
 transfer claim without its corresponding numerical and physical evidence.

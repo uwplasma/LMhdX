@@ -473,7 +473,8 @@ T condition, the excess over the wall decays along the duct in a fixed shape,
 $T-T_w=\theta\,e^{-\lambda x}$. Without axial conduction or internal heat,
 $\theta$ is the eigenfunction of $-L(\theta)=\Lambda f\theta$ with the smallest
 eigenvalue, $f=u/\bar u$. `developed_wall_temperature(problem, velocity)` finds
-it by inverse iteration with the same fast-diagonal factorization, and returns:
+it with `solvax.inverse_iteration` on the same fast-diagonal factorization, and
+returns:
 - the decay rate $\lambda=\Lambda\alpha/\bar u$;
 - the profile scaled to a unit bulk excess, $(T-T_w)/(T_b-T_w)$;
 - $Nu_T=\Lambda D_hA/P_w$, which is $\Lambda D_h^2/4$ when every wall is held, with
@@ -494,13 +495,12 @@ thermal = ThermalProblem(
     flow, (periodic, held, held), specific_heat=1.0, thermal_conductivity=1.0, reference_temperature=0.0
 )
 result = developed_wall_temperature(thermal, solve_steady_state(flow).velocity)
-print(f"Nu_T {float(result.nusselt):.4f} in {int(result.iterations)} iterations")  # 2.9823 in 13
+print(f"Nu_T {float(result.nusselt):.4f} in {int(result.iterations)} iterations")  # 2.9823 in 12
 ```
 
 The iteration stops once `eigen_residual` is below `tolerance` (1e-10 in
-float64, 1e-4 in float32), or after `max_iterations`. Each iteration gains the
-ratio of the two smallest eigenvalues of the section's symmetric modes: the
-square duct takes 13 iterations, a 1:8 duct about 150.
+float64, 1e-4 in float32), or after `max_iterations`: the square duct takes 12
+iterations, a 1:8 duct 146.
 
 $\Lambda$ is the Rayleigh quotient of the converged $\theta$. The quotient is
 stationary at an eigenfunction, so its derivative in the velocity needs none of
