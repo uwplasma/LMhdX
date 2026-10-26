@@ -12,7 +12,8 @@ reserved for plan steps H2.2 and H3 and raise.
 
 :func:`jax.grad` through the leaves of a problem runs the implicit derivative of the steady solve.
 The factorizations are built on the host from the primal values, so :func:`jax.jit` is for the
-objective with the problem closed over.
+objective with the problem closed over; the exception is a conducting wall's numbers, which the Stokes solve
+of a periodic duct takes as arguments (their potential factorization is built in the trace).
 """
 
 from __future__ import annotations
@@ -34,11 +35,11 @@ from .fields import Uniform, host, is_traced, primal
 from .grid import Field
 from .pipe import PipeProblem, solve_pipe
 from .pipe import flow_rate as _pipe_flow_rate
-from .problem import Q2D, Problem, channel_kernel, thermal_kernel
+from .problem import Q2D, Open, Problem, channel_kernel, hold_walls, thermal_kernel
 from .q2d import Q2DProblem, evolve_q2d, solve_q2d
 from .steady import _MAX_STEPS, solve_compiled, solve_steady_state
 
-__all__ = ["Solution", "Solver", "solve"]
+__all__ = ["Case", "Solution", "Solver", "solve"]
 
 _RESERVED = {"rk3": "H2.2", "march": "H3", "implicit": "H2.2"}
 _METHODS = ("auto", "stokes", "newton", "euler", "ifrk4")
@@ -84,6 +85,15 @@ class Solver:
         return method
 
 
+class Case(NamedTuple):
+    """A problem with its solver and start, as :func:`lmhdx.config.load` reads them from a TOML file."""
+
+    problem: object
+    solver: Solver | None = None
+    start: object = None
+    name: str = ""
+
+
 class Solution(NamedTuple):
     """The result of :func:`solve`; ``fields`` holds the named arrays and each is also an attribute.
 
@@ -118,11 +128,14 @@ def _flux(axial: Field):
 
 @functools.lru_cache(maxsize=16)
 def _program(kernel, tolerance: float):
-    """One compiled steady solve whose forcing and field scale are arguments, so both can be differentiated."""
+    """One compiled steady solve whose forcing, field scale and wall numbers are arguments, so each can be differentiated.
 
-    def run(forcing, scale):
+    The kernel holds the wall pattern only, so a new conductance or thickness reuses the program.
+    """
+
+    def run(forcing, scale, walls):
         found = solve_steady_state(
-            kernel, forcing=forcing, field_scale=scale, tolerance=tolerance, max_steps=_MAX_STEPS
+            kernel, forcing=forcing, field_scale=scale, walls=walls, tolerance=tolerance, max_steps=_MAX_STEPS
         )
         return found.velocity, found.pressure, found.potential, found.residual_norm
 
@@ -130,9 +143,12 @@ def _program(kernel, tolerance: float):
 
 
 def _steady(problem: Problem, solver: Solver) -> Solution:
-    kernel, forcing, scale, factor = channel_kernel(
-        problem, 1.0 if solver.dt is None else solver.dt, solver.precision
+    # Only the Stokes solve of a periodic duct differentiates wall numbers: they ride as arguments.
+    carried = problem.advection == "off" and not any(isinstance(entry, Open) for entry in problem.bc)
+    kernel, forcing, scale, factor, walls = channel_kernel(
+        problem, 1.0 if solver.dt is None else solver.dt, solver.precision, carried=carried
     )
+    held, walls = (None, walls) if carried else (walls, None)
     rate = problem.flow_rate
     if kernel.open_axis is not None:
         if any(primal(f, "the forcing") for f in problem.forcing):
@@ -144,16 +160,17 @@ def _steady(problem: Problem, solver: Solver) -> Solution:
         fields["currents"], residual = found.currents, found.residual_norm
         if is_traced(factor):
             fields, residual = jax.tree.map(lambda f: f * factor, fields), abs(factor) * residual
-        return Solution(fields, None, _flux(fields["velocity"][0]), residual, found.iterations)
+        found = Solution(fields, None, _flux(fields["velocity"][0]), residual, found.iterations)
+        return hold_walls(found, held)
     unit = rate is not None
     if unit and problem.advection != "off":
         raise NotImplementedError(
             "a flow rate sets the drive of a Stokes duct; constant-flux control is plan H2.5"
         )
-    if forcing is not None or is_traced(scale) or solver.tol is not None:
+    if forcing is not None or is_traced(scale) or solver.tol is not None or walls is not None:
         tolerance = 1.0e-9 if solver.tol is None else solver.tol
         velocity, pressure, potential, residual = _program(kernel, tolerance)(
-            kernel.forcing if forcing is None else tuple(forcing), scale
+            kernel.forcing if forcing is None else tuple(forcing), scale, walls
         )
     else:
         found = solve_compiled(kernel)
@@ -171,7 +188,7 @@ def _steady(problem: Problem, solver: Solver) -> Solution:
         )
         residual = abs(drive) * residual
     fields = {"velocity": velocity, "pressure": pressure, "potential": potential}
-    return Solution(fields, drive, _flux(velocity[0]), residual)
+    return hold_walls(Solution(fields, drive, _flux(velocity[0]), residual), held)
 
 
 def _pipe(problem: Problem, solver: Solver) -> Solution:
@@ -222,16 +239,17 @@ def _q2d(problem: Q2D, solver: Solver) -> Solution:
 
 
 def _transient(problem: Problem, solver: Solver, start) -> Solution:
-    kernel, forcing, scale, _ = channel_kernel(problem, solver.dt, solver.precision)
+    kernel, forcing, scale, _, walls = channel_kernel(problem, solver.dt, solver.precision)
     if forcing is not None or is_traced(scale) or kernel.open_axis is not None or float(scale) != 1.0:
         raise NotImplementedError("an unsteady run takes a concrete drive and field, and no open axis")
     run = advance(
         kernel, solver.steps, start, viscous=kernel.viscous_factorizations(), checkpoint=solver.checkpoint
     )
     fields = {"velocity": run.velocity, "pressure": run.pressure, "potential": run.potential}
-    return Solution(
+    found = Solution(
         fields, history={"divergence": run.divergence_residual, "kinetic_energy": run.kinetic_energy}
     )
+    return hold_walls(found, walls)
 
 
 def _thermal(problem: Problem, solver: Solver, start) -> Solution:
@@ -246,7 +264,7 @@ def _thermal(problem: Problem, solver: Solver, start) -> Solution:
         validate_thermal_inputs,
     )
 
-    kernel, forcing, scale, _ = channel_kernel(problem, solver.dt, solver.precision)
+    kernel, forcing, scale, _, walls = channel_kernel(problem, solver.dt, solver.precision)
     if forcing is not None or is_traced(scale) or float(scale) != 1.0:
         raise NotImplementedError("an unsteady run takes a concrete drive and field")
     heat_problem, thermal = thermal_kernel(problem, kernel), problem.thermal
@@ -273,7 +291,7 @@ def _thermal(problem: Problem, solver: Solver, start) -> Solution:
             f"the thermal run was rejected at step {rejected['step']}: {rejected['reasons']}"
         )
     fields = {"velocity": final.velocity, "temperature": final.temperature}
-    return Solution(fields, history=history)
+    return hold_walls(Solution(fields, history=history), walls)
 
 
 def solve(problem: object, solver: Solver | None = None, start: object = None) -> object:
@@ -282,8 +300,14 @@ def solve(problem: object, solver: Solver | None = None, start: object = None) -
     ``start`` is the initial state of an unsteady run: for a thermal run ``None`` (rest, at the
     problem's initial temperature), ``"steady"`` (the steady flow, temperature at rest) or a
     :class:`lmhdx.thermal.ThermalState`; for a mechanical run a velocity or ``None``. A steady
-    solve takes none.
+    solve takes none. A :class:`Case` brings its own solver and start unless they are given.
     """
+    if isinstance(problem, Case):
+        problem, solver, start = (
+            problem.problem,
+            solver or problem.solver,
+            problem.start if start is None else start,
+        )
     if not isinstance(problem, (Problem, Q2D)):
         if solver is not None or start is not None:
             raise TypeError(f"{type(problem).__name__} takes no solver or start")
