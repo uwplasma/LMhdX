@@ -541,7 +541,6 @@ class OpenPipeSolution(NamedTuple):
     residual_norm: jnp.ndarray
     initial_residual_norm: jnp.ndarray
     iterations: jnp.ndarray
-    status: jnp.ndarray
 
 
 def monotone_interpolant(x: np.ndarray, y: np.ndarray):
