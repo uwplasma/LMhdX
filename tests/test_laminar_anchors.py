@@ -6,6 +6,7 @@ is held to the offset it is measured to have from that solution. Every mesh sequ
 three meshes of ratio 1.5, and a Richardson value with an observed order of 2 is what is compared.
 """
 
+import jax
 import numpy as np
 import pytest
 
@@ -165,3 +166,47 @@ def test_the_friction_error_falls_with_the_cells_in_the_hartmann_layer_at_second
     ]
     study = grid_convergence(*drive, 1.5)
     assert 1.9 < study.order < 2.1 and study.extrapolated == pytest.approx(exact, rel=5e-5)
+
+
+def test_the_hunt_wall_derivative_meets_ni_2007_and_the_spectral_duct():
+    """T35: d(dp/dx)/dc of Hunt's duct (Ha 300, Re 10) against Ni's two tables and an independent spectral solve.
+
+    Ni et al. 2007 give dp/dx 374.897 at c 0.05 and 585.4302 at c 0.1: a secant of 4210.6 per unit c. The
+    derivative at the midpoint differs from a secant by the curvature of dp/dx (1.15 % here, the same in the
+    spectral duct), so the table is met after that correction, and the automatic derivative of the 127-cell
+    solve is held to the spectral derivative at the mesh error of the pressure gradient itself (plan T3: 1.2e-3
+    measured, 2e-3 allowed).
+    """
+    lmhdx.enable_x64()
+    mid = 0.075
+    slope = float(
+        jax.grad(lambda c: lmhdx.solve(_duct(300, 127, conductance=c, viscosity=0.1)).pressure_gradient)(mid)
+    )
+
+    def spectral(c):
+        return 0.1 / quadrant_flow_rate(300, 64, hartmann_wall=c)
+
+    secant = (spectral(0.1) - spectral(0.05)) / 0.05
+    reference = (spectral(mid + 1e-3) - spectral(mid - 1e-3)) / 2e-3
+    assert (585.4302 - 374.897) / 0.05 == pytest.approx(4210.6, abs=0.1)
+    assert secant == pytest.approx(4210.6, rel=2e-3)
+    assert abs(secant - reference) / reference == pytest.approx(0.0115, abs=5e-4)
+    assert slope == pytest.approx(reference, rel=2e-3)
+    assert slope == pytest.approx(4210.6 * reference / secant, rel=2e-3)
+
+
+def test_the_wall_derivative_converges_with_the_mesh_at_second_order():
+    """The derivative, not only the drive, has the scheme's order: three meshes of ratio 1.5 (Ha 20, c 0.05)."""
+    lmhdx.enable_x64()
+    runs = [
+        jax.value_and_grad(
+            lambda c, n=n: (
+                lmhdx.solve(_duct(20, n, conductance=c, beta=(3.0, 3.0), viscosity=0.1)).pressure_gradient
+            )
+        )(0.05)
+        for n in (49, 73, 109)
+    ]
+    for index in (0, 1):
+        study = grid_convergence(*(float(run[index]) for run in runs), 1.5, 1.5)
+        assert 1.9 < study.order < 2.1 and study.monotone
+    assert study.extrapolated == pytest.approx(31.8176, rel=1e-4)

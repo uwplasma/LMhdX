@@ -2,9 +2,11 @@
 
 A :class:`Problem` is a frozen dataclass and a registered pytree. Its leaves are the inputs the
 kernels differentiate: the ``forcing``, the ``flow_rate``, the field amplitude (:mod:`lmhdx.fields`),
-the Q2D state and coefficients, a heat source and the initial temperature. The grid, boundary kinds,
-walls, material properties and scheme names are static, so ``jax.grad`` never returns a silent zero
-for one; properties and wall conductances become leaves when the kernels take them traced (plan H4.2).
+the Q2D state and coefficients, a heat source and the initial temperature, and the numbers of a
+conducting :class:`Wall` (its conductance, or conductivity and thickness, and those of its layers). The
+grid, boundary kinds, which walls conduct, cell counts, material properties and scheme names are static,
+so ``jax.grad`` never returns a silent zero for one; properties become leaves when the kernels take them
+traced.
 
 :func:`lmhdx.solve` translates a problem to :class:`~lmhdx.core3d.ChannelProblem`,
 :class:`~lmhdx.thermal.ThermalProblem`, :class:`~lmhdx.pipe.PipeProblem` or
@@ -17,12 +19,14 @@ import dataclasses
 from dataclasses import dataclass
 from math import cosh, pi, sinh, sqrt
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 
 from .axial import axial_faces, open_duct
 from .cases import WallLayer
 from .core3d import ChannelProblem
-from .fields import Fringe, Uniform, host, is_traced, primal, pytree
+from .fields import Fringe, Func, Table, Uniform, host, is_traced, primal, pytree
 from .grid import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Grid, axis
 from .pipe import pipe_grid
 from .q2d import make_q2d_case
@@ -48,28 +52,65 @@ def _frozen(value):
     return value if value is None or not np.ndim(value) else tuple(map(_frozen, value))
 
 
+def _zero(value) -> bool:
+    return isinstance(value, (int, float)) and value == 0
+
+
 @dataclass(frozen=True)
 class Wall:
     """A no-slip wall at one end of an axis, or at both.
 
-    ``conductance`` is the thin-wall ``c = sigma_w t_w / (sigma L)``; ``layers``
+    ``conductance`` is the thin-wall ``c = sigma_w t_w / (sigma L)``; or give ``conductivity`` and
+    ``thickness`` (``L`` the grid's unit), and ``c`` is formed from them. ``layers``
     resolve the wall in cells instead, a tuple of :class:`lmhdx.cases.WallLayer`
     from the fluid outward (absolute conductivity, divided by the fluid's here).
     ``temperature`` or ``heat_flux`` (outward conductive flux, positive cools; a
     number or an array over the two other axes) set the thermal condition; neither
     is adiabatic. Both are static until the thermal kernels take traced data.
+
+    The numbers of a conducting wall are leaves of the :class:`Problem`: ``conductance``, ``conductivity``
+    and ``thickness``, and each layer's conductivity and thickness (the cells are static), so ``jax.grad``,
+    ``jax.jvp`` and ``jax.vmap`` pass through them. A conductance that is the literal ``0.0`` is the
+    insulating wall: it is structure, not a leaf, and a traced one that is zero has no derivative
+    (``ValueError``; use a small positive value). Under ``jax.jit`` the primal is unknown, so declare a
+    traced conducting wall with ``conducting=True``.
     """
 
     conductance: float = 0.0
     layers: tuple[WallLayer, ...] = ()
-    temperature: float | None = None
-    heat_flux: float | None = None
+    temperature: float | tuple | None = None
+    heat_flux: float | tuple | None = None
+    conductivity: float | None = None
+    thickness: float | None = None
+    conducting: bool = False
 
     def __post_init__(self) -> None:
         for name in ("temperature", "heat_flux"):
             object.__setattr__(self, name, _frozen(getattr(self, name)))
         if self.temperature is not None and self.heat_flux is not None:
             raise ValueError("a wall takes a temperature or a heat flux, not both")
+
+
+# A wall's numbers are children; everything else, and whether the conductance is one, is structure.
+jax.tree_util.register_pytree_node(
+    Wall,
+    lambda w: (
+        (
+            None if _zero(w.conductance) else w.conductance,
+            w.conductivity,
+            w.thickness,
+            tuple((layer.conductivity, layer.thickness) for layer in w.layers),
+        ),
+        (w.temperature, w.heat_flux, w.conducting, tuple((layer.name, layer.cells) for layer in w.layers)),
+    ),
+    lambda aux, children: Wall(
+        0.0 if children[0] is None else children[0],
+        tuple(WallLayer(name, *pair, cells) for (name, cells), pair in zip(aux[3], children[3], strict=True)),
+        *aux[:2],
+        *children[1:3],
+        aux[2],
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -92,6 +133,9 @@ class Open:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "profile", _frozen(self.profile))
+
+
+Bc = Wall | Sides | Open | str  # one entry of ``Problem.bc``: what each axis is
 
 
 @pytree(
@@ -123,10 +167,6 @@ class Thermal:
     initial_temperature: float = 0.0
 
 
-@pytree(
-    ("forcing", "flow_rate", "B", "thermal"),
-    ("grid", "bc", "density", "viscosity", "conductivity", "advection"),
-)
 @dataclass(frozen=True, eq=False)
 class Problem:
     """A duct, channel or pipe: grid, boundaries, material, field and drive.
@@ -141,11 +181,11 @@ class Problem:
     """
 
     grid: Grid
-    bc: tuple = ("periodic", "wall", "wall")
+    bc: dict[str, Bc] | tuple[Bc, Bc, Bc] = ("periodic", "wall", "wall")
     density: float = 1.0
     viscosity: float = 1.0
     conductivity: float = 1.0
-    B: object = Uniform(0.0, 0.0, 0.0)
+    B: Uniform | Fringe | Table | Func = Uniform(0.0, 0.0, 0.0)
     forcing: tuple[float, float, float] = (0.0, 0.0, 0.0)
     flow_rate: float | None = None
     advection: str = "off"
@@ -153,6 +193,8 @@ class Problem:
 
     def __post_init__(self) -> None:
         if isinstance(self.bc, dict):
+            if missing := sorted(set("xyz") - set(self.bc)):
+                raise ValueError(f"bc needs an entry for each axis, missing {missing}")
             object.__setattr__(self, "bc", tuple(self.bc[name] for name in "xyz"))
 
     def replace(self, **changes) -> Problem:
@@ -181,11 +223,53 @@ class Q2D:
     ``steps`` belong to the :class:`lmhdx.solver.Solver`.
     """
 
-    initial_vorticity: object
-    forcing: object = None
+    initial_vorticity: np.ndarray
+    forcing: np.ndarray | None = None
     viscosity: float = 1.0e-2
     hartmann_friction: float = 0.1
     length: tuple[float, float] = (2.0 * pi, 2.0 * pi)
+
+
+_SLOT = object()
+
+
+def _flatten_problem(problem: Problem):
+    """The leaves are the field values and every wall; ``bc`` keeps its shape with the walls taken out."""
+    walls = []
+
+    def strip(entry):
+        if isinstance(entry, Wall):
+            walls.append(entry)
+            return _SLOT
+        return Sides(strip(entry.lower), strip(entry.upper)) if isinstance(entry, Sides) else entry
+
+    skeleton = tuple(strip(entry) for entry in problem.bc)
+    aux = (
+        problem.grid,
+        skeleton,
+        problem.density,
+        problem.viscosity,
+        problem.conductivity,
+        problem.advection,
+    )
+    return (problem.forcing, problem.flow_rate, problem.B, problem.thermal, tuple(walls)), aux
+
+
+def _unflatten_problem(aux, children) -> Problem:
+    grid, skeleton, density, viscosity, conductivity, advection = aux
+    forcing, flow_rate, B, thermal, walls = children
+    walls = iter(walls)
+
+    def fill(entry):
+        if entry is _SLOT:
+            return next(walls)
+        return Sides(fill(entry.lower), fill(entry.upper)) if isinstance(entry, Sides) else entry
+
+    bc = tuple(fill(entry) for entry in skeleton)
+    return Problem(grid, bc, density, viscosity, conductivity, B, forcing, flow_rate, advection, thermal)
+
+
+jax.tree_util.register_pytree_node(Problem, _flatten_problem, _unflatten_problem)
 
 
 def _layers(wall: Wall, fluid: float):
@@ -197,17 +281,72 @@ def _layers(wall: Wall, fluid: float):
     return ratios, widths
 
 
-def channel_kernel(problem: Problem, dt: float = 1.0, precision: str = "state"):
-    """Return ``(kernel, forcing, scale, rate)``: the :class:`ChannelProblem` and what rides beside it.
+def _thin(wall: Wall, fluid: float):
+    """The thin-wall ratio of ``wall``: its ``conductance``, or ``c = sigma_w t_w / sigma`` from conductivity and thickness."""
+    if wall.conductivity is None and wall.thickness is None:
+        return wall.conductance
+    if None in (wall.conductivity, wall.thickness) or not _zero(wall.conductance):
+        raise ValueError("a wall takes a conductance, or a conductivity and a thickness together, not both")
+    if not fluid:
+        raise ValueError("c = sigma_w t_w / sigma needs a conducting fluid; give the conductance")
+    return wall.conductivity * wall.thickness / fluid
+
+
+def _static(value, wall: Wall | None, carried: bool) -> float:
+    """What the kernel holds for a wall number: its value, or 1.0 when it is traced and rides as an argument.
+
+    A traced conductance must conduct: its primal is positive, or ``Wall.conducting`` says so where the
+    primal is unknown (under jit); the derivative at zero is undefined. A kernel that cannot carry the
+    number takes its primal.
+    """
+    if not is_traced(value):
+        return float(value)
+    what = (
+        "a wall number (declare a conductance with Wall(..., conducting=True) to differentiate it under jit)"
+    )
+    if wall is not None and not wall.conducting and not primal(value, what) > 0.0:
+        raise ValueError(
+            "the wall conductance is zero, an insulating wall, whose derivative is undefined: use a small positive value"
+        )
+    return 1.0 if carried else primal(value, what)
+
+
+@jax.custom_jvp
+def _undefined(value):
+    return jnp.zeros(())
+
+
+@_undefined.defjvp
+def _undefined_jvp(primals, tangents):
+    return jnp.zeros(()), jnp.nan * sum(jnp.sum(t) for t in tangents)
+
+
+def hold_walls(solution, walls):
+    """Return ``solution``, with a NaN derivative in a wall number the run took at its primal (not a silent zero)."""
+    if walls is None:
+        return solution
+    zero = sum(_undefined(leaf) for leaf in jax.tree.leaves(walls))
+    return jax.tree.map(
+        lambda x: x + zero.astype(x.dtype) if jnp.issubdtype(jnp.result_type(x), jnp.inexact) else x, solution
+    )
+
+
+def channel_kernel(problem: Problem, dt: float = 1.0, precision: str = "state", carried: bool = False):
+    """Return ``(kernel, forcing, scale, rate, walls)``: the :class:`ChannelProblem` and what rides beside it.
 
     ``forcing`` is ``None`` when the body force is a number, which the kernel then carries; a traced one
     is an argument. ``scale`` multiplies the imposed field. A periodic duct driven by ``flow_rate`` is the
     unit-drive kernel, which :func:`lmhdx.solver.solve` rescales; an open duct whose Stokes solution is linear in a
     traced ``flow_rate`` is built at its primal, and ``rate`` is the factor that restores the derivative.
+    ``walls`` is ``None`` unless a wall number is traced; then it is the ``(conductance, layers)`` of
+    :meth:`~lmhdx.core3d.ChannelProblem.with_walls`. A kernel whose solve ``carried`` them as arguments
+    (the periodic Stokes duct) holds only the pattern, 1.0 for each traced number, so one program serves every
+    value; any other takes the primals, and the caller returns the derivative through :func:`hold_walls`.
     """
     if problem.grid.is_polar:
         raise ValueError("a polar grid is a pipe, which has no ChannelProblem")
     conditions, conductance, layers, opened = [], [], [], None
+    dynamic, fluid = ([0.0] * 3, [None] * 3), float(host(problem.conductivity, "the conductivity"))
     for index in range(3):
         ends = problem.ends(index)
         wall = ends is not None and not isinstance(ends, Open)
@@ -219,12 +358,22 @@ def channel_kernel(problem: Problem, dt: float = 1.0, precision: str = "state"):
         conductance.append(0.0)
         layers.append(None)
         if wall:
-            first, second = (float(host(w.conductance, "a wall conductance")) for w in ends)
-            if first != second:
+            thin = [_thin(ends[0], fluid)]
+            thin.append(thin[0] if ends[1] is ends[0] else _thin(ends[1], fluid))
+            first, second = (_static(c, w, carried) for c, w in zip(thin, ends, strict=True))
+            if first != second or (thin[0] is not thin[1] and is_traced(thin)):
                 raise NotImplementedError("a thin wall takes one conductance on both ends of an axis")
-            conductance[-1] = first
+            conductance[-1], dynamic[0][index] = first, thin[0]
             if any(w.layers for w in ends):
-                layers[-1] = tuple(_layers(w, float(problem.conductivity)) for w in ends)
+                pairs = tuple(_layers(w, fluid) for w in ends)
+                layers[-1] = tuple(
+                    pair and tuple(tuple(_static(v, None, carried) for v in part) for part in pair)
+                    for pair in pairs
+                )
+                dynamic[1][index] = tuple(
+                    pair and tuple((jnp if is_traced(pair) else np).asarray(part, float) for part in pair)
+                    for pair in pairs
+                )
     field, scale = problem.B.sample(problem.grid)
     peak = np.max(np.abs(field.components), axis=(1, 2, 3)) if hasattr(field, "components") else np.abs(field)
     # u_x B_across drives a current along a periodic axis that nothing closes: the Hartmann channel.
@@ -261,7 +410,8 @@ def channel_kernel(problem: Problem, dt: float = 1.0, precision: str = "state"):
     elif opened is not None:
         inlet = BoundaryCondition(DIRICHLET, lower=np.asarray(opened.profile), upper_kind=NEUMANN)
         kernel = dataclasses.replace(kernel, conditions=(inlet, *kernel.conditions[1:]))
-    return kernel, (drive if traced and not unit else None), scale, rate
+    walls = (tuple(dynamic[0]), tuple(dynamic[1])) if is_traced(dynamic) else None
+    return kernel, (drive if traced and not unit else None), scale, rate, walls
 
 
 def thermal_kernel(problem: Problem, flow: ChannelProblem) -> ThermalProblem:
@@ -318,7 +468,7 @@ def duct(
     *,
     wall_conductance: float = 0.0,
     cells_in_layer: int = 6,
-    walls: dict | None = None,
+    walls: dict[str, Bc] | None = None,
     flow_rate: float | None = None,
     **fields: object,
 ) -> Problem:
