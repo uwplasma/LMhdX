@@ -8,7 +8,7 @@ is not part of the package or of ``validation/``. ``benchmarks/provenance.json``
 reference file's.
 
 A reference keeps, per figure, the image's hash, the calibration of both axes, the codes that agree and where the
-paper says so (``agree_basis``: "the paper", or "my reading" where it does not), and the band of those codes, with
+paper says so (``agree_basis``: "the paper", or "figure reading" where it does not), and the band of those codes, with
 the curves that are not one of the six codes. Each is simplified to within half a pixel of every extracted column,
 nothing decimated before, and rounded to a tenth of one. Each axis carries its calibration misfit in its own units, and the record its digitizing uncertainty, which a
 test uses as its tolerance. ``digitize`` returns every code's curve in full, for a figure read again.
@@ -357,7 +357,7 @@ def _compact(record: dict) -> dict:
         axis: float(f"{spread[axis] * scale:.3g}") for axis, scale in zip("xy", record["per_pixel"])
     }
     out["uncertainty"]["px"] = {axis: round(value, 2) for axis, value in spread.items()}
-    out["agree_basis"] = "my reading" if "as read" in record["agree_source"] else "the paper"
+    out["agree_basis"] = "figure reading" if "as read" in record["agree_source"] else "the paper"
     out["curves"] = {}
     for name, curve in record["curves"].items():
         if name in SIX:

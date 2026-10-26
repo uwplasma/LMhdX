@@ -1643,9 +1643,9 @@ def test_the_magnetoconvection_section_meets_figure_13s_core():
 def _check_reference_record(record):
     """One digitized figure as shipped: its image hashed; both axes on their label lattice, three ticks at least and
     within 0.6 px (the worst measured is 0.54), the misfit and the digitizing uncertainty also in the axis's units;
-    whether the paper or my reading chose the band's codes; the kept curves ordered and visible, and the band ordered
+    whether the paper or a figure reading chose the band's codes; the kept curves ordered and visible, and the band ordered
     and inside its window."""
-    assert len(record["sha256"]) == 64 and record["agree_basis"] in ("the paper", "my reading")
+    assert len(record["sha256"]) == 64 and record["agree_basis"] in ("the paper", "figure reading")
     for axis, scale in zip("xy", record["per_pixel"]):
         fit, spread = record["calibration"][axis], record["uncertainty"]["px"][axis]
         assert fit["misfit_px"] <= 0.6 and fit["ticks"] >= 3
