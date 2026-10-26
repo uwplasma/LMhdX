@@ -150,7 +150,9 @@ def test_a_second_run_of_the_same_shape_compiles_nothing_and_a_chunked_restart_l
     assert core3d._compiled_trajectory.cache_info().hits >= 3
     # The compiled run is the scan it replaces (to 1e-33, in entries that are zero to round-off), and
     # restarting at a step boundary loses nothing.
-    inline = core3d._trajectory(problem, 8, factorization, viscous, True)(zero_velocity(problem))
+    inline = core3d._trajectory(problem, 8, factorization, viscous, core3d.EULER, None, True)(
+        zero_velocity(problem), 0.0
+    )
     for chunked, complete, plain in zip(second.velocity, whole.velocity, inline.velocity, strict=True):
         assert np.max(np.abs(np.asarray(complete.data) - np.asarray(plain.data))) <= 1e-30
         assert np.max(np.abs(np.asarray(chunked.data) - np.asarray(complete.data))) < 1e-14
