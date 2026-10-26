@@ -12,6 +12,7 @@ amplitude. Sampling needs a concrete primal: use :func:`jax.grad`, or close over
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import jax
@@ -22,6 +23,7 @@ try:
 except ImportError:  # pragma: no cover - older JAX keeps it in jax.core
     from jax.core import concrete_or_error
 
+from ._programs import is_traced
 from .cases import _interpolate_tabulated_field, load_tabulated_field
 from .core3d import ImposedField, fringe_field
 
@@ -35,13 +37,6 @@ def pytree(data: tuple[str, ...] = (), meta: tuple[str, ...] = ()):
         return jax.tree_util.register_dataclass(cls, data_fields=list(data), meta_fields=list(meta))
 
     return register
-
-
-def is_traced(*values) -> bool:
-    """Whether any of the pytrees ``values`` holds a tracer."""
-    return any(
-        isinstance(leaf, jax.core.Tracer) for value in values for leaf in jax.tree_util.tree_leaves(value)
-    )
 
 
 def host(value, what: str) -> np.ndarray:
@@ -153,7 +148,7 @@ class Table:
 class Func:
     """A field ``fn(x, y, z, params) -> (Bx, By, Bz)`` sampled at the cell centres; ``params`` is any pytree."""
 
-    fn: callable
+    fn: Callable
     params: object = ()
 
     def sample(self, grid):
