@@ -34,10 +34,13 @@ from lmhdx.grid import (
     wall_resolving_faces,
 )
 from lmhdx.ops import (
+    _face_value,
+    _lower_weight,
     advective_step_limit,
     cell_inner_product,
     divergence,
     face_average_adjoint,
+    face_conductivity,
     face_distances,
     face_gradient,
     face_inner_product,
@@ -541,6 +544,121 @@ def test_the_limiter_does_not_overshoot_a_step():
     assert np.max(stepped[True]) <= 1.0 + 1e-12
     assert np.min(stepped[True]) >= -1e-12
     assert np.max(stepped[False]) > 1.0 + 1e-3
+
+
+def _jumping_faces(count: int) -> np.ndarray:
+    """Faces on ``[0, 2 pi]`` whose first and last widths differ by a factor of ``count``: ``x = 2 pi t^2``."""
+    return 2.0 * np.pi * np.linspace(0.0, 1.0, count + 1) ** 2
+
+
+def test_the_limiter_reproduces_a_linear_profile_on_a_stretched_patch():
+    """Widths (1, 2, 4, 8) and ``f = y``: the face at ``y = 3`` reads 3 where raw differences gave 8/3.
+
+    The limiter compares slopes over the centre distances, so the ratio is one on any affine patch and the
+    limited value is the distance-weighted central one.
+    """
+    widths = np.array([1.0, 2.0, 4.0, 8.0])
+    stencil = jnp.asarray(np.cumsum(widths) - 0.5 * widths).reshape(4, 1, 1)
+    gaps = 0.5 * (widths[:-1] + widths[1:])
+    weight = widths[2] / (widths[1] + widths[2])
+    for carrier in (1.0, -1.0):
+        value = _face_value(stencil, jnp.full((1, 1, 1), carrier), 0, weight, True, gaps)
+        assert float(value[0, 0, 0]) == pytest.approx(3.0, abs=1e-14)
+
+
+def test_the_limited_flux_equals_the_central_flux_on_a_stretched_linear_profile():
+    """Where the profile is affine the limiter weight is one, so limited and central transport coincide."""
+    faces = _periodic_faces(16, 0.5)
+    grid = Grid(faces, faces, faces)
+    _, y, _ = _coordinates(grid, 0)
+    fields = _carried_in_y(grid, 0.3 * y)
+    central = np.asarray(momentum_advection(fields, BOX, limited=False)[0].data)
+    limited = np.asarray(momentum_advection(fields, BOX, limited=True)[0].data)
+    interior = (slice(None), slice(2, -2), slice(None))
+    assert np.max(np.abs(central[interior] - limited[interior])) < 1e-13
+
+
+def test_the_limiter_does_not_overshoot_a_step_on_a_stretched_mesh():
+    faces = _periodic_faces(48, 0.5)
+    grid = Grid(faces, faces, faces)
+    _, y, _ = _coordinates(grid, 0)
+    profile = np.where((y > 2.0) & (y < 4.0), 1.0, 0.0)
+    fields = _carried_in_y(grid, profile)
+    dt = 0.5 * float(np.min(grid.widths[1]))
+    stepped = profile - dt * np.asarray(momentum_advection(fields, BOX, limited=True)[0].data)
+    assert np.max(stepped) <= 1.0 + 1e-12
+    assert np.min(stepped) >= -1e-12
+
+
+def test_a_periodic_seam_weighs_the_wrapped_cell_not_a_mirror_of_its_own():
+    """End widths 1 and 8: the seam's lower weight is ``1 / 9``, not the mirrored ``1 / 2``; a wall mirrors."""
+    widths = np.array([1.0, 3.0, 5.0, 8.0])
+    assert _lower_weight(widths, WRAP)[0] == pytest.approx(1.0 / 9.0)
+    assert _lower_weight(widths, WALL)[0] == pytest.approx(0.5)
+    sigma = Field(
+        jnp.asarray([[[1.0]], [[1.0]], [[1.0]], [[4.0]]]),
+        (CENTER,) * 3,
+        Grid(
+            np.concatenate(([0.0], np.cumsum(widths))), uniform_faces(1, 0.0, 1.0), uniform_faces(1, 0.0, 1.0)
+        ),
+    )
+    # Series resistance of the last cell's half (4 wide, conductivity 4) and the first's (0.5, conductivity 1).
+    assert float(face_conductivity(sigma, 0, WRAP).data[0, 0, 0]) == pytest.approx(4.5 / 1.5)
+
+
+def test_interpolation_converges_at_second_order_across_a_periodic_seam():
+    """``sin x`` at the seam of a mesh whose end widths differ by ``n``: first order with a mirrored weight."""
+
+    def seam_error(count: int) -> float:
+        faces = _jumping_faces(count)
+        grid = Grid(faces, uniform_faces(1, 0.0, 1.0), uniform_faces(1, 0.0, 1.0))
+        field = _cells(grid, lambda x, y, z: np.sin(x) + 0 * y + 0 * z)
+        interpolated = np.asarray(face_interpolate(field, 0, WRAP).data)[:, 0, 0]
+        return abs(interpolated[0] - np.sin(faces[0]))
+
+    errors = [seam_error(count) for count in (16, 32, 64)]
+    assert min(np.log2(errors[0] / errors[1]), np.log2(errors[1] / errors[2])) > 1.9
+
+
+def test_central_transport_conserves_kinetic_energy_on_a_stretched_periodic_mesh():
+    """The central operator's work ``sum u . div(u u) V`` vanishes for a divergence-free state on any mesh.
+
+    A streamfunction gives the discrete solenoidal state exactly. With the carrier weighted by the distance
+    to each centre and the convected value as well, 30% width modulation left a relative drift of 2e-3.
+    """
+    count, depth = 24, 3
+    fraction = np.arange(count) / count
+    widths = 1.0 + 0.5 * np.sin(2.0 * np.pi * fraction + 0.3) + 0.25 * np.sin(4.0 * np.pi * fraction)
+    widths = widths / widths.sum() * 2.0 * np.pi
+    faces = np.concatenate(([0.0], np.cumsum(widths)))
+    grid = Grid(faces, faces, uniform_faces(depth, 0.0, 1.0))
+    psi = np.random.default_rng(1).standard_normal((count, count))
+    u = (np.roll(psi, -1, 1) - psi) / widths[None, :]
+    v = -(np.roll(psi, -1, 0) - psi) / widths[:, None]
+    wrap = lambda a, axis: np.concatenate([a, np.take(a, [0], axis=axis)], axis=axis)  # noqa: E731
+    data = (
+        wrap(u, 0)[:, :, None] * np.ones((1, 1, depth)),
+        wrap(v, 1)[:, :, None] * np.ones((1, 1, depth)),
+        np.zeros((count, count, depth + 1)),
+    )
+    fields = tuple(Field(jnp.asarray(d), velocity_offset(a), grid) for a, d in enumerate(data))
+    assert float(jnp.max(jnp.abs(divergence(fields).data))) < 1e-10
+    transported = momentum_advection(fields, BOX, limited=False)
+    own = [0.5 * (widths + np.roll(widths, 1)), 0.5 * (widths + np.roll(widths, 1))]
+    work = scale = 0.0
+    for axis in range(2):
+        measure = [widths[:, None], widths[None, :]]
+        measure[axis] = own[axis][:, None] if axis == 0 else own[axis][None, :]
+        volume = measure[0] * measure[1] * (1.0 / depth)
+        cut = (
+            (slice(0, -1), slice(None), slice(None))
+            if axis == 0
+            else (slice(None), slice(0, -1), slice(None))
+        )
+        term = np.asarray(fields[axis].data)[cut] * np.asarray(transported[axis].data)[cut]
+        work += np.sum(term * volume[:, :, None])
+        scale += np.sum(np.abs(term) * volume[:, :, None])
+    assert abs(work) < 1e-13 * scale
 
 
 def test_the_step_limit_reports_the_convective_bound():

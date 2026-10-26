@@ -568,7 +568,11 @@ def fast_diagonal_polar_poisson(
 
 @dataclass(frozen=True)
 class FastDiagonalPoisson:
-    """A factorized Laplacian that solves ``laplacian(u) = rhs`` in three contractions."""
+    """A factorized Laplacian that solves ``laplacian(u) = rhs`` in three contractions.
+
+    ``axis_weights`` scale each axis's flux, ``sum_a w_a d_a^2``: the Schur operator ``D H^-1 G`` of a diagonal ``H``
+    that damps each velocity component at its own rate, which the same eigenvectors diagonalize.
+    """
 
     grid: Grid
     conditions: tuple[BoundaryCondition, BoundaryCondition, BoundaryCondition]
@@ -579,6 +583,7 @@ class FastDiagonalPoisson:
     precision: str = "state"
     refinements: int = 2
     corrections: int = 0
+    axis_weights: tuple[float, float, float] = (1.0, 1.0, 1.0)
     _low: dict | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -596,7 +601,7 @@ class FastDiagonalPoisson:
             raise ValueError("right-hand side must be cell centred")
 
         def operator(values):
-            return laplacian(rhs.replace_data(values), self.conditions).data
+            return laplacian(rhs.replace_data(values), self.conditions, self.axis_weights).data
 
         volumes = (self.grid, _cell_volumes) if self.singular else None
         result = _refined(self, self._direct, operator, rhs.data, volumes)
@@ -622,14 +627,15 @@ class FastDiagonalPoisson:
 
     def residual_norm(self, solution: Field, rhs: Field) -> jnp.ndarray:
         """Return the maximum absolute residual of a candidate solution."""
-        applied = laplacian(solution, self.conditions)
+        applied = laplacian(solution, self.conditions, self.axis_weights)
         difference = applied.data - rhs.data
         if self.singular:
             difference = _volume_mean_removed(difference, (self.grid, _cell_volumes))
         return jnp.max(jnp.abs(difference))
 
     def _eigenvalue_total(self) -> np.ndarray:
-        total = self.values[0][:, None, None] + self.values[1][None, :, None] + self.values[2][None, None, :]
+        scaled = [weight * value for weight, value in zip(self.axis_weights, self.values)]
+        total = scaled[0][:, None, None] + scaled[1][None, :, None] + scaled[2][None, None, :]
         if self.singular:
             total[0, 0, 0] = 1.0
         return total
@@ -1436,8 +1442,8 @@ _DEFECT = {"float64": 1.0e-10, "float32": 1.0e-4}  # a singular right-hand side'
 class VariableHelmholtz:
     """``V (shift x - coefficient div(G grad x))`` on cell-wise coefficients, solved by SOLVAX (plan D5).
 
-    Generic numerics, to move to SOLVAX (uwplasma/SOLVAX#158, ADR 0009 D36); LMhdX keeps the materials and
-    ``conjugate_grid``.
+    SOLVAX 0.34.0's ``separable.flux_form_operator`` is the same operator; this one stays until SOLVAX takes an axis
+    with mixed ends (uwplasma/SOLVAX#172, ADR 0009 D36). LMhdX keeps the materials and ``conjugate_grid``.
 
     The face-conductance contract, stated once. ``G`` is each face's conductance per unit area, the harmonic mean of
     its two half cells (:func:`lmhdx.ops.face_conductivity`), so ``G`` times the gradient over the centre distance is

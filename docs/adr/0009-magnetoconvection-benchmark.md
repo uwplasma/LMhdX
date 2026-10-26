@@ -7,12 +7,14 @@ Status: proposed 2026-10-19. It restates plan step 5.4 and amends:
 - plan D26: an evolving duct may take an advective outlet instead of D26's (D37);
 - plan D27 and validation row 6: this benchmark moves to row 19 (D35).
 
-Its step 5.4b builds D5's PCG fallback for walls that make the solve
-non-separable.
+Its step 5.4b solves walls that make the solve non-separable by D5's PCG
+path.
 
 Basis:
 
-- `main` at `4e1b6b3` (1.11.0), with the plan's Phase 5 status;
+- `main` at `4e1b6b3` (1.11.0), with the plan's Phase 5 status. Main now
+  carries Program H and ADR 0010: plan H7.2 and H7.3 are the work order for
+  this ADR's wall stack and reference stack;
 - a full read of Mistrangelo et al., *A code-to-code benchmark for
   magneto-convection in a horizontal duct*, Nucl. Fusion 65 (2025) 116006,
   covering all pages, Tables 1–5 and Figures 1–38 (page numbers below are the
@@ -75,7 +77,7 @@ reproduces.
 
 Everything else the case needs exists: an arbitrary `B(x, y, z)`, graded faces,
 limited momentum transport, implicit viscosity and damping, Boussinesq buoyancy,
-the thermal open axis, and SOLVAX on the 0.19 floor.
+the thermal open axis, and SOLVAX on the 0.34.0 floor.
 
 **D35. The target is Case 1, gated. Case 2 follows as a reported comparison.**
 
@@ -128,12 +130,15 @@ and the potential.**
   is preconditioned by the fast-diagonal inverse at the volume-mean
   coefficients. The charge operator is singular; its null mode is handled
   inside the operator and preconditioner, so the same call serves.
-- **Where the numerics live.** The variable-coefficient operator (harmonic-mean
-  face conductances, the cell-wise Helmholtz shift) and its preconditioned
-  solve are generic. They go to SOLVAX, and LMhdX keeps the materials,
-  `SolidWall`, `conjugate_grid` and the physics. Until a SOLVAX release carries
-  the operator, it lives in `poisson.py`, marked to move (uwplasma/SOLVAX#158);
-  LMhdX then calls it and deletes its own.
+- **Where the numerics live.** The variable-coefficient operator is
+  `solvax.separable.flux_form_operator` (SOLVAX 0.34.0): harmonic-mean,
+  series-resistance faces, a cell-wise shift, `pcg_linear_solve` with implicit
+  derivatives, NaN on failure, and a singular variant that reports the removed
+  defect. LMhdX calls it and keeps only `SolidWall`, `conjugate_grid`, the
+  material maps and the physics. It gives each axis one boundary kind, and the
+  open duct's axis has a Dirichlet inlet and a Neumann outlet, so until SOLVAX
+  takes mixed ends (uwplasma/SOLVAX#172) the same operator stays in
+  `poisson.py`, marked to move.
 - **What a solid wall needs:** a thickness, a whole number of equal cells, a
   thermal conductivity, a volumetric heat capacity `ρc_p` and, for the charge,
   an electrical conductivity. These are the fields the 2.0 `WallLayer` gains.
