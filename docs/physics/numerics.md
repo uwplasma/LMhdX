@@ -211,11 +211,19 @@ $\Delta t\propto Ha^{-2}$ if left explicit. It is applied implicitly as a
 correction to the conservative face force,
 
 $$
-\mathbf u^{*}=\mathbf u+\frac{\Delta t\,\mathbf r}{1+\Delta t\,\lambda},
+H\mathbf u^{*}+\frac{\Delta t}{\rho}G p=\mathbf b,\qquad D\mathbf u^{*}=0,\qquad
+H=(1+\Delta t\,\lambda)I\ \bigl(-\Delta t\,\nu\nabla^2\text{ if implicit}\bigr),
 $$
 
-so the correction vanishes with the right-hand side and changes the path to a
-steady state but not the steady state itself. The fast solve needs one shift per
+with $\mathbf b$ the old velocity plus the forces. The pressure gradient meets the same $H$ as every other
+force, so a pressure force in balance with the forcing leaves the fluid at rest
+to round-off, and the stage's fixed point is the physical steady state. The
+pressure solves $D H^{-1} G$ by SOLVAX's constrained solve: one iteration where
+$H$ commutes with the gradient (periodic axes), a few next to a wall. A time loop starts each solve from
+the last step's pressure: a steady flow then takes 0 to 1 iterations in place of 13.
+Before this the stage scaled the increment per component and projected it, and a
+gradient force rest state was lost whenever $\lambda$ differed between components
+(peak speed $4.4\times10^{-2}$ at $B=10$, $\Delta t=0.1$). The fast solve needs one shift per
 component, so a varying field takes the largest rate over the cells; in the
 diagonal model a cell of rate $r$ then updates by $1-\Delta t\,r/(1+\Delta t\,\lambda)$,
 inside $(0,1]$ wherever $r\le\lambda$, where a smaller shift such as the volume
@@ -277,6 +285,31 @@ in the potential solve leaves the operator asymmetric by $6\times10^{-7}$. Steps
 Ha 600 and $10^{-7}$ to Ha 1000, with `linear_max_restarts=600` (36,000 CG
 iterations) above Ha 300: the three solves take 5,581, 12,056 and 19,299.
 `test_the_fringe_certifies_at_the_tolerance_rule` holds the fringe to that rule.
+
+### The IMEX Runge-Kutta step
+
+`advance(problem, steps, viscous=problem.viscous_factorizations(RK3), scheme=RK3)` takes the
+low-storage scheme of Spalart, Moser and Rogers (1991): three stages of the constrained
+stage above, with explicit weights $(8/15, 5/12, 3/4)$, carried weights
+$(0, -17/60, -5/12)$ and Crank-Nicolson weights $(4/15, 1/15, 1/6)$ for the damping and the
+viscous term. Transport and the part of the Lorentz force that is not damping are explicit, so
+each stage solves $H_k\mathbf u+c_k\,\Delta t\,G p/\rho=\mathbf b_k$, $D\mathbf u=0$ exactly and a
+gradient force at balance leaves the fluid at rest at every stage (peak speed under
+$10^{-13}$, $B_y=0$ and $10$, $\Delta t=0.1$ to $10^{-3}$). `Euler` is the one-stage tableau.
+
+Stability. For a shear mode carried by a uniform stream at $kh=\pi/2$ the RK3 amplification per
+step is $|g|^2=1-C^4/12+C^6/36$, below one up to $C=\sqrt3$ (`courant_step` takes a fraction of
+it); forward Euler with the same central flux has $|g|^2=1+C^2$ and grows at every $C$.
+Limited transport is bounded under both. Accuracy. Against the same scheme at 64 steps, the
+Shatrov and Gerbeth manufactured flow (3-D, no slip, tanh-stretched $12^3$, $Re=100$) converges at
+order 2.30 and 2.24 for RK3 (Euler 1.01, 1.18); an exactly damped shear mode at order 2.0 (Euler
+1.1); the kinetic-energy change of an unsteady inviscid box at order 2.76, 2.95, 2.99 (Euler
+gains energy); the energy budget with drive, Lorentz damping and viscosity closes at order 2.0.
+The Orr-Sommerfeld mode of plane Poiseuille flow at $Re=8000$ grows at $2.6626\times10^{-3}$ on
+$32\times48$ cells against the tabulated $2.66441\times10^{-3}$, and the step moves it by
+$9\times10^{-7}$. The second order of the implicit terms is the Crank-Nicolson limit: the
+transport alone would be third order. Gradients through a short window pass the dot-product
+identity to $6\times10^{-15}$ and a Taylor remainder of slope 2.0.
 
 ## Running the step as one compiled trajectory
 
