@@ -66,6 +66,7 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 import numpy as np
+import solvax
 
 from .core3d import (
     ChannelProblem,
@@ -1170,11 +1171,9 @@ def developed_heat(
 class DevelopedWallTemperature(NamedTuple):
     """The duct of :func:`developed_wall_temperature`; ``docs/physics/thermal.md`` gives the equations.
 
-    ``temperature`` is the shape at a unit bulk excess, ``(T - T_w)/(T_b - T_w)``; ``eigenvalue`` is ``Lambda`` in
-    ``-L(theta) = Lambda f theta``, ``f = u/u_mean``; ``nusselt`` averages the wall flux over the held walls.
-    ``eigen_residual`` is ``max |L(theta) + Lambda f theta| / max |Lambda f theta|`` after ``iterations``, and
-    ``converged`` whether it reached the tolerance with the flow forward in every cell; if not, the eigenvalue,
-    the decay rate and the Nusselt number are NaN.
+    ``temperature`` is ``(T - T_w)/(T_b - T_w)``, ``eigenvalue`` is ``Lambda`` in ``-L(theta) = Lambda f theta`` with
+    ``f = u/u_mean``, and ``nusselt`` averages the wall flux over the held walls. ``eigen_residual`` and
+    ``iterations`` are :func:`solvax.inverse_iteration`'s; ``converged`` is its own and the flow's certificate.
     """
 
     temperature: Field
@@ -1197,23 +1196,14 @@ def developed_wall_temperature(
 ) -> DevelopedWallTemperature:
     """The thermally fully developed duct with its walls held at one temperature (the T condition).
 
-    ``theta`` is the eigenfunction of the smallest eigenvalue, found by inverse iteration with the fast-diagonal
-    factorization until ``eigen_residual`` is below ``tolerance`` (1e-10 in float64, 1e-4 in float32) or after
-    ``max_iterations``. Each iteration gains the ratio of the two smallest eigenvalues of the section's symmetric
-    modes: a square duct reaches 1e-10 in 13, a 1:8 duct in about 150. ``Lambda`` is the Rayleigh quotient
-    of the result, stationary at an eigenfunction, so its derivative in the velocity needs none of the iteration.
-
-    The supported derivative is the first derivative of the eigenvalue, the decay rate and the Nusselt number at a
-    converged solve. The profile is returned under ``stop_gradient``: its sensitivity needs an implicit
-    eigenvector solve, and second derivatives are not supported either.
-
-    The duct is as for :func:`developed_heat`. The held walls share one temperature, which does not enter; a
-    heat-flux wall must be adiabatic. Sources and Joule heat are left out. Compiled whole by :func:`jax.jit`.
+    ``theta`` and ``Lambda`` are the smallest eigenpair, by :func:`solvax.inverse_iteration` on the fast-diagonal
+    factorization to ``tolerance`` (1e-10 in float64, 1e-4 in float32), with its derivative contract. The duct is as
+    for :func:`developed_heat`; the held walls share one temperature, a heat-flux wall is adiabatic, and sources and
+    Joule heat are left out.
 
     ``converged`` also certifies the raw flow, in traced arithmetic: a finite positive mean, every cell forward, the
     same axial velocity on both axial faces and no transverse velocity (to 1e-9 of the largest in float64, 1e-4 in
-    float32). A reversed flow, whose normalized speeds are positive too, is not converged. ``tolerance`` and
-    ``max_iterations`` are checked on the host: positive and finite, and a positive integer.
+    float32). If not, the eigenvalue, the decay rate and the Nusselt number are NaN.
     """
     if tolerance is not None and (
         isinstance(tolerance, bool) or not (np.isfinite(tolerance) and tolerance > 0.0)
@@ -1250,28 +1240,13 @@ def developed_wall_temperature(
     rough = 1e-9 if weight.dtype == jnp.float64 else 1e-4
     forward = jnp.isfinite(mean) & (mean > 0.0) & jnp.all(speed > 0.0) & (stray <= rough * largest)
 
-    def quotient(theta, weight):
-        stiffness = -laplacian(theta, homogeneous).data
-        eigenvalue = jnp.sum(volumes * theta.data * stiffness) / jnp.sum(volumes * weight * theta.data**2)
-        scale = jnp.max(jnp.abs(eigenvalue * weight * theta.data))
-        return eigenvalue, jnp.max(jnp.abs(stiffness - eigenvalue * weight * theta.data)) / scale
+    def solve(rhs):  # K^-1 of the volume-weighted pencil K = V (-L), W = V f
+        return -factorization.solve(Field(rhs / volumes, _CELL, grid)).data
 
-    fixed = jax.lax.stop_gradient(weight)  # the loop is not differentiated
-
-    def inverse(carry):
-        theta, _, count = carry
-        grown = -factorization.solve(theta.replace_data(fixed * theta.data)).data
-        theta = theta.replace_data(grown / jnp.max(jnp.abs(grown)))
-        return theta, quotient(theta, fixed)[1], count + 1
-
-    theta, _, count = jax.lax.while_loop(
-        lambda carry: (carry[1] > tolerance) & (carry[2] < max_iterations),
-        inverse,
-        (Field(fixed, _CELL, grid), jnp.asarray(jnp.inf, fixed.dtype), jnp.asarray(0)),
+    eigenvalue, theta, info = solvax.inverse_iteration(
+        solve, volumes * weight, weight, tol=tolerance, max_steps=max_iterations
     )
-    theta = jax.lax.stop_gradient(theta)
-    eigenvalue, residual = quotient(theta, weight)
-    converged = (residual <= tolerance) & forward
+    converged = info.converged & forward
     eigenvalue = jnp.where(converged, eigenvalue, jnp.nan)
     perimeter, held_perimeter = 0.0, 0.0  # wall areas over the axial length
     length = float(np.sum(grid.widths[axial]))
@@ -1282,16 +1257,16 @@ def developed_wall_temperature(
             faces = float(np.sum(grid.face_areas(axis)[(slice(None),) * axis + (end,)])) / length
             perimeter, held_perimeter = perimeter + faces, held_perimeter + faces * (kind == DIRICHLET)
     area = float(np.sum(grid.cell_volumes())) / length
-    bulk = jnp.sum(volumes * weight * theta.data) / jnp.sum(volumes)
+    bulk = jnp.sum(volumes * weight * theta) / jnp.sum(volumes)
     return DevelopedWallTemperature(
-        theta.replace_data(jax.lax.stop_gradient(theta.data / bulk)),
+        Field(jax.lax.stop_gradient(theta / bulk), _CELL, grid),
         eigenvalue,
         eigenvalue * problem.diffusivity / mean,
         mean * area,
         4.0 * area / perimeter,
         eigenvalue * (4.0 * area / perimeter) * area / held_perimeter,
-        residual,
-        count,
+        info.residual,
+        info.iterations,
         converged,
     )
 
