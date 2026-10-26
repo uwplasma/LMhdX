@@ -1,17 +1,10 @@
-"""TOML schema 3: a table is a constructor call.
+"""TOML schema 3: a table is a constructor call (see docs/reference/cli.md).
 
-``[problem]`` is ``Problem(**table)``, or ``preset = "duct"`` (any of :func:`lmhdx.problem.duct`,
-``channel``, ``fringe_duct``, ``pipe``, ``q2d``) with the preset's arguments. Keys are keyword
-arguments, nested tables nested objects, and ``kind`` picks the class where several fit (``B`` is
-``uniform``, ``fringe``, ``table`` or ``func``; a ``bc`` entry ``wall``, ``sides`` or ``open``).
-``[solver]`` is ``Solver(**table)`` and ``[start]`` takes ``state``, ``"rest"`` or ``"steady"``. An axis
-of ``[problem.grid]`` is a list of faces or the arguments of :func:`lmhdx.grid.axis`; a ``Func`` field
-is ``"module:function"`` or ``"file.py:function"``, and relative paths resolve against the file.
-
-:func:`load` refuses an unknown key, a missing key, a wrong TOML type and an unknown ``kind`` with the
-table path in the message, before anything is solved: an integer stands for a number, a float or a
-boolean never for an integer. :func:`dumps` writes any problem without callables back as the same
-text, and :func:`upgrade` converts a schema 1 (thermal) or schema 2 (case) file.
+``[problem]`` is ``Problem(**table)``, or ``preset = "duct"`` (``channel``, ``fringe_duct``, ``pipe``, ``q2d``)
+with the preset's arguments; keys are keyword arguments, nested tables nested objects, and ``kind`` picks the
+class where several fit. :func:`load` refuses an unknown key, a missing key, a wrong TOML type or an unknown
+kind with the table path; :func:`dumps` writes a problem back as the same text; :func:`upgrade` converts
+schema 1 (thermal) and 2 (case) files.
 """
 
 from __future__ import annotations
@@ -21,10 +14,11 @@ import functools
 import inspect
 import json
 import re
+import runpy
 import types
 import typing
 from collections.abc import Callable
-from importlib import import_module, util
+from importlib import import_module
 from pathlib import Path
 
 import numpy as np
@@ -37,17 +31,33 @@ from .solver import Case, Solver, solve
 
 __all__ = ["dumps", "load", "upgrade"]
 
-_CLASSES = (Problem, Q2D, Wall, Sides, Open, Thermal, Uniform, Fringe, Table, Func, WallLayer, Grid, Solver)
-_KINDS = {cls.__name__.lower(): cls for cls in _CLASSES}
+
+@dataclasses.dataclass(frozen=True)
+class Start:
+    """``[start]``: the initial state of an unsteady run, ``"rest"`` or the ``"steady"`` flow."""
+
+    state: str = "rest"
+
+    def __post_init__(self):
+        if self.state not in ("rest", "steady"):
+            raise ValueError(f'state is "rest" or "steady", got {self.state!r}')
+
+
+_KINDS = {c.__name__.lower(): c for c in (Problem, Q2D, Wall, Sides, Open, Thermal, Uniform)}
+_KINDS |= {c.__name__.lower(): c for c in (Fringe, Table, Func, WallLayer, Grid, Solver, Start)}
 _PLAIN = (Problem, Solver, Thermal, Grid, WallLayer, Wall)  # written without a kind: nothing else fits
-_PRESETS = {preset.__name__: preset for preset in (duct, channel, fringe_duct, pipe, q2d)}
-_NAMES = {
-    float: "a number",
-    int: "an integer",
-    bool: "a boolean",
-    str: "a string",
-    tuple: "an array",
-    np.ndarray: "an array",
+_PRESETS = {f.__name__: f for f in (duct, channel, fringe_duct, pipe, q2d)}
+_NAMES = {float: "a number", int: "an integer", bool: "a boolean", str: "a string"}
+_NAMES |= {tuple: "an array", np.ndarray: "an array"}
+_NUMBERS = lambda v: type(v) in (int, float) or isinstance(v, list) and all(map(_NUMBERS, v))  # noqa: E731
+_IS = {
+    bool: lambda v: isinstance(v, bool),
+    int: lambda v: type(v) is int,
+    float: lambda v: type(v) in (int, float),
+    str: lambda v: isinstance(v, str),
+    tuple: lambda v: isinstance(v, list),
+    dict: lambda v: isinstance(v, dict),
+    np.ndarray: lambda v: isinstance(v, dict) or isinstance(v, list) and _NUMBERS(v),
 }
 
 
@@ -55,65 +65,71 @@ class _Mismatch(ValueError):
     """A value of the wrong TOML type for a hint, which another arm of a union may accept."""
 
 
+def _at(where, key):
+    return f"{where}.{key}" if where else key
+
+
 def _arms(hint):
     """The alternatives of a union hint, without ``None`` (an absent key is how a field is left out)."""
     union = typing.get_origin(hint) in (typing.Union, types.UnionType)
-    return [arm for arm in typing.get_args(hint) if arm is not type(None)] if union else [hint]
+    return [a for a in typing.get_args(hint) if a is not type(None)] if union else [hint]
 
 
 @functools.cache
 def _allowed(call):
-    """Return the keyword hints of ``call`` (a class or function) and its parameters."""
+    """The keyword hints and the parameters of a class or function."""
     parameters = inspect.signature(call).parameters
     hints = typing.get_type_hints(call.__init__ if inspect.isclass(call) else call)
     allowed = {}
-    for name, parameter in parameters.items():
-        if parameter.kind is parameter.VAR_KEYWORD:  # the presets pass the rest to Problem
+    for name, p in parameters.items():
+        if p.kind is p.VAR_KEYWORD:  # the presets pass the rest to Problem
             allowed |= {k: v for k, v in typing.get_type_hints(Problem.__init__).items() if k != "return"}
         else:
             hint = hints.get(name, object)
-            allowed[name] = tuple[hint, ...] if parameter.kind is parameter.VAR_POSITIONAL else hint
+            allowed[name] = tuple[hint, ...] if p.kind is p.VAR_POSITIONAL else hint
     return allowed, parameters
 
 
 def _build(call, table, where, base):
-    """Return ``call(**table)``, the table checked against its signature first."""
+    """``call(**table)``, the table checked against the signature first."""
     allowed, parameters = _allowed(call)
+    label = f"[{where}]" if where else "the file"
     if unknown := sorted(set(table) - set(allowed)):
-        raise ValueError(f"[{where}] has unknown keys {unknown}; valid keys are {sorted(allowed)}")
-    named = (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
-    if missing := [
-        n for n, p in parameters.items() if p.default is p.empty and p.kind in named and n not in table
-    ]:
-        raise ValueError(f"[{where}] lacks {missing}")
+        raise ValueError(f"{label} has unknown keys {unknown}; valid keys are {sorted(allowed)}")
+    P = inspect.Parameter
+    required = [
+        n
+        for n, p in parameters.items()
+        if p.default is P.empty and p.kind in (P.POSITIONAL_OR_KEYWORD, P.KEYWORD_ONLY)
+    ]
+    if missing := [n for n in required if n not in table]:
+        raise ValueError(f"{label} lacks {missing}")
     args, kwargs = (), {}
     for key, value in table.items():
-        converted = _convert(allowed[key], value, f"{where}.{key}", base)
-        if key == "path":
-            converted = str(Path(base) / converted)
-        if key in parameters and parameters[key].kind is inspect.Parameter.VAR_POSITIONAL:
-            args = converted
+        value = _convert(allowed[key], value, _at(where, key), base)
+        value = str(Path(base) / value) if key == "path" else value
+        if key in parameters and parameters[key].kind is P.VAR_POSITIONAL:
+            args = value
         else:
-            kwargs[key] = converted
+            kwargs[key] = value
     try:
         return call(*args, **kwargs)
     except (TypeError, ValueError) as error:
-        raise ValueError(f"[{where}] {error}") from None
+        raise ValueError(f"{label} {error}") from None
 
 
 def _convert(hint, value, where, base):
-    """Return ``value`` as ``hint`` says: a table becomes an object, a list a tuple or an array."""
+    """``value`` as ``hint`` says: a table becomes an object, a list a tuple or an array."""
     arms = _arms(hint)
-    classes = [arm for arm in arms if arm in _CLASSES]
+    classes = [a for a in arms if a in _KINDS.values()]
     if isinstance(value, dict) and classes:
-        kind = value.get("kind")
+        kind, table = value.get("kind"), {k: v for k, v in value.items() if k != "kind"}
         if kind is not None and _KINDS.get(kind) not in classes:
             raise ValueError(
                 f"[{where}] kind must be one of {[c.__name__.lower() for c in classes]}, got {kind!r}"
             )
-        fits = (c for c in classes if set(value) - {"kind"} <= set(_allowed(c)[0]))
-        cls = _KINDS[kind] if kind is not None else next(fits, classes[0])
-        return _build(cls, {k: v for k, v in value.items() if k != "kind"}, where, base)
+        fits = (c for c in classes if set(table) <= set(_allowed(c)[0]))
+        return _build(_KINDS[kind] if kind is not None else next(fits, classes[0]), table, where, base)
     for arm in arms:
         try:
             return _leaf(arm, value, where, base)
@@ -123,40 +139,22 @@ def _convert(hint, value, where, base):
     raise mismatch if len(arms) == 1 else ValueError(f"{where} must be {names}, got {value!r}")
 
 
-def _numbers(value):
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        or (isinstance(value, list) and all(map(_numbers, value)))
-    )
-
-
 def _leaf(hint, value, where, base):
-    """Check ``value`` against a hint that is not a table: a number, a string, an array, a function."""
-    origin, args = typing.get_origin(hint), typing.get_args(hint)
-    kind = origin or hint
+    """``value`` against a hint that is not a table: a number, a string, an array, a function."""
+    kind, args = typing.get_origin(hint) or hint, typing.get_args(hint)
     if hint is object:
-        return np.asarray(value, float) if isinstance(value, list) and _numbers(value) else value
+        return np.asarray(value, float) if isinstance(value, list) and _NUMBERS(value) else value
     if hint is Callable:
         return _function(value, where, base)
-    ok = {
-        bool: lambda v: isinstance(v, bool),
-        int: lambda v: isinstance(v, int) and not isinstance(v, bool),
-        float: lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
-        str: lambda v: isinstance(v, str),
-        np.ndarray: lambda v: isinstance(v, dict) or isinstance(v, list) and _numbers(v),
-        tuple: lambda v: isinstance(v, list),
-        dict: lambda v: isinstance(v, dict),
-    }.get(kind, lambda v: False)
-    if not ok(value):
+    if not _IS.get(kind, lambda v: False)(value):
         raise _Mismatch(f"{where} must be {_NAMES.get(kind, 'a table')}, got {value!r}")
     if kind is np.ndarray:  # a face list, or the arguments of axis()
         return _build(axis, value, where, base) if isinstance(value, dict) else np.asarray(value, float)
-    if kind is dict:
-        return {k: _convert(args[1], v, f"{where}.{k}", base) for k, v in value.items()} if args else value
+    if kind is dict and args:
+        return {k: _convert(args[1], v, _at(where, k), base) for k, v in value.items()}
+    if kind is tuple and not args:
+        return _deep(value)
     if kind is tuple:
-        if not args:
-            return _nest(value)
         hints = (args[0],) * len(value) if args[-1] is Ellipsis else args
         if len(hints) != len(value):
             raise ValueError(f"{where} must have {len(hints)} entries, got {len(value)}")
@@ -164,147 +162,116 @@ def _leaf(hint, value, where, base):
     return value
 
 
-def _nest(value):
-    return tuple(map(_nest, value)) if isinstance(value, list) else value
+def _deep(value):
+    return tuple(map(_deep, value)) if isinstance(value, list) else value
 
 
 def _function(spec, where, base):
     """Import ``"module:function"`` or ``"file.py:function"`` (a file relative to the TOML file)."""
-    module, _, name = spec.partition(":") if isinstance(spec, str) else (spec, "", "")
+    module, _, name = str(spec).partition(":")
     if not name:
         raise ValueError(f"{where} must be 'module:function' or 'file.py:function', got {spec!r}")
     try:
         if module.endswith(".py"):
-            found = util.spec_from_file_location(Path(module).stem, Path(base) / module)
-            module = util.module_from_spec(found)
-            found.loader.exec_module(module)
-        else:
-            module = import_module(module)
-        for part in name.split("."):
-            module = getattr(module, part)
-        return module
-    except (ImportError, AttributeError, OSError) as error:
+            return runpy.run_path(str(Path(base) / module))[name]
+        return functools.reduce(getattr, name.split("."), import_module(module))
+    except (ImportError, AttributeError, KeyError, OSError) as error:
         raise ValueError(f"{where}: cannot import {spec!r}: {error}") from None
-
-
-def _table(root, key):
-    if not isinstance(root.get(key, {}), dict):
-        raise ValueError(f"{key} must be a table")
-    return dict(root.get(key, {}))
-
-
-def _start(state: str = "rest"):
-    """``[start]``: the initial state of an unsteady run, ``"rest"`` or the ``"steady"`` flow."""
-    if state not in ("rest", "steady"):
-        raise ValueError(f'state is "rest" or "steady", got {state!r}')
-    return None if state == "rest" else state
 
 
 def _override(root, item):
     path, sep, text = item.partition("=")
+    *parents, leaf = path.split(".")
     try:
-        if not sep:
-            raise ValueError
-        *parents, leaf = path.split(".")
-        table = root
-        for key in parents:
-            table = table.setdefault(key, {})
+        table = functools.reduce(lambda t, k: t.setdefault(k, {}), parents, root) if sep else 1 / 0
         try:
             table[leaf] = tomllib.loads(f"value = {text}")["value"]
         except tomllib.TOMLDecodeError:  # a bare word is a string: solver.method=march
             table[leaf] = text
-    except (ValueError, AttributeError, TypeError):
+    except (AttributeError, TypeError, ZeroDivisionError):
         raise ValueError(f"override {item!r} is not table.key=value") from None
 
 
-def load(path: str | Path, *overrides: str) -> Case:
-    """Read a schema 3 file as a :class:`lmhdx.solver.Case`; ``overrides`` are ``"solver.steps=100"``.
+def _file(
+    schema_version: int = 3,
+    name: str = "",
+    units: str = "",
+    notes: str = "",
+    solver: Solver | None = None,
+    start: Start | None = None,
+    output: dict | None = None,
+):
+    if schema_version != 3:
+        raise ValueError(f"schema_version {schema_version} is not 3: `lmhdx upgrade FILE` converts the file")
+    if output:
+        raise ValueError("[output] takes no keys yet: Output arrives with plan step H4.4")
+    return solver, None if start is None or start.state == "rest" else start.state, name
 
-    ``solve(load(path))`` runs it. The values of an override are TOML: ``problem.B.value=[0, 30, 0]``.
+
+def load(path: str | Path, *overrides: str) -> Case:
+    """Read a schema 3 file as a :class:`lmhdx.solver.Case`; ``overrides`` are TOML, ``"solver.steps=100"``.
+
+    ``solve(load(path))`` runs it.
     """
     root, base = _load_toml(path), Path(path).resolve().parent
     for item in overrides:
         _override(root, item)
-    if root.get("schema_version", 3) != 3:
-        raise ValueError(
-            f"schema_version {root['schema_version']!r} is not 3: convert it with `lmhdx upgrade FILE`"
-        )
-    keys = ("schema_version", "name", "units", "notes", "problem", "solver", "output", "start")
-    if unknown := sorted(set(root) - set(keys)):
-        raise ValueError(
-            f"the file has unknown keys {unknown}; valid keys are {sorted(keys)} "
-            "(a file of schema 1 or 2 is converted with `lmhdx upgrade FILE`)"
-        )
-    for key, hint in (("schema_version", int), ("name", str), ("units", str), ("notes", str)):
-        if key in root:
-            _leaf(hint, root[key], key, base)
-    if "problem" not in root:
-        raise ValueError("a case needs a [problem] table")
-    if _table(root, "output"):
-        raise ValueError("[output] takes no keys yet: Output arrives with plan step H4.4")
-    table = _table(root, "problem")
+    table = root.pop("problem", None)
+    if table is None:
+        raise ValueError("a case needs a [problem] table (older files: `lmhdx upgrade FILE`)")
+    if not isinstance(table, dict):
+        raise ValueError("problem must be a table")
     preset = table.pop("preset", None)
-    if preset is None:
-        problem = _convert(Problem | Q2D, table, "problem", base)
-    elif preset in _PRESETS:
+    if preset is not None and preset not in _PRESETS:
+        raise ValueError(f"[problem] preset must be one of {sorted(_PRESETS)}, got {preset!r}")
+    if preset:
         problem = _build(_PRESETS[preset], table, "problem", base)
     else:
-        raise ValueError(f"[problem] preset must be one of {sorted(_PRESETS)}, got {preset!r}")
-    solver = _build(Solver, _table(root, "solver"), "solver", base) if "solver" in root else None
-    return Case(problem, solver, _build(_start, _table(root, "start"), "start", base), root.get("name", ""))
-
-
-def _is_default(field, value):
-    try:
-        return (
-            field.default is not dataclasses.MISSING
-            and np.shape(value) == np.shape(field.default)
-            and bool(np.all(value == field.default))
-        )
-    except ValueError:  # a ragged nested tuple has no shape
-        return False
+        problem = _convert(Problem | Q2D, table, "problem", base)
+    return Case(problem, *_build(_file, root, "", base))
 
 
 def _tree(obj):
     """The nested tables, lists and scalars of ``obj``: what :func:`load` reads back."""
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        tree = (
-            {"kind": type(obj).__name__.lower()} if type(obj) in _CLASSES and type(obj) not in _PLAIN else {}
-        )
-        for field in dataclasses.fields(obj):
-            value = getattr(obj, field.name)
-            if value is not None and not _is_default(field, value):
-                tree[field.name] = _tree(value)
+        tree = {} if type(obj) in _PLAIN else {"kind": type(obj).__name__.lower()}
+        for f in dataclasses.fields(obj):
+            value = getattr(obj, f.name)
+            try:
+                same = f.default is not dataclasses.MISSING and np.shape(value) == np.shape(f.default)
+                same = same and bool(np.all(value == f.default))
+            except ValueError:  # a ragged nested tuple has no shape
+                same = False
+            if value is not None and not same:
+                tree[f.name] = _tree(value)
         return tree
     if isinstance(obj, (bool, str)):
         return obj
     if isinstance(obj, (int, float)):
-        return obj.item() if hasattr(obj, "item") else obj
-    if isinstance(obj, dict):
-        return {str(key): _tree(value) for key, value in obj.items()}
+        return (int if isinstance(obj, int) else float)(obj)
     if isinstance(obj, (list, tuple)):
-        return [_tree(value) for value in obj]
+        return [_tree(v) for v in obj]
     if callable(obj):
         name = f"{obj.__module__}:{obj.__qualname__}"
         if "<" in name or obj.__module__ == "__main__":
             raise ValueError(f"{name} cannot be imported back: define it in a module or a file.py")
         return name
     try:
-        return np.asarray(obj, float).tolist()
+        return (
+            np.asarray(obj, float).tolist()
+            if not isinstance(obj, dict)
+            else {str(k): _tree(v) for k, v in obj.items()}
+        )
     except (TypeError, ValueError):
         raise ValueError(f"cannot write a {type(obj).__name__} to TOML") from None
 
 
 def _inline(value):
     if isinstance(value, dict):
-        return (
-            "{ " + ", ".join(f"{_key(k)} = {_inline(v)}" for k, v in value.items()) + " }" if value else "{}"
-        )
+        return "{" + ", ".join(f"{_key(k)} = {_inline(v)}" for k, v in value.items()) + "}"
     if isinstance(value, list):
         return "[" + ", ".join(map(_inline, value)) + "]"
-    if isinstance(value, bool):
-        return str(value).lower()
-    return json.dumps(value) if isinstance(value, str) else repr(value)
+    return json.dumps(value).replace("Infinity", "inf").replace("NaN", "nan")  # a float prints as its repr
 
 
 def _key(key):
@@ -312,27 +279,23 @@ def _key(key):
 
 
 def _toml(tree, prefix=""):
-    scalars = [f"{_key(k)} = {_inline(v)}" for k, v in tree.items() if not isinstance(v, dict)]
-    tables = []
-    for key, value in tree.items():
-        if isinstance(value, dict):
-            path = f"{prefix}{_key(key)}"
-            header = "" if value and all(isinstance(v, dict) for v in value.values()) else f"[{path}]\n"
-            tables.append(header + _toml(value, f"{path}."))
-    return "\n\n".join(filter(None, ["\n".join(scalars), *tables]))
+    """Dotted keys, one line each: ``problem.grid.x = [...]``."""
+    return "\n".join(
+        _toml(v, f"{prefix}{_key(k)}.") if isinstance(v, dict) and v else f"{prefix}{_key(k)} = {_inline(v)}"
+        for k, v in tree.items()
+    )
 
 
 def dumps(problem, solver: Solver | None = None, start: str | None = None, name: str = "") -> str:
-    """Return the TOML text of a problem, its solver and its start, or of a :class:`Case`.
+    """The TOML text of a problem, its solver and its start, or of a :class:`Case`; :func:`load` reads it back.
 
-    :func:`load` of the text gives back an equal pytree. A problem holding a lambda, a function
-    defined in a script, a traced value or a ``ThermalState`` start cannot be written.
+    A lambda, a function defined in a script, a traced value or a ``ThermalState`` start cannot be written.
     """
     if isinstance(problem, Case):
         problem, solver, start, name = problem
     if start not in (None, "steady"):
         raise ValueError(f"only the start 'steady' is written, not {start!r}")
-    tree = {"schema_version": 3} | ({"name": name} if name else {}) | {"problem": _tree(problem)}
+    tree = {"schema_version": 3, **({"name": name} if name else {}), "problem": _tree(problem)}
     tree |= {"solver": _tree(solver)} if solver is not None else {}
     tree |= {"start": {"state": start}} if start else {}
     return _toml(tree) + "\n"
@@ -348,29 +311,25 @@ def _faces(count, half, layer, cells):
     return axis(count, -half, half)
 
 
-def _note(name, table):
-    """One comment line for the keys of ``table`` that schema 3 cannot hold yet; empty for no keys."""
-    return f"[{name}] " + ", ".join(f"{k} = {v!r}" for k, v in table.items()) if table else ""
-
-
 def _from_thermal(root):
-    """A schema 1 (thermal) file as schema 3 tables, and what schema 3 cannot hold yet."""
-    flow, heat, run = root["flow"], root.get("thermal", {}), root.get("run", {})
+    """A schema 1 (thermal) file as schema 3 tables, and the settings schema 3 cannot hold yet."""
+    flow, heat, run, case = root["flow"], root.get("thermal", {}), root.get("run", {}), root["case"]
     grid, bc = {}, []
-    for index, name in enumerate("xyz"):
-        spec = dict(root["grid"][name])
-        if "layer_thickness" in spec:
-            spec = axis(**{"max_ratio": None, "cells_in_layer": 4} | spec).tolist()
-        grid[name] = spec
-        if flow["conditions"][index] == "periodic":
+    for i, n in enumerate("xyz"):
+        spec = root["grid"][n]
+        grid[n] = (
+            axis(**{"max_ratio": None, "cells_in_layer": 4} | spec).tolist()
+            if "layer_thickness" in spec
+            else spec
+        )
+        if flow["conditions"][i] == "periodic":
             bc.append("periodic")
             continue
-        wall, c = heat[name], flow.get("wall_conductance", (0, 0, 0))[index]
-        ends = [
-            ({"conductance": c} if c else {}) | {wall["kind"]: wall.get(end, 0.0)}
-            for end in ("lower", "upper")
+        c, wall = flow.get("wall_conductance", (0, 0, 0))[i], heat[n]
+        lower, upper = [
+            ({"conductance": c} if c else {}) | {wall["kind"]: wall.get(e, 0.0)} for e in ("lower", "upper")
         ]
-        bc.append(ends[0] if ends[0] == ends[1] else {"kind": "sides", "lower": ends[0], "upper": ends[1]})
+        bc.append(lower if lower == upper else {"kind": "sides", "lower": lower, "upper": upper})
     problem = {
         k: flow[k] for k in ("density", "viscosity", "conductivity", "forcing", "advection") if k in flow
     }
@@ -379,106 +338,85 @@ def _from_thermal(root):
         "bc": bc,
         "thermal": {k: v for k, v in heat.items() if k not in ("x", "y", "z", "hold_flow")},
     }
-    if "magnetic_field" in flow:
-        problem["B"] = {"kind": "uniform", "value": list(flow["magnetic_field"])}
-    tree = {
-        "schema_version": 3,
-        "name": root["case"]["name"],
-        "units": root["case"]["units"],
-        "problem": problem,
-    }
+    problem |= (
+        {"B": {"kind": "uniform", "value": list(flow["magnetic_field"])}} if "magnetic_field" in flow else {}
+    )
+    tree = {"schema_version": 3, "name": case["name"], "units": case["units"], "problem": problem}
     tree["solver"] = {"method": "euler", "dt": flow["dt"], "steps": run["steps"]}
-    if flow.get("initial_velocity") == "steady":
-        tree["start"] = {"state": "steady"}
-    dropped = [_note("run", {k: v for k, v in run.items() if k != "steps"})]
-    dropped += [_note("thermal", {"hold_flow": True})] * bool(heat.get("hold_flow"))
-    return tree, dropped + [_note(k, root.get(k)) for k in ("output", "restart")]
+    tree |= {"start": {"state": "steady"}} if flow.get("initial_velocity") == "steady" else {}
+    notes = {
+        "run": {k: v for k, v in run.items() if k != "steps"},
+        "thermal": {k: heat[k] for k in ["hold_flow"] if heat.get(k)},
+    }
+    return tree, notes | {k: root.get(k) for k in ("output", "restart")}
 
 
 def _from_case(root):
-    """A schema 2 (case) rectangular duct as schema 3 tables, and what schema 3 cannot hold yet."""
-    case, geometry, field, steps = (
-        root["case"],
-        root["geometry"],
-        root["magnetic_field"],
-        root["time_stepper"],
-    )
+    """A schema 2 (case) rectangular duct as schema 3 tables, and the settings schema 3 cannot hold yet."""
+    case, geometry, field, steps = (root[k] for k in ("case", "geometry", "magnetic_field", "time_stepper"))
     fluids = {
         (r["conductivity"], r.get("density") or 1.0, r.get("viscosity") or 1.0)
         for r in root["regions"]
         if r["kind"] == "fluid"
     }
     kinds = {b["kind"] for b in root.get("boundary_conditions", [])}
-    if (
-        geometry["kind"] != "rect_duct"
-        or field["kind"] != "constant"
-        or field.get("ramp_duration")
-        or len(fluids) != 1
-        or kinds - {"no_slip", "insulating"}
-    ):
+    shape = (geometry["kind"], field["kind"], field.get("ramp_duration", 0), len(fluids))
+    if shape != ("rect_duct", "constant", 0, 1) or kinds - {"no_slip", "insulating"}:
         raise ValueError(
             "only a rectangular duct of one fluid with a constant field and insulating walls is converted; "
             "write [problem.bc] and [problem.B] by hand (Wall(conductance=) or Wall(layers=), Table, Func)"
         )
     ((sigma, rho, nu),) = fluids
     halves, b = (0.5 * geometry["width"], 0.5 * geometry["height"]), field["value"]
-    peak = np.abs(b[1:])
-    along = 0 if peak[0] >= peak[1] else 1
-    ha = halves[along] * np.hypot(*peak) * np.sqrt(sigma / (rho * nu))
-    layer = [np.inf, np.inf] if not ha else [halves[along] / ha] * 2
-    if ha:
-        layer[1 - along] = halves[along] / np.sqrt(ha)
-    faces = [_faces(geometry[n], h, w, 6).tolist() for n, h, w in zip(("ny", "nz"), halves, layer)]
-    grid = {"x": {"cells": 1, "lower": 0.0, "upper": 1.0}, "y": faces[0], "z": faces[1]}
-    problem = {
-        "grid": grid,
-        "B": {"kind": "uniform", "value": list(b)},
-        "forcing": [case.get("forcing", 1.0), 0.0, 0.0],
-    }
+    along = 0 if abs(b[1]) >= abs(b[2]) else 1
+    ha = halves[along] * np.hypot(b[1], b[2]) * np.sqrt(sigma / (rho * nu))
+    layers = [halves[along] / (ha if k == along else np.sqrt(ha)) if ha else np.inf for k in (0, 1)]
+    y, z = (_faces(geometry[n], h, w, 6).tolist() for n, h, w in zip(("ny", "nz"), halves, layers))
+    problem = {"grid": {"x": {"cells": 1, "lower": 0.0, "upper": 1.0}, "y": y, "z": z}}
+    problem |= {"B": {"kind": "uniform", "value": list(b)}, "forcing": [case.get("forcing", 1.0), 0.0, 0.0]}
     problem |= {k: v for k, v in zip(("conductivity", "density", "viscosity"), (sigma, rho, nu)) if v != 1.0}
     tree = {"schema_version": 3, "name": case["name"], "problem": problem}
     tree |= {"notes": case["notes"]} if case.get("notes") else {}
+    tree["solver"] = {"dt": min(halves) ** 2 / nu}
     if root.get("solver", {}).get("mode") == "transient":
         count = min(steps["max_steps"], int(np.floor(steps["t_final"] / steps["dt"] + 1e-12)))
         tree["solver"] = {"method": "implicit", "dt": steps["dt"], "steps": count}
-    else:
-        tree["solver"] = {"dt": min(halves) ** 2 / nu}
-    dropped = [_note(k, root.get(k)) for k in ("output", "logging", "restart")]
-    return tree, dropped + [
-        _note("case", {"initial_velocity": v}) for v in [case.get("initial_velocity")] if v
-    ]
+    notes = {k: root.get(k) for k in ("output", "logging", "restart")}
+    return tree, notes | {"case": {k: case[k] for k in ["initial_velocity"] if case.get(k)}}
 
 
 def upgrade(path: str | Path) -> str:
-    """Return the schema 3 text of a schema 1 (thermal) or schema 2 (case) file.
+    """The schema 3 text of a schema 1 (thermal) or schema 2 (case) file.
 
-    What schema 3 cannot hold yet (the output, logging and restart tables and the run limits, until
-    plan step H4.4) is listed as comments at the top. A layered duct, a conducting wall and a tabulated or
-    analytic field are refused, naming the tables to write by hand.
+    Settings schema 3 cannot hold yet (output, logging, restart, run limits: plan step H4.4) head the text as
+    comments. A layered duct, a conducting wall and a tabulated or analytic field are refused.
     """
     root = _load_toml(path)
     try:
         if root.get("solver", {}).get("kind") == "thermal":
-            tree, dropped = _from_thermal(root)
+            tree, notes = _from_thermal(root)
         elif {"case", "geometry", "time_stepper"} <= set(root):
-            tree, dropped = _from_case(root)
+            tree, notes = _from_case(root)
         else:
             done = " (it is schema 3 already)" if "problem" in root else ""
             raise ValueError(f"{path} is not a run configuration of schema 1 (thermal) or 2 (case){done}")
     except (KeyError, TypeError) as error:
         raise ValueError(f"{path} is not a valid schema 1 or 2 file: {error!r}") from None
-    return "".join(f"# not carried over: {item}\n" for item in filter(None, dropped)) + _toml(tree) + "\n"
+    comments = [
+        f"# not carried over: [{n}] " + ", ".join(f"{k} = {v!r}" for k, v in t.items())
+        for n, t in notes.items()
+        if t
+    ]
+    return "\n".join(comments + [_toml(tree), ""])
 
 
 def run(path: str | Path, *overrides: str) -> dict[str, object]:
-    """Solve a schema 3 file and return its scalars; the command line prints them."""
+    """Solve a schema 3 file and return its scalars, and the last of each history series."""
     case = load(path, *overrides)
     solution = solve(case)
-    names = ("pressure_gradient", "flow_rate", "residual", "iterations")
-    summary = {"case": case.name} | {
-        n: float(v) for n in names if (v := getattr(solution, n, None)) is not None
-    }
-    history = solution.history._asdict() if hasattr(solution.history, "_asdict") else solution.history
-    return summary | (
-        {"last": {k: float(np.ravel(v)[-1]) for k, v in history.items()}} if isinstance(history, dict) else {}
-    )
+    history = getattr(solution.history, "_asdict", lambda: solution.history)()
+    summary = {"case": case.name}
+    for n in ("pressure_gradient", "flow_rate", "residual", "iterations"):
+        summary |= {n: float(getattr(solution, n))} if getattr(solution, n) is not None else {}
+    last = {k: float(np.ravel(v)[-1]) for k, v in history.items()} if isinstance(history, dict) else {}
+    return summary | ({"last": last} if last else {})
