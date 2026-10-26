@@ -65,6 +65,14 @@ a stretched mesh; ``"limited"`` adds the van Leer blend that keeps the thin side
 layers bounded. Transport is explicit, so switching it on bounds the step by
 :func:`lmhdx.ops.advective_step_limit`.
 
+*Time stepping.* ``scheme`` is :data:`EULER`, one stage, or :data:`RK3`, the low-storage
+IMEX scheme of Spalart, Moser and Rogers with Crank-Nicolson viscous and damping terms:
+each stage is the constrained stage above with the weights of its :class:`Tableau`, so
+the rest state and the divergence constraint hold at every stage. Forward Euler with
+central transport is unstable at every Courant number; the RK3 stage map is stable to
+``sqrt 3`` (:func:`courant_step`). RK3 is third order for transport and second order
+for the implicit terms, which is what the manufactured and linear-growth tests measure.
+
 Run the projection step as one compiled trajectory.
 
 A Python loop around :func:`lmhdx.core3d.step` dispatches every operation from the
@@ -90,8 +98,10 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+from collections.abc import Callable
 from dataclasses import dataclass
 from types import SimpleNamespace
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -113,6 +123,7 @@ from .grid import (
     wall_resolving_faces,
 )
 from .ops import (
+    advective_step_limit,
     cell_force_to_faces,
     divergence,
     face_conductivity,
@@ -138,10 +149,14 @@ from .poisson import (
 
 __all__ = [
     "ChannelProblem",
+    "EULER",
     "EnergyBudget",
     "ImposedField",
+    "RK3",
+    "Tableau",
     "Trajectory",
     "advance",
+    "courant_step",
     "duct_problem",
     "electric_state",
     "energy_budget",
@@ -163,6 +178,25 @@ _INSULATING = BoundaryCondition("neumann")
 # The pressure of an inflow-outflow axis: no correction through the inlet, p = 0 at the outlet (D26).
 _OUTLET_PRESSURE = BoundaryCondition(NEUMANN, upper_kind=DIRICHLET)
 _ADVECTION = ("off", "central", "limited")
+
+
+class Tableau(NamedTuple):
+    """An IMEX Runge-Kutta scheme in the low-storage form of Spalart, Moser and Rogers (1991).
+
+    A stage advances ``u`` by ``dt (explicit R(u_old) + carried R(u_prev) + (explicit + carried -
+    implicit) L(u_old) + implicit L(u_new))``: ``R`` is transport and the force that is not damping,
+    ``L`` the damping and, if implicit, the viscous term. ``limit`` is the largest Courant number
+    ``dt sum_a |u_a|/dx_a`` that keeps central transport stable (``0`` for Euler, which never does).
+    """
+
+    explicit: tuple[float, ...]
+    carried: tuple[float, ...]
+    implicit: tuple[float, ...]
+    limit: float
+
+
+EULER = Tableau((1.0,), (0.0,), (1.0,), 0.0)
+RK3 = Tableau((8 / 15, 5 / 12, 3 / 4), (0.0, -17 / 60, -5 / 12), (4 / 15, 1 / 15, 1 / 6), float(np.sqrt(3.0)))
 
 
 def velocity_offset(component: int) -> tuple[float, float, float]:
@@ -413,26 +447,31 @@ class ChannelProblem:
         inverse = sum(1.0 / float(np.min(widths)) ** 2 for widths in self.grid.widths)
         return 1.0 / (2.0 * float(self.viscosity) * inverse)
 
-    def viscous_factorizations(self) -> tuple[FastDiagonalHelmholtz, ...]:
+    def viscous_factorizations(self, scheme: Tableau = EULER) -> tuple:
         """Factorize the implicit viscous operator for each velocity component.
 
         Build these once on the host and pass them to :func:`step` to take
         diffusion implicitly. The shift carries the magnetic damping, so one
         solve removes both stiff terms. :attr:`precision` selects the float32
         solve with float64 correction of :mod:`lmhdx.poisson` for float64 states.
+        A multi-stage ``scheme`` gets one tuple of components per stage, each at its implicit weight.
         """
         conditions = tuple(velocity_condition(self.conditions, axis) for axis in range(3))
-        return tuple(
-            fast_diagonal_helmholtz(
-                self.grid,
-                velocity_offset(component),
-                conditions,
-                shift=1.0 + float(self.dt) * self.damping_rates[component],
-                coefficient=float(self.dt) * float(self.viscosity),
-                precision=self.precision,
+        stages = tuple(
+            tuple(
+                fast_diagonal_helmholtz(
+                    self.grid,
+                    velocity_offset(component),
+                    conditions,
+                    shift=1.0 + weight * float(self.dt) * self.damping_rates[component],
+                    coefficient=weight * float(self.dt) * float(self.viscosity),
+                    precision=self.precision,
+                )
+                for component in range(3)
             )
-            for component in range(3)
+            for weight in scheme.implicit
         )
+        return stages[0] if len(stages) == 1 else stages
 
     def factorization(self) -> FastDiagonalPoisson:
         """Factorize the scalar Laplacian shared by the pressure and the potential.
@@ -701,28 +740,56 @@ def project(
     return enforce_face_constraints(corrected, problem), pressure
 
 
+def courant_step(velocity: tuple[Field, Field, Field], scheme: Tableau = RK3, cfl: float = 0.9) -> float:
+    """Return ``cfl`` times the largest step at which ``scheme`` keeps central transport of ``velocity`` stable."""
+    if not scheme.limit:
+        raise ValueError("central transport is unstable under this scheme at every step; use RK3")
+    return cfl * scheme.limit * float(advective_step_limit(velocity))
+
+
 def step(
     velocity: tuple[Field, Field, Field],
     problem: ChannelProblem,
     factorization: FastDiagonalPoisson | None = None,
-    viscous: tuple[FastDiagonalHelmholtz, ...] | None = None,
+    viscous: tuple | None = None,
+    scheme: Tableau = EULER,
+    force: Callable[[jnp.ndarray], tuple[Field, Field, Field]] | None = None,
+    time: float = 0.0,
     pressure: Field | None = None,
 ) -> tuple[tuple[Field, Field, Field], Field, Field]:
-    """Advance one projection step and return velocity, pressure and potential.
+    """Advance one step of ``scheme`` and return velocity, pressure and potential.
 
-    Passing ``viscous`` takes diffusion implicitly and lifts the step off
-    :attr:`ChannelProblem.diffusive_step_limit`; ``pressure``, the last step's, starts the stage's solve.
+    Passing ``viscous`` takes diffusion implicitly (Crank-Nicolson in :data:`RK3`) and lifts the step
+    off :attr:`ChannelProblem.diffusive_step_limit`; a multi-stage ``scheme`` takes the per-stage
+    tuple of :meth:`ChannelProblem.viscous_factorizations`. ``force(t)`` is a further force density
+    on the velocity faces, evaluated at the time of each stage's input state, starting from ``time``.
+    ``pressure``, the last step's, starts the first stage's solve (each later stage starts from the one before).
     """
-    return _step(velocity, problem, factorization, viscous, pressure)[:3]
+    return _step(velocity, problem, factorization, viscous, scheme, force, time, pressure)[:3]
 
 
-def _step(velocity, problem: ChannelProblem, factorization, viscous, pressure=None):
+def _step(velocity, problem, factorization, viscous, scheme, force, time, pressure=None):
     factorization = problem.factorization() if factorization is None else factorization
-    potential, force = electric_state(velocity, problem, factorization)
-    moved, pressure, info = _advance_momentum(
-        velocity, face_lorentz_force(force, problem), problem, viscous, pressure=pressure
+    stages = (viscous,) if len(scheme.explicit) == 1 else viscous
+    carried, solves = None, []
+    for k, weights in enumerate(zip(scheme.explicit, scheme.carried, scheme.implicit, strict=True)):
+        potential, current = electric_state(velocity, problem, factorization)
+        velocity, pressure, info, carried = _advance_momentum(
+            velocity,
+            face_lorentz_force(current, problem),
+            problem,
+            None if stages is None else stages[k],
+            extra_force=None if force is None else force(time),
+            weights=weights,
+            carried=carried,
+            pressure=pressure,
+        )
+        solves.append(info)
+        time = time + (weights[0] + weights[1]) * problem.dt
+    iterations, residual = (
+        jnp.stack([getattr(i, name) for i in solves]) for name in ("iterations", "residual")
     )
-    return moved, pressure, potential, info
+    return velocity, pressure, potential, (jnp.sum(iterations), jnp.max(residual))
 
 
 @functools.lru_cache(maxsize=16)
@@ -771,25 +838,34 @@ def _advance_momentum(
     viscous: tuple[FastDiagonalHelmholtz, ...] | None = None,
     *,
     extra_force: tuple[Field, Field, Field] | None = None,
+    weights: tuple[float, float, float] = (1.0, 0.0, 1.0),
+    carried: tuple[jnp.ndarray, ...] | None = None,
     pressure: Field | None = None,
-) -> tuple[tuple[Field, Field, Field], Field, solvax.SpdSolveInfo]:
-    """Solve the stage ``H u + (dt/rho) G p = b``, ``D u = 0``; return velocity, pressure and solve status.
+) -> tuple[tuple[Field, Field, Field], Field, solvax.SpdSolveInfo, tuple[jnp.ndarray, ...]]:
+    """Solve one stage ``H u + c (dt/rho) G p = b``, ``D u = 0``; return velocity, pressure, status, ``R``.
 
-    ``b`` holds the old velocity, the face Lorentz force ``body`` and the other forces, and ``H`` the
-    magnetic damping (plus the viscous operator when implicit), so a pressure force meets the same
-    ``H`` as every other force and a gradient in balance with the forcing leaves the fluid at rest.
-    With ``w = H^-1 b`` and ``q = dt p / rho``, SOLVAX's :meth:`~solvax.FastDiagonalSchur.solve_exact`
-    solves ``-D H^-1 G q = D w`` by preconditioned conjugate gradients (one iteration on periodic
-    axes, a few near walls) and ``u = w - H^-1 G q``. The status holds the iterations and relative
-    Schur residual; a failure is NaN. ``extra_force`` is a further force density on the velocity
-    faces (buoyancy, say), added to the forcing before the division by density. ``pressure``, the
-    last step's, starts the solve: 0-1 iterations in a steady flow against 13-15 from zero.
+    ``weights`` are the ``(explicit, carried, implicit)`` of the stage in :class:`Tableau`, ``c`` the sum
+    of the first two, and ``carried`` the ``R`` the previous stage returned. ``R(u) = f + lambda u`` holds
+    the face Lorentz force ``body``, the other forces and minus transport, with the damping returned to
+    it, and the viscous term when that is explicit. ``b = u + dt (explicit R + carried R_prev + (c -
+    implicit) L u)``, ``L = -lambda`` (plus the viscous term when implicit), and ``H = 1 + implicit dt
+    lambda`` per component, minus ``implicit dt nu`` times the Laplacian when implicit. A pressure
+    force meets the same ``H`` as every other force, so a gradient in balance with the forcing leaves
+    the fluid at rest. With ``w = H^-1 b`` and ``q = c dt p / rho``, SOLVAX's
+    :meth:`~solvax.FastDiagonalSchur.solve_exact` solves ``-D H^-1 G q = D w`` exactly by
+    preconditioned conjugate gradients (one iteration on periodic axes, a few near walls) and ``u =
+    w - H^-1 G q``. The status holds the iterations and relative Schur residual; a failure is NaN.
+
+    ``extra_force`` is a further force density on the velocity faces (buoyancy, say), added to the
+    forcing before the division by density. ``pressure``, the last stage's or step's, starts the solve:
+    0-1 iterations in a steady flow against 13-15 from zero.
     """
     if any(condition.is_mixed for condition in problem.pressure_conditions):
         raise NotImplementedError("an inflow-outflow axis needs mixed end kinds in SOLVAX (issue 172)")
-    dt, grid = float(problem.dt), problem.grid
-    shifts = tuple(1.0 + dt * rate for rate in problem.damping_rates)
-    coefficient = dt * float(problem.viscosity) * (viscous is not None)
+    explicit, previous, implicit = weights
+    dt, grid, rates = float(problem.dt), problem.grid, problem.damping_rates
+    shifts = tuple(1.0 + implicit * dt * rate for rate in rates)
+    coefficient = implicit * dt * float(problem.viscosity) * (viscous is not None)
     inverse, gradient, constrained, solve = _stage(
         grid, problem.conditions, problem.pressure_conditions, shifts, coefficient, viscous
     )
@@ -799,30 +875,37 @@ def _advance_momentum(
         if problem.advection == "off"
         else momentum_advection(velocity, velocity_conditions, limited=problem.advection == "limited")
     )
-    predicted = []
+    predicted, rate = [], []
     for axis, field in enumerate(velocity):
         force = body[axis].data + problem.forcing[axis]
         if extra_force is not None:
             force = force + extra_force[axis].data
-        drive = force / problem.density - (0.0 if transport is None else transport[axis].data)
-        if viscous is None:
-            drive = drive + problem.viscosity * staggered_laplacian(field, velocity_conditions).data
-        predicted.append(inverse[axis](shifts[axis] * field.data + dt * drive))
+        damping = rates[axis] * field.data
+        viscous_term = problem.viscosity * staggered_laplacian(field, velocity_conditions).data
+        now = force / problem.density - (0.0 if transport is None else transport[axis].data) + damping
+        now = now + (viscous_term if viscous is None else 0.0)
+        old = -damping + (0.0 if viscous is None else viscous_term)
+        before = 0.0 if carried is None else previous * carried[axis]
+        rate.append(now)
+        change = explicit * now + before + (explicit + previous - implicit) * old
+        predicted.append(inverse[axis](field.data + dt * change))
     predicted = constrained(predicted)
     source = -divergence(predicted).data
     # A divergence under the field's round-off is noise, and CG started on noise can break down.
     scale = sum(jnp.max(jnp.abs(w.data)) / np.min(grid.widths[a]) for a, w in enumerate(predicted))
     source = jnp.where(jnp.abs(source) > 16 * jnp.finfo(source.dtype).eps * scale, source, 0.0)
+    stage = (explicit + previous) * dt
     # A right-hand side of exactly zero has the tolerance rtol |rhs| = 0, which no guess meets: drop it there.
     guess = (
         None
         if pressure is None
-        else jnp.where(jnp.any(source != 0), dt / problem.density * pressure.data, 0.0)
+        else jnp.where(jnp.any(source != 0), stage * pressure.data / problem.density, 0.0)
     )
-    flux, info = solve(source, x0=guess, rtol=1e-12 if velocity[0].dtype == jnp.float64 else None)
+    flux, info = solve(source, x0=guess, rtol=1e-13 if velocity[0].dtype == jnp.float64 else None)
     pull = [inverse[axis](g) for axis, g in enumerate(gradient(flux))]
     corrected = constrained([w.data - g for w, g in zip(predicted, pull, strict=True)])
-    return corrected, Field((problem.density / dt) * flux, (CENTER,) * 3, grid), info
+    pressure = Field(problem.density * flux / stage, (CENTER,) * 3, grid)
+    return corrected, pressure, info, tuple(rate)
 
 
 @functools.lru_cache(maxsize=16)
@@ -1121,20 +1204,24 @@ def advance(
     velocity: tuple[Field, Field, Field] | None = None,
     *,
     factorization: FastDiagonalPoisson | None = None,
-    viscous: tuple[FastDiagonalHelmholtz, ...] | None = None,
+    viscous: tuple | None = None,
+    scheme: Tableau = EULER,
+    force: Callable[[jnp.ndarray], tuple[Field, Field, Field]] | None = None,
+    time: float = 0.0,
     checkpoint: bool = True,
 ) -> Trajectory:
-    """Run ``steps`` projection steps as one compiled scan.
+    """Run ``steps`` steps of ``scheme`` as one compiled scan, from ``time``.
 
     ``steps`` is static: it fixes the length of the compiled trajectory. The
     factorizations are built once on the host, outside the trace, because their
     assembly reads concrete arrays; passing ``viscous`` takes diffusion
     implicitly, which is what lets a long run choose its step for accuracy.
+    ``viscous`` and ``force(t)`` are those of :func:`step`.
 
-    The compiled run is kept per problem, ``steps``, factorizations and
-    ``checkpoint``: a restart in chunks compiles once, and only the state is an
-    argument. A problem with a traced parameter is traced into the caller's
-    program instead.
+    The compiled run is kept per problem, ``steps``, factorizations, ``scheme`` and
+    ``checkpoint``: a restart in chunks compiles once, and only the state and the time are
+    arguments. A problem with a traced parameter, or a ``force``, is traced into the caller's
+    program instead (a force may close over the caller's tracers, which a kept program must not).
     """
     if steps < 1:
         raise ValueError("steps must be positive")
@@ -1142,35 +1229,36 @@ def advance(
     try:
         hash(problem)
     except TypeError:
-        return _trajectory(problem, steps, factorization, viscous, checkpoint)(velocity)
-    return _compiled_trajectory(problem, steps, factorization, viscous, checkpoint)(velocity)
+        return _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint)(velocity, time)
+    if force is not None:
+        return _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint)(velocity, time)
+    return _compiled_trajectory(problem, steps, factorization, viscous, scheme, checkpoint)(velocity, time)
 
 
-def _trajectory(problem, steps, factorization, viscous, checkpoint):
-    """The run of ``steps`` steps as a function of the starting velocity."""
+def _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint):
+    """The run of ``steps`` steps as a function of the starting velocity and time."""
     factorization = problem.factorization() if factorization is None else factorization
 
     def single(carry, _):
-        updated, pressure, potential, info = _step(carry[0], problem, factorization, viscous, carry[1])
-        return (updated, pressure, potential), (
-            *trajectory_diagnostics(updated, problem),
-            info.iterations,
-            info.residual,
+        *state, now = carry
+        updated, pressure, potential, solves = _step(
+            state[0], problem, factorization, viscous, scheme, force, now, state[1]
         )
+        history = (*trajectory_diagnostics(updated, problem), *solves)
+        return (updated, pressure, potential, now + problem.dt), history
 
-    def run(velocity):
+    def run(velocity, time):
         # The last pressure and potential ride in the carry: stacked as scan outputs they cost two
         # cell fields per step (3.1 GiB over 100 steps at 128^3 in float64) to return the last one.
         cell = Field(jnp.zeros(problem.grid.shape, velocity[0].dtype), (CENTER,) * 3, problem.grid)
+        start = (velocity, cell, cell, jnp.asarray(time, velocity[0].dtype))
         body = jax.checkpoint(single) if checkpoint else single
-        (final, pressure, potential), history = jax.lax.scan(
-            body, (velocity, cell, cell), xs=None, length=steps
-        )
+        (final, pressure, potential, _), history = jax.lax.scan(body, start, xs=None, length=steps)
         return Trajectory(final, pressure, potential, *history)
 
     return run
 
 
 @functools.lru_cache(maxsize=8)
-def _compiled_trajectory(problem, steps, factorization, viscous, checkpoint):
-    return jax.jit(_trajectory(problem, steps, factorization, viscous, checkpoint))
+def _compiled_trajectory(problem, steps, factorization, viscous, scheme, checkpoint):
+    return jax.jit(_trajectory(problem, steps, factorization, viscous, scheme, None, checkpoint))
