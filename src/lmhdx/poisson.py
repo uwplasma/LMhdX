@@ -39,15 +39,16 @@ its public names stay importable from here.
 
 from __future__ import annotations
 
+import copy
 import functools
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import solvax
 
-from ._programs import attribute, grid_program, host_array
+from ._programs import attribute, grid_program, host_array, is_traced
 from .grid import (
     CENTER,
     DIRICHLET,
@@ -102,8 +103,8 @@ def _check_precision(precision: str, refinements: int) -> None:
 
 
 def _single(array: np.ndarray) -> np.ndarray:
-    """Cast a host array to float32 once, at factorization, rather than per solve."""
-    return np.ascontiguousarray(array, dtype=np.float32)
+    """Cast an array to float32 once, at factorization, rather than per solve."""
+    return jnp.asarray(array, jnp.float32)
 
 
 def _refined(factorization, direct, matvec, data: jnp.ndarray, volumes: tuple | None) -> jnp.ndarray:
@@ -714,7 +715,8 @@ def _is_singular(values: list[np.ndarray]) -> bool:
     a Hartmann layer at Ha 100) passed for a null mode, and the solve removed it.
     """
     return all(
-        float(np.min(np.abs(value))) <= _SINGULAR_TOLERANCE * max(float(np.max(np.abs(value))), 1.0)
+        is_traced(value)  # a traced wall axis: constants are in the null space of any sheet closure
+        or float(np.min(np.abs(value))) <= _SINGULAR_TOLERANCE * max(float(np.max(np.abs(value))), 1.0)
         for value in values
     )
 
@@ -725,7 +727,7 @@ def _promote_null_mode(
     """Move each axis's smallest eigenvalue to index zero."""
     ordered_vectors, ordered_values = [], []
     for vector, value in zip(vectors, values, strict=True):
-        order = np.argsort(np.abs(value), kind="stable")
+        order = jnp.argsort(jnp.abs(value)) if is_traced(value) else np.argsort(np.abs(value), kind="stable")
         ordered_vectors.append(vector[:, order])
         ordered_values.append(value[order])
     return ordered_vectors, ordered_values
@@ -763,7 +765,19 @@ def _symmetric_eigen(operator: np.ndarray, weights: np.ndarray, message: str, nu
     (:func:`_constant_null`): only then is the eigenvalue nearest zero set to zero. A small row sum is not
     that certificate: a Dirichlet axis whose smallest cells lie far from its ends has row sums of 8e-8 of
     its largest entry in float32, and a real eigenvalue near -8 that must not be zeroed.
+
+    A traced operator (a wall parameter under a derivative) is diagonalized in the trace by
+    ``jnp.linalg.eigh``; its symmetry cannot be checked, and the constants' eigenvalue is set to zero by
+    a mask where the host path assigns it. The outputs are constants for differentiation: the mirror
+    sheets of a symmetric duct are an exactly degenerate pair, whose eigenvector derivative is
+    infinite, so the solve is differentiated implicitly instead (``FastDiagonalThinWallPoisson.solve_with_walls``).
     """
+    if is_traced(operator, weights):
+        root = jnp.sqrt(weights)
+        symmetric = root[:, None] * operator / root[None, :]
+        eigenvalues, eigenvectors = jnp.linalg.eigh(0.5 * (symmetric + symmetric.T))
+        lowest = jnp.arange(len(weights)) == jnp.argmin(jnp.abs(eigenvalues))
+        return jax.lax.stop_gradient((jnp.where(null & lowest, 0.0, eigenvalues), eigenvectors, root))
     root = np.sqrt(weights)
     symmetric = root[:, None] * operator / root[None, :]
     asymmetry = _relative_asymmetry(symmetric)
@@ -801,9 +815,12 @@ def _constant_null(offset_value: float, condition: BoundaryCondition) -> bool:
     return offset_value == CENTER and DIRICHLET not in condition.kinds
 
 
-def assemble_thin_wall_operator(
-    grid: Grid, axis: int, conductance: tuple[float, float]
-) -> tuple[np.ndarray, np.ndarray]:
+def _conducts(value) -> bool:
+    """Whether a wall end conducts: a traced conductance does (its sign is the caller's), else it must be positive."""
+    return is_traced(value) or float(value) > 0.0
+
+
+def assemble_thin_wall_operator(grid: Grid, axis: int, conductance: tuple) -> tuple[np.ndarray, np.ndarray]:
     """Return the one-dimensional potential operator with a sheet node on each conducting wall, and its weights.
 
     A thin wall of conductance ratio ``c`` has a potential of its own: the fluid
@@ -814,7 +831,8 @@ def assemble_thin_wall_operator(
     measure, so the tangential axes act on it as on a cell and the operator stays
     a Kronecker sum. The rows are read out of the production stencil: the coupling
     is the difference between the prescribed-value and the insulating wall cell.
-    An end with zero conductance gets no node.
+    An end with zero conductance gets no node. Only the sheet's row depends on ``c``,
+    so a traced ``c`` (an array result) is added to the host-built remainder.
     """
     if grid.is_polar and axis != 0:
         raise ValueError("a thin wall on a polar grid is normal to the radius")
@@ -827,23 +845,27 @@ def assemble_thin_wall_operator(
 
     insulating, prescribed = assemble(NEUMANN), assemble(DIRICHLET)
     face, cell = (np.asarray(measure) for measure in grid.axis_measures(axis))
-    lower, upper = (float(value) for value in conductance)
-    count, lead = insulating.shape[0], int(lower > 0.0)
-    size = count + lead + int(upper > 0.0)
+    ends = [_conducts(value) for value in conductance]
+    count, lead = insulating.shape[0], int(ends[0])
+    size = count + lead + int(ends[1])
+    unit = np.eye(size)
     operator, weights = np.zeros((size, size)), np.zeros(size)
     operator[lead : lead + count, lead : lead + count] = insulating
     weights[lead : lead + count] = cell
-    for index, value, node in ((0, lower, 0), (count - 1, upper, size - 1)):
-        if value <= 0.0:
+    sheets = []
+    for index, value, node in ((0, conductance[0], 0), (count - 1, conductance[1], size - 1)):
+        if not _conducts(value):
             continue
-        weights[node] = value * face[0 if index == 0 else -1]
-        if weights[node] <= 0.0:
+        weight = value * face[0 if index == 0 else -1]
+        if not is_traced(weight) and weight <= 0.0:
             raise ValueError("a thin wall needs a wall face of nonzero area")
         row, coupling = lead + index, insulating[index, index] - prescribed[index, index]
         operator[row, row] -= coupling
         operator[row, node] = coupling
-        operator[node, row] = cell[index] * coupling / weights[node]
-        operator[node, node] = -operator[node, row]
+        sheets.append((node, row, cell[index] * coupling / weight, weight))
+    for node, row, gain, weight in sheets:
+        operator = operator + gain * np.outer(unit[node], unit[row] - unit[node])
+        weights = weights + weight * unit[node]
     return operator, weights
 
 
@@ -863,7 +885,9 @@ def assemble_thick_wall_operator(
     half cells in series. Also returned, per end, is the fraction of the
     potential difference across the fluid's half cell, which
     :meth:`FastDiagonalThinWallPoisson.solve_with_walls` uses to report the
-    interface potential :func:`lmhdx.ops.thin_wall_current` reads.
+    interface potential :func:`lmhdx.ops.thin_wall_current` reads. Ratios and
+    widths may be traced: the links are added to the operator one by one, in the
+    order the host path always used.
     """
     if grid.is_polar:
         raise ValueError("a wall resolved in cells needs a Cartesian grid")
@@ -874,6 +898,7 @@ def assemble_thick_wall_operator(
     counts = [0 if end is None else end[1].size for end in ends]
     count, lead = cell.size, counts[0]
     size = count + sum(counts)
+    unit = np.eye(size)
     operator, weights, fractions = np.zeros((size, size)), np.zeros(size), [1.0, 1.0]
     operator[lead : lead + count, lead : lead + count] = insulating
     weights[lead : lead + count] = cell
@@ -886,23 +911,23 @@ def assemble_thick_wall_operator(
         half = cell[index] * (insulating[index, index] - prescribed[index, index])
         fractions[side] = 1.0 / (1.0 + half * 0.5 * widths[0] / ratio[0])
         nodes = [lead + index] + [lead - 1 - k if side == 0 else lead + count + k for k in range(widths.size)]
-        weights[nodes[1:]] = ratio * widths
+        weights = weights + unit[nodes[1:]].T @ (ratio * widths)
         resistance = 0.5 * widths / ratio
         links = [half * fractions[side]] + list(1.0 / (resistance[:-1] + resistance[1:]))
         for (first, second), link in zip(zip(nodes[:-1], nodes[1:]), links, strict=True):
             for row, column in ((first, second), (second, first)):
-                operator[row, column] += link / weights[row]
-                operator[row, row] -= link / weights[row]
+                operator = operator + (link / weights[row]) * np.outer(unit[row], unit[column] - unit[row])
     return operator, weights, tuple(fractions)
 
 
 def _wall_cells(layer) -> tuple[np.ndarray, np.ndarray]:
-    """Return a resolved wall's per-cell conductivity ratios and widths, checked."""
-    widths = np.asarray(layer[1], dtype=float)
-    ratios = np.broadcast_to(np.asarray(layer[0], dtype=float), widths.shape).copy()
-    if widths.ndim != 1 or widths.size == 0 or np.any(widths <= 0.0) or np.any(ratios <= 0.0):
+    """Return a resolved wall's per-cell conductivity ratios and widths, checked unless traced."""
+    xp = jnp if is_traced(layer) else np
+    widths = xp.asarray(layer[1], dtype=float)
+    ratios = xp.broadcast_to(xp.asarray(layer[0], dtype=float), widths.shape)
+    if xp is np and (widths.ndim != 1 or widths.size == 0 or np.any(widths <= 0.0) or np.any(ratios <= 0.0)):
         raise ValueError("a resolved wall needs positive conductivity ratios and positive widths")
-    return ratios, widths
+    return ratios.copy() if xp is np else ratios, widths
 
 
 @dataclass(frozen=True, eq=False)
@@ -920,20 +945,14 @@ class FastDiagonalThinWallPoisson(FastDiagonalPoisson):
     does not vary.
     """
 
-    conductance: tuple[float, float, float] = (0.0, 0.0, 0.0)
     operators: tuple[np.ndarray, ...] = ()
     weights: tuple[np.ndarray, ...] = ()
     corner_gain: np.ndarray | None = None
-    # Wall nodes below and above each axis, and the interface fractions of resolved walls.
-    pads: tuple[tuple[int, int], ...] | None = None
+    # Wall nodes below and above each axis (static), and the interface fractions of resolved walls.
+    pads: tuple[tuple[int, int], ...] = ((0, 0),) * 3
     fractions: tuple[tuple[float, float], ...] | None = None
     # Resolved walls on two axes: the corner cells' indices, and the Woodbury basis and capacitance.
     corner_fix: tuple | None = None
-
-    def _pads(self) -> tuple[tuple[int, int], ...]:
-        if self.pads is not None:
-            return self.pads
-        return tuple((1, 1) if float(value) > 0.0 else (0, 0) for value in self.conductance)
 
     def _measure_factors(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         return self.weights[0][:, None, None], self.weights[1][None, :, None], self.weights[2][None, None, :]
@@ -950,10 +969,9 @@ class FastDiagonalThinWallPoisson(FastDiagonalPoisson):
         """
         if rhs.grid != self.grid or rhs.offset != (CENTER, CENTER, CENTER):
             raise ValueError("right-hand side must be cell centred on the factorized grid")
-        pads = self._pads()
+        pads = self.pads
         data = jnp.pad(rhs.data, pads)
-        solution = _refined(self, self._corrected, self._apply, data, (self, _own_measure))
-        solution = _corrected(self, self._corrected, self._apply, data, solution, (self, _own_measure))
+        solution = _solved(self, data) if is_traced(self.operators) else self._solve_data(data)
         cells = tuple(slice(low, size - high) for (low, high), size in zip(pads, solution.shape))
         volumes = host_array(self.grid, _cell_volumes, dtype=solution.dtype)
         solution = solution - jnp.sum(volumes * solution[cells]) / jnp.sum(volumes)
@@ -968,14 +986,20 @@ class FastDiagonalThinWallPoisson(FastDiagonalPoisson):
                 at = (slice(None),) * axis
                 adjacent = lines[at + (slice(fluid, fluid + 1 or None),)]
                 wall = lines[at + (slice(node, node + 1 or None),)] if present else adjacent
-                fraction = 1.0 if self.fractions is None else self.fractions[axis][side]
                 # A resolved wall reports the potential on the interface, which the half-cell current reads.
-                ends.append(wall if fraction == 1.0 else adjacent + fraction * (wall - adjacent))
+                present_resolved = present and self.fractions is not None
+                ends.append(
+                    adjacent + self.fractions[axis][side] * (wall - adjacent) if present_resolved else wall
+                )
             sheets = lines[(slice(None),) * axis + (slice(low, lines.shape[axis] - high),)]
             inner = jnp.zeros_like(sheets)[(slice(None),) * axis + (slice(1, None),)]
             offset = tuple(FACE if other == axis else CENTER for other in range(3))
             walls.append(Field(jnp.concatenate((ends[0], inner, ends[1]), axis=axis), offset, self.grid))
         return Field(solution[cells], (CENTER, CENTER, CENTER), self.grid), tuple(walls)
+
+    def _solve_data(self, data: jnp.ndarray) -> jnp.ndarray:
+        solution = _refined(self, self._corrected, self._apply, data, (self, _own_measure))
+        return _corrected(self, self._corrected, self._apply, data, solution, (self, _own_measure))
 
     def _apply(self, values: jnp.ndarray) -> jnp.ndarray:
         """The assembled operator, for the float64 residual of a mixed-precision solve."""
@@ -1022,7 +1046,52 @@ class FastDiagonalThinWallPoisson(FastDiagonalPoisson):
         return solution - self._direct(_corners(solution, edge, (vectors @ modes) / root), single)
 
     def _edge(self) -> int:
-        return next(axis for axis, value in enumerate(self.conductance) if not float(value) > 0.0)
+        return next(axis for axis, (low, high) in enumerate(self.pads) if not low + high)
+
+
+@jax.custom_jvp
+def _solved(factorization, data):
+    """``A^-1 data`` for the operator of a factorization whose arrays are traced (a wall parameter)."""
+    return factorization._solve_data(data)
+
+
+@_solved.defjvp
+def _solved_jvp(primals, tangents):
+    """``d x = A^-1 (d b - (d A) x)``, with ``d A`` from the assembled operators alone: the eigenbasis is only A's solver.
+
+    The solve is a composition of transposable linear maps, so the reverse pass transposes it as written and
+    needs no derivative of an eigendecomposition (whose degenerate pairs have none).
+    """
+    factorization, data = primals
+    shifted = copy.copy(factorization)
+    solution = _solved(factorization, data)
+
+    def applied(operators):
+        object.__setattr__(shifted, "operators", operators)
+        return shifted._apply(solution)
+
+    change = jax.jvp(applied, (factorization.operators,), (tangents[0].operators,))[1]
+    return solution, factorization._solve_data(tangents[1] - change)
+
+
+_LEAVES = ("vectors", "values", "scales", "operators", "weights", "corner_gain", "fractions", "_low")
+_STATIC = tuple(f.name for f in fields(FastDiagonalThinWallPoisson) if f.name not in _LEAVES)
+
+
+def _unflatten(static, leaves) -> FastDiagonalThinWallPoisson:
+    """Rebuild a factorization without running its constructor, so a transformed copy keeps its arrays as they are."""
+    rebuilt = object.__new__(FastDiagonalThinWallPoisson)
+    for name, value in (*zip(_STATIC, static, strict=True), *zip(_LEAVES, leaves, strict=True)):
+        object.__setattr__(rebuilt, name, value)
+    return rebuilt
+
+
+# The arrays are the leaves: a wall conductance under a derivative, or a vmap, gives traced ones.
+jax.tree_util.register_pytree_node(
+    FastDiagonalThinWallPoisson,
+    lambda f: (tuple(getattr(f, name) for name in _LEAVES), tuple(getattr(f, name) for name in _STATIC)),
+    _unflatten,
+)
 
 
 def _corner_inverse_weights(factorization) -> np.ndarray:
@@ -1059,7 +1128,10 @@ def fast_diagonal_thin_wall_poisson(
 ) -> FastDiagonalThinWallPoisson:
     """Factorize the potential Laplacian with a thin wall of ratio ``conductance[axis]`` on both walls of an axis.
 
-    Zero keeps the insulating closure of ``conditions``; a conducting axis must
+    ``conductance`` and the ``layers`` ratios and widths may be traced: the wall axis is then
+    diagonalized in the trace and the result is a pytree of its arrays, differentiable in them.
+    A traced entry conducts (whether an end conducts is static); two resolved walls
+    (:func:`_corner_fix`) cannot be traced. Zero keeps the insulating closure of ``conditions``; a conducting axis must
     have insulating (Neumann) walls to replace, and one axis at least must not
     conduct. ``layers`` gives axes walls resolved in cells instead
     (:func:`assemble_thick_wall_operator`), ``(lower, upper)`` per axis or
@@ -1070,14 +1142,19 @@ def fast_diagonal_thin_wall_poisson(
     _require_separable(grid)
     layers = (None, None, None) if layers is None else tuple(layers)
     resolved = [axis for axis, pair in enumerate(layers) if pair and any(pair)]
-    conducting = [axis for axis, value in enumerate(conductance) if float(value) > 0.0]
+    conducting = [axis for axis, value in enumerate(conductance) if _conducts(value)]
     if resolved and conducting:
         raise ValueError("walls resolved in cells take no thin wall on another axis")
     if len(resolved) > 1 and (len(resolved) > 2 or grid.shape[3 - sum(resolved)] != 1):
         raise ValueError("walls resolved in cells on two axes need one cell along the third")
     conducting = conducting + resolved
     pads, fractions = [], []
-    if len(conditions) != 3 or len(conductance) != 3 or len(conducting) == 3 or min(conductance) < 0.0:
+    if (
+        len(conditions) != 3
+        or len(conductance) != 3
+        or len(conducting) == 3
+        or (not is_traced(conductance) and min(conductance) < 0.0)
+    ):
         raise ValueError(
             "thin walls need one condition and one non-negative conductance per axis, one axis without"
         )
@@ -1093,7 +1170,7 @@ def fast_diagonal_thin_wall_poisson(
             operator, weight, fractions[axis] = assemble_thick_wall_operator(grid, axis, layers[axis])
             pads[axis] = tuple(0 if layer is None else len(layer[1]) for layer in layers[axis])
         elif axis in conducting:
-            ratio = float(conductance[axis])
+            ratio = conductance[axis]
             operator, weight = assemble_thin_wall_operator(grid, axis, (ratio, ratio))
             pads[axis] = (1, 1)
         else:
@@ -1118,16 +1195,19 @@ def fast_diagonal_thin_wall_poisson(
         singular,
         precision,
         refinements,
-        conductance=tuple(float(value) for value in conductance),
         operators=tuple(operators),
         weights=tuple(weights),
         corner_gain=_corner_gain(vectors, values, scales, 3 - sum(conducting))
         if len(conducting) == 2
         else None,
-        pads=tuple(pads) if resolved else None,
+        pads=tuple(pads),
         fractions=tuple(fractions) if resolved else None,
     )
     if len(resolved) == 2:
+        if is_traced(layers):
+            raise NotImplementedError(
+                "walls resolved on two axes take their parameters as constants: the corner correction is built on the host"
+            )
         factorization = replace(factorization, corner_fix=_corner_fix(factorization, grid, resolved, layers))
     return factorization
 
@@ -1238,22 +1318,25 @@ def _corner_gain(vectors, values, scales, edge: int) -> np.ndarray | None:
     In the eigenbasis of the edge axis that conduction is ``lambda_m`` on the four
     corner nodes of mode ``m``, so the correction is
     ``-lambda_m (I - lambda_m C_m)^-1`` with ``C_m`` the corner block of the
-    uncorrected inverse; ``None`` when nothing varies along the edge.
+    uncorrected inverse; ``None`` when nothing varies along the edge. The modes are
+    one batch, in the trace when a wall parameter is traced, and a mode below the
+    tolerance has a zero gain.
     """
     first, second = (axis for axis in range(3) if axis != edge)
-    tolerance = _SINGULAR_TOLERANCE * max(1.0, *(float(np.max(np.abs(value))) for value in values))
-    if not np.any(np.abs(values[edge]) > tolerance):
+    if len(values[edge]) < 2:
         return None
+    xp = jnp if is_traced(vectors, values, scales) else np
+    tolerance = _SINGULAR_TOLERANCE * xp.maximum(1.0, xp.max(xp.stack([xp.max(xp.abs(v)) for v in values])))
     corners = ((first, _CORNER_ROWS), (second, _CORNER_COLUMNS))
     left = [vectors[axis][rows] / scales[axis][rows, None] for axis, rows in corners]
     right = [vectors[axis][rows] * scales[axis][rows, None] for axis, rows in corners]
     total = values[first][:, None] + values[second][None, :]
-    gain = np.zeros((values[edge].size, 4, 4))
-    for mode, eigenvalue in enumerate(values[edge]):
-        if abs(eigenvalue) > tolerance:
-            block = np.einsum("pi,pj,ij,qi,qj->pq", *left, 1.0 / (total + eigenvalue), *right)
-            gain[mode] = -eigenvalue * np.linalg.inv(np.eye(4) - eigenvalue * block)
-    return gain
+    modes = values[edge]
+    kept = xp.abs(modes) > tolerance
+    shift = xp.where(kept, modes, 1.0)[:, None, None]
+    block = xp.einsum("pi,pj,mij,qi,qj->mpq", *left, 1.0 / (total[None] + shift), *right)
+    eigenvalue = xp.where(kept, modes, 0.0)[:, None, None]
+    return -eigenvalue * xp.linalg.inv(xp.eye(4) - eigenvalue * block)
 
 
 def free_slice(grid: Grid, axis: int, offset_value: float, condition: BoundaryCondition) -> slice:
