@@ -6,10 +6,12 @@ the leaves of a ``Problem`` with Taylor remainders, central differences and the 
 """
 
 import dataclasses
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+from xml.etree import ElementTree
 
 import jax
 import jax.numpy as jnp
@@ -20,10 +22,11 @@ import lmhdx
 from lmhdx import Open, Problem, Sides, Solver, Thermal, Uniform, Wall, duct
 from lmhdx.axial import fringe_duct as old_fringe_duct
 from lmhdx.axial import pressure_drop, solve_open_duct
-from lmhdx.cases import WallLayer
+from lmhdx.cases import NumericalFailure, WallLayer
 from lmhdx.core3d import ChannelProblem, advance, duct_problem
 from lmhdx.fields import Fringe, Func, Table
 from lmhdx.grid import CENTER, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid, axis, uniform_faces
+from lmhdx.output import Output, Start, read_record
 from lmhdx.pipe import pipe_problem, solve_pipe
 from lmhdx.problem import _BKZ_DOMAINS, bulk_ratio, channel, fringe_duct, pipe, q2d
 from lmhdx.q2d import evolve_q2d, make_q2d_case, solve_q2d
@@ -749,3 +752,188 @@ def test_the_wall_derivative_is_refused_where_it_is_not_defined_or_not_yet_avail
     assert np.isnan(float(gradient.bc[1].conductance)) and np.isfinite(float(gradient.flow_rate))
     exact = lmhdx.solve(fringe.replace(bc=(Open(), Wall(jnp.asarray(0.02)), Wall(0.02))))
     assert float(exact.pressure_drop(-1.0, 1.0)) == float(lmhdx.solve(fringe).pressure_drop(-1.0, 1.0))
+
+
+# Output (plan H4.4): restart, ParaView files, summary and log for every run type.
+
+
+def _vtk(path):
+    """The cell arrays of a ParaView file, by name, and its type and extent."""
+    root = ElementTree.parse(path).getroot()
+    arrays = {i.get("Name"): np.array(i.text.split(), dtype=float) for i in root.iter("DataArray")}
+    return root.get("type"), root[0].get("WholeExtent"), arrays
+
+
+_RUNS = {
+    "euler": (lambda: duct(5, 12, cells_in_layer=3), Solver(dt=0.01, steps=8), 4),
+    "thermal": (lambda: _heated_duct()[0], Solver(dt=2.0e-3, steps=40), 10),
+    "q2d": (lambda: q2d(shape=(16, 16)), Solver(dt=0.01, steps=20, history=5), 5),
+}
+
+
+@pytest.mark.parametrize("name", _RUNS)
+def test_a_run_in_chunks_or_from_its_record_is_the_run_in_one_bit_for_bit(tmp_path, name):
+    build, solver, every = _RUNS[name]
+    problem, half = build(), dataclasses.replace(solver, steps=solver.steps // 2)
+    whole = lmhdx.solve(problem, solver)
+    for chunk in (0, every):  # an Output changes no number, whether the run is one chunk or several
+        found = lmhdx.solve(problem, solver, Output(str(tmp_path / f"c{chunk}"), every=chunk))
+        assert _same(found.fields, whole.fields) and _same(found.history, whole.history)
+    # 20 + 20 steps are 40: the second half starts from the first half's record.
+    lmhdx.solve(problem, half, Output(str(tmp_path / "half")))
+    record = tmp_path / "half" / f"run_{half.steps:06d}.npz"
+    again = lmhdx.solve(problem, half, Output(str(tmp_path / "again")), start=record)
+    assert _same(again.fields, whole.fields)
+    assert (tmp_path / "again" / f"run_{solver.steps:06d}.npz").exists()
+    assert {p.name for p in (tmp_path / "again").glob("*.pvd")} == {f"run_from_{half.steps:06d}.pvd"}
+    for file in ("run_%06d.npz" % solver.steps,):
+        with np.load(tmp_path / "again" / file) as resumed, np.load(tmp_path / f"c{every}" / file) as chunked:
+            assert all(np.array_equal(resumed[k], chunked[k]) for k in chunked.files if k != "notes")
+
+
+def test_a_record_resumes_only_the_run_that_wrote_it(tmp_path):
+    problem, solver = duct(5, 12, cells_in_layer=3), Solver(dt=0.01, steps=4)
+    lmhdx.solve(problem, solver, Output(str(tmp_path)))
+    record = tmp_path / "run_000004.npz"
+    with pytest.raises(ValueError, match="another problem or solver"):
+        lmhdx.solve(duct(6, 12, cells_in_layer=3), solver, start=record)
+    with pytest.raises(ValueError, match="another problem or solver"):
+        lmhdx.solve(problem, dataclasses.replace(solver, dt=0.02), start=record)
+    # An import takes the state of any record of the same fields.
+    imported = lmhdx.solve(
+        duct(6, 12, cells_in_layer=3), solver, start=Start(path=str(record), mode="import")
+    )
+    assert imported.velocity[0].shape == (2, 12, 12)
+    with np.load(record) as arrays:
+        arrays = dict(arrays)
+    hot = arrays["leaf0"].copy()
+    hot[0, 0, 0] = np.nan
+    bad, shape = "is not a lmhdx.record record of version 1", arrays["leaf0"].shape
+    for change, message in (
+        (dict(version=2), bad),
+        (dict(leaf0=arrays["leaf0"][:, :3]), rf"leaf 0 is float64\(2, 3, {shape[2]}\)"),
+        (dict(leaf0=hot), "leaf 0 is not finite"),
+        (dict(leaf1=arrays["leaf1"].astype(np.float32)), "leaf 1 is float32"),
+        (dict(leaf9=arrays["leaf1"]), bad),
+    ):
+        np.savez(tmp_path / "bad.npz", **{**arrays, **change})
+        with pytest.raises(ValueError, match=message):
+            lmhdx.solve(problem, solver, start=tmp_path / "bad.npz")
+    np.savez(tmp_path / "bad.npz", **{k: v for k, v in arrays.items() if k != "leaf3"})
+    with pytest.raises(ValueError, match=bad):
+        lmhdx.solve(problem, solver, start=tmp_path / "bad.npz")
+    with pytest.raises(ValueError, match="multiples of output.every"):
+        lmhdx.solve(problem, solver, Output(str(tmp_path / "x"), every=3))
+    with pytest.raises(ValueError, match="concrete"):
+        jax.grad(
+            lambda b: (
+                lmhdx.solve(problem.replace(B=Uniform(0.0, b, 0.0)), solver, Output(str(tmp_path / "y")))
+                .velocity[0]
+                .data.sum()
+            )
+        )(5.0)
+    with pytest.raises(ValueError, match="no start"):
+        lmhdx.solve(problem, start=record)
+
+
+def test_a_steady_solve_writes_its_fields_once(tmp_path):
+    problem = duct(20, 24)
+    found = lmhdx.solve(problem, output=Output(str(tmp_path), name="hartmann"))
+    assert _same(found.fields, lmhdx.solve(problem).fields)
+    assert {p.name for p in tmp_path.iterdir()} == {
+        "hartmann_000000.npz",
+        "hartmann_000000.vtr",
+        "hartmann.pvd",
+        "hartmann.log",
+        "hartmann.jsonl",
+        "summary.json",
+    }
+    summary = json.loads((tmp_path / "summary.json").read_text())
+    assert summary["accepted"] and summary["steps"] == 0 and summary["method"] == "stokes"
+    assert summary["flow_rate"] == float(found.flow_rate) and summary["residual"] == float(found.residual)
+    assert found.summary == summary
+    state, step = read_record(tmp_path / "hartmann_000000.npz", found.fields)
+    assert step == 0 and _same(state, found.fields)
+    # ParaView reads the stretched grid as it is, and the arrays as they are, x fastest.
+    kind, extent, arrays = _vtk(tmp_path / "hartmann_000000.vtr")
+    grid = problem.grid
+    assert kind == "RectilinearGrid" and extent == "0 1 0 24 0 24"
+    assert np.allclose(arrays["Y"], grid.y, rtol=1e-12) and np.allclose(arrays["Z"], grid.z, rtol=1e-12)
+    assert np.allclose(arrays["pressure"], np.transpose(found.pressure.data).ravel(), rtol=1e-12)
+    centred = [np.moveaxis(np.asarray(v.data), a, 0) for a, v in enumerate(found.velocity)]
+    centred = [np.moveaxis(0.5 * (c[:-1] + c[1:]), 0, a) for a, c in enumerate(centred)]
+    expected = np.stack([np.transpose(c) for c in centred], axis=-1).ravel()
+    assert np.allclose(arrays["velocity"], expected, rtol=1e-12, atol=1e-14)
+    text = (tmp_path / "hartmann.log").read_text()
+    assert text.startswith(
+        "LMhdX solver\ncase=hartmann mode=steady solver=stokes geometry=cartesian cells=(1,24,24)"
+    )
+    assert "completed case=hartmann" in text
+
+
+def test_a_pipe_is_written_as_a_structured_grid_at_its_true_points(tmp_path):
+    problem = pipe(5, 6, 8, cells_in_layer=2)
+    found = lmhdx.solve(problem, output=Output(str(tmp_path), fields=("velocity",)))
+    kind, extent, arrays = _vtk(tmp_path / "run_000000.vts")
+    assert (
+        kind == "StructuredGrid"
+        and extent == f"0 6 0 8 0 {problem.grid.shape[2]}"
+        and "pressure" not in arrays
+    )
+    points = arrays["Points"].reshape(-1, 3)
+    assert np.allclose(np.max(np.hypot(points[:, 0], points[:, 1])), problem.grid.x[-1], rtol=1e-12)
+    r, theta = (
+        problem.grid.x,
+        problem.grid.y,
+    )  # x runs fastest, then the angle: the first two points are on one ray
+    assert np.allclose(points[1], [r[1] * np.cos(theta[0]), r[1] * np.sin(theta[0]), problem.grid.z[0]])
+    assert np.allclose(points[len(r)], [r[0] * np.cos(theta[1]), r[0] * np.sin(theta[1]), problem.grid.z[0]])
+    assert np.allclose(arrays["velocity"], np.transpose(found.velocity[0].data).ravel(), rtol=1e-12)
+
+
+def test_a_rejected_chunk_stops_the_run_and_keeps_the_chunk_before(tmp_path):
+    problem, solver = _heated_duct()[0], Solver(dt=2.0e-3, steps=40, advective_cfl_limit=4.0e-5)
+    with pytest.raises(NumericalFailure, match="rejected at step") as caught:
+        lmhdx.solve(problem, solver, Output(str(tmp_path), every=10))
+    summary = json.loads((tmp_path / "summary.json").read_text())
+    assert caught.value.summary == summary and not summary["accepted"] and summary["steps"] == 10
+    assert summary["rejected"]["reasons"] == ["advective_cfl over 4e-05"] and summary["rejected"]["step"] > 10
+    written = {p.name for p in tmp_path.iterdir()}
+    assert {"run_000010.npz", "run_000020_rejected.npz", "run.pvd"} <= written
+    assert not written & {"run_000020.npz", "run_000020.vtr"}
+    # The rejected state imports but does not resume.
+    with pytest.raises(ValueError, match="another problem or solver"):
+        lmhdx.solve(problem, solver, start=tmp_path / "run_000020_rejected.npz")
+    assert lmhdx.solve(
+        problem,
+        Solver(dt=2.0e-3, steps=10),
+        start=Start(path=str(tmp_path / "run_000020_rejected.npz"), mode="import"),
+    )
+    with pytest.raises(NumericalFailure, match="rejected at step"):
+        lmhdx.solve(problem, solver)  # without an Output the run raises just the same
+    with pytest.raises(ValueError, match="exceeds buoyancy_courant_limit"):  # the start is held to it too
+        lmhdx.solve(problem, Solver(dt=2.0e-3, steps=10, buoyancy_courant_limit=1.0e-3))
+    # Conduction alone is not held to an advective limit.
+    quiet = problem.replace(thermal=dataclasses.replace(problem.thermal, advection="off"))
+    assert lmhdx.solve(
+        quiet, Solver(dt=2.0e-3, steps=10, advective_cfl_limit=1.0e-9), Output(str(tmp_path / "q"))
+    ).summary["accepted"]
+
+
+def test_the_log_keeps_the_solvers_text_and_adds_a_json_line_per_chunk(tmp_path):
+    lmhdx.solve(
+        _heated_duct()[0], Solver(dt=2.0e-3, steps=40), Output(str(tmp_path), every=20, name="heated")
+    )
+    lines = (tmp_path / "heated.log").read_text().splitlines()
+    assert lines[0] == "LMhdX solver"
+    assert (
+        lines[2]
+        == "domain=(1.000000e+00,2.000000e+00,2.000000e+00) dt=2.000000e-03 end=8.000000e-02 max_steps=40"
+    )
+    assert [line.split()[0] for line in lines if line.startswith("step=")] == ["step=20", "step=40"]
+    assert sum(line.startswith("progress=50.0%") for line in lines) == 1 and lines[-1].startswith(
+        "completed case=heated"
+    )
+    records = [json.loads(line) for line in (tmp_path / "heated.jsonl").read_text().splitlines()]
+    assert [r["step"] for r in records] == [20, 40] and records[1]["time"] == pytest.approx(0.08, rel=1e-12)
+    assert records[1]["finite"] == 1.0 and "heat_balance_residual" in records[1]

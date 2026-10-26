@@ -28,49 +28,34 @@ retained samples and add samples from the resumed segment; stride `0` keeps
 only the latest terminal. Restart state and compact diagnostics are independent.
 
 
-## A thermal run
+## An unsteady run
 
-A thermal state is resumed from a versioned record. The record holds the
-staggered velocity, the temperature and the time, exactly:
+`lmhdx.solve(problem, solver, Output("out", every=20))` runs in compiled chunks of 20 steps and writes, for
+every kind of run (a projection run, a heated one, Q2D) and, once, for a steady solve:
+- the record `run_000020.npz` after each accepted chunk: the state, exactly, with the identity of the problem and
+  solver that wrote it;
+- the ParaView frame `run_000020.vtr` (`.vts` for a polar grid, at the points $(r\cos\theta, r\sin\theta, z)$),
+  gathered in `run.pvd`; `fields=("velocity",)` limits the arrays. Stretched grids need nothing extra: the
+  rectilinear file holds the face coordinates;
+- `summary.json`, and the solver's log (`run.log`: the banner, a block per chunk with its progress and the
+  time remaining, the footer) beside a JSON line per chunk in `run.jsonl`.
+
+`Output(name=)` names the files (a case's `name` in a TOML file). A run in chunks is the run in one, bit for bit,
+and so is a run restarted from a record, because a step boundary is the whole state:
 
 ```python
-from lmhdx.thermal import load_thermal_record, write_thermal_record
-from lmhdx.io import write_vtr
-from lmhdx.ops import cell_average
+import lmhdx
 
-path = write_thermal_record("state", problem, state, units="SI")  # state.npz
-state = load_thermal_record(path, problem, units="SI")
-velocity = jnp.stack([cell_average(f, a).data for a, f in enumerate(state.velocity)], axis=-1)
-write_vtr("frame", problem.flow.grid.faces, temperature=state.temperature.data, velocity=velocity)  # for ParaView
+solution = lmhdx.solve(problem, lmhdx.Solver(dt=2e-3, steps=40), lmhdx.Output("out", every=10))
+first = lmhdx.Solver(dt=2e-3, steps=20)
+lmhdx.solve(problem, first, lmhdx.Output("out"))                 # out/run_000020.npz
+rest = lmhdx.solve(problem, first, start="out/run_000020.npz")   # the same state as solution
 ```
 
-The record is a NPZ file with this contents:
-- its schema (`lmhdx.thermal.state`) and version;
-- a units label, which the caller declares and the loader checks;
-- the problem it was written with, as plain data.
+A record is a NPZ file of the state's arrays, its step and an identity hash. `start=path` resumes: it refuses a
+record written for another problem or solver (the run's length excluded), a leaf of another shape or dtype, and any
+leaf that is not finite. `lmhdx.output.Start(path=..., mode="import")` takes the state of any record of the same
+fields, for another experiment. A rejected chunk's state is written as `run_000030_rejected.npz` and imports only.
 
-`load_thermal_record` refuses a record in these cases:
-- its schema, version or units differ, or it was written for another problem.
-  When the problem differs, the error names the parts that differ;
-- a field is missing, mangled or not finite, or the time is not a finite
-  scalar of the compute dtype. These are checked before any state is made.
-
-A record restores the prognostic state exactly. The step's other inputs are
-the caller's: the heat source, whether the flow is held, and an outlet's
-backflow temperature. So a load has two meanings:
-- **An exact resume.** Pass the same `run` provenance (plain data) to both
-  `write_thermal_record` and `load_thermal_record`; a record written by a run
-  with other inputs is refused. A run of six steps and a run of three, through a
-  record, then three more, agree bit for bit.
-- **A state import.** Without `run`, the state becomes the start of another
-  experiment.
-
-`lmhdx case.toml` keeps the run's heat source and `hold_flow` in each record.
-Its `[restart] mode` chooses between the two meanings.
-
-`lmhdx.io.write_vtr` writes any named cell arrays as a rectilinear grid; a thermal run writes two:
-- the temperature;
-- the velocity, as each component's mean over the two faces of its cell.
-
-The cells are in VTK's order, x varying fastest. `write_pvd` gathers frames
-into a time series.
+Without an `Output` a run does no I/O. `write_vtk(path, grid, **cells)` writes named cell arrays directly,
+x varying fastest; `write_pvd` gathers frames into a time series.
