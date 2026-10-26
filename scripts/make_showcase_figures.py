@@ -10,13 +10,14 @@ The duct, pipe and Q2D figures take about three minutes on a laptop CPU, the
 thermal benchmarks about eight; the convection movie takes three minutes on a
 laptop GPU and about a quarter of an hour on its CPU. The small thermal solves
 are pinned to the CPU, where they run faster than on a GPU. Sizes are kept under
-the documented Git media budget.
+the documented Git media budget; production-resolution movies are release assets.
 """
 
 from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import json
 from pathlib import Path
 
@@ -1040,13 +1041,20 @@ def _rgb(fig) -> np.ndarray:
 
 def _animate(frames: list, name: str, width: int, duration: int, quality: int = 45) -> None:
     """An animated WebP, each frame downsampled to ``width`` pixels for smooth edges; ``minimize_size`` stores
-    only what changes between frames."""
+    only what changes between frames. The movie is a release asset, written to the untracked
+    ``docs/_static/generated``; its last frame, 480 px wide, is the tracked preview."""
     height = round(frames[0].shape[0] * width / frames[0].shape[1])
     images = [Image.fromarray(frame).resize((width, height), Image.LANCZOS) for frame in frames]
     options = {"duration": duration, "loop": 0, "quality": quality, "method": 6, "minimize_size": True}
-    path = STATIC / f"{name}.webp"
+    path = STATIC / "generated" / f"{name}.webp"
+    path.parent.mkdir(parents=True, exist_ok=True)
     images[0].save(path, save_all=True, append_images=images[1:], **options)
-    print(f"wrote {path.name}: {len(images)} frames, {path.stat().st_size / 1024:.0f} KiB")
+    last = Image.fromarray(frames[-1])
+    last.resize((480, round(last.height * 480 / last.width)), Image.LANCZOS).save(
+        STATIC / f"{name}_preview.webp", quality=80, method=6
+    )
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    print(f"wrote {path.name}: {len(images)} frames, {path.stat().st_size / 1024:.0f} KiB, sha256 {digest}")
 
 
 RESULTS = Path(__file__).resolve().parents[1] / "benchmarks" / "results"

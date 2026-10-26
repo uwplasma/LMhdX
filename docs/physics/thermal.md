@@ -451,7 +451,9 @@ Nusselt number of the square duct rises from 3.62 at Ha 0 to 4.56 at Ha 10 and
 ```
 
 The figure below compares LMhdX with exact results over a wider range than the
-tests cover; `python scripts/make_showcase_figures.py --only developed` redraws
+tests cover. This figure and the two below verify the solver against exact or
+independent solutions; none is a comparison with experiment.
+`python scripts/make_showcase_figures.py --only developed` redraws
 it. Its inputs and results are saved in `docs/_static/data/`, as are those of the
 entrance and onset figures further down, so each figure can be checked or
 replotted from the stored numbers. Every value is a mean Nusselt number: the
@@ -566,10 +568,15 @@ electrical walls and no heat conduction through solid walls. It does not mean a
 lower pumping cost: at the same flow rate, conducting walls raise the MHD
 pressure drop. It is not a conjugate-wall result either.
 
-```{image} ../_static/thermal_heated_duct.webp
+```{image} ../_static/thermal_heated_duct_preview.webp
 :alt: Heated wall, floor and outlet temperatures of an insulating and a Hunt duct in 3-D as heat enters from one side wall
 :align: center
+:target: https://github.com/uwplasma/LMhdX/releases/download/showcase-thermal/thermal_heated_duct.webp
 ```
+
+The image is the movie's last frame and links to the movie, a release asset:
+`thermal_heated_duct.webp`, SHA-256 `f9ff3031c42d3f7d99a3efc4344f5541c07e2372c5a1568d526866eef23137d7`, written to `docs/_static/generated/` by
+`python scripts/make_showcase_figures.py --only heated-duct`.
 
 **Crediting a load.** A design that must remove a given duty is judged on what
 the duty itself does, not on the gross outlet enthalpy. Joule heat and a
@@ -654,10 +661,15 @@ This is a transient run in a field. It shows how the flow evolves, but it is
 not a quantitative result until the stabilised transient step keeps a fluid at
 rest in a field along $y$.
 
-```{image} ../_static/thermal_convection_3d.webp
+```{image} ../_static/thermal_convection_3d_preview.webp
 :alt: A liquid-metal layer heated from below, without a field and in a horizontal field
 :align: center
+:target: https://github.com/uwplasma/LMhdX/releases/download/showcase-thermal/thermal_convection_3d.webp
 ```
+
+The image is the movie's last frame and links to the movie, a release asset:
+`thermal_convection_3d.webp`, SHA-256 `bb3c3adb84882ded113c7dba1c0a56b872a3dff2dfa55c508013bd26fb7c9ec1`, written to `docs/_static/generated/` by
+`python scripts/make_showcase_figures.py --only convection`.
 
 ## A worked example
 

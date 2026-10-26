@@ -166,47 +166,22 @@ python examples/fringe_duct_example.py
 
 ## Heat transfer
 
-![A liquid-metal layer heated from below, without a field and in a horizontal field](docs/_static/thermal_convection_3d.webp)
+`lmhdx.thermal` adds a temperature field to the flow solver: heat conducts, is
+carried by the flow, can be released by the currents as Joule heating and can
+drive buoyant flow, and every step checks the heat budget. The module is still
+research stage. Far down a heated duct LMhdX matches the exact Nusselt numbers
+of rectangular ducts and of Hartmann plates to within 0.35 %, and in a vertical
+field it follows Chandrasekhar's tenfold rise of the critical Rayleigh number to
+within 0.9 %. The
+[heat transport page](https://lmhdx.readthedocs.io/en/latest/physics/thermal.html)
+gives each comparison, its conditions and the command that redraws it.
 
-*Liquid metal heated from below, at Ra = 10⁴ and Pr = 0.1. Without a field the
-convection cells keep rearranging. A horizontal field (the arrow) leaves
-straight rolls lined up with it, as in liquid-metal experiments (Burr & Müller
-2002). The movie shows how the flow evolves; it is not a quantitative result.*
+[![A liquid-metal layer heated from below, without a field and in a horizontal field](docs/_static/thermal_convection_3d_preview.webp)](https://github.com/uwplasma/LMhdX/releases/download/showcase-thermal/thermal_convection_3d.webp)
 
-`lmhdx.thermal` adds a temperature field to the flow solver. Heat conducts
-through the fluid, is carried along by the flow, can be released by the
-currents as Joule heating, and can drive buoyant flow. Every time step checks
-that the heat budget balances. The module is still research stage. The
-Nusselt number, Nu, measures how well the flow carries heat away from a wall.
-The [heat transport page](https://lmhdx.readthedocs.io/en/latest/physics/thermal.html)
-shows each of these comparisons with its figure. All of them are against exact
-or independent solutions, so they verify the solver; none is a comparison with
-experiment.
-- Far down a heated duct, LMhdX matches the exact mean Nusselt number of
-  rectangular ducts of any aspect ratio to within 0.35 % (the H1 condition, on
-  the hydraulic diameter). Between Hartmann plates heated with a uniform flux it
-  matches the closed form to within 0.2 % from Ha 1 to 1000, and the error
-  falls at second order as the mesh is refined.
-- A vertical field delays the onset of convection in a layer heated from below.
-  LMhdX follows Chandrasekhar's tenfold rise in the critical Rayleigh number
-  from Q = Ha² = 0 to 1000 to within 0.9 %, once extrapolated in the time step.
-- In a duct at Ha 1000 heated through one side wall, with the flow held fixed,
-  conducting Hartmann walls drive side-layer jets that lower the wall's hottest
-  rise by about a quarter. That is at a fixed flow rate; the same walls also
-  raise the pressure drop.
-
-The test suite runs the duct, plate and Q = 0 onset cases on fixed meshes and
-checks the reference solutions themselves
-([`validation/thermal.py`](validation/thermal.py)). The figures and movies are
-regenerated with
-
-```console
-python scripts/make_showcase_figures.py --only developed   # or entrance, onset, convection, heated-duct
-```
-
-The three figures take about eight minutes on a laptop CPU, and each movie a
-few minutes on a laptop GPU. Each figure's inputs and results are saved next to
-it, in [`docs/_static/data/`](docs/_static/data/).
+*Liquid metal heated from below (Ra = 10⁴, Pr = 0.1); the image links to the
+movie. Without a field the cells keep rearranging; a horizontal field leaves
+rolls along it, as in Burr & Müller (2002). An illustration, not a
+quantitative result.*
 
 ## Design with gradients
 
