@@ -347,9 +347,8 @@ _compiled = jax.jit(
 
 @functools.wraps(_solve, assigned=("__doc__",), updated=())
 def solve_open_duct(*arguments, **controls) -> OpenDuctSolution:
-    # Eagerly, one compiled program per problem and controls (some 700 small eager ones before), the
-    # same whether or not ``field_scale`` is passed; under a trace the solve joins the caller's
-    # program as before. A rejected solve is nonfinite under any trace and raises here.
+    # Eagerly, one compiled program per problem and controls, whether or not ``field_scale`` is passed;
+    # under a trace the solve joins the caller's program. A rejected solve is nonfinite and raises here.
     controls = {"field_scale": 1.0, **controls}
     traced = isinstance(controls["field_scale"], jax.core.Tracer)
     solution = (_solve if traced else _compiled)(*arguments, **controls)
