@@ -1156,7 +1156,9 @@ def _trajectory(problem, steps, factorization, viscous, checkpoint):
         # cell fields per step (3.1 GiB over 100 steps at 128^3 in float64) to return the last one.
         cell = Field(jnp.zeros(problem.grid.shape, velocity[0].dtype), (CENTER,) * 3, problem.grid)
         body = jax.checkpoint(single) if checkpoint else single
-        (final, pressure, potential), history = jax.lax.scan(body, (velocity, cell, cell), xs=None, length=steps)
+        (final, pressure, potential), history = jax.lax.scan(
+            body, (velocity, cell, cell), xs=None, length=steps
+        )
         return Trajectory(final, pressure, potential, *history)
 
     return run
