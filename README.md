@@ -166,44 +166,19 @@ python examples/fringe_duct_example.py
 
 ## Heat transfer
 
-`lmhdx.thermal` adds a temperature field to the flow solver. Heat conducts
-through the fluid, is carried along by the flow, can be released by the
-currents as Joule heating, and can drive buoyant flow. Every time step checks
-that the heat budget balances. The module is still research stage; the
+`lmhdx.thermal` adds a temperature field to the flow solver: heat conducts, is
+carried by the flow, can be released by the currents as Joule heating and can
+drive buoyant flow, and every step checks the heat budget. The module is still
+research stage. Far down a heated duct LMhdX matches the exact Nusselt numbers
+of rectangular ducts and of Hartmann plates to within 0.35 %, and in a vertical
+field it follows Chandrasekhar's tenfold rise of the critical Rayleigh number to
+within 0.9 %. The
 [heat transport page](https://lmhdx.readthedocs.io/en/latest/physics/thermal.html)
-covers it in full. The Nusselt number, Nu, measures how well the flow carries
-heat away from a wall.
+gives each comparison, its conditions and the command that redraws it.
 
 ![Velocity and temperature of a square duct at Ha 0 and 100 in 3-D, Nusselt numbers against aspect ratio and Hartmann number, and mesh convergence](docs/_static/thermal_developed_duct.webp)
 
-Far down a heated duct the temperature profile stops changing shape. There,
-LMhdX matches the exact mean Nusselt number of rectangular ducts of any aspect
-ratio to within 0.35 % (uniform axial heating with the wall at one temperature
-around the section, the H1 condition, based on the hydraulic diameter). Between
-Hartmann plates heated with a uniform flux, it matches the closed-form solution
-to within 0.2 % from Ha 1 to 1000, and the error falls at second order as the
-mesh is refined.
-
 ![Critical Rayleigh number against the field strength, the critical rolls at Q = 0 and 1000, and the error against the time step](docs/_static/thermal_magnetoconvection.webp)
-
-A vertical magnetic field delays the onset of convection in a layer heated from
-below. Chandrasekhar's theory predicts a tenfold rise in the critical Rayleigh
-number between Q = Ha² = 0 and 1000, and LMhdX follows it to within 0.9 % once
-the result is extrapolated in the time step.
-
-These comparisons are against exact or independent solutions, so they verify
-the solver; none of them is a comparison with experiment. The test suite runs
-the duct, plate and Q = 0 onset cases on fixed meshes and checks the reference
-solutions themselves ([`validation/thermal.py`](validation/thermal.py)). The
-full sweeps in the figures, and a comparison of the thermal entrance with the
-Graetz solution, take about eight minutes on a laptop CPU:
-
-```console
-python scripts/make_showcase_figures.py --only developed   # or entrance, onset
-```
-
-Each figure's inputs and results are saved next to it, in
-[`docs/_static/data/`](docs/_static/data/).
 
 ## Design with gradients
 

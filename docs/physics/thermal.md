@@ -451,7 +451,9 @@ Nusselt number of the square duct rises from 3.62 at Ha 0 to 4.56 at Ha 10 and
 ```
 
 The figure below compares LMhdX with exact results over a wider range than the
-tests cover; `python scripts/make_showcase_figures.py --only developed` redraws
+tests cover. This figure and the two below verify the solver against exact or
+independent solutions; none is a comparison with experiment.
+`python scripts/make_showcase_figures.py --only developed` redraws
 it. Its inputs and results are saved in `docs/_static/data/`, as are those of the
 entrance and onset figures further down, so each figure can be checked or
 replotted from the stored numbers. Every value is a mean Nusselt number: the
