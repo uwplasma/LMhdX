@@ -441,6 +441,27 @@ def test_what_cannot_be_differentiated_yet_is_refused_not_silently_zero():
     assert float(objective(1.0)) == pytest.approx(float(lmhdx.solve(base).flow_rate), rel=1e-8)
 
 
+@pytest.mark.parametrize(
+    ("hartmann", "reynolds", "cells", "method"),
+    [(20, 40, 12, "march"), (20, 20, 12, "march"), (20, 10, 12, "newton"), (100, 20, 16, "newton")],
+)
+def test_auto_marches_an_open_duct_while_the_courant_step_is_within_four_damping_steps(
+    hartmann, reynolds, cells, method
+):
+    """The measured regimes of plan H.10.9 (62 axial cells, warm seconds Newton / march: 15.9 / 5.35, 5.2 / 3.4, 1.7 / 3.9, 33.8 / 41.6)."""
+    duct_ = fringe_duct(
+        hartmann,
+        wall_conductance=0.02,
+        spacing=0.5,
+        cells=cells,
+        cells_in_layer=3 if cells == 12 else 4,
+        flow_rate=4.0 * reynolds,
+        advection="central",
+        growth=1.0,
+    )
+    assert Solver().resolve(duct_) == method == Solver(method=method).resolve(duct_)
+
+
 def test_the_solver_resolves_its_method_and_refuses_what_the_kernels_cannot_do():
     stokes, inertial = duct(20, 32), duct(20, 32, advection="central")
     assert Solver().resolve(stokes) == "stokes" and Solver().resolve(inertial) == "newton"
@@ -448,9 +469,14 @@ def test_the_solver_resolves_its_method_and_refuses_what_the_kernels_cannot_do()
     assert Solver(dt=0.01, steps=2).resolve(q2d(shape=(8, 8))) == "ifrk4"
     with pytest.raises(ValueError, match="dt and steps"):
         Solver().resolve(q2d(shape=(8, 8)))
-    for method, plan in (("rk3", "H2.2"), ("march", "H3"), ("implicit", "H2.2")):
-        with pytest.raises(NotImplementedError, match=plan):
+    for method in ("rk3", "implicit"):
+        with pytest.raises(NotImplementedError, match="H2.2"):
             Solver(method=method).resolve(stokes)
+    inflow = fringe_duct(10.0, advection="central", **_SMALL_FRINGE)
+    assert {Solver(method=m).resolve(inflow) for m in ("newton", "march")} == {"newton", "march"}
+    for method, problem in (("march", inertial), ("march", stokes)):
+        with pytest.raises(ValueError, match="does not fit"):
+            Solver(method=method).resolve(problem)
     with pytest.raises(ValueError, match="one of"):
         Solver(method="rk4").resolve(stokes)
     with pytest.raises(ValueError, match="does not fit"):

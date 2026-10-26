@@ -148,8 +148,10 @@ python examples/fringe_duct_example.py
 - The flow rate through every station, mass and charge hold to round-off; the
   upstream gradient is the fully developed one; the pressure drop across the
   fringe and its derivative with respect to the field strength are outputs.
-- With `advection="central"` or `"limited"`, `solve_open_duct` continues the
-  Stokes solution by Newton–Krylov; at N = 1000 the inertial share of the
+- With `advection="central"` or `"limited"`, `solve_open_duct` takes the
+  Stokes solution to its steady state by Newton-Krylov or by marching the
+  Runge-Kutta stepper (`method="auto"` picks the faster) and reports
+  `converged`, `stagnated` or `unsteady`; at N = 1000 the inertial share of the
   excess drop is 0.4 – 2.3 % (reported, not gated). `fringe_pipe` and
   `solve_open_pipe` give a circular pipe an inlet and an outlet (Stokes limit
   only), with the ALEX B1 comparison in the numerics notes.
@@ -293,7 +295,7 @@ states each gate and what it does not cover.
 | `python examples/hunt_example.py` | conducting walls, prescribed throughput and hydraulic power |
 | `python examples/li_aln_wall_stack_example.py` | explicit wall material layers and interface currents |
 | `python examples/fringe_duct_example.py` | 3-D duct leaving a magnet, drop and its field derivative |
-| `python examples/open_duct_inertia_example.py` | inertial share of the fringe drop from the Newton open-duct solve |
+| `python examples/open_duct_inertia_example.py` | inertial share of the fringe drop from the open-duct solve with advection |
 | `python examples/q2d_turbulence_demo.py` | Q2D vorticity evolution, energy decay, movie |
 | `python examples/duct_design_law.py` | optimum aspect ratio of an insulated duct, one blanket design |
 

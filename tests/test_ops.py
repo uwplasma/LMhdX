@@ -480,6 +480,27 @@ def test_a_uniform_flow_is_not_transported(limited):
         assert float(jnp.max(jnp.abs(field.data))) < 1e-13
 
 
+def test_the_outlet_face_of_an_open_axis_loses_momentum_through_its_outer_side():
+    """The outlet face owns half a cell: its transport is its own flux out minus the last centre's, over that half cell."""
+    grid = Grid(uniform_faces(8, 0.0, 4.0), uniform_faces(2, 0.0, 1.0), uniform_faces(2, 0.0, 1.0))
+    wall = BoundaryCondition(DIRICHLET)
+    conditions = (BoundaryCondition(DIRICHLET, upper_kind=NEUMANN), wall, wall)
+    slope, width = 0.2, 0.5
+    axial = Field(
+        jnp.broadcast_to((1.0 + slope * np.arange(9) * width)[:, None, None], (9, 2, 2)),
+        velocity_offset(0),
+        grid,
+    )
+    zeros = tuple(
+        Field(jnp.zeros(grid.offset_shape(velocity_offset(c))), velocity_offset(c), grid) for c in (1, 2)
+    )
+    found = np.asarray(momentum_advection((axial, *zeros), conditions, limited=False)[0].data)[:, 0, 0]
+    speed = np.asarray(axial.data)[:, 0, 0]
+    np.testing.assert_allclose(found[1:-1], 2.0 * slope * speed[1:-1], rtol=1e-13)
+    assert found[0] == 0.0
+    assert found[-1] == pytest.approx(slope * (2.0 * speed[-1] - slope * width / 2.0), rel=1e-13)
+
+
 @pytest.mark.parametrize("limited", [False, True])
 def test_the_flux_form_conserves_momentum(limited):
     """Telescoping fluxes: the transported momentum of a periodic box sums to zero."""

@@ -1,13 +1,14 @@
 """Check whether inertia matters in a fringing flow with the open-duct solve.
 
 ``solve_open_duct`` solves a duct with an inlet and an outlet. Without advection
-it is the inertialess (Stokes) flow; with ``advection="central"`` it is Newton's
-method on the full steady flow, started from that one. It is worth using to check
-the inertial share at moderate Re: the share below is the change of the fringe
-pressure drop when transport is switched on. Past Re ~ 30 the outer iterations
-grow fast, so keep Re moderate and ``growth=1.0`` (small cell Reynolds number).
-This Ha 30 case is cheap; the measured share at Ha 100-200 and Re 10-40 is about
-0.045% Re^1.31 Ha^-0.16 of the drop, but those meshes take minutes.
+it is the inertialess (Stokes) flow; with ``advection="central"`` the flow is
+taken from that one to its steady state by Newton's method or by marching the
+Runge-Kutta stepper, whichever ``method="auto"`` finds faster. It is worth using to
+check the inertial share: the share below is the change of the fringe pressure
+drop when transport is switched on. Keep ``growth=1.0`` (small cell Reynolds
+number). This Ha 30 case is cheap; the measured share at Ha 100-200 and Re
+10-40 is about 0.045% Re^1.31 Ha^-0.16 of the drop. Check ``status``: only
+``CONVERGED`` (0) is a steady flow.
 
 Edit the inputs below, then run ``python examples/open_duct_inertia_example.py``.
 """
@@ -48,13 +49,15 @@ def build(reynolds, advection):
     )
 
 
-# Run the Stokes-limit and the Newton solves at each Reynolds number.
+# Run the Stokes-limit solve and the inertial solve at each Reynolds number.
 rows = []
 for reynolds in REYNOLDS_NUMBERS:
-    print(f"Ha = {HARTMANN_NUMBER:g}, Re = {reynolds:g}: Stokes, then Newton...", flush=True)
+    print(
+        f"Ha = {HARTMANN_NUMBER:g}, Re = {reynolds:g}: Stokes, then the steady inertial solve...", flush=True
+    )
     start = time.perf_counter()
     stokes = solve_open_duct(build(reynolds, "off"))
-    full = solve_open_duct(build(reynolds, "central"), continuation=(0.5, 1.0))
+    full = solve_open_duct(build(reynolds, "central"))
     drop_stokes = float(pressure_drop(stokes.pressure, -HALF_LENGTH, HALF_LENGTH))
     drop_full = float(pressure_drop(full.pressure, -HALF_LENGTH, HALF_LENGTH))
     rows.append(
@@ -63,7 +66,8 @@ for reynolds in REYNOLDS_NUMBERS:
             "drop_stokes": drop_stokes,
             "drop_with_transport": drop_full,
             "inertial_share_percent": 100.0 * abs(drop_full - drop_stokes) / abs(drop_stokes),
-            "outer_iterations": int(full.iterations),
+            "iterations": int(full.iterations),
+            "status": int(full.status),
             "relative_residual": float(full.residual_norm / full.initial_residual_norm),
             "seconds": time.perf_counter() - start,
         }
@@ -76,7 +80,7 @@ print("Results (half-width, density, viscosity and conductivity are 1):")
 for row in rows:
     print(
         f"  Re {row['reynolds']:g}: drop {row['drop_stokes']:.6g} -> {row['drop_with_transport']:.6g}, "
-        f"inertial share {row['inertial_share_percent']:.3f}%, {row['outer_iterations']} outer iterations, "
+        f"inertial share {row['inertial_share_percent']:.3f}%, {row['iterations']} iterations, "
         f"{row['seconds']:.0f} s"
     )
 print(f"Wrote {OUTPUT_DIR / 'open_duct_inertia_summary.json'}")
