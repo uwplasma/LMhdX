@@ -30,8 +30,9 @@ _TEST_SHARDS = {
         "tests/test_freemhd.py",
         "tests/test_benchmarks.py",
         "tests/test_example_runner.py",
-        "tests/test_design.py",
     ),
+    # Split from support: the design studies are most of its unit time.
+    "design": ("tests/test_design.py",),
     "operators": (
         "tests/test_grid.py",
         "tests/test_ops.py",
@@ -40,7 +41,7 @@ _TEST_SHARDS = {
         "tests/test_em.py",
         "tests/test_momentum_placement_oracle.py",
     ),
-    "channel": ("tests/test_core3d.py", "tests/test_pipe.py", "tests/test_axial.py", "tests/test_table_i.py"),
+    "channel": ("tests/test_core3d.py", "tests/test_pipe.py"),
     "plane": (
         *(
             f"tests/test_core3d.py::{name}"
@@ -52,6 +53,8 @@ _TEST_SHARDS = {
             )
         ),
         "tests/test_coreflow.py",
+        "tests/test_axial.py",
+        "tests/test_table_i.py",
     ),
     "steady": ("tests/test_steady.py",),
     # The shared-program tests of 2b.1, split from steady to keep both inside their budgets.
@@ -80,20 +83,26 @@ _TEST_SHARDS = {
     "physics": (
         "tests/test_physics.py",
         "tests/test_q2d_identities.py",
+        "tests/test_stepper.py",
     ),
+    "api": ("tests/test_problem.py",),
+    "anchors": ("tests/test_laminar_anchors.py",),
 }
 
 _ALL_TESTS = tuple(dict.fromkeys(path.split("::")[0] for shard in _TEST_SHARDS.values() for path in shard))
 _CHANGE_TEST_NAMES = {
-    "__init__": "config example_runner",
+    "__init__": "config example_runner problem",
     "__main__": "io",
     "cases": "config physics fully_developed units_and_wall_models design io",
     "axial": "axial example_runner",
-    "core3d": "core3d timeloop steady coreflow axial",
+    "core3d": "core3d stepper timeloop steady coreflow axial",
     "coreflow": "coreflow freemhd",
     "fully_developed": "fully_developed design config example_runner",
     "steady": "steady fully_developed axial",
     "grid": "grid ops core3d timeloop steady pipe axial",
+    "problem": "problem laminar_anchors example_runner",
+    "fields": "problem laminar_anchors",
+    "solver": "problem laminar_anchors example_runner",
     "ops": "ops em core3d timeloop steady pipe axial",
     "poisson": "poisson core3d timeloop steady pipe axial",
     "pipe": "pipe poisson axial em",
