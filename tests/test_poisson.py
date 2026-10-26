@@ -676,3 +676,98 @@ def test_the_solves_carry_no_cell_sized_constants():
         for shape in re.findall(r'dense<[\["][^\n]*>\s*:\s*tensor<([\dx]+)x', text)
     ]
     assert sizes and max(sizes) < n**3 // 2
+
+
+def _wall_grid():
+    return Grid(uniform_faces(1, 0.0, 1.0), geometric_faces(10, -1.0, 1.0, 1.2), uniform_faces(8, -1.0, 1.0))
+
+
+def _compatible(grid, seed=0):
+    volumes = grid.cell_volumes()
+    data = np.random.default_rng(seed).standard_normal(grid.shape)
+    return Field(jnp.asarray(data - np.sum(data * volumes) / np.sum(volumes)), (CENTER,) * 3, grid)
+
+
+def test_a_wall_operator_assembled_in_the_trace_is_the_host_operator():
+    from lmhdx.poisson import assemble_thick_wall_operator, assemble_thin_wall_operator
+
+    grid = _wall_grid()
+    thin = assemble_thin_wall_operator(grid, 1, (0.05, 0.05))
+    traced = jax.jit(lambda c: assemble_thin_wall_operator(grid, 1, (c, c)))(0.05)
+    assert all(np.array_equal(a, b) for a, b in zip(thin, traced, strict=True))
+    layers = ((5.0, (0.03, 0.04, 0.05)), (0.5, (0.1, 0.1)))
+    host = assemble_thick_wall_operator(grid, 1, layers)
+    traced = jax.jit(lambda r, w: assemble_thick_wall_operator(grid, 1, ((r[0], w[0]), (r[1], w[1]))))(
+        (5.0, 0.5), (jnp.array([0.03, 0.04, 0.05]), jnp.array([0.1, 0.1]))
+    )
+    for a, b in zip(host[:2], traced[:2], strict=True):
+        np.testing.assert_allclose(b, a, rtol=1e-15, atol=0.0)  # XLA fuses one product: one rounding at most
+    np.testing.assert_allclose(traced[2], host[2], rtol=1e-15)
+
+
+@pytest.mark.parametrize("precision", ["state", "mixed"])
+@pytest.mark.parametrize("walls", [(0.0, 0.05, 0.0), (0.0, 0.05, 0.2)])
+def test_a_traced_wall_factorization_solves_as_the_host_one_and_differentiates_implicitly(walls, precision):
+    """The potential of walls built in the trace: the host solve to 1e-11, the derivative against differences."""
+    from lmhdx.poisson import fast_diagonal_thin_wall_poisson
+
+    grid = _wall_grid()
+    conditions = (BoundaryCondition(PERIODIC), WALL, WALL)
+    rhs = _compatible(grid)
+
+    def potential(c):
+        built = fast_diagonal_thin_wall_poisson(
+            grid, conditions, (0.0, c, walls[2]), precision=precision, layers=None
+        )
+        return built.solve_with_walls(rhs)[0].data
+
+    expected = fast_diagonal_thin_wall_poisson(grid, conditions, walls, precision=precision)
+    expected = expected.solve_with_walls(rhs)[0].data
+    scale = float(jnp.max(jnp.abs(expected)))
+    assert float(jnp.max(jnp.abs(jax.jit(potential)(walls[1]) - expected))) <= 1e-11 * scale
+    weight = jax.random.normal(jax.random.PRNGKey(1), grid.shape)
+
+    def objective(c):
+        return jnp.sum(weight * potential(c))
+
+    slope = jax.grad(objective)(walls[1])
+    assert float(jax.jvp(objective, (walls[1],), (1.0,))[1]) == pytest.approx(float(slope), rel=1e-10)
+    step = 1e-3 * walls[1]
+    central = (objective(walls[1] + step) - objective(walls[1] - step)) / (2 * step)
+    assert float(slope) == pytest.approx(float(central), rel=2e-5)
+
+
+def test_a_wall_factorization_is_a_pytree_that_crosses_jit_and_vmap():
+    from lmhdx.poisson import fast_diagonal_thin_wall_poisson
+
+    grid = _wall_grid()
+    conditions = (BoundaryCondition(PERIODIC), WALL, WALL)
+    rhs = _compatible(grid)
+    built = jax.jit(lambda c: fast_diagonal_thin_wall_poisson(grid, conditions, (0.0, c, 0.0)))(0.05)
+    leaves, tree = jax.tree.flatten(built)
+    again = jax.tree.unflatten(tree, leaves)
+    assert again.pads == built.pads and again.grid == grid
+    solve = jax.jit(lambda factorization: factorization.solve_with_walls(rhs)[0].data)
+    host = fast_diagonal_thin_wall_poisson(grid, conditions, (0.0, 0.05, 0.0)).solve(rhs).data
+    assert float(jnp.max(jnp.abs(solve(built) - host))) <= 1e-11 * float(jnp.max(jnp.abs(host)))
+    sweep = jax.vmap(
+        lambda c: fast_diagonal_thin_wall_poisson(grid, conditions, (0.0, c, 0.0)).solve(rhs).data
+    )
+    swept = sweep(jnp.array([0.05, 0.5]))
+    assert float(jnp.max(jnp.abs(swept[0] - host))) <= 1e-11 * float(jnp.max(jnp.abs(host)))
+    assert float(jnp.max(jnp.abs(swept[1] - swept[0]))) > 1e-3 * float(jnp.max(jnp.abs(host)))
+
+
+def test_two_resolved_walls_refuse_traced_parameters_and_the_insulating_wall_takes_no_node():
+    from lmhdx.poisson import fast_diagonal_thin_wall_poisson
+
+    grid = Grid(uniform_faces(1, 0.0, 1.0), geometric_faces(6, -1.0, 1.0, 1.2), uniform_faces(6, -1.0, 1.0))
+    conditions = (BoundaryCondition(PERIODIC), WALL, WALL)
+
+    def build(ratio):
+        walls = ((ratio, (0.1, 0.1)), None)
+        return fast_diagonal_thin_wall_poisson(grid, conditions, (0.0,) * 3, layers=(None, walls, walls))
+
+    with pytest.raises(NotImplementedError, match="two axes"):
+        jax.jit(build)(2.0)
+    assert build(2.0).corner_fix is not None

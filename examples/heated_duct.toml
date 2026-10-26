@@ -1,0 +1,28 @@
+# A heated duct with buoyancy and Joule heating, run with `lmhdx examples/heated_duct.toml`.
+# A table is a constructor call: [problem] is Problem(**table), [solver] is Solver(**table), and
+# `table.key=value` on the command line overrides a key, e.g. `solver.steps=20 problem.B.value=[0, 20, 0]`.
+schema_version = 3
+name = "heated_duct"
+units = "nondimensional"
+
+[problem]
+forcing = [1.0, 0.0, 0.0]
+B = { kind = "uniform", value = [0.0, 10.0, 0.0] }
+bc = { x = "periodic", y = { heat_flux = 0.0 }, z = { lower = { heat_flux = 0.0 }, upper = { heat_flux = 1.0 } } }
+
+[problem.grid]
+x = { cells = 1, lower = 0.0, upper = 1.0 }
+y = { cells = 8, lower = -1.0, upper = 1.0 }
+z = { cells = 8, lower = -1.0, upper = 1.0 }
+
+[problem.thermal]
+specific_heat = 1.0
+thermal_conductivity = 0.05
+reference_temperature = 0.0
+expansion_coefficient = 0.02
+gravity = [0.0, 0.0, -1.0]
+heat_source = 0.5
+
+[solver]
+dt = 2.0e-3
+steps = 40
