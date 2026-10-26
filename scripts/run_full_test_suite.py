@@ -255,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
         str(workers),
         "--dist",
         "worksteal",
-        "--durations=20",
+        "--durations=0",
         f"--junitxml={junit_path}",
     ]
     if args.test_timeout_seconds is not None:
