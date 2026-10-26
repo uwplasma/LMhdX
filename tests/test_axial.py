@@ -25,6 +25,12 @@ from lmhdx.steady import _face_weights, _orthogonal_projection, steady_residual,
 
 pytestmark = pytest.mark.numerical
 
+_COMPILES: list = []
+jax.monitoring.register_event_duration_secs_listener(
+    lambda event, duration, **_: (
+        _COMPILES.append(event) if event.endswith("backend_compile_duration") else None
+    )
+)
 _OPEN = BoundaryCondition(DIRICHLET, upper_kind=NEUMANN)
 _WALL = BoundaryCondition(NEUMANN)
 
@@ -203,6 +209,18 @@ def test_the_pressure_drop_adjoint_matches_central_differences():
     step = 1e-4
     central = (float(drop(1.0 + step)) - float(drop(1.0 - step))) / (2.0 * step)
     assert gradient == pytest.approx(central, rel=1e-6)
+
+
+def test_building_and_solving_an_open_duct_compiles_a_few_programs_and_a_repeat_none():
+    """H0.1: the inlet profile and the solve are compiled programs, not hundreds of eagerly dispatched operations."""
+    del _COMPILES[:]
+    problem = _small_fringe(hartmann=9.0, spacing=1.0)
+    first = solve_open_duct(problem)
+    built = len(_COMPILES)
+    second = solve_open_duct(problem, field_scale=1.01)
+    assert built < 40 and len(_COMPILES) == built
+    assert float(second.residual_norm) <= 1e-9 * float(second.initial_residual_norm)
+    assert float(first.residual_norm) <= 1e-9 * float(first.initial_residual_norm)
 
 
 def test_invalid_open_axes_are_refused():

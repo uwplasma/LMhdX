@@ -22,6 +22,12 @@ solver controls to compile objectives with `jax.jit(jax.value_and_grad(objective
 Host factorizations are assembled once per trace, not differentiated; changing
 the static problem requires a new trace. Compiled failures remain nonfinite.
 
+## Through a Problem
+
+A [`Problem`](../getting_started/problem.md) is a pytree: `jax.grad(f)(problem)` returns a `Problem`
+of derivatives with respect to its forcing, flow rate, field amplitude, heat source and initial
+temperature. Properties, wall conductances and the grid are static, so a traced one raises.
+
 ## Steady duct response
 
 ```python

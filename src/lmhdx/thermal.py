@@ -659,7 +659,7 @@ def build_thermal_step(
         else:
             body = face_lorentz_force(_lorentz_from_currents(currents, field, flow), flow)
             buoyancy = _buoyancy(temperature, problem)
-            moved, _ = _advance_momentum(velocity, body, flow, pressure, viscous, extra_force=buoyancy)
+            moved = _advance_momentum(velocity, body, flow, viscous, extra_force=buoyancy)[0]
         fluxes = _upwind_fluxes(temperature, velocity, problem, reservoir) if upwind else None
         transport = divergence(fluxes).data if upwind else 0.0
         carried = (
