@@ -38,7 +38,7 @@ from lmhdx.grid import (
     uniform_faces,
     wall_resolving_faces,
 )
-from lmhdx.ops import divergence
+from lmhdx.ops import divergence, face_gradient
 from validation.shercliff import flow_rate
 
 # Physics validation rather than unit checks: the channel cases integrate to a
@@ -425,6 +425,93 @@ def test_an_extra_force_density_enters_beside_the_forcing():
     for pushed, forced in zip(advance(problem, uniform), advance(more)):
         error, scale = (float(jnp.max(jnp.abs(data))) for data in (pushed.data - forced.data, forced.data))
         assert error <= 1e-13 * scale
+
+
+def _periodic_box(cells: int = 16) -> Grid:
+    faces = uniform_faces(cells, 0.0, 2.0 * np.pi)
+    return Grid(faces, faces, uniform_faces(1, 0.0, 1.0))
+
+
+def _box_problem(field: float, dt: float, **overrides) -> ChannelProblem:
+    return ChannelProblem(
+        grid=_periodic_box(),
+        conditions=(PERIODIC_X,) * 3,
+        magnetic_field=(0.0, field, 0.0),
+        dt=dt,
+        **overrides,
+    )
+
+
+@pytest.mark.parametrize("mode", ["explicit", "implicit", "implicit from rest pressure"])
+@pytest.mark.parametrize(("field", "dt", "cold"), [(0.0, 0.1, 1e-13), (10.0, 0.1, 2e-3), (10.0, 0.01, 5e-5)])
+def test_a_pressure_gradient_force_leaves_the_fluid_at_rest(field, dt, cold, mode):
+    """``p = sin x sin y`` and a force equal to its discrete gradient, across a field along ``y``: no motion.
+
+    The damping rescales ``x`` and ``z`` and not ``y``, so a predictor that scaled only the force left a
+    solenoidal remainder the projection could not remove: peak speed 4.4e-2 at B = 10 and dt = 0.1, 2.4e-3 at
+    dt = 0.01 (3.6e-2 and 2.4e-3 with implicit viscosity). The stage carries the pressure gradient through the
+    same ``H``: exact to round-off with explicit viscosity, and with implicit viscosity from the stage's own
+    pressure; from a zero pressure the split stage leaves ``cold``, 30 to 80 times less than before.
+    """
+    from lmhdx.core3d import _advance_momentum
+
+    problem = _box_problem(field, dt)
+    grid = problem.grid
+    x, y = (np.asarray(centres) for centres in grid.centers[:2])
+    pressure = Field(
+        jnp.asarray(np.sin(x)[:, None, None] * np.sin(y)[None, :, None] * np.ones((1, 1, 1))),
+        (CENTER,) * 3,
+        grid,
+    )
+    force = enforce_face_constraints(
+        tuple(face_gradient(pressure, axis, PERIODIC_X) for axis in range(3)), problem
+    )
+    viscous = None if mode == "explicit" else problem.viscous_factorizations()
+    last = pressure if mode.endswith("pressure") else None
+    rest = zero_velocity(problem)
+    velocity, found = _advance_momentum(
+        rest, rest, problem, problem.factorization(), viscous, extra_force=force, pressure=last
+    )
+    bound = cold if mode == "implicit" else 1e-13
+    assert max(float(jnp.max(jnp.abs(component.data))) for component in velocity) < bound
+    if mode != "implicit":
+        assert float(jnp.max(jnp.abs(found.data - pressure.data))) < 1e-12
+
+
+def _vortex(problem: ChannelProblem) -> tuple[Field, Field, Field]:
+    """The divergence-free vortex ``psi = sin x sin 2y``, exact on the staggered grid through its corner values."""
+    xf, yf = (np.asarray(faces) for faces in problem.grid.faces[:2])
+    corner = np.sin(xf)[:, None] * np.sin(2.0 * yf)[None, :]
+    u = np.diff(corner, axis=1) / np.diff(yf)[None, :]
+    v = -np.diff(corner, axis=0) / np.diff(xf)[:, None]
+    data = (u[:, :, None], v[:, :, None], np.zeros(problem.grid.shape[:2] + (2,)))
+    return tuple(Field(jnp.asarray(d), velocity_offset(axis), problem.grid) for axis, d in enumerate(data))
+
+
+@pytest.mark.parametrize("implicit", [False, True])
+@pytest.mark.parametrize("field", [0.0, 3.0, 30.0])
+def test_the_step_is_first_order_in_time_across_magnetic_stiffness(field, implicit):
+    """A decaying vortex across a field along ``y``, against the same scheme at a sixteenth of the coarsest step.
+
+    ``dt lambda`` reaches 90 over the coarse steps; the error must still fall at least first order
+    on every refinement.
+    """
+    horizon = 0.4
+
+    def final(steps: int):
+        problem = _box_problem(field, horizon / steps, viscosity=0.05)
+        viscous = problem.viscous_factorizations() if implicit else None
+        trajectory = advance(
+            problem, steps, _vortex(problem), factorization=problem.factorization(), viscous=viscous
+        )
+        return trajectory.velocity
+
+    reference = final(64)
+    errors = [
+        max(float(jnp.max(jnp.abs(a.data - b.data))) for a, b in zip(final(steps), reference))
+        for steps in (4, 8, 16)
+    ]
+    assert errors[1] < 0.55 * errors[0] and errors[2] < 0.55 * errors[1], errors
 
 
 def _implicit_channel_error(cells: int, *, step_multiple: float) -> tuple[float, float]:
