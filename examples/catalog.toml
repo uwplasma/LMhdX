@@ -71,3 +71,12 @@ status = "research-stage"
 runtime = "portable"
 outputs = ["design-law table", "one blanket-duct optimum", "diagnostics"]
 docs = "docs/tutorials/duct_design_law.md"
+
+[[example]]
+id = "problem-duct"
+path = "examples/problem_example.py"
+command = "python examples/problem_example.py"
+status = "stable"
+runtime = "portable"
+outputs = ["pressure gradient", "flow rate", "gradient with respect to the field", "diagnostics"]
+docs = "docs/getting_started/problem.md"

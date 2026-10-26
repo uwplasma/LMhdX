@@ -98,3 +98,23 @@ fails; `completed` still does not certify mesh independence or steady flow.
 The Q2D model is a
 depth-averaged strong-field approximation; it does not resolve Hartmann-layer
 profiles or replace the 3-D formulation where the field varies along the flow.
+
+## Conventions of the channel and duct literature
+
+Two papers agree on a flow only after their scales are converted. `channel(...)` takes the bulk
+Reynolds number, or $R$ of Boeck, Krasnov and Zienicke, and works in half-width, bulk velocity,
+unit density and conductivity, so $\nu = 1/Re_{av}$ and $B = Ha\sqrt{\nu}$.
+
+| Source | Length | Velocity | $Re$ | $Ha$ |
+|---|---|---|---|---|
+| Krasnov, Zikanov and Boeck (2011, 2012), Krasnov et al. 2013, Zikanov et al. 2014 | half-width $L$ | bulk $U$ | $LU/\nu$ | $BL\sqrt{\sigma/\rho\nu}$ |
+| Shatrov and Gerbeth 2010 | half-width $h$ | bulk $v_b$ | the same | the same |
+| Boeck, Krasnov and Zienicke 2007 | half-width $d$ | $R = U_0\delta/\nu$ on the laminar centreline $U_0$, $\delta = d/Ha$ | $Re = Ha\,R$, $Re_{av} = Ha\,R_{av}$ | $d/\delta$ |
+| Krasnov et al. 2010 | half the smaller side | centreline of the laminar base flow | on that velocity | on that length |
+| Zhao and Zikanov 2012 | the full gap $d$ | $U_0 = V/(B_0 d)$ fixed by the voltage | $U_0 d/\nu$ | $dB_0\sqrt{\sigma/\rho\nu}$ |
+| Kobayashi 2008 | half-width | bulk | 29,000 is the 14,500 of Krasnov et al. | |
+
+The ratio $R = Re/Ha$ is the same in every convention. A half-gap Hartmann number is half the
+full-gap one. In a laminar Hartmann channel the bulk velocity is
+$U_{av}/U_0 = (\cosh Ha - \sinh Ha/Ha)/(\cosh Ha - 1)$, which is 0.90008 at $Ha = 10$ and 0.95000
+at $Ha = 20$, and $c_f = 2\tau_w/\rho U_{av}^2$ with $Re_\tau = Re_{av}\sqrt{c_f/2}$.

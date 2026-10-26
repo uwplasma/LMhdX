@@ -55,6 +55,7 @@ See the analytical, numerical, and FreeMHD evidence for every claim.
 
 getting_started/install
 getting_started/first_run
+getting_started/problem
 ```
 
 ```{toctree}
