@@ -318,6 +318,27 @@ def _varying_duct(hartmann: float = 20.0, wall_conductance: float = 0.05) -> Cha
     return dataclasses.replace(duct, grid=grid, magnetic_field=(across, along, 0.0))
 
 
+def test_the_wall_adjoint_matches_finite_differences_in_a_varying_field():
+    """A wall conductance passed to the solve is differentiated implicitly, with a varying and skew field."""
+    problem = _varying_duct(20.0, 0.05)
+
+    def throughput(c):
+        walls = ((0.0, c, 0.0), (None, None, None))
+        return jnp.mean(solve_steady_state(problem, pseudo_step=100.0, walls=walls).velocity[0].data)
+
+    value, gradient = jax.jit(jax.value_and_grad(throughput))(0.05)
+    compiled = jax.jit(throughput)
+    assert float(value) == pytest.approx(
+        float(jnp.mean(solve_steady_state(problem, pseudo_step=100.0).velocity[0].data)), rel=1e-7
+    )
+    size = 1.0e-3 * 0.05
+    difference = (compiled(0.05 + size) - compiled(0.05 - size)) / (2.0 * size)
+    assert float(gradient) == pytest.approx(float(difference), rel=1e-6)
+    assert (
+        float(gradient) < 0.0
+    )  # a conducting wall carries current away from the fluid, braking the flow more
+
+
 @pytest.mark.parametrize(("hartmann", "conductance"), [(20.0, 0.0), (100.0, 0.05), (300.0, 0.0)])
 def test_a_varying_field_certifies_at_the_default_tolerance(hartmann, conductance):
     """Issue #145: one projection left ~1e-13 of the removed gradient outside the divergence-free fields.
