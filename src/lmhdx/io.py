@@ -1292,8 +1292,16 @@ def thermal_run_from_toml(root: dict, base: str | Path = ".", *, version: int = 
     )  # fmt: skip
 
 
-def run_from_toml(path: str | Path) -> dict[str, object]:
+def run_from_toml(path: str | Path, *overrides: str) -> dict[str, object]:
+    """Run a TOML file: schema 3 (:mod:`lmhdx.config`, with ``table.key=value`` overrides) or an older one."""
     root = _load_toml(path)
+    if root.get("schema_version") == 3 or "problem" in root:
+        from .config import run
+
+        print(json.dumps(summary := run(path, *overrides), indent=2))
+        return summary
+    if overrides:
+        raise ValueError("overrides apply to schema 3 files; convert this one with `lmhdx upgrade FILE`")
     if root.get("solver", {}).get("kind") == "thermal":
         return run_thermal(thermal_run_from_toml(root, Path(path).resolve().parent))
     config = load_run_config(path)
@@ -1302,16 +1310,21 @@ def run_from_toml(path: str | Path) -> dict[str, object]:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv) if argv is not None else sys.argv[1:]
-    # A TOML case runs directly (`lmhdx case.toml`); `run case.toml` is kept for old scripts.
-    toml = argv[1:2] if argv[:1] == ["run"] else argv[:1]
+    if len(argv) == 2 and argv[0] == "upgrade":
+        from .config import upgrade
+
+        print(upgrade(argv[1]), end="")
+        return 0
+    # A TOML case runs directly (`lmhdx case.toml [table.key=value ...]`); `run case.toml` is kept for old scripts.
+    toml = argv[1:] if argv[:1] == ["run"] else argv
     if toml and Path(toml[0]).suffix == ".toml":
-        return _summary_exit_code(run_from_toml(toml[0]))
+        return _summary_exit_code(run_from_toml(*toml))
 
     formatter = argparse.ArgumentDefaultsHelpFormatter
     parser = argparse.ArgumentParser(
         prog="lmx" if sys.argv and Path(sys.argv[0]).name == "lmx" else "lmhdx",
         description="Run and validate differentiable inductionless MHD cases.",
-        epilog="A TOML case may also be passed directly: lmhdx CASE.toml",
+        epilog="A TOML case may also be passed directly: lmhdx CASE.toml; lmhdx upgrade OLD.toml converts an old one",
         formatter_class=formatter,
     )
     subparsers = parser.add_subparsers(dest="command", title="commands", required=True)
