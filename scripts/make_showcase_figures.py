@@ -7,17 +7,16 @@ reference, the pipe, and the heat-transfer set: three benchmarks against the
 literature (developed Nusselt numbers, the thermal entrance, magnetoconvection
 onset) and two 3-D movies (convection with and without a field, a heated duct).
 The duct, pipe and Q2D figures take about three minutes on a laptop CPU, the
-thermal benchmarks about eight; the convection movie takes three minutes on a
-laptop GPU and about a quarter of an hour on its CPU. The small thermal solves
+thermal benchmarks about eight; the convection movie takes about twelve minutes
+on a laptop GPU. The small thermal solves
 are pinned to the CPU, where they run faster than on a GPU. Sizes are kept under
-the documented Git media budget; production-resolution movies are release assets.
+the documented Git media budget.
 """
 
 from __future__ import annotations
 
 import argparse
 import dataclasses
-import hashlib
 import json
 from pathlib import Path
 
@@ -650,7 +649,7 @@ def thermal_onset(chandrasekhar_numbers: tuple[float, ...] = (0.0, 10.0, 100.0, 
 def thermal_convection(rayleigh: float = 1.0e4, prandtl: float = 0.1, chandrasekhar: float = 1000.0) -> None:
     """A liquid-metal layer heated from below: cells without a field, rolls along a horizontal one.
 
-    Three minutes on a laptop GPU (an RTX 3060, float64), about a quarter of an hour on its CPU.
+    About twelve minutes on a laptop GPU (an RTX 3060, float64): the exact momentum stage iterates by the plates.
     """
     lmhdx.enable_x64()
     # Free-fall units, with d, U_ff = sqrt(g beta Delta T d) and rho one; Q = sigma B^2 d^2 / (rho nu).
@@ -683,7 +682,7 @@ def thermal_convection(rayleigh: float = 1.0e4, prandtl: float = 0.1, chandrasek
             fig.text(0.98, 0.04, conditions, ha="right", color=MUTED)
             _colorbar(fig, (0.31, 0.16, 0.38, 0.03), cmap, norm, label, (-0.5, 0, 0.5))
             frames.append(_rgb(fig))
-    _animate(frames, "thermal_convection_3d", width=720, duration=160)
+    _animate(frames, "thermal_convection_3d", width=720, duration=160, quality=44)  # inside 1.18 MB
 
 
 def thermal_heated_duct(hartmann: float = 1000.0, peclet: float = 2000.0) -> None:
@@ -1041,20 +1040,13 @@ def _rgb(fig) -> np.ndarray:
 
 def _animate(frames: list, name: str, width: int, duration: int, quality: int = 45) -> None:
     """An animated WebP, each frame downsampled to ``width`` pixels for smooth edges; ``minimize_size`` stores
-    only what changes between frames. The movie is a release asset, written to the untracked
-    ``docs/_static/generated``; its last frame, 480 px wide, is the tracked preview."""
+    only what changes between frames."""
     height = round(frames[0].shape[0] * width / frames[0].shape[1])
     images = [Image.fromarray(frame).resize((width, height), Image.LANCZOS) for frame in frames]
     options = {"duration": duration, "loop": 0, "quality": quality, "method": 6, "minimize_size": True}
-    path = STATIC / "generated" / f"{name}.webp"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = STATIC / f"{name}.webp"
     images[0].save(path, save_all=True, append_images=images[1:], **options)
-    last = Image.fromarray(frames[-1])
-    last.resize((480, round(last.height * 480 / last.width)), Image.LANCZOS).save(
-        STATIC / f"{name}_preview.webp", quality=80, method=6
-    )
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    print(f"wrote {path.name}: {len(images)} frames, {path.stat().st_size / 1024:.0f} KiB, sha256 {digest}")
+    print(f"wrote {path.name}: {len(images)} frames, {path.stat().st_size / 1024:.0f} KiB")
 
 
 RESULTS = Path(__file__).resolve().parents[1] / "benchmarks" / "results"

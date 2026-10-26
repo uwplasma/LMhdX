@@ -570,15 +570,10 @@ electrical walls and no heat conduction through solid walls. It does not mean a
 lower pumping cost: at the same flow rate, conducting walls raise the MHD
 pressure drop. It is not a conjugate-wall result either.
 
-```{image} ../_static/thermal_heated_duct_preview.webp
+```{image} ../_static/thermal_heated_duct.webp
 :alt: Heated wall, floor and outlet temperatures of an insulating and a Hunt duct in 3-D as heat enters from one side wall
 :align: center
-:target: https://github.com/uwplasma/LMhdX/releases/download/showcase-thermal/thermal_heated_duct.webp
 ```
-
-The image is the movie's last frame and links to the movie, a release asset:
-`thermal_heated_duct.webp`, SHA-256 `f9ff3031c42d3f7d99a3efc4344f5541c07e2372c5a1568d526866eef23137d7`, written to `docs/_static/generated/` by
-`python scripts/make_showcase_figures.py --only heated-duct`.
 
 **Crediting a load.** A design that must remove a given duty is judged on what
 the duty itself does, not on the gross outlet enthalpy. Joule heat and a
@@ -645,26 +640,21 @@ within 4 % of 1707.76; the full sweep is rerun by the figure script.
 
 At $Ra=10^4$ and $Pr=0.1$, a periodic $4\times4\times1$ layer (64 × 64 × 32
 cells, van Leer heat transport, limited momentum transport, Courant number at
-most 0.44) convects in cells that keep rearranging. A horizontal field of
+most 0.47) convects in cells that keep rearranging. A horizontal field of
 $Q=1000$ damps every motion that varies along it and leaves steady rolls with
 their axes along the field, as in the NaK experiments of Burr & Müller (2002).
 The movie colours the side walls and the mid-plane by temperature.
-`python scripts/make_showcase_figures.py --only convection` takes three minutes
-on a laptop GPU and about a quarter of an hour on its CPU.
+`python scripts/make_showcase_figures.py --only convection` takes about twelve
+minutes on a laptop GPU.
 
 This is a transient run in a field. It shows how the flow evolves, but it is
 not a quantitative result until the stabilised transient step keeps a fluid at
 rest in a field along $y$.
 
-```{image} ../_static/thermal_convection_3d_preview.webp
+```{image} ../_static/thermal_convection_3d.webp
 :alt: A liquid-metal layer heated from below, without a field and in a horizontal field
 :align: center
-:target: https://github.com/uwplasma/LMhdX/releases/download/showcase-thermal/thermal_convection_3d.webp
 ```
-
-The image is the movie's last frame and links to the movie, a release asset:
-`thermal_convection_3d.webp`, SHA-256 `bb3c3adb84882ded113c7dba1c0a56b872a3dff2dfa55c508013bd26fb7c9ec1`, written to `docs/_static/generated/` by
-`python scripts/make_showcase_figures.py --only convection`.
 
 ## A worked example
 
