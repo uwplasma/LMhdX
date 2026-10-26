@@ -102,7 +102,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [support, design, operators, physics, channel, plane, steady, programs, fully_developed, gradients, api, anchors]
+        shard: [support, design, operators, physics, channel, plane, axial, steady, programs, fully_developed, gradients, api, anchors]
         include:
           # Coverage on the steady shard peaks near 12 GB of resident memory with four
           # workers, against 16 GB on a hosted runner; two workers keep it well inside.
@@ -117,6 +117,8 @@ jobs:
           - shard: design
             cache: support
           - shard: plane
+            cache: channel
+          - shard: axial
             cache: channel
           - shard: fully_developed
             cache: steady
@@ -214,6 +216,12 @@ jobs:
           path: artifacts/test-evidence/plane
           key: lmx-test-evidence-${{ github.run_id }}-plane
           fail-on-cache-miss: true
+      - name: Restore axial evidence
+        uses: actions/cache/restore@v6
+        with:
+          path: artifacts/test-evidence/axial
+          key: lmx-test-evidence-${{ github.run_id }}-axial
+          fail-on-cache-miss: true
       - name: Restore gradients evidence
         uses: actions/cache/restore@v6
         with:
@@ -260,7 +268,7 @@ jobs:
             budget: 300
             cache: pr-unit
           - tier: unit
-            shard: "operators physics channel plane steady programs fully_developed gradients"
+            shard: "operators physics channel plane axial steady programs fully_developed gradients"
             label: numerics
             budget: 300
             cache: pr-unit
@@ -273,6 +281,10 @@ jobs:
             budget: 420
           - tier: regression
             shard: plane
+            budget: 420
+            cache: pr-regressionchannel
+          - tier: regression
+            shard: axial
             budget: 420
             cache: pr-regressionchannel
           - tier: regression

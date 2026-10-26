@@ -53,9 +53,10 @@ _TEST_SHARDS = {
             )
         ),
         "tests/test_coreflow.py",
-        "tests/test_axial.py",
         "tests/test_table_i.py",
     ),
+    # Split from plane: the Newton and march root comparison compiles two adjoint programs.
+    "axial": ("tests/test_axial.py",),
     "steady": ("tests/test_steady.py",),
     # The shared-program tests of 2b.1, split from steady to keep both inside their budgets.
     "programs": tuple(
