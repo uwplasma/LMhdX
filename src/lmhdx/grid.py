@@ -75,6 +75,8 @@ _GEOMETRIES = (CARTESIAN, POLAR)
 class Grid:
     """Immutable tensor-product grid defined by strictly increasing face coordinates.
 
+    ``x``, ``y`` and ``z`` are the faces of the three axes (``x_faces``, ``y_faces`` and ``z_faces`` read them).
+
     ``geometry`` names what the three coordinates mean. :data:`CARTESIAN` is
     ``(x, y, z)``. :data:`POLAR` is ``(r, theta, z)``, which is a tensor product
     in the coordinates but not in the metric: an azimuthal face keeps its area
@@ -90,20 +92,20 @@ class Grid:
     balance rather than as a differentiated product.
     """
 
-    x_faces: np.ndarray
-    y_faces: np.ndarray
-    z_faces: np.ndarray
+    x: np.ndarray
+    y: np.ndarray
+    z: np.ndarray
     geometry: str = CARTESIAN
 
     def __post_init__(self) -> None:
         for axis in _AXES:
-            object.__setattr__(self, f"{axis}_faces", _validated(getattr(self, f"{axis}_faces"), name=axis))
+            object.__setattr__(self, axis, _validated(getattr(self, axis), name=axis))
         if self.geometry not in _GEOMETRIES:
             raise ValueError(f"geometry must be one of {list(_GEOMETRIES)}, got {self.geometry!r}")
         if self.geometry == POLAR:
-            if self.x_faces[0] < 0.0:
+            if self.x[0] < 0.0:
                 raise ValueError("a polar grid needs a non-negative radius")
-            span = float(self.y_faces[-1] - self.y_faces[0])
+            span = float(self.y[-1] - self.y[0])
             if not np.isclose(span, 2.0 * np.pi):
                 raise ValueError(f"a polar grid must span 2*pi in the azimuth, got {span:.6g}")
 
@@ -123,7 +125,11 @@ class Grid:
 
     @property
     def faces(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        return (self.x_faces, self.y_faces, self.z_faces)
+        return (self.x, self.y, self.z)
+
+    x_faces = property(lambda self: self.x)
+    y_faces = property(lambda self: self.y)
+    z_faces = property(lambda self: self.z)
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -184,7 +190,7 @@ class Grid:
         )
         if not self.is_polar or index == 1:
             return factors
-        radial = self.x_faces if index == 0 else self._annular() / self.widths[0]
+        radial = self.x if index == 0 else self._annular() / self.widths[0]
         return (*factors, radial[:, None, None])
 
     def face_areas(self, axis: str | int) -> np.ndarray:
@@ -195,7 +201,7 @@ class Grid:
         return area
 
     def _annular(self) -> np.ndarray:
-        return 0.5 * (self.x_faces[1:] ** 2 - self.x_faces[:-1] ** 2)
+        return 0.5 * (self.x[1:] ** 2 - self.x[:-1] ** 2)
 
     def axis_measures(self, axis: str | int) -> tuple[np.ndarray, np.ndarray]:
         """Return the face and cell measures of one axis, with the other two divided out.
@@ -212,7 +218,7 @@ class Grid:
         if not self.is_polar or index == 2:
             return np.ones(self.shape[index] + 1), widths
         if index == 0:
-            return np.asarray(self.x_faces), np.asarray(self.centers[0]) * widths
+            return np.asarray(self.x), np.asarray(self.centers[0]) * widths
         radius = np.asarray(self.centers[0])[:, None, None]
         return np.ones(self.shape[1] + 1), radius * widths[None, :, None]
 
