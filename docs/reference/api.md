@@ -69,6 +69,8 @@ the guide is [Problems, solvers and one verb](../getting_started/problem.md).
    :members: Uniform, Fringe, Table, Func
 .. automodule:: lmhdx.solver
    :members:
+.. automodule:: lmhdx.config
+   :members: load, dumps, upgrade
 .. autofunction:: lmhdx.configure
 .. autofunction:: lmhdx.grid.axis
 ```
