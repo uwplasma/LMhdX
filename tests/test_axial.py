@@ -240,38 +240,42 @@ def test_invalid_open_axes_are_refused():
     assert np.allclose(np.diff(_small_fringe(growth=1.0).grid.faces[0]), 0.5)
 
 
-def test_the_inertial_fringe_is_solved_balanced_and_differentiated_by_newton_and_by_the_march():
-    """H3: Ha 10, Re 5 (N 20), central transport; both methods against the pinned Newton root of `main` and each other (1e-6), the march's adjoint against central differences."""
+@pytest.mark.parametrize("method", ["newton", "march"])
+def test_the_inertial_fringe_is_solved_balanced_and_differentiated_by_newton_and_by_the_march(method):
+    """H3: Ha 10, Re 5 (N 20), central transport; the drop and its adjoint against the pinned Newton root of `main`.
+
+    Each method meets the pinned root at 1e-8 (they read 6e-11 and 4e-11 off it), so the two agree on the drop
+    and its gradient to 2e-8, well inside the plan's 1e-6; one compiled program per method keeps a test
+    to one worker, and the march's adjoint is also checked against central differences and the Taylor order.
+    """
     problem = _small_fringe(spacing=1.0, upstream=2.0, downstream=2.0, flow_rate=20.0, advection="central")
-    found = {}
-    for method in ("newton", "march"):
 
-        def drop(scale, method=method):
-            solution = solve_open_duct(problem, field_scale=scale, method=method)
-            return pressure_drop(solution.pressure, -4.0, 2.0), solution
+    def drop(scale):
+        solution = solve_open_duct(problem, field_scale=scale, method=method)
+        return pressure_drop(solution.pressure, -4.0, 2.0), solution
 
-        evaluate = jax.jit(jax.value_and_grad(drop, has_aux=True))
-        (value, solution), gradient = evaluate(1.0)
-        assert int(solution.status) == CONVERGED
-        assert float(solution.residual_norm) <= 1e-9 * float(solution.initial_residual_norm)
-        assert float(jnp.max(jnp.abs(station_flow_rates(solution.velocity) - 20.0))) < 1e-12 * 20.0
-        assert float(mass_balance(solution.velocity)) < 1e-12
-        assert float(charge_balance(solution, problem)) < 1e-12
-        stokes = 413.5619471240624  # the Stokes-limit drop of the same duct
-        assert 1e-3 < abs(float(value) - stokes) / stokes < 0.2
-        # The root of the Newton solve of `main` before H3 (same operator, residual 1e-12): the plan's 1e-6 gate.
-        assert float(value) == pytest.approx(420.27523399266335, rel=1e-6)
-        assert float(gradient) == pytest.approx(331.1104370772331, rel=1e-6)
-        found[method] = (float(value), float(gradient))
-    assert found["newton"] == pytest.approx(found["march"], rel=1e-6)
-    # Newton's root is differentiated by the march's rule; its Taylor and central-difference checks are the march's.
-    h2 = [float(evaluate(1.0 + h)[0][0]) for h in (0.0, 0.04, 0.02, 0.01)]
-    errors = [abs(h2[i] - h2[0] - h * found["march"][1]) for i, h in ((1, 0.04), (2, 0.02), (3, 0.01))]
+    evaluate = jax.jit(jax.value_and_grad(drop, has_aux=True))
+    (value, solution), gradient = evaluate(1.0)
+    assert int(solution.status) == CONVERGED
+    assert float(solution.residual_norm) <= 1e-9 * float(solution.initial_residual_norm)
+    assert float(jnp.max(jnp.abs(station_flow_rates(solution.velocity) - 20.0))) < 1e-12 * 20.0
+    assert float(mass_balance(solution.velocity)) < 1e-12
+    assert float(charge_balance(solution, problem)) < 1e-12
+    stokes = 413.5619471240624  # the Stokes-limit drop of the same duct
+    assert 1e-3 < abs(float(value) - stokes) / stokes < 0.2
+    # The root of the Newton solve of `main` before H3 (same operator, residual 1e-12).
+    assert float(value) == pytest.approx(420.27523399266335, rel=1e-8)
+    assert float(gradient) == pytest.approx(331.1104370772331, rel=1e-8)
+    if method == "newton":  # its root is differentiated by the march's rule: the checks below are the march's
+        return
+    # H.10.6: the Taylor remainder of the root falls as h^2.
+    values = [float(evaluate(1.0 + h)[0][0]) for h in (0.0, 0.04, 0.02, 0.01)]
+    errors = [abs(values[i] - values[0] - h * float(gradient)) for i, h in ((1, 0.04), (2, 0.02), (3, 0.01))]
     assert np.log2(errors[0] / errors[1]) == pytest.approx(2.0, abs=0.15)
     assert np.log2(errors[1] / errors[2]) == pytest.approx(2.0, abs=0.15)
     step = 1e-4
     central = (float(evaluate(1.0 + step)[0][0]) - float(evaluate(1.0 - step)[0][0])) / (2.0 * step)
-    assert found["march"][1] == pytest.approx(central, rel=1e-6)
+    assert float(gradient) == pytest.approx(central, rel=1e-6)
 
 
 def test_the_rk3_step_leaves_a_stokes_flow_of_an_open_duct_where_it_is_at_any_step_and_field_scale():
