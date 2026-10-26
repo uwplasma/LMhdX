@@ -10,8 +10,6 @@ import pytest
 from lmhdx.core3d import (
     ChannelProblem,
     SolidWall,
-    _boundary_data,
-    _flux_form,
     conjugate_grid,
     enforce_face_constraints,
     project,
@@ -52,7 +50,7 @@ from lmhdx.ops import (
     outgoing_rate,
     staggered_laplacian,
 )
-from lmhdx.poisson import fast_diagonal_helmholtz
+from lmhdx.poisson import fast_diagonal_helmholtz, variable_helmholtz
 from lmhdx.thermal import (
     ThermalProblem,
     _buoyancy,
@@ -1347,12 +1345,11 @@ def _walled(cells: int = 6, wall_cells: int = 2):
     return walled, walled.cells("thermal_conductivity", 20.4), walled.cells("heat_capacity", 1.867)
 
 
-@pytest.mark.parametrize("ends", ["temperature", "heat_flux"])
-def test_two_materials_in_series_conduct_exactly(ends):
-    """Steady conduction through steel, fluid and steel, held at 0 below and 1 above, or taking in 0.75 below and
-    giving it up above (the singular variant, to a constant): the harmonic face conductance makes the cell
-    temperatures the exact piecewise-linear profile and carries the same flux through every face, the two
-    interfaces among them. A heat flux built with the wall's ``k`` delivers it."""
+@pytest.mark.parametrize("lower", ["temperature", "heat_flux"])
+def test_two_materials_in_series_conduct_exactly(lower):
+    """Steady conduction through steel, fluid and steel held at 1 above, and at 0 or heated at 0.75 below: the
+    harmonic face conductance makes the cell temperatures the exact piecewise-linear profile and carries the same
+    flux through every face, the two interfaces among them. A heat flux built with the wall's ``k`` delivers it."""
     fluid = Grid(uniform_faces(1, 0.0, 1.0), uniform_faces(1, 0.0, 1.0), uniform_faces(8, -1.0, 1.0))
     wall = SolidWall(0.5, 4, 3.0, 1.0)
     walled = conjugate_grid(fluid, ((None, None), (None, None), (wall, wall)))
@@ -1361,28 +1358,17 @@ def test_two_materials_in_series_conduct_exactly(ends):
     below = np.where(
         z < -1.0, (z + 1.5) / 3.0, np.where(z < 1.0, 0.5 / 3.0 + z + 1.0, 13 / 6 + (z - 1.0) / 3.0)
     )
-    if ends == "temperature":  # the resistance below z, over the total 7/3
-        held, exact, flux, shift = (
-            thermal_boundary("temperature", 0.0, 1.0),
-            below * 3.0 / 7.0,
-            3.0 / 7.0,
-            1e-12,
-        )
+    if lower == "temperature":  # the resistance below z, over the total 7/3
+        ends, exact, flux = thermal_boundary("temperature", 0.0, 1.0), below * 3.0 / 7.0, 3.0 / 7.0
     else:  # 0.75 enters below, a negative outward flux, and leaves through the top
-        held, exact, flux, shift = (
-            thermal_boundary("heat_flux", -0.75, 0.75, conductivity=3.0),
-            -0.75 * below,
-            -0.75,
-            0.0,
-        )
-    conditions = (WRAP, WALL, held)
-    steady = _flux_form(walled.grid, conditions, k, shift, 1.0)
-    temperature = np.asarray(steady.solve(steady.lift(_boundary_data(conditions)))[0])[0, 0]
-    if shift == 0.0:  # the singular variant returns the zero-mean solution
-        exact = exact - np.sum(np.diff(walled.grid.faces[2]) * exact) / 3.0
-    assert temperature == pytest.approx(exact, abs=1e-9)
-    crossing = np.asarray(steady.conductances()[2])[0, 0, 1:-1] * np.diff(temperature)
-    assert crossing == pytest.approx(np.full(15, flux), abs=1e-9)
+        ends = thermal_boundary("heat_flux", -0.75, 1.0, upper_kind="temperature", conductivity=3.0)
+        exact, flux = 1.0 + 0.75 * (7.0 / 3.0 - below), -0.75
+    conditions = (WRAP, WALL, ends)
+    steady = variable_helmholtz(walled.grid, conditions, k, 1e-12, 1.0)  # no storage to speak of
+    temperature, _ = steady.solve(steady.lift(conditions))
+    assert np.asarray(temperature)[0, 0] == pytest.approx(exact, abs=1e-9)
+    crossing = np.asarray(steady.face_fluxes(temperature, conditions)[2].data)[0, 0]
+    assert crossing == pytest.approx(np.full(17, flux), abs=1e-9)
 
 
 def test_two_materials_brought_into_contact_follow_the_exact_transient():
@@ -1396,15 +1382,14 @@ def test_two_materials_brought_into_contact_follow_the_exact_transient():
         fluid = Grid(uniform_faces(1, 0.0, 1.0), uniform_faces(1, 0.0, 1.0), uniform_faces(cells, 0.0, 1.0))
         walled = conjugate_grid(fluid, ((None, None), (None, None), (SolidWall(1.0, cells, k, c), None)))
         dt, z = time / steps, np.asarray(walled.grid.centers[2])
-        conduction = _flux_form(
+        conduction = variable_helmholtz(
             walled.grid,
             (WRAP, WALL, WALL),
             walled.cells("thermal_conductivity", 1.0),
             walled.cells("heat_capacity", 1.0),
             dt,
         )
-        conducted = conduction.with_coefficients(shift=0.0)  # -V dt div(k grad t)
-        advance = jax.jit(lambda t: t + conduction.solve(-conducted.apply(t))[0])
+        advance = jax.jit(lambda t: t + conduction.solve(dt * conduction.divergence(t))[0])
         temperature = jnp.asarray(np.broadcast_to(np.where(z < 0.0, 1.0, 0.0), walled.grid.shape))
         for _ in range(steps):
             temperature = advance(temperature)
@@ -1423,7 +1408,7 @@ def test_walled_conduction_is_symmetric_conserves_heat_and_converges_in_few_iter
     symmetric, a step stores the heat put in, and the volume-mean preconditioner leaves under ten iterations,
     on either mesh and at either step."""
     walled, k, c = _walled(cells)
-    conduction = _flux_form(walled.grid, (WRAP, WALL, WALL), k, c, dt)
+    conduction = variable_helmholtz(walled.grid, (WRAP, WALL, WALL), k, c, dt)
     rng = np.random.default_rng(54)
     u, v = (jnp.asarray(rng.standard_normal(walled.grid.shape)) for _ in range(2))
     assert float(jnp.vdot(conduction.apply(u), v)) == pytest.approx(
@@ -1431,11 +1416,10 @@ def test_walled_conduction_is_symmetric_conserves_heat_and_converges_in_few_iter
     )
     source = np.zeros(walled.grid.shape)
     source[walled.fluid] = 1.0
-    volumes = walled.grid.cell_volumes()
-    increment, info = conduction.solve(dt * jnp.asarray(volumes * source))  # from a uniform temperature
-    stored = np.sum(volumes * c * np.asarray(increment))
-    assert stored == pytest.approx(dt * np.sum(volumes * source), rel=1e-10)
-    assert int(info.iterations) < 10
+    increment, iterations = conduction.solve(dt * jnp.asarray(source))  # from a uniform temperature
+    stored = np.sum(walled.grid.cell_volumes() * c * np.asarray(increment))
+    assert stored == pytest.approx(dt * np.sum(walled.grid.cell_volumes() * source), rel=1e-10)
+    assert int(iterations) < 10
 
 
 def test_walled_conduction_at_a_high_contrast_converges_in_the_documented_iterations():
@@ -1447,9 +1431,9 @@ def test_walled_conduction_at_a_high_contrast_converges_in_the_documented_iterat
     k, c = walled.cells("thermal_conductivity", 20.4), walled.cells("heat_capacity", 1.867)
     source = np.zeros(walled.grid.shape)
     source[walled.fluid] = 1.0
-    conduction = _flux_form(walled.grid, (WRAP, WALL, WALL), k, c, 0.05)
-    increment, info = conduction.solve(0.05 * walled.grid.cell_volumes() * source)
-    assert 10 < int(info.iterations) <= 40 and np.all(np.isfinite(np.asarray(increment)))
+    conduction = variable_helmholtz(walled.grid, (WRAP, WALL, WALL), k, c, 0.05)
+    increment, iterations = conduction.solve(0.05 * source)
+    assert 10 < int(iterations) <= 40 and np.all(np.isfinite(np.asarray(increment)))
 
 
 def test_uniform_conduction_is_the_fast_diagonal_inverse_and_walled_conduction_differentiates():
@@ -1457,16 +1441,16 @@ def test_uniform_conduction_is_the_fast_diagonal_inverse_and_walled_conduction_d
     derivatives in the right-hand side match central differences, the tangent and adjoint solves starting from
     zero."""
     conditions = (WRAP, WALL, WALL)
-    uniform = _flux_form(STRETCHED, conditions, 2.0, 3.0, 0.01)
+    uniform = variable_helmholtz(STRETCHED, conditions, 2.0, 3.0, 0.01)
     rhs = jnp.asarray(np.random.default_rng(5).standard_normal(STRETCHED.shape))
-    temperature, info = uniform.solve(STRETCHED.cell_volumes() * rhs)
+    temperature, iterations = uniform.solve(rhs)
     direct = fast_diagonal_helmholtz(STRETCHED, CELL, conditions, shift=3.0, coefficient=0.02).solve(
         Field(rhs, CELL, STRETCHED)
     )
     assert np.asarray(temperature) == pytest.approx(np.asarray(direct.data), rel=1e-9, abs=1e-12)
-    assert int(info.iterations) == 1
+    assert int(iterations) == 1
     walled, k, c = _walled()
-    conduction = _flux_form(walled.grid, conditions, k, c, 0.05)
+    conduction = variable_helmholtz(walled.grid, conditions, k, c, 0.05)
     rng = np.random.default_rng(6)
     rhs, weights = (jnp.asarray(1e-3 * rng.standard_normal(walled.grid.shape)) for _ in range(2))
 
@@ -1490,13 +1474,12 @@ def test_a_wall_conductivity_is_a_leaf_of_the_conduction_solve():
         heat = np.exp(-((y[:, None] - 0.3) ** 2 + (z[None, :] + 0.5) ** 2))
         weight = np.where(z[None, :] < 0.0, 1.0, 0.2) * (1.0 + y[:, None])
         rhs, weights = (jnp.asarray(np.broadcast_to(a, walled.grid.shape)) for a in (heat, weight))
-        conduction = _flux_form(walled.grid, (WRAP, WALL, WALL), k, c, 0.05)
+        conduction = variable_helmholtz(walled.grid, (WRAP, WALL, WALL), k, c, 0.05)
 
-        def objective(values, **options):
+        def objective(values, operator=conduction):
             traces.append(None)
             k = walled.cells("thermal_conductivity", 20.4, {(2, 0): values[0], (1, 1): values[1]})
-            heat = walled.grid.cell_volumes() * rhs
-            return jnp.vdot(weights, conduction.with_coefficients(conductivity=k).solve(heat, **options)[0])
+            return jnp.vdot(weights, operator.with_coefficients(conductivity=k).solve(rhs)[0])
 
         return conduction, objective
 
@@ -1510,7 +1493,9 @@ def test_a_wall_conductivity_is_a_leaf_of_the_conduction_solve():
     base = objective(steel)
     remainders = [abs(float(objective(steel + h * direction) - base) - h * slope) for h in (4.0, 2.0, 1.0)]
     assert all(3.5 < coarse / fine < 4.5 for coarse, fine in zip(remainders, remainders[1:])), remainders
-    tight = jax.grad(lambda values: objective(values, rtol=1e-13))(steel)
+    tight = jax.grad(lambda values: objective(values, dataclasses.replace(conduction, tolerance=1e-13)))(
+        steel
+    )
     assert np.asarray(tight) == pytest.approx(np.asarray(gradient), rel=1e-9)
     tangent = float(jax.jvp(objective, (steel,), (direction,))[1])
     assert float(jax.vjp(objective, steel)[1](1.0)[0] @ direction) == pytest.approx(tangent, rel=1e-12)
@@ -1518,8 +1503,9 @@ def test_a_wall_conductivity_is_a_leaf_of_the_conduction_solve():
     jitted = jax.jit(objective)
     jitted(steel), jitted(1.1 * steel)
     assert len(traces) == 1, "a new wall conductivity recompiled"
-    assert np.isnan(float(objective(steel, max_steps=1)))
-    assert np.all(np.isnan(np.asarray(jax.grad(lambda values: objective(values, max_steps=1))(steel))))
+    unconverged = dataclasses.replace(conduction, max_steps=1)
+    assert np.isnan(float(objective(steel, unconverged)))
+    assert np.all(np.isnan(np.asarray(jax.grad(lambda values: objective(values, unconverged))(steel))))
     _, finer = walled_solve(10)
     central = (finer(steel + 1e-3 * direction) - finer(steel - 1e-3 * direction)) / 2e-3
     assert float(jax.grad(finer)(steel) @ direction) == pytest.approx(float(central), rel=1e-7)
@@ -1540,13 +1526,13 @@ def test_highly_conducting_walls_hold_the_fluid_at_their_temperature():
         walled = conjugate_grid(fluid, ((None, None),) + ((SolidWall(0.1, 4, 1000.0, 1.0),) * 2,) * 2)
         heat = np.zeros(walled.grid.shape)
         heat[walled.fluid] = 1.0
-        conduction = _flux_form(
+        conduction = variable_helmholtz(
             walled.grid, (WRAP, held, held), walled.cells("thermal_conductivity", 1.0), 1e-9, 1.0
         )
-        temperature, info = conduction.solve(jnp.asarray(walled.grid.cell_volumes() * heat), max_steps=400)
+        temperature, iterations = dataclasses.replace(conduction, max_steps=400).solve(jnp.asarray(heat))
         volumes = walled.grid.cell_volumes()[walled.fluid]
         means.append(float(np.sum(np.asarray(temperature)[walled.fluid] * volumes) / np.sum(volumes)))
-        assert int(info.iterations) < 80
+        assert int(iterations) < 80
     errors = [mean / series - 1.0 for mean in means]
     assert 3.0 < errors[0] / errors[1] < 4.5, errors
     richardson = means[1] + (means[1] - means[0]) / 3.0
@@ -1588,11 +1574,11 @@ def test_walls_build_the_extended_grid_and_its_corners_take_the_nearer_wall():
         conjugate_grid(_polar(2, 4), ((None, None),) * 3)
     with pytest.raises(ValueError, match="whole"):
         SolidWall(0.3, 1.5, *STEEL)
-    invalid = _flux_form(fluid, (WRAP, WALL, WALL), np.nan, 1.0, 1.0).solve(jnp.ones(fluid.shape))[0]
-    assert np.all(np.isnan(np.asarray(invalid)))
-    open_end = thermal_boundary("temperature", 1.0, upper_kind="heat_flux", conductivity=1.0)
-    with pytest.raises(NotImplementedError, match="mixed ends"):
-        _flux_form(fluid, (WRAP, open_end, WALL), 1.0, 1.0, 1.0)
+    with pytest.raises(ValueError, match="positive and finite"):
+        variable_helmholtz(fluid, (WRAP, WALL, WALL), np.nan, 1.0, 1.0)
+    conduction = variable_helmholtz(fluid, (WRAP, WALL, WALL), 1.0, 1.0, 1.0)
+    with pytest.raises(ValueError, match="own kinds"):
+        conduction.lift((WRAP, thermal_boundary("temperature", 1.0), WALL))
 
 
 def test_a_float32_fast_diagonal_helmholtz_stays_definite_at_a_large_coefficient():
@@ -1604,16 +1590,18 @@ def test_a_float32_fast_diagonal_helmholtz_stays_definite_at_a_large_coefficient
 
     code = """
 import numpy as np
-from lmhdx.core3d import SolidWall, _flux_form, conjugate_grid
+from lmhdx.core3d import SolidWall, conjugate_grid
 from lmhdx.grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, tanh_faces, uniform_faces
+from lmhdx.poisson import variable_helmholtz
 fluid = Grid(uniform_faces(2, 0.0, 1.0), *(tanh_faces(24, -1.0, 1.0, 2.0) for _ in range(2)))
 wall = SolidWall(2.0 / 23.0, 4, 18.3, 4.27)
 walled = conjugate_grid(fluid, ((None, None), (wall, wall), (wall, wall)))
 k, c = walled.cells("thermal_conductivity", 20.4), walled.cells("heat_capacity", 1.867)
 walls = (BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN), BoundaryCondition(NEUMANN))
-conduction = _flux_form(walled.grid, walls, k, c, 1.0e4)
-increment, info = conduction.solve(walled.grid.cell_volumes().astype(np.float32))
-assert increment.dtype == np.float32 and np.all(np.isfinite(increment)), int(info.iterations)
+conduction = variable_helmholtz(walled.grid, walls, k, c, 1.0e4)
+assert max(float(np.max(values)) for values in conduction.preconditioner.values) <= 0.0
+increment, iterations = conduction.solve(np.ones(walled.grid.shape, np.float32))
+assert increment.dtype == np.float32 and np.all(np.isfinite(increment)), int(iterations)
 """
     env = {key: value for key, value in __import__("os").environ.items() if key != "JAX_ENABLE_X64"}
     subprocess.run([sys.executable, "-c", code], check=True, env=env, timeout=300)

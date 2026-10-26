@@ -85,7 +85,7 @@ jobs:
       - uses: ./.github/actions/setup-lmhdx
         with:
           python-version: "3.10"
-          solvax-version: "0.34.0"
+          solvax-version: "0.19.0"
           cache-suffix: pr-impact
       - name: Run conservatively affected tests
         run: |
@@ -126,7 +126,7 @@ jobs:
       - uses: ./.github/actions/setup-lmhdx
         with:
           python-version: "3.10"
-          solvax-version: "0.34.0"
+          solvax-version: "0.19.0"
           cache-suffix: ${{ matrix.cache || matrix.shard }}
       - name: Run covered test shard
         env:
@@ -274,7 +274,7 @@ jobs:
       - uses: ./.github/actions/setup-lmhdx
         with:
           python-version: "3.10"
-          solvax-version: "0.34.0"
+          solvax-version: "0.19.0"
           cache-suffix: ${{ matrix.cache || format('pr-{0}{1}', matrix.tier, matrix.label || matrix.shard) }}
       - name: Run uncovered evidence tier
         env:

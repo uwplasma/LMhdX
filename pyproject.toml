@@ -15,7 +15,7 @@ dependencies = [
   "filelock",
   "jax",
   "numpy",
-  "solvax>=0.34.0,<1",
+  "solvax>=0.19,<1",
   "tomli; python_version < '3.11'",
 ]
 classifiers = [

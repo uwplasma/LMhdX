@@ -376,10 +376,9 @@ given faces exactly, the block's slices, and the walls, whose properties
 nearer wall's material, the first axis's when equally near to rounding, as the
 corners of resolved electrical walls do.
 
-**The solve.** SOLVAX's `separable.flux_form_operator` (0.34.0) is
-$V\,(s\,x - \tau\,\nabla\cdot(k\nabla x))$ for cell-wise $k$ and $s$; LMhdX
-builds it on the extended grid with one boundary kind per axis (a mixed axis
-waits on SOLVAX) and keeps the walls, the material maps and the corner rule.
+**The solve.** `poisson.variable_helmholtz(grid, conditions, conductivity,
+shift, coefficient)` is $V\,(s\,x - \tau\,\nabla\cdot(k\nabla x))$ for cell-wise
+$k$ and $s$.
 
 **The face-conductance contract.** Between two cells with half widths
 $\delta_1$, $\delta_2$ and conductivities $k_1$, $k_2$, the flux per unit area
@@ -397,14 +396,15 @@ $$
 $$
 
 $b$ the boundary data's `lift`, so PCG's tolerance is the change's.
-The solve is preconditioned by the fast-diagonal inverse at the volume-mean
-$k$ and $s$, and differentiates implicitly, its tangent and adjoint solves from
-zero. Unconverged, it returns NaN, and NaN derivatives.
+`solvax.pcg_linear_solve` is preconditioned by the fast-diagonal inverse at the
+volume-mean $k$ and $s$, and differentiates implicitly, its tangent and adjoint
+solves from zero. Unconverged, it returns NaN, and NaN derivatives. The
+operator is generic numerics, to move to SOLVAX (uwplasma/SOLVAX#158).
 
 **What is differentiable.**
 - **The walls' conductivity and heat capacity.** `cells(name, fluid_value,
   walls={(axis, side): value})` puts a wall's value into the cells in the
-  trace. The operator's `with_coefficients(conductivity, shift)` builds the
+  trace. `VariableHelmholtz.with_coefficients(conductivity, shift)` builds the
   face conductances from it, and the preconditioner keeps its built means. So a
   wall's $k$ or $\rho c_p$ is a leaf, and a new value does not recompile.
 - **Static:** a wall's thickness, its cell count, and which cell belongs to
