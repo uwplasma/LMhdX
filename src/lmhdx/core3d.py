@@ -922,6 +922,7 @@ def _constant(problem: ChannelProblem, build, *static) -> Field:
 # Run the projection step as one compiled trajectory (formerly ``lmhdx.core3d``).
 
 
+@jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class Trajectory:
     """The end state of a run and the per-step history of its diagnostics."""
@@ -1106,20 +1107,43 @@ def advance(
     factorizations are built once on the host, outside the trace, because their
     assembly reads concrete arrays; passing ``viscous`` takes diffusion
     implicitly, which is what lets a long run choose its step for accuracy.
+
+    The compiled run is kept per problem, ``steps``, factorizations and
+    ``checkpoint``: a restart in chunks compiles once, and only the state is an
+    argument. A problem with a traced parameter is traced into the caller's
+    program instead.
     """
     if steps < 1:
         raise ValueError("steps must be positive")
-    factorization = problem.factorization() if factorization is None else factorization
     velocity = zero_velocity(problem) if velocity is None else velocity
+    try:
+        hash(problem)
+    except TypeError:
+        return _trajectory(problem, steps, factorization, viscous, checkpoint)(velocity)
+    return _compiled_trajectory(problem, steps, factorization, viscous, checkpoint)(velocity)
+
+
+def _trajectory(problem, steps, factorization, viscous, checkpoint):
+    """The run of ``steps`` steps as a function of the starting velocity."""
+    factorization = problem.factorization() if factorization is None else factorization
 
     def single(carry, _):
         updated, pressure, potential = step(carry[0], problem, factorization, viscous, carry[1])
         return (updated, pressure, potential), trajectory_diagnostics(updated, problem)
 
-    # The last pressure and potential ride in the carry: stacked as scan outputs they cost two
-    # cell fields per step (3.1 GiB over 100 steps at 128^3 in float64) to return the last one.
-    cell = Field(jnp.zeros(problem.grid.shape, velocity[0].dtype), (CENTER,) * 3, problem.grid)
-    start = (velocity, cell, cell)
-    body = jax.checkpoint(single) if checkpoint else single
-    (final, pressure, potential), (residual, energy) = jax.lax.scan(body, start, xs=None, length=steps)
-    return Trajectory(final, pressure, potential, residual, energy)
+    def run(velocity):
+        # The last pressure and potential ride in the carry: stacked as scan outputs they cost two
+        # cell fields per step (3.1 GiB over 100 steps at 128^3 in float64) to return the last one.
+        cell = Field(jnp.zeros(problem.grid.shape, velocity[0].dtype), (CENTER,) * 3, problem.grid)
+        body = jax.checkpoint(single) if checkpoint else single
+        (final, pressure, potential), (residual, energy) = jax.lax.scan(
+            body, (velocity, cell, cell), xs=None, length=steps
+        )
+        return Trajectory(final, pressure, potential, residual, energy)
+
+    return run
+
+
+@functools.lru_cache(maxsize=8)
+def _compiled_trajectory(problem, steps, factorization, viscous, checkpoint):
+    return jax.jit(_trajectory(problem, steps, factorization, viscous, checkpoint))
