@@ -167,7 +167,7 @@ def _measure_factor(factorization, axis: int) -> np.ndarray:
     return factorization._measure_factors()[axis]
 
 
-def _measure_total(factorization) -> np.ndarray:
+def _measure_total(factorization) -> np.floating:
     return np.sum(factorization._measure())
 
 
@@ -622,7 +622,6 @@ class FastDiagonalPoisson:
 
     def _direct(self, data: jnp.ndarray, single: bool = False) -> jnp.ndarray:
         dtype = data.dtype
-        # Stored factors, not quotients: normalized volumes and reciprocal eigenvalue sums.
         if self.singular:
             weights = _normalized_measure(self, dtype)
             data = data - jnp.sum(weights * data)
