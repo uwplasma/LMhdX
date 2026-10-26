@@ -558,14 +558,20 @@ the implicit function theorem on the fixed point of one step
 (`solvax.root_solve`), tangent and transposed solves by GMRES on that step's
 linearization.
 
-*The outlet.* The momentum of the outlet face, which owns half a cell, left the
-domain with no flux in the first form of the transport term: harmless to a
-Newton solve, but the root of that operator is unstable in time (a mode
+*The outlet.* The outlet face owns half a cell and had no transport in the first
+form of the term (the zero edge of a wall face): a Newton solve still finds the
+root of that operator, but the root is unstable in time (a mode
 localized at the outlet and growing as $2^{\text{cells}}$ upstream, at a rate of
 about 10 per unit time at Ha 20, Re 20, whatever the step). The outlet face now
 carries the flux $u^2$ through its outer side. The pressure drop of the fringe
-moved by $2\times10^{-8}$ (Ha 20, Re 20 and 40) and by $3\times10^{-5}$ on the
-coarsest test mesh (spacing 1, Re 10).
+moved by $3\times10^{-5}$ on the coarsest test mesh (spacing 1, Re 10), by
+$2.5\times10^{-8}$ at Ha 20, Re 40 and by less than $10^{-10}$ in the other cases
+below. The same mode was the near-critical one of the Newton Jacobian: on the
+$62\times12\times12$ mesh at Ha 20, Re 40 the Newton solve took 1,352 outer
+iterations (105 s warm) without the flux and 206 (16 s) with it, to the same
+drop within $4\times10^{-13}$, so the growth of the outer count with Re recorded
+below was largely this mode. The long campaigns below (Ha 100, Re 33; Ha 200,
+Re 40) were not re-run.
 
 What follows is the Newton campaign that preceded the march, kept as measured.
 
