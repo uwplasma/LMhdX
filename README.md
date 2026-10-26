@@ -288,6 +288,7 @@ states each gate and what it does not cover.
 | Command | Physics |
 |---|---|
 | `lmhdx examples/hartmann_case.toml` | Hartmann duct from a TOML file, terminal diagnostics |
+| `lmhdx examples/heated_duct.toml` | heated duct with buoyancy from a schema 3 TOML file (a table is a constructor call), terminal diagnostics |
 | `python examples/hartmann_example.py` | analytical error, conservation, ParaView/CSV/NPZ output |
 | `python examples/hunt_example.py` | conducting walls, prescribed throughput and hydraulic power |
 | `python examples/li_aln_wall_stack_example.py` | explicit wall material layers and interface currents |
