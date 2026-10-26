@@ -13,10 +13,14 @@ the step put together.
 :math:`\\sigma B^2/\\rho`. Treating it explicitly forces
 :math:`\\Delta t \\propto Ha^{-2}`, which is why explicit codes stall at
 blanket-scale Hartmann numbers. It is applied here as a correction to the
-conservative face force, so the update reads
-``u* = u + dt * rhs / (1 + dt * lambda)``. The correction vanishes when the
-right-hand side does, so it changes the path to a steady state but not the steady
-state itself, and the conservative force keeps its own discretization.
+conservative face force, so the stage reads ``H u + (dt/rho) G p = b``,
+``D u = 0``, with ``H = (1 + dt * lambda)`` per component and ``b`` the old
+velocity plus the forces. The pressure gradient meets the same ``H`` as every other
+force, so a pressure force in balance with the forcing leaves the fluid at rest and
+the stage's fixed point is the physical steady state; the pressure solves the
+matched Schur operator ``D H^-1 G``, a Laplacian with one weight per axis. The
+correction vanishes when the right-hand side does, and the conservative force keeps
+its own discretization.
 
 *Consistency.* The force comes from the same face currents the potential equation
 is built on, never from a separately differenced potential. In the core the
@@ -43,10 +47,12 @@ silently clipped step. Passing the factorizations from
 :meth:`ChannelProblem.viscous_factorizations` to :func:`step` solves
 
 .. math:: \\left[(1+\\Delta t\\,\\lambda)I-\\Delta t\\,\\nu\\nabla^2\\right]\\mathbf u^{*}
-   =(1+\\Delta t\\,\\lambda)\\mathbf u+\\Delta t\\,(\\mathbf F+\\mathbf f)/\\rho,
+   =(1+\\Delta t\\,\\lambda)\\mathbf u+\\Delta t\\,(\\mathbf F+\\mathbf f-\\nabla p)/\\rho,
 
 backward Euler on the viscous term with the damping correction folded into the
-shift. That operator separates exactly as the pressure Laplacian does, so it
+shift, ``p`` the last step's pressure (zero if none is passed); the divergence the
+solve leaves is projected through the same weighted operator and the correction
+added to ``p``. That operator separates exactly as the pressure Laplacian does, so it
 costs three contractions and a divide, and the step is then bounded by accuracy
 rather than by the mesh. Both stiffnesses are gone at that point: the magnetic
 one because it grows as :math:`Ha^2`, the viscous one because it grows as the
@@ -677,21 +683,44 @@ def project(
     velocity: tuple[Field, Field, Field],
     problem: ChannelProblem,
     factorization: FastDiagonalPoisson | None = None,
+    *,
+    damped: bool = False,
 ) -> tuple[tuple[Field, Field, Field], Field]:
-    """Remove the divergence from a velocity field and return the pressure that did it."""
-    factorization = problem.factorization() if factorization is None else factorization
+    """Remove the divergence from a velocity field and return the pressure that did it.
+
+    ``damped`` removes it through the stage's own metric: the correction is
+    ``(dt/rho) H^-1 G p`` with ``H = 1 + dt lambda_c`` per component, and the pressure solves
+    the matched Schur operator ``D H^-1 G`` (a weighted Laplacian), so a pressure force that
+    ``H`` rescales is still a gradient the correction can cancel.
+    """
     velocity = enforce_face_constraints(velocity, problem)
-    source = divergence(velocity)
+    weights = _stage_weights(problem) if damped else (1.0,) * 3
+    pressure = _pressure(velocity, problem, factorization, weights)
     density, dt = attribute(problem, "density"), attribute(problem, "dt")
-    pressure = factorization.solve(source.replace_data((density / dt) * source.data))
     scalar = problem.pressure_conditions
     corrected = tuple(
         field.replace_data(
-            field.data - (dt / density) * face_gradient(pressure, component, scalar[component]).data
+            field.data
+            - (weights[component] * dt / density) * face_gradient(pressure, component, scalar[component]).data
         )
         for component, field in enumerate(velocity)
     )
     return enforce_face_constraints(corrected, problem), pressure
+
+
+def _pressure(velocity, problem: ChannelProblem, factorization, weights: tuple[float, float, float]) -> Field:
+    """The pressure that makes ``velocity - (dt/rho) diag(weights) G p`` divergence free."""
+    factorization = problem.factorization() if factorization is None else factorization
+    if weights != (1.0,) * 3:
+        factorization = dataclasses.replace(factorization, axis_weights=weights)
+    source = divergence(velocity)
+    density, dt = attribute(problem, "density"), attribute(problem, "dt")
+    return factorization.solve(source.replace_data((density / dt) * source.data))
+
+
+def _stage_weights(problem: ChannelProblem) -> tuple[float, float, float]:
+    """The diagonal of ``H^-1`` in a momentum stage: one over ``1 + dt lambda`` per component."""
+    return tuple(1.0 / (1.0 + float(problem.dt) * rate) for rate in problem.damping_rates)
 
 
 def step(
@@ -699,16 +728,18 @@ def step(
     problem: ChannelProblem,
     factorization: FastDiagonalPoisson | None = None,
     viscous: tuple[FastDiagonalHelmholtz, ...] | None = None,
+    pressure: Field | None = None,
 ) -> tuple[tuple[Field, Field, Field], Field, Field]:
     """Advance one projection step and return velocity, pressure and potential.
 
     Passing ``viscous`` takes diffusion implicitly and lifts the step off
-    :attr:`ChannelProblem.diffusive_step_limit`.
+    :attr:`ChannelProblem.diffusive_step_limit`; ``pressure``, the last step's, then enters
+    that solve as a force and the projection corrects it (:func:`_advance_momentum`).
     """
     factorization = problem.factorization() if factorization is None else factorization
     potential, force = electric_state(velocity, problem, factorization)
     corrected, pressure = _advance_momentum(
-        velocity, face_lorentz_force(force, problem), problem, factorization, viscous
+        velocity, face_lorentz_force(force, problem), problem, factorization, viscous, pressure=pressure
     )
     return corrected, pressure, potential
 
@@ -721,8 +752,22 @@ def _advance_momentum(
     viscous: tuple[FastDiagonalHelmholtz, ...] | None = None,
     *,
     extra_force: tuple[Field, Field, Field] | None = None,
+    pressure: Field | None = None,
 ) -> tuple[tuple[Field, Field, Field], Field]:
-    """Predict with the face Lorentz force ``body``, then project; return velocity and pressure.
+    """Advance the stage ``H u + (dt/rho) G p = b``, ``D u = 0``; return velocity and pressure.
+
+    ``b`` holds the old velocity, the face Lorentz force ``body`` and the other forces, and
+    ``H`` the magnetic damping, plus the viscous operator when it is taken implicitly. A pressure
+    force therefore meets the same ``H`` as every other force, and a gradient in balance with the
+    forcing leaves the fluid at rest.
+
+    For a diagonal ``H`` (explicit viscosity) the matched pressure operator ``D H^-1 G`` is a
+    weighted Laplacian (:func:`project` with ``damped``) and the stage is solved exactly. With
+    implicit viscosity ``H`` is not diagonal, and the stage is split as an incremental projection:
+    the last ``pressure`` (zero if none) is a force in the viscous solve, and the damped
+    projection returns the correction. The stage is then exact where ``pressure`` is its own;
+    from zero it is exact only for undamped periodic axes, and elsewhere leaves a splitting
+    error that falls with ``dt``. The exact Schur solve needs an inner iteration.
 
     ``extra_force`` is a further force density on the velocity faces, added to the
     forcing before the division by density, so a body force such as buoyancy rides
@@ -742,16 +787,21 @@ def _advance_momentum(
         drive = force / problem.density
         if transport is not None:
             drive = drive - transport[component].data
-        rate = problem.damping_rates[component]
-        shift = 1.0 + problem.dt * rate
+        shift = 1.0 + problem.dt * problem.damping_rates[component]
         if viscous is None:
             diffusion = staggered_laplacian(component_field, velocity_conditions)
             updated = component_field.data + problem.dt * (problem.viscosity * diffusion.data + drive) / shift
         else:
+            if pressure is not None:
+                gradient = face_gradient(pressure, component, problem.pressure_conditions[component])
+                drive = drive - gradient.data / problem.density
             source = component_field.replace_data(shift * component_field.data + problem.dt * drive)
             updated = viscous[component].solve(source).data
         predicted.append(component_field.replace_data(updated))
-    return project(tuple(predicted), problem, factorization)
+    corrected, correction = project(tuple(predicted), problem, factorization, damped=True)
+    if viscous is None or pressure is None:
+        return corrected, correction
+    return corrected, correction.replace_data(pressure.data + correction.data)
 
 
 @functools.lru_cache(maxsize=16)
@@ -1063,7 +1113,7 @@ def advance(
     velocity = zero_velocity(problem) if velocity is None else velocity
 
     def single(carry, _):
-        updated, pressure, potential = step(carry[0], problem, factorization, viscous)
+        updated, pressure, potential = step(carry[0], problem, factorization, viscous, carry[1])
         return (updated, pressure, potential), trajectory_diagnostics(updated, problem)
 
     # The last pressure and potential ride in the carry: stacked as scan outputs they cost two
