@@ -1441,8 +1441,8 @@ _PCG_TOLERANCE = {"float64": 1.0e-11, "float32": 1.0e-5}
 class VariableHelmholtz:
     """``V (shift x - coefficient div(G grad x))`` on cell-wise coefficients, solved by SOLVAX (plan D5).
 
-    Generic numerics, to move to SOLVAX (uwplasma/SOLVAX#158, ADR 0009 D36); LMhdX keeps the materials and
-    ``conjugate_grid``.
+    SOLVAX 0.34.0's ``separable.flux_form_operator`` is the same operator; this one stays until SOLVAX takes an axis
+    with mixed ends (uwplasma/SOLVAX#172, ADR 0009 D36). LMhdX keeps the materials and ``conjugate_grid``.
 
     The face-conductance contract, stated once. ``G`` is each face's conductance per unit area, the harmonic mean of
     its two half cells (:func:`lmhdx.ops.face_conductivity`), so ``G`` times the gradient over the centre distance is

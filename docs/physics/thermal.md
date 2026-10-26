@@ -399,7 +399,9 @@ $b$ the boundary data's `lift`, so PCG's tolerance is the change's.
 `solvax.pcg_linear_solve` is preconditioned by the fast-diagonal inverse at the
 volume-mean $k$ and $s$, and differentiates implicitly, its tangent and adjoint
 solves from zero. Unconverged, it returns NaN, and NaN derivatives. The
-operator is generic numerics, to move to SOLVAX (uwplasma/SOLVAX#158).
+operator is SOLVAX 0.34.0's `separable.flux_form_operator`, which matches it to
+4e-16; LMhdX moves to it once it takes an axis with a Dirichlet and a Neumann
+end, as the open duct needs (uwplasma/SOLVAX#172).
 
 **What is differentiable.**
 - **The walls' conductivity and heat capacity.** `cells(name, fluid_value,
