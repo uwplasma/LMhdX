@@ -95,8 +95,8 @@ _INSULATING = BoundaryCondition(NEUMANN)
 # How a march ended: at a steady residual under the tolerance, stalled above it, or with no steady state.
 CONVERGED, STAGNATED, UNSTEADY = 0, 1, 2
 # A varying field gives every cell the largest damping rate in the implicit part and leaves the rest of its
-# own, up to that rate, to the explicit part: the march is stable to ``dt rate`` of 5 and not at 7 (Ha 100, Re 20).
-_DAMPING_COURANT = 3.0
+# own, up to that rate, to the explicit part: the march is stable to ``dt rate`` of 6 and not at 7 (Ha 100, Re 20).
+_DAMPING_COURANT = 4.0
 
 
 class OpenDuctSolution(NamedTuple):

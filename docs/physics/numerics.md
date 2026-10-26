@@ -545,10 +545,10 @@ range, against TM-228's 0.0932.
 constrained stage at each of three substeps, Crank-Nicolson damping and
 viscosity, central transport, the lift carrying the inlet. A step is the smaller
 of 0.9 of the Courant limit $\sqrt3/\sum_a\max|u_a|/\Delta x_a$ and
-$3/\lambda_{\max}$, $\lambda_{\max}=\sigma B_{\max}^2/\rho$: a varying field
+$4/\lambda_{\max}$, $\lambda_{\max}=\sigma B_{\max}^2/\rho$: a varying field
 gives every cell the largest damping rate in the implicit part and leaves the
 rest of its own to the explicit one, which is stable to $\lambda_{\max}\Delta t$
-of 5 and not at 7 (Ha 100, Re 20). Fifty steps make a chunk, and
+of 6 and not at 7 (Ha 100, Re 20). Fifty steps make a chunk, and
 `solvax.fixed_point_iteration` repeats chunks until the physical steady residual
 (the projected momentum balance, as before) falls to `tolerance` of the lift's.
 A march that does not get there is watched for sixteen chunks more and reported

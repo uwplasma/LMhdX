@@ -1589,6 +1589,14 @@ H2.1 does not depend on H1 and starts at once; H2.2 needs H1.1 and H0.3.
 | H3.4 | Three outcomes of a march: `converged`, `stagnated`, `unsteady` (the residual does not decay while the perturbation energy oscillates or grows); SOLVAX reports stagnation, LMhdX classifies it | the real case is T32(c), steady to Re about 35,400 and bursting above it, which waits for the annulus; until then a known time-periodic duct run is the test, and a steady problem converges with status `converged` | unit tests, T32(c) later | +20 |
 | H3.5 | Delete the Newton and inner-Stokes-CG stack for open ducts one release after H3.1–H3.4 hold on `main` | `axial.py` from about 1,040 to about 500 lines; no test tolerance changed | existing | −300 |
 
+*H3 status (2026-10-26, Lane A, one PR).* H3.1, H3.3, H3.4 and H3.5 landed together, the last without the release
+of waiting because the march passes the root comparison (log row of the date); the march is `axial._march`, called by
+`solve_open_duct` when advection is on (no separate `march_open_duct`), and `Solver(method="march")` selects it.
+Newton is deleted, not kept as a polish: it was `gcrot` with the Stokes-CG preconditioner and the continuation,
+not cheap to keep, and the marched root already meets the steady residual at the solve tolerance. H3.2 (the T4 and T5
+anchors, Hunt Ha 300 to Ha 10,000 at Re 10 to 1,000) is not in this PR and stays open. The statuses are classified by
+LMhdX (`axial._watch`) until SOLVAX has a march driver (SOLVAX #174).
+
 #### Phase H4 — API 2.0 (Lane C, with H4.6 on Lane B)
 
 Contract in ADR 0010 (DH4–DH7). Everything before H4.7 is additive, so `main`
@@ -2096,13 +2104,20 @@ weighted-Poisson path line for line. Repayment: H3.5 (-300, the Newton and inner
 open ducts). The H0.6 loan above is not drawn on, because the stage replaced the predictor scaling
 and its projection pairing in the same lines.
 
+Repayment recorded 2026-10-26 (H3): the Newton and inner-Stokes-CG stack was 166 lines of `axial.py`, not 300, and the
+march, the open-axis stage and the outlet flux add 175 (`axial.py` +105, `core3d.py` +56, `ops.py` +6, `solver.py` +5, the
+rest counted net): the package goes from 14,090 to 14,110 lines and the maintained core from 12,653 to 12,673, so the
+B2 loan of 86 is not repaid and this PR takes 20 more, **106 outstanding**. 46 of the added lines are the mirror-duct
+bridge of `core3d._stage`, deleted when SOLVAX #172 takes mixed end kinds; the audit targets stand at the measured
+values, not lower.
+
 ##### H.10.9 Capability status in one table (2026-10-22)
 
 | Area | Supported envelope | Evidence | Open blocker | Next |
 |---|---|---|---|---|
 | Fully developed MHD | Hartmann, Shercliff, Hunt ducts; polar pipes; implicit derivatives of converged steady solutions | Table I, eight rows, orders 1.96–2.02 | Does not qualify arbitrary 3-D blanket flow | keep |
-| Open and fringing flow | Cartesian Stokes/Newton ducts; open polar Stokes pipe; spatially varying B as static preparation data | ANL fringe rows; ALEX B1 at the side-wall tap | The original tap position is unresolved (selecting it by agreement would be calibration); no end-to-end coil derivative | read the ALEX report; H8.1 |
-| Transient momentum | First-order step with limited or upwind transport; Stokes and held-flow use; constrained stage `H u + (dt/rho) G p = b`, `D u = 0` exact, explicit or implicit viscosity (Lane B, PR B1); IMEX RK3 with Crank-Nicolson viscous and damping terms and central transport, stable to Courant sqrt 3 (Lane B, PR B2) | time order 1.00–1.04 (H.0); gradient-force rest state at 3e-16 for `B_y` 0 and 10, Euler and RK3 (T38); RK3 time order 2.30 and 2.24 on the Shatrov flow (T28), 2.76–2.99 for inviscid transport energy (T24), 2.0 for the energy budget (T34), Orr–Sommerfeld growth within 0.07 % (T25) | ~~no pressure-balanced rest state for a non-isotropic B (H.10.1)~~ closed by B1; ~~central transport with Euler is unstable~~ RK3 is the stepper for central transport, Euler stays unstable with it (pinned by a closed-form amplification test); no inflow-outflow axis in the stage until SOLVAX takes mixed end kinds (SOLVAX #172); no CFL controller or constant-flux control (H2.3); ledger scope (H2.7); T29 duct not run | H2.3–H2.8, H3 (march) |
+| Open and fringing flow | Cartesian Stokes ducts and inertial ducts marched to their steady state by the RK3 step (statuses `converged`, `stagnated`, `unsteady`); open polar Stokes pipe; spatially varying B as static preparation data | ANL fringe rows; ALEX B1 at the side-wall tap | The original tap position is unresolved (selecting it by agreement would be calibration); no end-to-end coil derivative | read the ALEX report; H8.1 |
+| Transient momentum | First-order step with limited or upwind transport; Stokes and held-flow use; constrained stage `H u + (dt/rho) G p = b`, `D u = 0` exact, explicit or implicit viscosity (Lane B, PR B1); IMEX RK3 with Crank-Nicolson viscous and damping terms and central transport, stable to Courant sqrt 3 (Lane B, PR B2) | time order 1.00–1.04 (H.0); gradient-force rest state at 3e-16 for `B_y` 0 and 10, Euler and RK3 (T38); RK3 time order 2.30 and 2.24 on the Shatrov flow (T28), 2.76–2.99 for inviscid transport energy (T24), 2.0 for the energy budget (T34), Orr–Sommerfeld growth within 0.07 % (T25) | ~~no pressure-balanced rest state for a non-isotropic B (H.10.1)~~ closed by B1; ~~central transport with Euler is unstable~~ RK3 is the stepper for central transport, Euler stays unstable with it (pinned by a closed-form amplification test); an inflow-outflow axis in the stage through a mirror-duct preconditioner (`core3d._stage`) until SOLVAX takes mixed end kinds (SOLVAX #172); no CFL controller or constant-flux control (H2.3); ledger scope (H2.7); T29 duct not run | H2.3–H2.8, H3 (march) |
 | Thermal | Constant-property fluid heat, implicit conduction, Joule heat, Boussinesq in closed flows, developed ducts; open thermal with held velocity | thermal PRs, Nu tables | evolving open thermal flow and solid storage are not on main | H7 |
 | Conducting walls | Insulating and thin walls; resolved layers in separable geometry; general 3-D electrical walls are draft #286 | wall tests | one-cell third axis on main | H7.2 |
 | Derivatives | Steady forcing and field-scale sensitivities, thermal state, source and reservoir directions in the prepared path | steady gradients vs central differences | geometry, material, timestep, BC setup and field arrays are static in important paths | H4.2, H8.1 |
