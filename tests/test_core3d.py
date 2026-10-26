@@ -1129,3 +1129,42 @@ def test_the_coupled_step_converges_at_first_order_in_time():
     ]
     orders = np.log2(np.divide(errors[:-1], errors[1:]))
     assert np.all((orders > 0.8) & (orders < 1.5)), (errors, orders)
+
+
+@pytest.mark.parametrize("periodic", [True, False])
+def test_the_summed_lorentz_force_is_the_boundary_term_and_the_current_is_divergence_free(periodic):
+    """T6 (Ni et al. 2012, part III): sum of F dV = (sum over end faces of J_out A r) x B, constant B.
+
+    The face form's half-cell arm turns the sum over cells into end-face terms once div J = 0, on a stretched
+    mesh, for a random velocity and a skew field. A walled axis has no end-face current, so its force sums to
+    zero; a periodic axis carries the net current times its length.
+    """
+    from lmhdx.core3d import _lorentz_from_currents, face_currents
+
+    x = BoundaryCondition(PERIODIC) if periodic else WALL
+    grid = Grid(
+        uniform_faces(5, 0.0, 1.5) if periodic else tanh_faces(5, 0.0, 1.5, 1.2),
+        tanh_faces(7, -1.0, 1.0, 1.4),
+        tanh_faces(6, -1.0, 1.0, 1.3),
+    )
+    field = np.array([0.3, 1.0, -0.7])
+    problem = ChannelProblem(
+        grid=grid, conditions=(x, WALL, WALL), conductivity=1.3, magnetic_field=tuple(field)
+    )
+    _, currents, imposed = face_currents(_random_velocity(problem), problem, problem.factorization())
+    force = _lorentz_from_currents(currents, imposed, problem)
+    summed = np.array([np.sum(np.asarray(f.data) * grid.cell_volumes()) for f in force])
+    scale = sum(np.sum(np.abs(np.asarray(f.data)) * grid.cell_volumes()) for f in force)
+    boundary = np.zeros(3)
+    for axis, current in enumerate(currents):
+        area = np.asarray(grid.face_areas(axis))
+        for end, outward in ((0, -1.0), (-1, 1.0)):
+            flux = outward * np.take(np.asarray(current.data) * area, [end], axis)
+            for component in range(3):
+                position = grid.faces[axis][[end]] if component == axis else grid.centers[component]
+                other = tuple(index for index in range(3) if index != component)
+                boundary[component] += np.sum(flux * np.expand_dims(position, other))
+    assert np.max(np.abs(summed - np.cross(boundary, field))) <= 1e-12 * scale
+    assert (np.max(np.abs(summed)) > 1e-3 * scale) == periodic
+    charge = float(jnp.max(jnp.abs(divergence(currents).data)))
+    assert charge <= 1e-12 * max(float(jnp.max(jnp.abs(c.data))) for c in currents)
