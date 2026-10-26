@@ -102,7 +102,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [support, design, operators, physics, channel, plane, steady, programs, fully_developed, gradients]
+        shard: [support, design, operators, physics, channel, plane, steady, programs, fully_developed, gradients, api, anchors]
         include:
           # Coverage on the steady shard peaks near 12 GB of resident memory with four
           # workers, against 16 GB on a hosted runner; two workers keep it well inside.
@@ -220,6 +220,18 @@ jobs:
           path: artifacts/test-evidence/gradients
           key: lmx-test-evidence-${{ github.run_id }}-gradients
           fail-on-cache-miss: true
+      - name: Restore api evidence
+        uses: actions/cache/restore@v6
+        with:
+          path: artifacts/test-evidence/api
+          key: lmx-test-evidence-${{ github.run_id }}-api
+          fail-on-cache-miss: true
+      - name: Restore anchors evidence
+        uses: actions/cache/restore@v6
+        with:
+          path: artifacts/test-evidence/anchors
+          key: lmx-test-evidence-${{ github.run_id }}-anchors
+          fail-on-cache-miss: true
       - name: Combine and enforce coverage
         run: |
           python -m coverage combine artifacts/test-evidence/*
@@ -278,6 +290,12 @@ jobs:
             shard: gradients
             budget: 420
             cache: pr-regressionsteady
+          - tier: regression
+            shard: api
+            budget: 420
+          - tier: regression
+            shard: anchors
+            budget: 420
           - tier: regression
             shard: support
             budget: 300

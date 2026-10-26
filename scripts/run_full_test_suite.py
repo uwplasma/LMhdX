@@ -84,11 +84,13 @@ _TEST_SHARDS = {
         "tests/test_physics.py",
         "tests/test_q2d_identities.py",
     ),
+    "api": ("tests/test_problem.py",),
+    "anchors": ("tests/test_laminar_anchors.py",),
 }
 
 _ALL_TESTS = tuple(dict.fromkeys(path.split("::")[0] for shard in _TEST_SHARDS.values() for path in shard))
 _CHANGE_TEST_NAMES = {
-    "__init__": "config example_runner",
+    "__init__": "config example_runner problem",
     "__main__": "io",
     "cases": "config physics fully_developed units_and_wall_models design io",
     "axial": "axial example_runner",
@@ -97,6 +99,9 @@ _CHANGE_TEST_NAMES = {
     "fully_developed": "fully_developed design config example_runner",
     "steady": "steady fully_developed axial",
     "grid": "grid ops core3d timeloop steady pipe axial",
+    "problem": "problem laminar_anchors example_runner",
+    "fields": "problem laminar_anchors",
+    "solver": "problem laminar_anchors example_runner",
     "ops": "ops em core3d timeloop steady pipe axial",
     "poisson": "poisson core3d timeloop steady pipe axial",
     "pipe": "pipe poisson axial em",
