@@ -8,6 +8,7 @@ solver modules until a symbol is used.
 
 from __future__ import annotations
 
+import logging
 import os
 from importlib import import_module
 
@@ -23,6 +24,7 @@ if (
     ).strip()
 
 __all__ = [
+    "configure",
     "enable_x64",
     "enable_compilation_cache",
     "make_hartmann_case",
@@ -52,6 +54,16 @@ __all__ = [
     "normal_stack_leakage_ratio",
     "equivalent_single_layer",
     "nested_wall_layer_resolution_summary",
+    "Problem",
+    "Wall",
+    "Sides",
+    "Open",
+    "Thermal",
+    "Uniform",
+    "Solver",
+    "channel",
+    "duct",
+    "fringe_duct",
 ]
 
 
@@ -74,6 +86,22 @@ def enable_x64() -> None:
 
     config.update("jax_enable_x64", True)
     _pin_matmul_precision()
+
+
+def configure(dtype: str | None = None) -> None:
+    """Set the process-wide choice that importing the package leaves alone.
+
+    ``dtype="float64"`` enables float64 and pins the matmul precision (:func:`enable_x64`), announced
+    once on the ``lmhdx`` logger; ``"float32"`` keeps JAX as it is. :func:`lmhdx.solve` calls
+    ``configure(dtype=solver.dtype)``.
+    """
+    from jax import config
+
+    if dtype not in (None, "float32", "float64"):
+        raise ValueError("dtype is 'float32' or 'float64'")
+    if dtype == "float64" and not config.jax_enable_x64:
+        enable_x64()
+        logging.getLogger("lmhdx").info("float64 enabled")
 
 
 def _pin_matmul_precision() -> str:
@@ -130,7 +158,17 @@ _EXPORTS = {
     "solve_steady_state": ("lmhdx.steady", "solve_steady_state"),
     "advance": ("lmhdx.core3d", "advance"),
     "Q2DProblem": ("lmhdx.q2d", "Q2DProblem"),
-    "solve": ("lmhdx.cases", "solve"),
+    "solve": ("lmhdx.solver", "solve"),
+    "Problem": ("lmhdx.problem", "Problem"),
+    "Wall": ("lmhdx.problem", "Wall"),
+    "Sides": ("lmhdx.problem", "Sides"),
+    "Open": ("lmhdx.problem", "Open"),
+    "Thermal": ("lmhdx.problem", "Thermal"),
+    "channel": ("lmhdx.problem", "channel"),
+    "duct": ("lmhdx.problem", "duct"),
+    "fringe_duct": ("lmhdx.problem", "fringe_duct"),
+    "Uniform": ("lmhdx.fields", "Uniform"),
+    "Solver": ("lmhdx.solver", "Solver"),
     "generate_rect_duct_mesh_from_faces": ("lmhdx.cases", "generate_rect_duct_mesh_from_faces"),
     "WallLayer": ("lmhdx.cases", "WallLayer"),
     "dynamic_to_kinematic_viscosity": ("lmhdx.cases", "dynamic_to_kinematic_viscosity"),

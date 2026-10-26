@@ -230,16 +230,12 @@ def divergence(faces: tuple[Field, Field, Field]) -> Field:
     return Field(total, (CENTER, CENTER, CENTER), grid)
 
 
-def laplacian(
-    field: Field, conditions: tuple[BoundaryCondition, ...], weights: tuple[float, float, float] = (1.0,) * 3
-) -> Field:
-    """Return the divergence of the gradient of a cell-centred field, each axis's flux scaled by ``weights``."""
+def laplacian(field: Field, conditions: tuple[BoundaryCondition, ...]) -> Field:
+    """Return the divergence of the gradient of a cell-centred field."""
     if len(conditions) != 3:
         raise ValueError("laplacian needs one boundary condition per axis")
     gradients = tuple(face_gradient(field, index, conditions[index]) for index in range(3))
-    return divergence(
-        tuple(g if w == 1.0 else g.replace_data(w * g.data) for g, w in zip(gradients, weights))
-    )
+    return divergence(gradients)
 
 
 def face_interpolate(field: Field, axis: int | str, condition: BoundaryCondition) -> Field:
