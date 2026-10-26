@@ -97,6 +97,7 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 import numpy as np
+import solvax
 
 from . import _pin_matmul_precision
 from ._programs import attribute, bound, host_array, host_scalar
@@ -333,6 +334,24 @@ def conjugate_grid(grid: Grid, walls) -> ConjugateGrid:
         faces.append(np.concatenate([below, edges, above]))
         fluid.append(slice(len(below), len(below) + grid.shape[axis]))
     return ConjugateGrid(Grid(*faces), tuple(fluid), walls)
+
+
+def _flux_form(grid: Grid, conditions, conductivity, shift, coefficient):
+    """SOLVAX's ``V (shift x - coefficient div(k grad x))`` on ``grid`` (``solvax.separable.flux_form_operator``).
+
+    ``conditions`` give each axis one kind, their data entering through :func:`_boundary_data`; ``shift`` 0 is the
+    singular charge balance. A Dirichlet end beside a Neumann one waits on SOLVAX (#172).
+    """
+    if any(condition.is_mixed for condition in conditions):
+        raise NotImplementedError("one boundary kind per axis: mixed ends wait on SOLVAX #172")
+    kinds = [condition.kinds[0] for condition in conditions]  # LMhdX's kind names are SOLVAX's
+    return solvax.separable.flux_form_operator(grid.widths, kinds, conductivity, shift, coefficient)
+
+
+def _boundary_data(conditions) -> list:
+    """The ends' values for the operator's ``lift``: a Dirichlet end's value, a Neumann end's derivative along the
+    axis; a periodic axis takes none."""
+    return [None if condition.is_periodic else (condition.lower, condition.upper) for condition in conditions]
 
 
 @dataclass(frozen=True)
