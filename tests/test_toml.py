@@ -79,6 +79,13 @@ _PROBLEMS = {
         bc=(Open(np.linspace(0, 1, 64).reshape(8, 8)), Wall(0.02), Wall(0.02))
     ),
     "pipe": lambda: pipe(10, 16, 24, wall_conductance=0.02),
+    "wall_leaves": lambda: duct(10, 24).replace(
+        bc=(
+            "periodic",
+            Wall(conductivity=2.0, thickness=0.05),
+            Sides(Wall(0.02, conducting=True), Wall(0.03)),
+        )
+    ),
     "q2d": lambda: q2d(shape=(8, 8)),
     "heated": _heated,
     "heated_walls": lambda: duct(10, 24).replace(
@@ -494,3 +501,13 @@ def test_the_command_line_upgrades_and_runs_a_file(tmp_path, capsys):
     assert summary["residual"] == float(expected.residual)
     with pytest.raises(ValueError, match="overrides apply to schema 3"):
         main([str(old), "solver.tol=1e-8"])
+
+
+def test_the_wall_leaves_are_leaves_after_a_round_trip(tmp_path):
+    """conductivity, thickness and the conducting flag survive TOML, and the numbers stay differentiable."""
+    problem = _PROBLEMS["wall_leaves"]()
+    loaded = load(_write(tmp_path, dumps(problem))).problem
+    walls = loaded.bc[1], loaded.bc[2].lower
+    assert (walls[0].conductivity, walls[0].thickness) == (2.0, 0.05) and walls[1].conducting
+    assert _same(loaded, problem)
+    assert len(jax.tree.leaves(loaded)) == len(jax.tree.leaves(problem)) >= 4

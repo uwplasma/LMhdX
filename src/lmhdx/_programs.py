@@ -28,11 +28,19 @@ __all__ = [
     "grid_program",
     "host_array",
     "host_scalar",
+    "is_traced",
     "problem_arrays",
     "shape_program",
     "store",
     "stored",
 ]
+
+
+def is_traced(*values) -> bool:
+    """Whether any of the pytrees ``values`` holds a tracer."""
+    return any(
+        isinstance(leaf, jax.core.Tracer) for value in values for leaf in jax.tree_util.tree_leaves(value)
+    )
 
 
 def _constants_as_constvars():
