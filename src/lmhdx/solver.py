@@ -39,7 +39,7 @@ from .problem import Q2D, Open, Problem, channel_kernel, thermal_kernel
 from .q2d import Q2DProblem, evolve_q2d, solve_q2d
 from .steady import _MAX_STEPS, solve_compiled, solve_steady_state
 
-__all__ = ["Solution", "Solver", "solve"]
+__all__ = ["Case", "Solution", "Solver", "solve"]
 
 _RESERVED = {"rk3": "H2.2", "implicit": "H2.2"}
 _METHODS = ("auto", "stokes", "newton", "march", "euler", "ifrk4")
@@ -85,6 +85,15 @@ class Solver:
         if method in ("euler", "ifrk4") and (self.dt is None or self.steps is None):
             raise ValueError(f"method {method!r} needs dt and steps")
         return method
+
+
+class Case(NamedTuple):
+    """A problem with its solver and start, as :func:`lmhdx.config.load` reads them from a TOML file."""
+
+    problem: object
+    solver: Solver | None = None
+    start: object = None
+    name: str = ""
 
 
 class Solution(NamedTuple):
@@ -289,8 +298,14 @@ def solve(problem: object, solver: Solver | None = None, start: object = None) -
     ``start`` is the initial state of an unsteady run: for a thermal run ``None`` (rest, at the
     problem's initial temperature), ``"steady"`` (the steady flow, temperature at rest) or a
     :class:`lmhdx.thermal.ThermalState`; for a mechanical run a velocity or ``None``. A steady
-    solve takes none.
+    solve takes none. A :class:`Case` brings its own solver and start unless they are given.
     """
+    if isinstance(problem, Case):
+        problem, solver, start = (
+            problem.problem,
+            solver or problem.solver,
+            problem.start if start is None else start,
+        )
     if not isinstance(problem, (Problem, Q2D)):
         if solver is not None or start is not None:
             raise TypeError(f"{type(problem).__name__} takes no solver or start")

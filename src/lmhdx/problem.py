@@ -22,7 +22,7 @@ import numpy as np
 from .axial import axial_faces, open_duct
 from .cases import WallLayer
 from .core3d import ChannelProblem
-from .fields import Fringe, Uniform, host, is_traced, primal, pytree
+from .fields import Fringe, Func, Table, Uniform, host, is_traced, primal, pytree
 from .grid import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Grid, axis
 from .pipe import pipe_grid
 from .q2d import make_q2d_case
@@ -62,8 +62,8 @@ class Wall:
 
     conductance: float = 0.0
     layers: tuple[WallLayer, ...] = ()
-    temperature: float | None = None
-    heat_flux: float | None = None
+    temperature: float | tuple | None = None
+    heat_flux: float | tuple | None = None
 
     def __post_init__(self) -> None:
         for name in ("temperature", "heat_flux"):
@@ -92,6 +92,9 @@ class Open:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "profile", _frozen(self.profile))
+
+
+Bc = Wall | Sides | Open | str  # one entry of ``Problem.bc``: what each axis is
 
 
 @pytree(
@@ -141,11 +144,11 @@ class Problem:
     """
 
     grid: Grid
-    bc: tuple = ("periodic", "wall", "wall")
+    bc: dict[str, Bc] | tuple[Bc, Bc, Bc] = ("periodic", "wall", "wall")
     density: float = 1.0
     viscosity: float = 1.0
     conductivity: float = 1.0
-    B: object = Uniform(0.0, 0.0, 0.0)
+    B: Uniform | Fringe | Table | Func = Uniform(0.0, 0.0, 0.0)
     forcing: tuple[float, float, float] = (0.0, 0.0, 0.0)
     flow_rate: float | None = None
     advection: str = "off"
@@ -153,6 +156,8 @@ class Problem:
 
     def __post_init__(self) -> None:
         if isinstance(self.bc, dict):
+            if missing := sorted(set("xyz") - set(self.bc)):
+                raise ValueError(f"bc needs an entry for each axis, missing {missing}")
             object.__setattr__(self, "bc", tuple(self.bc[name] for name in "xyz"))
 
     def replace(self, **changes) -> Problem:
@@ -181,8 +186,8 @@ class Q2D:
     ``steps`` belong to the :class:`lmhdx.solver.Solver`.
     """
 
-    initial_vorticity: object
-    forcing: object = None
+    initial_vorticity: np.ndarray
+    forcing: np.ndarray | None = None
     viscosity: float = 1.0e-2
     hartmann_friction: float = 0.1
     length: tuple[float, float] = (2.0 * pi, 2.0 * pi)
@@ -318,7 +323,7 @@ def duct(
     *,
     wall_conductance: float = 0.0,
     cells_in_layer: int = 6,
-    walls: dict | None = None,
+    walls: dict[str, Bc] | None = None,
     flow_rate: float | None = None,
     **fields: object,
 ) -> Problem:
