@@ -746,14 +746,21 @@ def _stage(grid, conditions, scalar, shifts, coefficient, viscous):
 
     with jax.ensure_compile_time_eval():
         schur = solvax.fast_diagonal_schur(grid.widths, [c.kind for c in scalar], shifts, coefficient)
-    # The right-hand side's mean is the wall flux, zero by construction: no relative compatibility test.
-    solve = functools.partial(
-        schur.solve_exact,
-        gradient=gradient,
-        divergence=lambda fields: divergence(constrained(fields)).data,
-        helmholtz=inverse,
-        defect_rtol=1.0,
-    )
+    widths = grid.volume_factors()
+
+    def solve(rhs, **options):
+        # The cell volumes are formed in the trace from the three width vectors, not captured as a cell-sized constant.
+        volumes = functools.reduce(jnp.multiply, (jnp.asarray(w, schur.volumes.dtype) for w in widths))
+        # The right-hand side's mean is the wall flux, zero by construction: no relative compatibility test.
+        return dataclasses.replace(schur, volumes=volumes).solve_exact(
+            rhs,
+            gradient=gradient,
+            divergence=lambda fields: divergence(constrained(fields)).data,
+            helmholtz=inverse,
+            defect_rtol=1.0,
+            **options,
+        )
+
     return inverse, gradient, constrained, jax.jit(solve, static_argnames="rtol")
 
 
