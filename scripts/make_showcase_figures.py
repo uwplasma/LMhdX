@@ -607,7 +607,7 @@ def thermal_onset(chandrasekhar_numbers: tuple[float, ...] = (0.0, 10.0, 100.0, 
         axis.plot(strong, np.pi**2 * strong, "--", color=MUTED, lw=1, label=r"$\pi^2 Q$, strong-field limit")
         table = np.transpose(CHANDRASEKHAR_TABLE)
         axis.plot(*table, "D", color=INK, mfc="none", ms=8, label="Chandrasekhar (1961) table")
-        axis.plot(rows[:, 0], rows[:, 5], "o", color=SERIES[0], label=r"LMhdX, extrapolated in $\Delta t$")
+        axis.plot(rows[:, 0], rows[:, 5], "o", color=SERIES[0], label="LMhdX")
         axis.set_xscale("symlog", linthresh=1.0, linscale=0.35)
         axis.set_yscale("log")
         axis.set(xlim=(0, 1.2e5), ylim=(1.2e3, 2e6), xlabel="Chandrasekhar number $Q = Ha^2$")
@@ -630,15 +630,15 @@ def thermal_onset(chandrasekhar_numbers: tuple[float, ...] = (0.0, 10.0, 100.0, 
                 axis.text(-0.13, 1.08, "(b)", transform=axis.transAxes, fontsize=15, fontweight="bold")
 
         axis = fig.add_subplot(outer[2])
-        steps = (r"$\Delta t_0 = 0.05/(Q + Ra_c^{1/2})$", r"$\Delta t_0/2$", r"Richardson in $\Delta t$")
-        for color, column, marker, label in zip(SERIES[::-1], (3, 4, 5), "s^o", steps):
+        steps = (r"$\Delta t_0 = 0.05/(Q + Ra_c^{1/2})$", r"$\Delta t_0/2$")
+        for color, column, marker, label in zip(SERIES[::-1], (3, 4), "so", steps):
             values = 100 * (rows[:, column] / rows[:, 1] - 1)
             axis.plot(rows[:, 0], values, marker + "-", color=color, label=label, **OPEN)
         axis.axhline(0.0, color=MUTED, lw=0.8)
         axis.set_xscale("symlog", linthresh=10.0, linscale=0.35)
         axis.set(xlim=(0, 1500), xlabel="$Q$", ylabel="$Ra_c$ against the eigenproblem (%)")
-        axis.set_title("First order in the time step")
-        axis.legend(loc="center right", bbox_to_anchor=(1.0, 0.6))
+        axis.set_title("Independent of the time step")
+        axis.legend(loc="upper left", bbox_to_anchor=(0.0, 0.93))
         _panel(axis, "c")
         _save_webp(fig, STATIC / "thermal_magnetoconvection.webp", dpi=110, palette=True)
 

@@ -172,13 +172,13 @@ drive buoyant flow, and every step checks the heat budget. The module is still
 research stage. Far down a heated duct LMhdX matches the exact Nusselt numbers
 of rectangular ducts and of Hartmann plates to within 0.35 %, and in a vertical
 field it follows Chandrasekhar's tenfold rise of the critical Rayleigh number to
-within 0.9 %. The
+within 0.8 %. The
 [heat transport page](https://lmhdx.readthedocs.io/en/latest/physics/thermal.html)
 gives each comparison, its conditions and the command that redraws it.
 
 ![Velocity and temperature of a square duct at Ha 0 and 100 in 3-D, Nusselt numbers against aspect ratio and Hartmann number, and mesh convergence](docs/_static/thermal_developed_duct.webp)
 
-![Critical Rayleigh number against the field strength, the critical rolls at Q = 0 and 1000, and the error against the time step](docs/_static/thermal_magnetoconvection.webp)
+![Critical Rayleigh number against the field strength, the critical rolls at Q = 0 and 1000, and the error at two time steps](docs/_static/thermal_magnetoconvection.webp)
 
 ## Design with gradients
 

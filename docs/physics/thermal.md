@@ -606,21 +606,14 @@ onset its rate then depends on that noise.
 The reference is Chandrasekhar's eigenproblem solved by Chebyshev collocation
 (`validation.thermal.chandrasekhar_onset`). It reproduces his tabulated values
 for $Q\le100$, as quoted by Basak & Kumar (2015), to within 0.01 %, which the
-tests check. LMhdX's onset converges at first order in the time step, and the
-extrapolated value is within 0.9 % of the reference across the tenfold rise of
-$Ra_c$. The tests run the Bénard onset at $Q=0$ and require it within 4 % of
-1707.76; the full sweep is rerun by the figure script.
-
-These runs use the stabilised momentum step, which damps each velocity
-component without matching the damping in its pressure correction. With the
-field vertical the fluid at rest stays at rest, but the perturbations are still
-affected at a finite time step. In a trial with a corrected stage, the Q = 1000
-onset at $\Delta t_0$ moved from 4.5 % to 0.8 % low, while the extrapolated
-values moved by less than 0.1 %. The figure will be regenerated once the
-corrected step is merged; the Q = 0 result does not change.
+tests check. On the exact momentum stage (#297) LMhdX's onset does not depend on
+the time step: $\Delta t_0$ and $\Delta t_0/2$ agree to 0.01 %. It lies 0.2 to
+0.8 % below the reference across the tenfold rise of $Ra_c$, which is the error of
+the 32-cell layer mesh. The tests run the Bénard onset at $Q=0$ and require it
+within 4 % of 1707.76; the full sweep is rerun by the figure script.
 
 ```{image} ../_static/thermal_magnetoconvection.webp
-:alt: Critical Rayleigh number against the Chandrasekhar number, the critical rolls at Q = 0 and 1000, and the error against the time step
+:alt: Critical Rayleigh number against the Chandrasekhar number, the critical rolls at Q = 0 and 1000, and the error at two time steps
 :align: center
 ```
 
