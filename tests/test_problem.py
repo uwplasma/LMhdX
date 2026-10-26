@@ -444,9 +444,14 @@ def test_the_solver_resolves_its_method_and_refuses_what_the_kernels_cannot_do()
     assert Solver(dt=0.01, steps=2).resolve(q2d(shape=(8, 8))) == "ifrk4"
     with pytest.raises(ValueError, match="dt and steps"):
         Solver().resolve(q2d(shape=(8, 8)))
-    for method, plan in (("rk3", "H2.2"), ("march", "H3"), ("implicit", "H2.2")):
-        with pytest.raises(NotImplementedError, match=plan):
+    for method in ("rk3", "implicit"):
+        with pytest.raises(NotImplementedError, match="H2.2"):
             Solver(method=method).resolve(stokes)
+    inflow = fringe_duct(10.0, advection="central", **_SMALL_FRINGE)
+    assert Solver().resolve(inflow) == Solver(method="march").resolve(inflow) == "march"
+    for method, problem in (("newton", inflow), ("march", inertial), ("march", stokes)):
+        with pytest.raises(ValueError, match="does not fit"):
+            Solver(method=method).resolve(problem)
     with pytest.raises(ValueError, match="one of"):
         Solver(method="rk4").resolve(stokes)
     with pytest.raises(ValueError, match="does not fit"):

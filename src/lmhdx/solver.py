@@ -4,11 +4,12 @@
 the kernel it describes, so a concrete problem gives the older entry point's result bit for bit.
 ``method`` maps to the kernels as follows: ``stokes`` is :func:`lmhdx.steady.solve_compiled`
 (:func:`lmhdx.axial.solve_open_duct` on an :class:`~lmhdx.problem.Open` axis,
-:func:`lmhdx.pipe.solve_pipe` on a polar grid), ``newton`` the same with advection on, ``euler`` the
+:func:`lmhdx.pipe.solve_pipe` on a polar grid), ``newton`` the same with advection on, ``march`` the
+open duct with advection on (the RK3 march of :func:`lmhdx.axial.solve_open_duct`), ``euler`` the
 projection step (:func:`lmhdx.core3d.advance`, or :func:`lmhdx.thermal.advance_thermal` with
 ``Problem.thermal``) and ``ifrk4`` :func:`lmhdx.q2d.solve_q2d`. ``auto`` takes ``euler`` if ``steps``
-is given, else ``stokes`` or ``newton`` by the advection; ``rk3``, ``march`` and ``implicit`` are
-reserved for plan steps H2.2 and H3 and raise.
+is given, else ``stokes``, ``newton`` or ``march`` by the advection and the axes; ``rk3`` and
+``implicit`` are reserved for plan step H2.2 and raise.
 
 :func:`jax.grad` through the leaves of a problem runs the implicit derivative of the steady solve.
 The factorizations are built on the host from the primal values, so :func:`jax.jit` is for the
@@ -34,14 +35,14 @@ from .fields import Uniform, host, is_traced, primal
 from .grid import Field
 from .pipe import PipeProblem, solve_pipe
 from .pipe import flow_rate as _pipe_flow_rate
-from .problem import Q2D, Problem, channel_kernel, thermal_kernel
+from .problem import Q2D, Open, Problem, channel_kernel, thermal_kernel
 from .q2d import Q2DProblem, evolve_q2d, solve_q2d
 from .steady import _MAX_STEPS, solve_compiled, solve_steady_state
 
 __all__ = ["Solution", "Solver", "solve"]
 
-_RESERVED = {"rk3": "H2.2", "march": "H3", "implicit": "H2.2"}
-_METHODS = ("auto", "stokes", "newton", "euler", "ifrk4")
+_RESERVED = {"rk3": "H2.2", "implicit": "H2.2"}
+_METHODS = ("auto", "stokes", "newton", "march", "euler", "ifrk4")
 
 
 @dataclass(frozen=True)
@@ -73,10 +74,12 @@ class Solver:
         if self.method not in _METHODS:
             raise ValueError(f"method must be one of {list(_METHODS)}, got {self.method!r}")
         q2d, method = isinstance(problem, Q2D), self.method
+        steady = None if q2d else "stokes" if problem.advection == "off" else "newton"
+        if steady == "newton" and isinstance(problem.ends(0), Open):
+            steady = "march"
         if method == "auto":
-            method = "ifrk4" if q2d else "euler" if self.steps is not None else "stokes"
-            method = "newton" if method == "stokes" and not q2d and problem.advection != "off" else method
-        allowed = ("ifrk4",) if q2d else ("euler", "stokes" if problem.advection == "off" else "newton")
+            method = "ifrk4" if q2d else "euler" if self.steps is not None else steady
+        allowed = ("ifrk4",) if q2d else ("euler", steady)
         if method not in allowed:
             raise ValueError(f"method {method!r} does not fit this problem; use one of {allowed}")
         if method in ("euler", "ifrk4") and (self.dt is None or self.steps is None):
@@ -90,7 +93,8 @@ class Solution(NamedTuple):
     ``velocity`` is the staggered components; ``pressure``, ``potential``, ``currents``,
     ``temperature`` and ``vorticity`` appear where the run has them. ``pressure_gradient`` is the
     drive of a periodic duct (the body force, or the one that meets ``flow_rate``), ``flow_rate``
-    the flux through the first x face, ``residual`` the kernel's residual norm.
+    the flux through the first x face, ``residual`` the kernel's residual norm and ``status`` how a marched
+    open duct ended (:data:`lmhdx.axial.CONVERGED`, ``STAGNATED`` or ``UNSTEADY``).
     """
 
     fields: dict
@@ -99,6 +103,7 @@ class Solution(NamedTuple):
     residual: object = None
     iterations: object = None
     history: object = None
+    status: object = None
 
     def __getattr__(self, name):
         try:
@@ -144,7 +149,9 @@ def _steady(problem: Problem, solver: Solver) -> Solution:
         fields["currents"], residual = found.currents, found.residual_norm
         if is_traced(factor):
             fields, residual = jax.tree.map(lambda f: f * factor, fields), abs(factor) * residual
-        return Solution(fields, None, _flux(fields["velocity"][0]), residual, found.iterations)
+        return Solution(
+            fields, None, _flux(fields["velocity"][0]), residual, found.iterations, status=found.status
+        )
     unit = rate is not None
     if unit and problem.advection != "off":
         raise NotImplementedError(

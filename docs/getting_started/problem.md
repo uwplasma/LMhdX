@@ -43,9 +43,10 @@ built and refused at `solve`.
 ## Solvers
 
 `method` is `stokes` (one certified conjugate-gradient solve), `newton` (the same with advection on),
-`euler` (the projection step as one compiled scan, or with `thermal` the heat step) or `ifrk4` (the Q2D
-integrator). `auto` picks `euler` if `steps` is given and `stokes` or `newton` otherwise. `rk3`, `march`
-and `implicit` are named for plan steps H2.2 and H3 and raise until they exist.
+`march` (an open duct with advection on, marched to its steady state), `euler` (the projection step as one
+compiled scan, or with `thermal` the heat step) or `ifrk4` (the Q2D integrator). `auto` picks `euler` if
+`steps` is given and `stokes`, `newton` or `march` otherwise. `rk3` and `implicit` are named for plan step
+H2.2 and raise until it exists.
 
 ## Derivatives
 

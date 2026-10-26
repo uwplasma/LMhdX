@@ -7,6 +7,11 @@ import pytest
 
 import lmhdx
 from lmhdx.axial import (
+    CONVERGED,
+    STAGNATED,
+    UNSTEADY,
+    _lift,
+    _watch,
     axial_faces,
     charge_balance,
     fringe_duct,
@@ -18,7 +23,7 @@ from lmhdx.axial import (
     station_flow_rates,
     station_pressure,
 )
-from lmhdx.core3d import ChannelProblem, velocity_offset, zero_velocity
+from lmhdx.core3d import RK3, ChannelProblem, _step, velocity_offset, zero_velocity
 from lmhdx.grid import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Grid, pad, uniform_faces
 from lmhdx.poisson import fast_diagonal_helmholtz, fast_diagonal_poisson
 from lmhdx.steady import _face_weights, _orthogonal_projection, steady_residual, with_inflow
@@ -211,11 +216,6 @@ def test_invalid_open_axes_are_refused():
         ChannelProblem(grid=grid, conditions=(_OPEN, _OPEN, _WALL))
     with pytest.raises(ValueError, match="has no wall"):
         ChannelProblem(grid=grid, conditions=(_OPEN, _WALL, _WALL), wall_conductance=(0.1, 0.0, 0.0))
-    with pytest.raises(ValueError, match="end at 1"):
-        solve_open_duct(
-            ChannelProblem(grid=grid, conditions=(_OPEN, _WALL, _WALL), advection="central"),
-            continuation=(0.5,),
-        )
     with pytest.raises(ValueError, match="first axis"):
         solve_open_duct(ChannelProblem(grid=grid, conditions=(_WALL, _OPEN, _WALL)))
     from lmhdx.core3d import fringe_field
@@ -240,11 +240,12 @@ def test_invalid_open_axes_are_refused():
     assert np.allclose(np.diff(_small_fringe(growth=1.0).grid.faces[0]), 0.5)
 
 
-def test_newton_solves_the_inertial_fringe_balances_it_and_differentiates_it():
-    """1.9d: Ha 10, Re 5 (N 20), central transport; balances, the inertial drop, its adjoint against central differences."""
+def test_the_march_solves_the_inertial_fringe_balances_it_and_differentiates_it():
+    """H3: Ha 10, Re 5 (N 20), central transport; balances, Newton's drop, its adjoint against central differences."""
     problem = _small_fringe(spacing=1.0, upstream=2.0, downstream=2.0, flow_rate=20.0, advection="central")
     solve = jax.jit(lambda scale: solve_open_duct(problem, field_scale=scale))
     solution = solve(1.0)
+    assert int(solution.status) == CONVERGED
     assert float(solution.residual_norm) <= 1e-9 * float(solution.initial_residual_norm)
     assert float(jnp.max(jnp.abs(station_flow_rates(solution.velocity) - 20.0))) < 1e-12 * 20.0
     assert float(mass_balance(solution.velocity)) < 1e-12
@@ -260,14 +261,75 @@ def test_newton_solves_the_inertial_fringe_balances_it_and_differentiates_it():
         )
     )
     assert 1e-3 < abs(drop - stokes) / stokes < 0.2
-    gradient = float(
-        jax.jit(
-            jax.grad(lambda s: pressure_drop(solve_open_duct(problem, field_scale=s).pressure, -4.0, 2.0))
-        )(1.0)
-    )
+    # The root of the Newton solve this march replaced (same operator, residual 1e-12): the plan's 1e-6 gate.
+    assert drop == pytest.approx(420.27523399266335, rel=1e-6)
+
+    def drops(scale):
+        return pressure_drop(solve_open_duct(problem, field_scale=scale).pressure, -4.0, 2.0)
+
+    gradient = float(jax.jit(jax.grad(drops))(1.0))
+    assert gradient == pytest.approx(331.1104370772331, rel=1e-6)
+    # H.10.6: the Taylor remainder of the marched root falls as h^2.
+    value = [float(pressure_drop(solve(1.0 + h).pressure, -4.0, 2.0)) for h in (0.0, 0.04, 0.02, 0.01)]
+    errors = [abs(value[i] - value[0] - h * gradient) for i, h in ((1, 0.04), (2, 0.02), (3, 0.01))]
+    assert np.log2(errors[0] / errors[1]) == pytest.approx(2.0, abs=0.15)
+    assert np.log2(errors[1] / errors[2]) == pytest.approx(2.0, abs=0.15)
     step = 1e-4
     central = (
         float(pressure_drop(solve(1.0 + step).pressure, -4.0, 2.0))
         - float(pressure_drop(solve(1.0 - step).pressure, -4.0, 2.0))
     ) / (2.0 * step)
     assert gradient == pytest.approx(central, rel=1e-6)
+
+
+def test_the_rk3_step_leaves_a_stokes_flow_of_an_open_duct_where_it_is_at_any_step_and_field_scale():
+    """The stage on an inflow-outflow axis: the lift, the mixed pressure solve and the scaled shifts keep the fixed point."""
+    problem = _small_fringe(spacing=1.0, upstream=2.0, downstream=2.0)
+    factorization, viscous = problem.factorization(), problem.viscous_factorizations(RK3)
+    lift = with_inflow(_lift(problem), problem)
+    for scale, dt in ((1.0, 0.05), (1.0, 3.0), (1.3, 0.4)):
+        state = solve_open_duct(problem, field_scale=scale).velocity
+        moved, _, _, (iterations, residual) = _step(
+            state, problem, factorization, viscous, RK3, None, 0.0, None, (dt, scale, lift)
+        )
+        size = max(float(jnp.max(jnp.abs(f.data))) for f in state)
+        change = max(float(jnp.max(jnp.abs(a.data - b.data))) for a, b in zip(moved, state, strict=True))
+        assert change < 1e-9 * size and float(residual) < 1e-12 and 3 <= int(iterations) < 600
+        assert float(mass_balance(moved)) < 1e-11 * size
+
+
+def test_a_march_that_has_not_converged_is_classified_stagnated_or_unsteady():
+    """H3.4: a rotation (a limit cycle) and a growing perturbation have no steady state; a slow decay is only stagnant."""
+    start = jnp.array([1.0, 0.0, 0.5])
+    turn = jnp.array([[jnp.cos(0.3), -jnp.sin(0.3), 0.0], [jnp.sin(0.3), jnp.cos(0.3), 0.0], [0.0, 0.0, 1.0]])
+    for chunk, status in (
+        (lambda x: turn @ x, UNSTEADY),
+        (lambda x: 1.2 * x, UNSTEADY),
+        (lambda x: x * (1.0 - 1e-3), STAGNATED),
+        (lambda x: x + jnp.array([1e-3, 0.0, 0.0]), STAGNATED),
+    ):
+        assert int(_watch(chunk, lambda x, chunk=chunk: jnp.linalg.norm(chunk(x) - x), start)) == status
+    problem = _small_fringe(spacing=1.0, upstream=2.0, downstream=2.0, flow_rate=20.0, advection="central")
+    cut = solve_open_duct(problem, max_steps=50, check=25)
+    assert int(cut.status) == STAGNATED and int(cut.iterations) == 50
+    assert float(cut.residual_norm) > 1e-9 * float(cut.initial_residual_norm)
+
+
+def test_a_step_of_an_open_duct_at_a_traced_field_scale_and_step_passes_the_derivative_standard():
+    """H.10.6 on the dynamic step: tangent and pullback pair, and the Taylor remainder in the field scale falls as h^2."""
+    problem = _small_fringe(spacing=1.0, upstream=2.0, downstream=2.0, flow_rate=20.0, advection="central")
+    factorization, viscous = problem.factorization(), problem.viscous_factorizations(RK3)
+    lift = with_inflow(_lift(problem), problem)
+    state = solve_open_duct(problem).velocity
+
+    @jax.jit
+    def moved(scale):
+        found = _step(state, problem, factorization, viscous, RK3, None, 0.0, None, (0.01, scale, lift))[0]
+        return jnp.concatenate([f.data.ravel() for f in found])
+
+    value, tangent = jax.jvp(moved, (1.0,), (1.0,))
+    cotangent = jnp.asarray(np.random.default_rng(1).standard_normal(value.shape))
+    assert float(jax.vjp(moved, 1.0)[1](cotangent)[0]) == pytest.approx(float(cotangent @ tangent), rel=1e-8)
+    errors = [float(jnp.linalg.norm(moved(1.0 + h) - value - h * tangent)) for h in (0.04, 0.02, 0.01)]
+    assert np.log2(errors[0] / errors[1]) == pytest.approx(2.0, abs=0.1)
+    assert np.log2(errors[1] / errors[2]) == pytest.approx(2.0, abs=0.1)

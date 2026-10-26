@@ -540,18 +540,34 @@ range, against TM-228's 0.0932.
 #### Inertia on the open axis: the inertial share (1.9d)
 
 `solve_open_duct` solves an advective open duct (`advection="central"` or
-`"limited"`) by Newton's method from the Stokes-limit solution. The unknown is
-the correction to the lift, with the residual extended by the identity off the
-constrained divergence-free fields, so the Jacobian is invertible on every
-vector. Each Newton update is a flexible GMRES with recycling
-(`solvax.gcrot`, cycle 30, 10 recycled directions, forcing $10^{-3}$)
-right-preconditioned by the Stokes-limit CG solve itself, stopped at $10^{-2}$;
-`continuation` steps the flow rate toward its target. The root is
-differentiated by the implicit function theorem (`solvax.root_solve`), the
-transposed solve preconditioned by the transpose of the Stokes solve under the
-face-volume inner product. On the test mesh (Ha 10, Re 5) the adjoint of the
-drop matches central differences to 4e-10. The Picard iteration of #184, which
-diverged at Ha 100, N 1000, is not needed.
+`"limited"`) by marching the Stokes-limit solution to its steady state (H3, from
+2026-10-26). The stepper is the RK3 scheme of `lmhdx.core3d`: the exact
+constrained stage at each of three substeps, Crank-Nicolson damping and
+viscosity, central transport, the lift carrying the inlet. A step is the smaller
+of 0.9 of the Courant limit $\sqrt3/\sum_a\max|u_a|/\Delta x_a$ and
+$3/\lambda_{\max}$, $\lambda_{\max}=\sigma B_{\max}^2/\rho$: a varying field
+gives every cell the largest damping rate in the implicit part and leaves the
+rest of its own to the explicit one, which is stable to $\lambda_{\max}\Delta t$
+of 5 and not at 7 (Ha 100, Re 20). Fifty steps make a chunk, and
+`solvax.fixed_point_iteration` repeats chunks until the physical steady residual
+(the projected momentum balance, as before) falls to `tolerance` of the lift's.
+A march that does not get there is watched for sixteen chunks more and reported
+as `stagnated` (flat or too slow) or `unsteady` (the residual grows by half, or the
+change between chunks turns through sixty degrees). The root is differentiated by
+the implicit function theorem on the fixed point of one step
+(`solvax.root_solve`), tangent and transposed solves by GMRES on that step's
+linearization.
+
+*The outlet.* The momentum of the outlet face, which owns half a cell, left the
+domain with no flux in the first form of the transport term: harmless to a
+Newton solve, but the root of that operator is unstable in time (a mode
+localized at the outlet and growing as $2^{\text{cells}}$ upstream, at a rate of
+about 10 per unit time at Ha 20, Re 20, whatever the step). The outlet face now
+carries the flux $u^2$ through its outer side. The pressure drop of the fringe
+moved by $2\times10^{-8}$ (Ha 20, Re 20 and 40) and by $3\times10^{-5}$ on the
+coarsest test mesh (spacing 1, Re 10).
+
+What follows is the Newton campaign that preceded the march, kept as measured.
 
 ANL fringe as above ($c=0.02$, $B_y$ alone, 15/10 buffers, $70\times32^2$,
 central transport), one A4000 shared with other jobs. $Re=U a/\nu$ is the mean

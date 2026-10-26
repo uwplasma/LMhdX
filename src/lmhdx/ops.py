@@ -669,7 +669,12 @@ def _along_own_axis(field: Field, axis: int, condition: BoundaryCondition, limit
         difference = jnp.concatenate((wrap, difference, wrap), axis=axis)
     else:
         edge = jnp.zeros_like(_take(difference, axis, slice(None, 1)))
-        difference = jnp.concatenate((edge, difference, edge), axis=axis)
+        out = edge
+        if condition.is_mixed:
+            # The outlet face owns half a cell and momentum leaves through it with its own velocity.
+            exit = _take(data, axis, slice(-1, None))
+            out = 2.0 * (exit * exit - _take(flux, axis, slice(-1, None)))
+        difference = jnp.concatenate((edge, difference, out), axis=axis)
     distances = face_distances(field.grid, axis, condition)
     return difference / _broadcast(distances, axis, field.dtype)
 

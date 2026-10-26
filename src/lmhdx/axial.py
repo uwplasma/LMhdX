@@ -25,16 +25,17 @@ preconditioned conjugate-gradient solve as a periodic duct's
 upstream of a field change the lift is the discrete solution, which is why the
 uniform region carries its fully developed gradient.
 
-With advection on (plan 1.9d) the steady problem is nonlinear. It is solved
-by Newton's method from the Stokes-limit solution, each Newton update by
-flexible GMRES with recycling (:func:`solvax.gcrot`) right-preconditioned by
-the Stokes-limit solve itself, a conjugate-gradient solve run to a loose
-tolerance: the Oseen operator differs from the Stokes one by the transport,
-which is small against the Lorentz force when ``N = Ha^2 / Re`` is large, so a
-few outer iterations suffice. Continuation in the flow rate steps toward the
-target Reynolds number. The root is differentiated by the implicit function
-theorem (:func:`solvax.root_solve`), its tangent and transposed solves being
-the same preconditioned Krylov solves.
+With advection on (plan 1.9d, H3) the steady problem is nonlinear and is marched to its fixed
+point: the IMEX Runge-Kutta stepper of :mod:`lmhdx.core3d` (central transport, Crank-Nicolson
+damping and viscosity, the exact constrained stage) advances the departure from the lift at a
+Courant-limited step, in chunks, until the physical steady residual falls to ``tolerance`` of the
+lift's. The march is a fixed point of the step, so its root is the root of the steady residual, whatever the
+step. The result carries one of three statuses: ``converged``; ``stagnated``, a residual that stopped
+falling above the tolerance, which Kelley and Keyes (1998) report as the failure of pseudo-transient
+continuation; and ``unsteady``, a residual that grows or whose change keeps turning, the signature of a
+flow with no steady state (a limit cycle or bursts). The root is differentiated by the implicit function
+theorem (:func:`solvax.root_solve`) on the fixed point of one step, its tangent and transposed solves
+GMRES on that step's linearization.
 """
 
 from __future__ import annotations
@@ -50,24 +51,25 @@ import solvax
 from jax.flatten_util import ravel_pytree
 
 from .core3d import (
+    RK3,
     ChannelProblem,
     ImposedField,
+    _step,
     duct_problem,
     face_currents,
     fringe_field,
     project,
     zero_velocity,
 )
-from .grid import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid, uniform_faces
-from .ops import face_electromotive_force, neighbours
+from .grid import CENTER, DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid, uniform_faces
+from .ops import advective_step_limit, face_electromotive_force, neighbours
 from .steady import (
     _certified,
-    _face_weights,
     _norm,
-    _orthogonal_projection,
     _preconditioner,
     _projection_solves,
     _stokes_limit_root,
+    _tangent_solve,
     momentum_terms,
     solve_compiled,
     solve_steady_state,
@@ -90,6 +92,11 @@ __all__ = [
 ]
 
 _INSULATING = BoundaryCondition(NEUMANN)
+# How a march ended: at a steady residual under the tolerance, stalled above it, or with no steady state.
+CONVERGED, STAGNATED, UNSTEADY = 0, 1, 2
+# A varying field gives every cell the largest damping rate in the implicit part and leaves the rest of its
+# own, up to that rate, to the explicit part: the march is stable to ``dt rate`` of 5 and not at 7 (Ha 100, Re 20).
+_DAMPING_COURANT = 3.0
 
 
 class OpenDuctSolution(NamedTuple):
@@ -103,6 +110,7 @@ class OpenDuctSolution(NamedTuple):
     residual_norm: jnp.ndarray
     initial_residual_norm: jnp.ndarray
     iterations: jnp.ndarray
+    status: jnp.ndarray
 
 
 def axial_faces(
@@ -256,11 +264,9 @@ def _solve(
     field_scale: float | jnp.ndarray = 1.0,
     tolerance: float = 1.0e-9,
     max_iterations: int = 36_000,
-    continuation: tuple[float, ...] = (1.0,),
-    max_newton_steps: int = 12,
-    inner_tolerance: float = 1.0e-1,
-    inner_iterations: int = 4_000,
-    krylov_dimension: int = 120,
+    max_steps: int = 40_000,
+    check: int = 50,
+    cfl: float = 0.9,
 ) -> OpenDuctSolution:
     """Solve an inflow-outflow duct; differentiable in ``field_scale``.
 
@@ -270,25 +276,21 @@ def _solve(
     fields under tracing. ``max_iterations`` follows the tolerance rule of #150
     (600 restarts of 60).
 
-    With advection, Newton's method from that solution (module docstring):
-    ``continuation`` lists the fractions of the flow rate solved in turn, ending
-    at 1; each Newton update is a :func:`solvax.gcrot` solve preconditioned by
-    the Stokes-limit CG run to ``inner_tolerance`` (at most
-    ``inner_iterations``), restarted every ``krylov_dimension`` outer
-    iterations, at most 3,600 per update. ``iterations`` then counts the outer
-    Krylov iterations of all Newton steps. The root is certified at ``tolerance``.
+    With advection, the march of the module docstring from that solution: RK3 steps at ``cfl`` times
+    the Courant limit of the current state, ``check`` steps between tests of the steady residual, at
+    most ``max_steps``. ``iterations`` then counts the steps and ``status`` is one of
+    :data:`CONVERGED`, :data:`STAGNATED` and :data:`UNSTEADY`; only ``CONVERGED`` is a steady
+    state, and its derivatives are the only ones to trust.
 
     Central transport needs the axial cells to keep the cell Reynolds number
     ``U dx / nu`` small: with :func:`fringe_duct`'s default buffer growth the
     downstream cells reach ``8 * spacing`` (cell Reynolds number 66 at Re 33),
-    and at Ha 100 the Newton iteration stalls between Re 31 and 33; with
+    and at Ha 100 the iteration stalls between Re 31 and 33; with
     ``growth=1.0`` it converges (plan 1.9d).
     """
     axis = problem.open_axis
     if axis != 0:
         raise ValueError("solve_open_duct needs the first axis to be the inflow-outflow axis")
-    if problem.advection != "off" and (not continuation or float(continuation[-1]) != 1.0):
-        raise ValueError("the continuation in the flow rate must end at 1")
     with jax.ensure_compile_time_eval():
         factorization = problem.factorization()
         viscous = _projection_solves(problem, float(problem.dt))
@@ -310,20 +312,10 @@ def _solve(
     )
     correction, _ = project(jax.tree.map(jnp.subtract, root, start), problem, factorization)
     velocity = with_inflow(jax.tree.map(jnp.add, start, correction), problem)
+    status = jnp.asarray(CONVERGED)
     if problem.advection != "off":
-        velocity, iterations = _newton_root(
-            problem,
-            stokes,
-            velocity,
-            factorization,
-            precond,
-            field_scale=field_scale,
-            tolerance=tolerance,
-            continuation=continuation,
-            max_steps=max_newton_steps,
-            inner_tolerance=inner_tolerance,
-            inner_iterations=inner_iterations,
-            cycle=krylov_dimension,
+        velocity, iterations, status = _march(
+            problem, velocity, factorization, field_scale, tolerance, _norm(rhs), max_steps, check, cfl
         )
     terms = momentum_terms(
         velocity, problem, factorization, forcing=zero, field_scale=field_scale, inflow=1.0
@@ -334,15 +326,11 @@ def _solve(
     pressure = first.replace_data(float(problem.dt) * (first.data + second.data))
     potential, currents, field = face_currents(velocity, problem, factorization, field_scale)
     return OpenDuctSolution(
-        velocity, pressure, potential, currents, field, _norm(residual), _norm(rhs), iterations
+        velocity, pressure, potential, currents, field, _norm(residual), _norm(rhs), iterations, status
     )
 
 
-_compiled = jax.jit(
-    _solve,
-    static_argnames="problem tolerance max_iterations continuation max_newton_steps inner_tolerance "
-    "inner_iterations krylov_dimension".split(),
-)
+_compiled = jax.jit(_solve, static_argnames="problem tolerance max_iterations max_steps check cfl".split())
 
 
 @functools.wraps(_solve, assigned=("__doc__",), updated=())
@@ -357,138 +345,88 @@ def solve_open_duct(*arguments, **controls) -> OpenDuctSolution:
     return solution
 
 
-def _stokes_inverse(stokes, factorization, precond, field_scale, tolerance, max_steps):
-    """``r -> d`` with ``A d = r`` approximately, ``A`` the Stokes-limit operator on the corrections.
+def _march(problem, velocity, factorization, field_scale, tolerance, reference, max_steps, check, cfl):
+    """March ``velocity`` to the fixed point of the RK3 step; return it, the steps taken and the status.
 
-    The same weighted conjugate-gradient solve as the Stokes limit
-    (:func:`lmhdx.steady._stokes_limit_root`), stopped at ``tolerance``; its
-    result is not a linear function of ``r``, which is why the outer Krylov
-    method is a flexible one.
+    The state is the flat velocity. A chunk is ``check`` steps at the smaller of ``cfl`` times the Courant
+    limit of the state it starts from and the damping limit, ``_DAMPING_COURANT`` over the largest rate.
+    :func:`solvax.fixed_point_iteration` repeats chunks until the steady residual is under ``tolerance``
+    of ``reference``, or the budget is spent, and :func:`_watch` classifies a march that is not
+    done. The root is then rebuilt by :func:`solvax.root_solve` on one step, which carries the derivatives.
     """
-    weights = _face_weights(stokes)
-    zero = (0.0, 0.0, 0.0)
+    lift, viscous = with_inflow(_lift(problem), problem), problem.viscous_factorizations(RK3)
+    flat, unravel = ravel_pytree(jax.lax.stop_gradient(velocity))
+    fixed, zero = jax.lax.stop_gradient(field_scale), (0.0, 0.0, 0.0)
+    guess = Field(jnp.zeros(problem.grid.shape, flat.dtype), (CENTER,) * 3, problem.grid)
 
-    def apply(target):
-        inside = _orthogonal_projection(target, stokes, factorization)
-
-        def matvec(y):
-            velocity = jax.tree.map(jnp.divide, y, weights)
-            return steady_residual(velocity, stokes, factorization, forcing=zero, field_scale=field_scale)
-
-        result = solvax.pcg(
-            lambda y: jax.tree.map(jnp.negative, matvec(y)),
-            jax.tree.map(jnp.negative, inside),
-            precond=lambda r: jax.tree.map(jnp.multiply, precond(r), weights),
-            rtol=tolerance,
-            max_steps=max_steps,
+    def advance(x, dt, scale, pressure):
+        state, pressure, _, _ = _step(
+            unravel(x), problem, factorization, viscous, RK3, None, 0.0, pressure, (dt, scale, lift)
         )
-        return jax.tree.map(jnp.divide, result.x, weights)
+        return ravel_pytree(state)[0], pressure
 
-    return apply
-
-
-def _newton_root(
-    problem,
-    stokes,
-    velocity,
-    factorization,
-    precond,
-    *,
-    field_scale,
-    tolerance,
-    continuation,
-    max_steps,
-    inner_tolerance,
-    inner_iterations,
-    cycle,
-):
-    """Newton from the Stokes-limit ``velocity`` along the flow-rate ``continuation``; see the module.
-
-    The unknown is the correction ``w`` to the lift, and the residual is extended off
-    the constrained divergence-free fields ``V`` by the identity,
-    ``F(w) = R(lift + Q w) + (w - Q w)`` with ``Q`` the orthogonal projection onto
-    ``V``, as the Stokes-limit derivative is: its Jacobian is invertible on every
-    vector, so the transposed solve of an arbitrary cotangent is consistent.
-    """
-    zero = (0.0, 0.0, 0.0)
-    lift_tree = _lift(problem)
-    lift, unravel = ravel_pytree(lift_tree)
-    fixed = jax.lax.stop_gradient(field_scale)
-    inverse = _stokes_inverse(stokes, factorization, precond, fixed, inner_tolerance, inner_iterations)
-
-    def inside(w):
-        return ravel_pytree(_orthogonal_projection(unravel(w), problem, factorization))[0]
-
-    def residual_at(fraction, scale):
-        def residual(w):
-            kept = inside(w)
-            state = unravel(fraction * lift + kept)
-            value = steady_residual(
-                state, problem, factorization, forcing=zero, field_scale=scale, inflow=fraction
-            )
-            return ravel_pytree(value)[0] + (w - kept)
-
-        return residual
-
-    def preconditioner(r):
-        kept = inside(r)
-        return ravel_pytree(inverse(unravel(kept)))[0] + (r - kept)
-
-    weights = ravel_pytree(_face_weights(problem))[0]
-
-    def transposed_preconditioner(r):
-        # The preconditioner is self-adjoint in the face-volume inner product W, so W M W^-1 is its transpose.
-        return weights * preconditioner(r / weights)
-
-    def krylov(matvec, target, rtol, precond=preconditioner):
-        result = solvax.gcrot(
-            matvec, target, precond=precond, m=cycle, k=10, rtol=rtol, max_restarts=max(1, 3_600 // cycle)
+    def step_size(x, scale):
+        rate = max(problem.damping_rates) * scale**2
+        return jnp.minimum(
+            cfl * RK3.limit * advective_step_limit(unravel(x)), _DAMPING_COURANT / jnp.maximum(rate, 1e-300)
         )
-        return result.x, result.iterations, result.converged & jnp.isfinite(result.residual_norm)
 
-    def newton(function, guess):
-        # Relative to the residual of the lift, as the Stokes-limit solve is.
-        scale = jnp.linalg.norm(function(jnp.zeros_like(guess)))
+    def chunk(x):
+        dt = step_size(x, fixed)
+        return jax.lax.fori_loop(
+            0, check, lambda _, carry: advance(carry[0], dt, fixed, carry[1]), (x, guess)
+        )[0]
 
-        def body(carry):
-            w, steps, total, _ = carry
-            value, linear = jax.linearize(function, w)
-            step, count, _ = krylov(linear, -value, 1.0e-3)
-            return w + step, steps + 1, total + count, jnp.linalg.norm(function(w + step))
+    def residual(x, scale):
+        value = steady_residual(
+            unravel(x), problem, factorization, forcing=zero, field_scale=scale, inflow=1.0
+        )
+        return _norm(value)
 
-        def going(carry):
-            _, steps, _, norm = carry
-            return (steps < max_steps) & (norm > tolerance * scale) & jnp.isfinite(norm)
-
-        first = jnp.linalg.norm(function(guess))
-        w, _, total, norm = jax.lax.while_loop(going, body, (guess, 0, 0, first))
-        return w, total, norm <= 10.0 * tolerance * scale
-
-    def tangent_solve(linear, target):
-        def solve(matvec, rhs):
-            x, _, accepted = krylov(matvec, rhs, 1.0e-10)
-            return _certified(x, accepted, "open-duct tangent solve")
-
-        def transpose_solve(vecmat, rhs):
-            x, _, accepted = krylov(vecmat, rhs, 1.0e-10, transposed_preconditioner)
-            return _certified(x, accepted, "open-duct adjoint solve")
-
-        return jax.lax.custom_linear_solve(linear, target, solve, transpose_solve)
-
-    def stage(carry, fraction):
-        # The fraction is a traced scalar: one Newton program serves every step of the continuation.
-        w, total, previous = carry
-        w, count, accepted = newton(residual_at(fraction, fixed), w * (fraction / previous))
-        return (_certified(w, accepted, "Newton solve"), total + count, fraction), None
-
-    w = inside(jax.lax.stop_gradient(ravel_pytree(velocity)[0] - lift))
-    (w, total, _), _ = jax.lax.scan(
-        stage, (w, jnp.zeros((), jnp.int32), jnp.ones((), w.dtype)), jnp.asarray(continuation, w.dtype)
+    found = solvax.fixed_point_iteration(
+        chunk,
+        flat,
+        residual_norm=lambda x: residual(x, fixed) / jax.lax.stop_gradient(reference),
+        atol=tolerance,
+        rtol=0.0,
+        max_steps=max_steps // check,
     )
+
+    status = jax.lax.cond(
+        found.converged,
+        lambda _: jnp.asarray(CONVERGED),
+        lambda x: _watch(chunk, lambda y: residual(y, fixed), x),
+        found.x,
+    )
+
+    dt = step_size(found.x, fixed)
     root = solvax.root_solve(
-        residual_at(1.0, field_scale), w, lambda function, guess: guess, tangent_solve=tangent_solve
+        lambda x: advance(x, dt, field_scale, guess)[0] - x,
+        found.x,
+        lambda function, x: x,
+        tangent_solve=_tangent_solve,
     )
-    return with_inflow(unravel(lift + inside(root)), problem), total
+    return unravel(root), found.iterations * check, status
+
+
+def _watch(chunk, residual, x):
+    """Classify a march that has not converged: sixteen more chunks from ``x`` say how it fails.
+
+    A residual that has not halved over them and either grows by half or changes between chunks
+    that turn through more than sixty degrees (an oscillation) means a flow with no steady state,
+    ``UNSTEADY``; a residual that is flat, or falling too slowly or still falling, is ``STAGNATED``.
+    """
+
+    def body(x, _):
+        y = chunk(x)
+        return y, (y - x, residual(y))
+
+    _, (changes, norms) = jax.lax.scan(body, x, None, length=16)
+    unit = changes / jnp.maximum(jnp.linalg.norm(changes, axis=1, keepdims=True), jnp.finfo(x.dtype).tiny)
+    turning = jnp.min(unit @ unit.T) < 0.5
+    return jnp.where(
+        (norms[-1] > 0.5 * norms[0]) & ((norms[-1] > 1.5 * norms[0]) | turning), UNSTEADY, STAGNATED
+    )
 
 
 def _lift(problem: ChannelProblem) -> tuple[Field, Field, Field]:
@@ -603,6 +541,7 @@ class OpenPipeSolution(NamedTuple):
     residual_norm: jnp.ndarray
     initial_residual_norm: jnp.ndarray
     iterations: jnp.ndarray
+    status: jnp.ndarray
 
 
 def monotone_interpolant(x: np.ndarray, y: np.ndarray):
