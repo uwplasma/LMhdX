@@ -83,6 +83,7 @@ _TEST_SHARDS = {
     "physics": (
         "tests/test_physics.py",
         "tests/test_q2d_identities.py",
+        "tests/test_stepper.py",
     ),
     "api": ("tests/test_problem.py",),
     "anchors": ("tests/test_laminar_anchors.py",),
@@ -94,7 +95,7 @@ _CHANGE_TEST_NAMES = {
     "__main__": "io",
     "cases": "config physics fully_developed units_and_wall_models design io",
     "axial": "axial example_runner",
-    "core3d": "core3d timeloop steady coreflow axial",
+    "core3d": "core3d stepper timeloop steady coreflow axial",
     "coreflow": "coreflow freemhd",
     "fully_developed": "fully_developed design config example_runner",
     "steady": "steady fully_developed axial",

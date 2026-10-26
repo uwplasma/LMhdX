@@ -16,6 +16,8 @@ import pytest
 
 from lmhdx.cases import make_hartmann_case
 from lmhdx.core3d import (
+    EULER,
+    RK3,
     ChannelProblem,
     advance,
     duct_problem,
@@ -393,7 +395,7 @@ def test_the_step_is_the_force_and_momentum_stages_it_is_built_from():
         potential, currents, field = face_currents(velocity, problem, factorization)
         force = _lorentz_from_currents(currents, field, problem)
         body = face_lorentz_force(force, problem)
-        moved, pressure, _ = _advance_momentum(velocity, body, problem, viscous)
+        moved, pressure, *_ = _advance_momentum(velocity, body, problem, viscous)
         stepped, stepped_pressure, stepped_potential = step(velocity, problem, factorization, viscous)
         assert _identical(force, electric_state(velocity, problem, factorization)[1])
         assert _identical((*moved, pressure, potential), (*stepped, stepped_pressure, stepped_potential))
@@ -410,7 +412,7 @@ def test_an_extra_force_density_enters_beside_the_forcing():
     extra = (0.4, -0.3, 0.2)
 
     def advance(case, force=None):
-        moved, pressure, _ = _advance_momentum(velocity, body, case, viscous, extra_force=force)
+        moved, pressure, *_ = _advance_momentum(velocity, body, case, viscous, extra_force=force)
         return (*moved, pressure)
 
     zero = tuple(f.replace_data(jnp.zeros_like(f.data)) for f in velocity)
@@ -439,17 +441,24 @@ def _box_problem(field: float, dt: float, **overrides) -> ChannelProblem:
 
 
 @pytest.mark.parametrize("mode", ["explicit", "implicit"])
-@pytest.mark.parametrize("dt", [0.1, 0.01, 0.001])
-@pytest.mark.parametrize("field", [0.0, 10.0])
-def test_a_pressure_gradient_force_leaves_the_fluid_at_rest(field, dt, mode):
+@pytest.mark.parametrize(
+    ("scheme", "field", "dt"),
+    [(EULER, field, dt) for field in (0.0, 10.0) for dt in (0.1, 0.01, 0.001)]
+    + [(RK3, 0.0, 0.1), (RK3, 10.0, 0.1), (RK3, 10.0, 0.01)],
+    ids=lambda value: (
+        getattr(value, "limit", None) is not None and ("rk3" if value.limit else "euler") or str(value)
+    ),
+)
+def test_a_pressure_gradient_force_leaves_the_fluid_at_rest(scheme, field, dt, mode):
     """``p = sin x sin y`` and a force equal to its discrete gradient, across a field along ``y``: no motion.
 
     The damping rescales ``x`` and ``z`` and not ``y``, so a predictor that scaled only the force left a
     solenoidal remainder the projection could not remove: peak speed 4.4e-2 at B = 10 and dt = 0.1, 2.4e-3 at
     dt = 0.01 (3.6e-2 and 2.4e-3 with implicit viscosity). The stage solves ``H u + (dt/rho) G p = b``,
-    ``D u = 0`` exactly, explicit or implicit viscosity, and returns the pressure that balances the force.
+    ``D u = 0`` exactly, explicit or implicit viscosity, one stage of Euler or three of RK3, and returns the pressure that
+    balances the force.
     """
-    from lmhdx.core3d import _advance_momentum
+    from lmhdx.core3d import _step
 
     problem = _box_problem(field, dt)
     grid = problem.grid
@@ -462,12 +471,14 @@ def test_a_pressure_gradient_force_leaves_the_fluid_at_rest(field, dt, mode):
     force = enforce_face_constraints(
         tuple(face_gradient(pressure, axis, PERIODIC_X) for axis in range(3)), problem
     )
-    viscous = None if mode == "explicit" else problem.viscous_factorizations()
-    rest = zero_velocity(problem)
-    velocity, found, info = _advance_momentum(rest, rest, problem, viscous, extra_force=force)
+    viscous = None if mode == "explicit" else problem.viscous_factorizations(scheme)
+    velocity, found, _, (iterations, residual) = _step(
+        zero_velocity(problem), problem, problem.factorization(), viscous, scheme, lambda t: force, 0.0
+    )
     assert max(float(jnp.max(jnp.abs(component.data))) for component in velocity) < 1e-13
     assert float(jnp.max(jnp.abs(found.data - pressure.data))) < 1e-12
-    assert bool(info.converged) and int(info.iterations) == 1
+    # One iteration in all: a later RK3 stage starts from the pressure of the one before, which is already exact.
+    assert int(iterations) == 1 and float(residual) < 1e-12
 
 
 @pytest.mark.parametrize("implicit", [False, True])
@@ -497,7 +508,7 @@ def test_the_stage_solves_its_saddle_system_next_to_walls(implicit):
 
     velocity, extra = enforce_face_constraints(random_fields(), problem), random_fields()
     viscous = problem.viscous_factorizations() if implicit else None
-    new, pressure, info = _advance_momentum(
+    new, pressure, info, _ = _advance_momentum(
         velocity, zero_velocity(problem), problem, viscous, extra_force=extra
     )
     conditions = tuple(velocity_condition(problem.conditions, axis) for axis in range(3))
