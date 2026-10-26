@@ -17,8 +17,8 @@ conservative face force, so the stage reads ``H u + (dt/rho) G p = b``,
 ``D u = 0``, with ``H = (1 + dt * lambda)`` per component and ``b`` the old
 velocity plus the forces. The pressure gradient meets the same ``H`` as every other
 force, so a pressure force in balance with the forcing leaves the fluid at rest and
-the stage's fixed point is the physical steady state; the pressure solves the
-matched Schur operator ``D H^-1 G``, a Laplacian with one weight per axis. The
+the stage's fixed point is the physical steady state. The pressure solves the
+matched Schur operator ``D H^-1 G``, exactly, by SOLVAX's constrained solve. The
 correction vanishes when the right-hand side does, and the conservative force keeps
 its own discretization.
 
@@ -50,12 +50,11 @@ silently clipped step. Passing the factorizations from
    =(1+\\Delta t\\,\\lambda)\\mathbf u+\\Delta t\\,(\\mathbf F+\\mathbf f-\\nabla p)/\\rho,
 
 backward Euler on the viscous term with the damping correction folded into the
-shift, ``p`` the last step's pressure (zero if none is passed); the divergence the
-solve leaves is projected through the same weighted operator and the correction
-added to ``p``. That operator separates exactly as the pressure Laplacian does, so it
-costs three contractions and a divide, and the step is then bounded by accuracy
-rather than by the mesh. Both stiffnesses are gone at that point: the magnetic
-one because it grows as :math:`Ha^2`, the viscous one because it grows as the
+shift, ``H`` of the stage. Next to a wall ``H`` does not commute with the gradient, so
+``D H^-1 G`` is solved by conjugate gradients preconditioned with its spectral
+multiplier (one iteration on periodic axes, a handful near walls), and the step is
+bounded by accuracy rather than by the mesh. Both stiffnesses are gone at that point: the
+magnetic one because it grows as :math:`Ha^2`, the viscous one because it grows as the
 mesh is refined.
 
 *Convective transport.* ``advection`` selects it: ``"off"`` is the Stokes limit,
@@ -92,10 +91,12 @@ from __future__ import annotations
 import dataclasses
 import functools
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import solvax
 
 from . import _pin_matmul_precision
 from ._programs import attribute, bound, host_array, host_scalar
@@ -683,44 +684,21 @@ def project(
     velocity: tuple[Field, Field, Field],
     problem: ChannelProblem,
     factorization: FastDiagonalPoisson | None = None,
-    *,
-    damped: bool = False,
 ) -> tuple[tuple[Field, Field, Field], Field]:
-    """Remove the divergence from a velocity field and return the pressure that did it.
-
-    ``damped`` removes it through the stage's own metric: the correction is
-    ``(dt/rho) H^-1 G p`` with ``H = 1 + dt lambda_c`` per component, and the pressure solves
-    the matched Schur operator ``D H^-1 G`` (a weighted Laplacian), so a pressure force that
-    ``H`` rescales is still a gradient the correction can cancel.
-    """
+    """Remove the divergence from a velocity field and return the pressure that did it."""
+    factorization = problem.factorization() if factorization is None else factorization
     velocity = enforce_face_constraints(velocity, problem)
-    weights = _stage_weights(problem) if damped else (1.0,) * 3
-    pressure = _pressure(velocity, problem, factorization, weights)
+    source = divergence(velocity)
     density, dt = attribute(problem, "density"), attribute(problem, "dt")
+    pressure = factorization.solve(source.replace_data((density / dt) * source.data))
     scalar = problem.pressure_conditions
     corrected = tuple(
         field.replace_data(
-            field.data
-            - (weights[component] * dt / density) * face_gradient(pressure, component, scalar[component]).data
+            field.data - (dt / density) * face_gradient(pressure, component, scalar[component]).data
         )
         for component, field in enumerate(velocity)
     )
     return enforce_face_constraints(corrected, problem), pressure
-
-
-def _pressure(velocity, problem: ChannelProblem, factorization, weights: tuple[float, float, float]) -> Field:
-    """The pressure that makes ``velocity - (dt/rho) diag(weights) G p`` divergence free."""
-    factorization = problem.factorization() if factorization is None else factorization
-    if weights != (1.0,) * 3:
-        factorization = dataclasses.replace(factorization, axis_weights=weights)
-    source = divergence(velocity)
-    density, dt = attribute(problem, "density"), attribute(problem, "dt")
-    return factorization.solve(source.replace_data((density / dt) * source.data))
-
-
-def _stage_weights(problem: ChannelProblem) -> tuple[float, float, float]:
-    """The diagonal of ``H^-1`` in a momentum stage: one over ``1 + dt lambda`` per component."""
-    return tuple(1.0 / (1.0 + float(problem.dt) * rate) for rate in problem.damping_rates)
 
 
 def step(
@@ -733,46 +711,88 @@ def step(
     """Advance one projection step and return velocity, pressure and potential.
 
     Passing ``viscous`` takes diffusion implicitly and lifts the step off
-    :attr:`ChannelProblem.diffusive_step_limit`; ``pressure``, the last step's, then enters
-    that solve as a force and the projection corrects it (:func:`_advance_momentum`).
+    :attr:`ChannelProblem.diffusive_step_limit`; ``pressure``, the last step's, starts the stage's solve.
     """
+    return _step(velocity, problem, factorization, viscous, pressure)[:3]
+
+
+def _step(velocity, problem: ChannelProblem, factorization, viscous, pressure=None):
     factorization = problem.factorization() if factorization is None else factorization
     potential, force = electric_state(velocity, problem, factorization)
-    corrected, pressure = _advance_momentum(
-        velocity, face_lorentz_force(force, problem), problem, factorization, viscous, pressure=pressure
+    moved, pressure, info = _advance_momentum(
+        velocity, face_lorentz_force(force, problem), problem, viscous, pressure=pressure
     )
-    return corrected, pressure, potential
+    return moved, pressure, potential, info
+
+
+@functools.lru_cache(maxsize=16)
+def _stage(grid, conditions, scalar, shifts, coefficient, viscous):
+    """``H^-1`` per component, ``G``, the face constraints and a jitted pressure solve, built once per stage."""
+    inverse = tuple(
+        (lambda f, axis=axis: f / shifts[axis])
+        if viscous is None
+        else (lambda f, axis=axis: viscous[axis].solve(Field(f, velocity_offset(axis), grid)).data)
+        for axis in range(3)
+    )
+
+    def gradient(pressure):
+        return [
+            face_gradient(Field(pressure, (CENTER,) * 3, grid), axis, scalar[axis]).data for axis in range(3)
+        ]
+
+    def constrained(arrays):
+        faces = (Field(a, velocity_offset(axis), grid) for axis, a in enumerate(arrays))
+        return enforce_face_constraints(tuple(faces), SimpleNamespace(conditions=conditions))
+
+    with jax.ensure_compile_time_eval():
+        schur = solvax.fast_diagonal_schur(grid.widths, [c.kind for c in scalar], shifts, coefficient)
+    widths = grid.volume_factors()
+
+    def solve(rhs, **options):
+        # The cell volumes are formed in the trace from the three width vectors, not captured as a cell-sized constant.
+        volumes = functools.reduce(jnp.multiply, (jnp.asarray(w, schur.volumes.dtype) for w in widths))
+        # The right-hand side's mean is the wall flux, zero by construction: no relative compatibility test.
+        return dataclasses.replace(schur, volumes=volumes).solve_exact(
+            rhs,
+            gradient=gradient,
+            divergence=lambda fields: divergence(constrained(fields)).data,
+            helmholtz=inverse,
+            defect_rtol=1.0,
+            **options,
+        )
+
+    return inverse, gradient, constrained, jax.jit(solve, static_argnames="rtol")
 
 
 def _advance_momentum(
     velocity: tuple[Field, Field, Field],
     body: tuple[Field, Field, Field],
     problem: ChannelProblem,
-    factorization: FastDiagonalPoisson,
     viscous: tuple[FastDiagonalHelmholtz, ...] | None = None,
     *,
     extra_force: tuple[Field, Field, Field] | None = None,
     pressure: Field | None = None,
-) -> tuple[tuple[Field, Field, Field], Field]:
-    """Advance the stage ``H u + (dt/rho) G p = b``, ``D u = 0``; return velocity and pressure.
+) -> tuple[tuple[Field, Field, Field], Field, solvax.SpdSolveInfo]:
+    """Solve the stage ``H u + (dt/rho) G p = b``, ``D u = 0``; return velocity, pressure and solve status.
 
-    ``b`` holds the old velocity, the face Lorentz force ``body`` and the other forces, and
-    ``H`` the magnetic damping, plus the viscous operator when it is taken implicitly. A pressure
-    force therefore meets the same ``H`` as every other force, and a gradient in balance with the
-    forcing leaves the fluid at rest.
-
-    For a diagonal ``H`` (explicit viscosity) the matched pressure operator ``D H^-1 G`` is a
-    weighted Laplacian (:func:`project` with ``damped``) and the stage is solved exactly. With
-    implicit viscosity ``H`` is not diagonal, and the stage is split as an incremental projection:
-    the last ``pressure`` (zero if none) is a force in the viscous solve, and the damped
-    projection returns the correction. The stage is then exact where ``pressure`` is its own;
-    from zero it is exact only for undamped periodic axes, and elsewhere leaves a splitting
-    error that falls with ``dt``. The exact Schur solve needs an inner iteration.
-
-    ``extra_force`` is a further force density on the velocity faces, added to the
-    forcing before the division by density, so a body force such as buoyancy rides
-    the same predictor and projection as the drive.
+    ``b`` holds the old velocity, the face Lorentz force ``body`` and the other forces, and ``H`` the
+    magnetic damping (plus the viscous operator when implicit), so a pressure force meets the same
+    ``H`` as every other force and a gradient in balance with the forcing leaves the fluid at rest.
+    With ``w = H^-1 b`` and ``q = dt p / rho``, SOLVAX's :meth:`~solvax.FastDiagonalSchur.solve_exact`
+    solves ``-D H^-1 G q = D w`` by preconditioned conjugate gradients (one iteration on periodic
+    axes, a few near walls) and ``u = w - H^-1 G q``. The status holds the iterations and relative
+    Schur residual; a failure is NaN. ``extra_force`` is a further force density on the velocity
+    faces (buoyancy, say), added to the forcing before the division by density. ``pressure``, the
+    last step's, starts the solve: 0-1 iterations in a steady flow against 13-15 from zero.
     """
+    if any(condition.is_mixed for condition in problem.pressure_conditions):
+        raise NotImplementedError("an inflow-outflow axis needs mixed end kinds in SOLVAX (issue 172)")
+    dt, grid = float(problem.dt), problem.grid
+    shifts = tuple(1.0 + dt * rate for rate in problem.damping_rates)
+    coefficient = dt * float(problem.viscosity) * (viscous is not None)
+    inverse, gradient, constrained, solve = _stage(
+        grid, problem.conditions, problem.pressure_conditions, shifts, coefficient, viscous
+    )
     velocity_conditions = tuple(velocity_condition(problem.conditions, axis) for axis in range(3))
     transport = (
         None
@@ -780,28 +800,29 @@ def _advance_momentum(
         else momentum_advection(velocity, velocity_conditions, limited=problem.advection == "limited")
     )
     predicted = []
-    for component, component_field in enumerate(velocity):
-        force = body[component].data + problem.forcing[component]
+    for axis, field in enumerate(velocity):
+        force = body[axis].data + problem.forcing[axis]
         if extra_force is not None:
-            force = force + extra_force[component].data
-        drive = force / problem.density
-        if transport is not None:
-            drive = drive - transport[component].data
-        shift = 1.0 + problem.dt * problem.damping_rates[component]
+            force = force + extra_force[axis].data
+        drive = force / problem.density - (0.0 if transport is None else transport[axis].data)
         if viscous is None:
-            diffusion = staggered_laplacian(component_field, velocity_conditions)
-            updated = component_field.data + problem.dt * (problem.viscosity * diffusion.data + drive) / shift
-        else:
-            if pressure is not None:
-                gradient = face_gradient(pressure, component, problem.pressure_conditions[component])
-                drive = drive - gradient.data / problem.density
-            source = component_field.replace_data(shift * component_field.data + problem.dt * drive)
-            updated = viscous[component].solve(source).data
-        predicted.append(component_field.replace_data(updated))
-    corrected, correction = project(tuple(predicted), problem, factorization, damped=True)
-    if viscous is None or pressure is None:
-        return corrected, correction
-    return corrected, correction.replace_data(pressure.data + correction.data)
+            drive = drive + problem.viscosity * staggered_laplacian(field, velocity_conditions).data
+        predicted.append(inverse[axis](shifts[axis] * field.data + dt * drive))
+    predicted = constrained(predicted)
+    source = -divergence(predicted).data
+    # A divergence under the field's round-off is noise, and CG started on noise can break down.
+    scale = sum(jnp.max(jnp.abs(w.data)) / np.min(grid.widths[a]) for a, w in enumerate(predicted))
+    source = jnp.where(jnp.abs(source) > 16 * jnp.finfo(source.dtype).eps * scale, source, 0.0)
+    # A right-hand side of exactly zero has the tolerance rtol |rhs| = 0, which no guess meets: drop it there.
+    guess = (
+        None
+        if pressure is None
+        else jnp.where(jnp.any(source != 0), dt / problem.density * pressure.data, 0.0)
+    )
+    flux, info = solve(source, x0=guess, rtol=1e-12 if velocity[0].dtype == jnp.float64 else None)
+    pull = [inverse[axis](g) for axis, g in enumerate(gradient(flux))]
+    corrected = constrained([w.data - g for w, g in zip(predicted, pull, strict=True)])
+    return corrected, Field((problem.density / dt) * flux, (CENTER,) * 3, grid), info
 
 
 @functools.lru_cache(maxsize=16)
@@ -932,6 +953,8 @@ class Trajectory:
     potential: Field
     divergence_residual: jnp.ndarray
     kinetic_energy: jnp.ndarray
+    stage_iterations: jnp.ndarray | None = None
+    stage_residual: jnp.ndarray | None = None
 
     @property
     def steps(self) -> int:
@@ -1128,18 +1151,22 @@ def _trajectory(problem, steps, factorization, viscous, checkpoint):
     factorization = problem.factorization() if factorization is None else factorization
 
     def single(carry, _):
-        updated, pressure, potential = step(carry[0], problem, factorization, viscous, carry[1])
-        return (updated, pressure, potential), trajectory_diagnostics(updated, problem)
+        updated, pressure, potential, info = _step(carry[0], problem, factorization, viscous, carry[1])
+        return (updated, pressure, potential), (
+            *trajectory_diagnostics(updated, problem),
+            info.iterations,
+            info.residual,
+        )
 
     def run(velocity):
         # The last pressure and potential ride in the carry: stacked as scan outputs they cost two
         # cell fields per step (3.1 GiB over 100 steps at 128^3 in float64) to return the last one.
         cell = Field(jnp.zeros(problem.grid.shape, velocity[0].dtype), (CENTER,) * 3, problem.grid)
         body = jax.checkpoint(single) if checkpoint else single
-        (final, pressure, potential), (residual, energy) = jax.lax.scan(
+        (final, pressure, potential), history = jax.lax.scan(
             body, (velocity, cell, cell), xs=None, length=steps
         )
-        return Trajectory(final, pressure, potential, residual, energy)
+        return Trajectory(final, pressure, potential, *history)
 
     return run
 

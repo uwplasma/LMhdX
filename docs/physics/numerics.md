@@ -211,11 +211,19 @@ $\Delta t\propto Ha^{-2}$ if left explicit. It is applied implicitly as a
 correction to the conservative face force,
 
 $$
-\mathbf u^{*}=\mathbf u+\frac{\Delta t\,\mathbf r}{1+\Delta t\,\lambda},
+H\mathbf u^{*}+\frac{\Delta t}{\rho}G p=\mathbf b,\qquad D\mathbf u^{*}=0,\qquad
+H=(1+\Delta t\,\lambda)I\ \bigl(-\Delta t\,\nu\nabla^2\text{ if implicit}\bigr),
 $$
 
-so the correction vanishes with the right-hand side and changes the path to a
-steady state but not the steady state itself. The fast solve needs one shift per
+with $\mathbf b$ the old velocity plus the forces. The pressure gradient meets the same $H$ as every other
+force, so a pressure force in balance with the forcing leaves the fluid at rest
+to round-off, and the stage's fixed point is the physical steady state. The
+pressure solves $D H^{-1} G$ by SOLVAX's constrained solve: one iteration where
+$H$ commutes with the gradient (periodic axes), a few next to a wall. A time loop starts each solve from
+the last step's pressure: a steady flow then takes 0 to 1 iterations in place of 13.
+Before this the stage scaled the increment per component and projected it, and a
+gradient force rest state was lost whenever $\lambda$ differed between components
+(peak speed $4.4\times10^{-2}$ at $B=10$, $\Delta t=0.1$). The fast solve needs one shift per
 component, so a varying field takes the largest rate over the cells; in the
 diagonal model a cell of rate $r$ then updates by $1-\Delta t\,r/(1+\Delta t\,\lambda)$,
 inside $(0,1]$ wherever $r\le\lambda$, where a smaller shift such as the volume

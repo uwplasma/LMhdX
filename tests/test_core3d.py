@@ -393,7 +393,7 @@ def test_the_step_is_the_force_and_momentum_stages_it_is_built_from():
         potential, currents, field = face_currents(velocity, problem, factorization)
         force = _lorentz_from_currents(currents, field, problem)
         body = face_lorentz_force(force, problem)
-        moved, pressure = _advance_momentum(velocity, body, problem, factorization, viscous)
+        moved, pressure, _ = _advance_momentum(velocity, body, problem, viscous)
         stepped, stepped_pressure, stepped_potential = step(velocity, problem, factorization, viscous)
         assert _identical(force, electric_state(velocity, problem, factorization)[1])
         assert _identical((*moved, pressure, potential), (*stepped, stepped_pressure, stepped_potential))
@@ -410,7 +410,7 @@ def test_an_extra_force_density_enters_beside_the_forcing():
     extra = (0.4, -0.3, 0.2)
 
     def advance(case, force=None):
-        moved, pressure = _advance_momentum(velocity, body, case, factorization, viscous, extra_force=force)
+        moved, pressure, _ = _advance_momentum(velocity, body, case, viscous, extra_force=force)
         return (*moved, pressure)
 
     zero = tuple(f.replace_data(jnp.zeros_like(f.data)) for f in velocity)
@@ -438,16 +438,16 @@ def _box_problem(field: float, dt: float, **overrides) -> ChannelProblem:
     )
 
 
-@pytest.mark.parametrize("mode", ["explicit", "implicit", "implicit from rest pressure"])
-@pytest.mark.parametrize(("field", "dt", "cold"), [(0.0, 0.1, 1e-13), (10.0, 0.1, 2e-3), (10.0, 0.01, 5e-5)])
-def test_a_pressure_gradient_force_leaves_the_fluid_at_rest(field, dt, cold, mode):
+@pytest.mark.parametrize("mode", ["explicit", "implicit"])
+@pytest.mark.parametrize("dt", [0.1, 0.01, 0.001])
+@pytest.mark.parametrize("field", [0.0, 10.0])
+def test_a_pressure_gradient_force_leaves_the_fluid_at_rest(field, dt, mode):
     """``p = sin x sin y`` and a force equal to its discrete gradient, across a field along ``y``: no motion.
 
     The damping rescales ``x`` and ``z`` and not ``y``, so a predictor that scaled only the force left a
     solenoidal remainder the projection could not remove: peak speed 4.4e-2 at B = 10 and dt = 0.1, 2.4e-3 at
-    dt = 0.01 (3.6e-2 and 2.4e-3 with implicit viscosity). The stage carries the pressure gradient through the
-    same ``H``: exact to round-off with explicit viscosity, and with implicit viscosity from the stage's own
-    pressure; from a zero pressure the split stage leaves ``cold``, 30 to 80 times less than before.
+    dt = 0.01 (3.6e-2 and 2.4e-3 with implicit viscosity). The stage solves ``H u + (dt/rho) G p = b``,
+    ``D u = 0`` exactly, explicit or implicit viscosity, and returns the pressure that balances the force.
     """
     from lmhdx.core3d import _advance_momentum
 
@@ -463,15 +463,103 @@ def test_a_pressure_gradient_force_leaves_the_fluid_at_rest(field, dt, cold, mod
         tuple(face_gradient(pressure, axis, PERIODIC_X) for axis in range(3)), problem
     )
     viscous = None if mode == "explicit" else problem.viscous_factorizations()
-    last = pressure if mode.endswith("pressure") else None
     rest = zero_velocity(problem)
-    velocity, found = _advance_momentum(
-        rest, rest, problem, problem.factorization(), viscous, extra_force=force, pressure=last
+    velocity, found, info = _advance_momentum(rest, rest, problem, viscous, extra_force=force)
+    assert max(float(jnp.max(jnp.abs(component.data))) for component in velocity) < 1e-13
+    assert float(jnp.max(jnp.abs(found.data - pressure.data))) < 1e-12
+    assert bool(info.converged) and int(info.iterations) == 1
+
+
+@pytest.mark.parametrize("implicit", [False, True])
+def test_the_stage_solves_its_saddle_system_next_to_walls(implicit):
+    """``H u + (dt/rho) G p = b`` and ``D u = 0`` hold to round-off where ``H`` and ``G`` do not commute.
+
+    Random old velocity and force, walls across ``y`` and ``z``, an oblique field and stretched cells.
+    The spectral multiplier is exact for the periodic ``x`` axis only, so the implicit stage iterates.
+    """
+    from lmhdx.core3d import _advance_momentum
+    from lmhdx.ops import staggered_laplacian
+
+    grid = Grid(uniform_faces(4, 0.0, 1.0), tanh_faces(6, -1.0, 1.0, 1.3), uniform_faces(5, -1.0, 1.0))
+    problem = ChannelProblem(
+        grid, (PERIODIC_X, WALL, WALL), density=2.0, viscosity=0.3, magnetic_field=(0.2, 1.5, 0.7),
+        forcing=(0.1, -0.2, 0.3), dt=0.05,
+    )  # fmt: skip
+    rng = np.random.default_rng(3)
+
+    def random_fields():
+        return tuple(
+            Field(
+                jnp.asarray(rng.normal(size=grid.offset_shape(velocity_offset(c)))), velocity_offset(c), grid
+            )
+            for c in range(3)
+        )
+
+    velocity, extra = enforce_face_constraints(random_fields(), problem), random_fields()
+    viscous = problem.viscous_factorizations() if implicit else None
+    new, pressure, info = _advance_momentum(
+        velocity, zero_velocity(problem), problem, viscous, extra_force=extra
     )
-    bound = cold if mode == "implicit" else 1e-13
-    assert max(float(jnp.max(jnp.abs(component.data))) for component in velocity) < bound
-    if mode != "implicit":
-        assert float(jnp.max(jnp.abs(found.data - pressure.data))) < 1e-12
+    conditions = tuple(velocity_condition(problem.conditions, axis) for axis in range(3))
+    dt, nu, rho = problem.dt, problem.viscosity, problem.density
+    residual = []
+    for c, rate in enumerate(problem.damping_rates):
+        shift = 1.0 + dt * rate
+        b = shift * velocity[c].data + dt * (problem.forcing[c] + extra[c].data) / rho
+        lap_new = nu * dt * staggered_laplacian(new[c], conditions).data
+        if implicit:
+            applied = shift * new[c].data - lap_new
+        else:
+            b = b + nu * dt * staggered_laplacian(velocity[c], conditions).data
+            applied = shift * new[c].data
+        gradient = face_gradient(pressure, c, problem.pressure_conditions[c]).data
+        residual.append(velocity[c].replace_data(applied + dt / rho * gradient - b))
+    scale = max(float(jnp.max(jnp.abs(f.data))) for f in new)
+    for field in enforce_face_constraints(tuple(residual), problem):
+        assert float(jnp.max(jnp.abs(field.data))) < 1e-10 * scale
+    assert float(jnp.max(jnp.abs(divergence(new).data))) < 1e-10 * scale
+    assert bool(info.converged) and (int(info.iterations) > 1) == implicit
+
+
+def test_a_flow_that_is_solenoidal_to_round_off_takes_no_pressure_iteration():
+    """A duct driven along ``x`` has divergence at round-off (1e-19): taken as a right-hand side it is noise.
+
+    Conjugate gradients started on it broke down on JAX 0.6.2 (``rho = r . M^-1 r`` negative, NaN after the
+    first step), so a divergence under the field's round-off is zero and the stage does not iterate.
+    """
+    grid = Grid(uniform_faces(4, 0.0, 1.0), tanh_faces(12, -1.0, 1.0, 1.5), tanh_faces(12, -1.0, 1.0, 1.5))
+    problem = ChannelProblem(grid, (PERIODIC_X, WALL, WALL), magnetic_field=(0.0, 20.0, 0.0), dt=1e-2)
+    run = advance(problem, 5, viscous=problem.viscous_factorizations())
+    assert int(jnp.max(run.stage_iterations)) == 0 and float(jnp.max(run.stage_residual)) == 0.0
+    assert all(bool(jnp.all(jnp.isfinite(field.data))) for field in run.velocity)
+
+
+def test_the_last_pressure_starts_the_stage_and_a_zero_right_hand_side_drops_it():
+    """Next to walls the stage iterates from zero and stops at once from its own pressure, same answer.
+
+    An exactly zero right-hand side has the tolerance ``rtol |rhs| = 0`` in SOLVAX, which a round-off guess never
+    meets: the solve returned NaN, so the guess is dropped there and the stage returns rest.
+    """
+    from lmhdx.core3d import _advance_momentum
+
+    grid = Grid(uniform_faces(4, 0.0, 1.0), tanh_faces(6, -1.0, 1.0, 1.3), uniform_faces(5, -1.0, 1.0))
+    problem = ChannelProblem(
+        grid, (PERIODIC_X, WALL, WALL), density=2.0, magnetic_field=(0.2, 1.5, 0.7), dt=0.05
+    )
+    pressure = Field(jnp.asarray(np.random.default_rng(3).normal(size=grid.shape)), (CENTER,) * 3, grid)
+    force = enforce_face_constraints(
+        tuple(face_gradient(pressure, axis, problem.pressure_conditions[axis]) for axis in range(3)), problem
+    )
+    viscous, rest = problem.viscous_factorizations(), zero_velocity(problem)
+    cold = _advance_momentum(rest, rest, problem, viscous, extra_force=force)
+    warm = _advance_momentum(rest, rest, problem, viscous, extra_force=force, pressure=cold[1])
+    assert int(cold[2].iterations) > 1 and int(warm[2].iterations) <= 1
+    assert float(jnp.max(jnp.abs(warm[1].data - cold[1].data))) < 1e-10 * float(
+        jnp.max(jnp.abs(cold[1].data))
+    )
+    quiet = _advance_momentum(rest, rest, problem, viscous, pressure=pressure)
+    assert bool(quiet[2].converged) and int(quiet[2].iterations) == 0
+    assert all(float(jnp.max(jnp.abs(field.data))) == 0.0 for field in (*quiet[0], quiet[1]))
 
 
 def _vortex(problem: ChannelProblem) -> tuple[Field, Field, Field]:
@@ -951,9 +1039,7 @@ def _buoyant_step(thermal, temperature):
     rest = zero_velocity(flow)
     body = tuple(field.replace_data(jnp.zeros_like(field.data)) for field in rest)
     extra = _buoyancy(Field(jnp.asarray(temperature), (CENTER,) * 3, flow.grid), thermal)
-    return _advance_momentum(
-        rest, body, flow, flow.factorization(), flow.viscous_factorizations(), extra_force=extra
-    )
+    return _advance_momentum(rest, body, flow, flow.viscous_factorizations(), extra_force=extra)[:2]
 
 
 def test_a_temperature_stratified_along_gravity_stays_at_rest():
@@ -993,11 +1079,12 @@ def test_buoyancy_accelerates_the_flow_independently_of_its_density():
     assert np.allclose(np.asarray(heavy[1].data), 2.5 * np.asarray(light[1].data), rtol=1e-12, atol=1e-12)
 
 
-def _benard_growth(rayleigh: float, dt: float, chandrasekhar: float = 0.0) -> float:
+def _benard_growth(rayleigh: float, dt: float, chandrasekhar: float = 0.0, window: int = 2) -> float:
     """Growth rate of the critical roll between rigid isothermal plates, heated below, in units of ``alpha/d^2``.
 
     ``d = nu = alpha = 1``, so ``g beta Delta T = Ra``; a vertical field of ``sigma B^2 = Q``. The rate is
-    taken between ``t = 2`` and ``3``, after the faster modes have decayed and long before saturation.
+    taken between ``t = window - 1`` and ``window``, after the faster modes have decayed and long before
+    saturation.
     """
     from lmhdx.thermal import (
         ThermalProblem,
@@ -1038,24 +1125,31 @@ def _benard_growth(rayleigh: float, dt: float, chandrasekhar: float = 0.0) -> fl
     for _ in range(3):
         state = run(state)
         amplitudes.append(float(jnp.max(jnp.abs(state.velocity[2].data))))
-    return float(np.log(amplitudes[2] / amplitudes[1]))
+    return float(np.log(amplitudes[window] / amplitudes[window - 1]))
 
 
 def test_benard_convection_sets_in_at_the_critical_rayleigh_number():
     """Rigid plates: onset at ``Ra_c = 1707.76``, ``k_c = 3.117`` (Reid & Harris 1958; Chandrasekhar 1961, Ch. II).
 
-    The partitioned step lags buoyancy and transport by one step, so the onset converges at first order in
-    ``dt`` from below; Richardson in ``dt`` on 16 x 16 cells lands within 4 %. A vertical field of
-    ``Q = Ha^2 = 100`` lifts onset to ``Ra_c = 3757`` (Chandrasekhar 1961, Ch. IV), so ``Ra = 2500`` grows
-    without it and decays with it.
+    The constrained momentum stage (``H u + G p = b``, solved exactly) puts the onset at 1675.6 and
+    1675.6 for ``dt`` = 2.5e-3 and 1.25e-3: independent of ``dt`` to 0.05, and 1.9 % below ``Ra_c``, which is
+    the 16 x 16 mesh. The split stage before it gave 1540.3 and 1602.7, first order in ``dt`` (Richardson
+    1665.2, 2.5 % low). A vertical field of ``Q = Ha^2 = 100`` lifts onset to ``Ra_c = 3757``
+    (Chandrasekhar 1961, Ch. IV), so ``Ra = 2500`` grows without it and decays with it. The decay is read
+    between ``t = 1`` and ``2`` (-6.3): the damped roll is at 5e-13 by ``t = 2``, and later windows read the
+    1e-12 floor the discrete hydrostatic imbalance leaves, which is the same before this change and moves
+    the sign with ``dt``.
     """
     onsets = []
     for dt in (2.5e-3, 1.25e-3):
         below, above = (_benard_growth(rayleigh, dt) for rayleigh in (1600.0, 1800.0))
         onsets.append(1600.0 - below * 200.0 / (above - below))
-    assert onsets[0] < onsets[1] < 1707.76, onsets
+    assert abs(onsets[0] - onsets[1]) < 0.1, onsets
+    assert 0.98 < onsets[1] / 1707.76 < 1.0, onsets
     assert abs((2.0 * onsets[1] - onsets[0]) / 1707.76 - 1.0) < 0.04, onsets
-    assert _benard_growth(2500.0, 1.25e-3) > 0.0 > _benard_growth(2500.0, 1.25e-3, chandrasekhar=100.0)
+    assert (
+        _benard_growth(2500.0, 1.25e-3) > 0.0 > _benard_growth(2500.0, 1.25e-3, chandrasekhar=100.0, window=1)
+    )
 
 
 # The coupled thermal step's accuracy (plan step 5.1f).
