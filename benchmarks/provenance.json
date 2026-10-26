@@ -283,7 +283,7 @@
     {
       "availability": "repository",
       "digitizer": "scripts/digitize_mistrangelo.py",
-      "digitizer_sha256": "76de1726ae76a957edd8b39b5e061b44caadebe1bd2caaac8e5e35044394e4f7",
+      "digitizer_sha256": "41111d5be7fb9a85f0e7d48863a4a7f5568a4d9e6da17ae1693e0672479d150e",
       "extracted": "2026-10-20, from the PDF of mistrangelo-2025 (its DOI and SHA-256 above) with pymupdf Document.extract_image(xref); each image's SHA-256 is in its record",
       "extraction": {
         "asset": "mistrangelo2025-case1-extraction.zip",
@@ -295,13 +295,13 @@
       "id": "mistrangelo2025-case1",
       "kind": "reference_data",
       "path": "lmhdx/data/benchmarks/references/mistrangelo2025-case1.json",
-      "sha256": "ee939b2e4e552a664317d9d1a50140378eca9fa1d79bf73926224445b3e5158e",
+      "sha256": "32f7493c3e3fe8e3a0af2833d57dc99f37de66757370cdd7e1d1ad29f79787f7",
       "title": "Mistrangelo et al. 2025, Case 1: figures digitized by scripts/digitize_mistrangelo.py"
     },
     {
       "availability": "repository",
       "digitizer": "scripts/digitize_mistrangelo.py",
-      "digitizer_sha256": "76de1726ae76a957edd8b39b5e061b44caadebe1bd2caaac8e5e35044394e4f7",
+      "digitizer_sha256": "41111d5be7fb9a85f0e7d48863a4a7f5568a4d9e6da17ae1693e0672479d150e",
       "extracted": "2026-10-20, from the PDF of mistrangelo-2025 (its DOI and SHA-256 above) with pymupdf Document.extract_image(xref); each image's SHA-256 is in its record",
       "extraction": {
         "asset": "mistrangelo2025-case2-extraction.zip",
@@ -313,7 +313,7 @@
       "id": "mistrangelo2025-case2",
       "kind": "reference_data",
       "path": "lmhdx/data/benchmarks/references/mistrangelo2025-case2.json",
-      "sha256": "146ce07108e7157586bb537509501702a1fe2cb08f89ae6505aac70c5c87658b",
+      "sha256": "37e92840f370468fbd5a295d2ff742d0c833c8e061e19c3bfe6f52c66984bf04",
       "title": "Mistrangelo et al. 2025, Case 2: figures digitized by scripts/digitize_mistrangelo.py"
     }
   ]
