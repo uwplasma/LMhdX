@@ -25,7 +25,8 @@ preconditioned conjugate-gradient solve as a periodic duct's
 upstream of a field change the lift is the discrete solution, which is why the
 uniform region carries its fully developed gradient.
 
-With advection on (plan 1.9d, H3) the steady problem is nonlinear and is marched to its fixed
+With advection on (plan 1.9d, H3) the steady problem is nonlinear and has two solvers,
+``method="march"`` and ``method="newton"``, chosen by ``"auto"`` (:func:`method_for`). The march goes to the fixed
 point: the IMEX Runge-Kutta stepper of :mod:`lmhdx.core3d` (central transport, Crank-Nicolson
 damping and viscosity, the exact constrained stage) advances the departure from the lift at a
 Courant-limited step, in chunks, until the physical steady residual falls to ``tolerance`` of the
@@ -33,9 +34,10 @@ lift's. The march is a fixed point of the step, so its root is the root of the s
 step. The result carries one of three statuses: ``converged``; ``stagnated``, a residual that stopped
 falling above the tolerance, which Kelley and Keyes (1998) report as the failure of pseudo-transient
 continuation; and ``unsteady``, a residual that grows or whose change keeps turning, the signature of a
-flow with no steady state (a limit cycle or bursts). The root is differentiated by the implicit function
-theorem (:func:`solvax.root_solve`) on the fixed point of one step, its tangent and transposed solves
-GMRES on that step's linearization.
+flow with no steady state (a limit cycle or bursts). Newton's method takes the same residual from the
+same Stokes-limit start, each update a preconditioned :func:`solvax.gcrot` solve, and is the cheaper where damping
+sets the step. Either root is differentiated by the implicit function theorem (:func:`solvax.root_solve`) on the
+fixed point of one step, its tangent and transposed solves GMRES on that step's linearization.
 """
 
 from __future__ import annotations
@@ -65,7 +67,9 @@ from .grid import CENTER, DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field
 from .ops import advective_step_limit, face_electromotive_force, neighbours
 from .steady import (
     _certified,
+    _face_weights,
     _norm,
+    _orthogonal_projection,
     _preconditioner,
     _projection_solves,
     _stokes_limit_root,
@@ -84,6 +88,7 @@ __all__ = [
     "fringe_duct",
     "fully_developed_inlet",
     "mass_balance",
+    "method_for",
     "open_duct",
     "pressure_drop",
     "solve_open_duct",
@@ -97,6 +102,7 @@ CONVERGED, STAGNATED, UNSTEADY = 0, 1, 2
 # A varying field gives every cell the largest damping rate in the implicit part and leaves the rest of its
 # own, up to that rate, to the explicit part: the march is stable to ``dt rate`` of 6 and not at 7 (Ha 100, Re 20).
 _DAMPING_COURANT = 4.0
+_MARCH_RATIO = 4.0  # ``auto`` marches up to this ratio of the Courant step to the damping step
 
 
 class OpenDuctSolution(NamedTuple):
@@ -264,6 +270,7 @@ def _solve(
     field_scale: float | jnp.ndarray = 1.0,
     tolerance: float = 1.0e-9,
     max_iterations: int = 36_000,
+    method: str = "auto",
     max_steps: int = 40_000,
     check: int = 50,
     cfl: float = 0.9,
@@ -276,9 +283,10 @@ def _solve(
     fields under tracing. ``max_iterations`` follows the tolerance rule of #150
     (600 restarts of 60).
 
-    With advection, the march of the module docstring from that solution: RK3 steps at ``cfl`` times
-    the Courant limit of the current state, ``check`` steps between tests of the steady residual, at
-    most ``max_steps``. ``iterations`` then counts the steps and ``status`` is one of
+    With advection, ``method`` is ``"march"`` (RK3 steps at ``cfl`` times the Courant limit of the
+    current state, ``check`` steps between tests of the steady residual, at most ``max_steps``),
+    ``"newton"`` or ``"auto"``, which is :func:`method_for`; ``iterations`` counts the steps of the
+    march and the Krylov iterations of Newton, and ``status`` is one of
     :data:`CONVERGED`, :data:`STAGNATED` and :data:`UNSTEADY`; only ``CONVERGED`` is a steady
     state, and its derivatives are the only ones to trust.
 
@@ -314,8 +322,16 @@ def _solve(
     velocity = with_inflow(jax.tree.map(jnp.add, start, correction), problem)
     status = jnp.asarray(CONVERGED)
     if problem.advection != "off":
-        velocity, iterations, status = _march(
-            problem, velocity, factorization, field_scale, tolerance, _norm(rhs), max_steps, check, cfl
+        velocity, iterations, status = _steady_root(
+            problem,
+            velocity,
+            factorization,
+            precond,
+            field_scale,
+            tolerance,
+            _norm(rhs),
+            method_for(problem, cfl) if method == "auto" else method,
+            (check, cfl, max_steps),
         )
     terms = momentum_terms(
         velocity, problem, factorization, forcing=zero, field_scale=field_scale, inflow=1.0
@@ -330,7 +346,9 @@ def _solve(
     )
 
 
-_compiled = jax.jit(_solve, static_argnames="problem tolerance max_iterations max_steps check cfl".split())
+_compiled = jax.jit(
+    _solve, static_argnames="problem tolerance max_iterations method max_steps check cfl".split()
+)
 
 
 @functools.wraps(_solve, assigned=("__doc__",), updated=())
@@ -345,15 +363,27 @@ def solve_open_duct(*arguments, **controls) -> OpenDuctSolution:
     return solution
 
 
-def _march(problem, velocity, factorization, field_scale, tolerance, reference, max_steps, check, cfl):
-    """March ``velocity`` to the fixed point of the RK3 step; return it, the steps taken and the status.
+def method_for(problem: ChannelProblem, cfl: float = 0.9) -> str:
+    """The method ``auto`` picks: ``march`` while the Courant step of the inlet flow is at most
+    ``_MARCH_RATIO`` damping steps, ``newton`` where the field binds harder (numerics notes: four measured ducts)."""
+    with jax.ensure_compile_time_eval():
+        courant = cfl * RK3.limit * advective_step_limit(with_inflow(_lift(problem), problem))
+        ratio = float(courant) * max(problem.damping_rates) / _DAMPING_COURANT
+    return "march" if ratio <= _MARCH_RATIO else "newton"
 
-    The state is the flat velocity. A chunk is ``check`` steps at the smaller of ``cfl`` times the Courant
-    limit of the state it starts from and the damping limit, ``_DAMPING_COURANT`` over the largest rate.
-    :func:`solvax.fixed_point_iteration` repeats chunks until the steady residual is under ``tolerance``
-    of ``reference``, or the budget is spent, and :func:`_watch` classifies a march that is not
-    done. The root is then rebuilt by :func:`solvax.root_solve` on one step, which carries the derivatives.
+
+def _steady_root(
+    problem, velocity, factorization, precond, field_scale, tolerance, reference, method, controls
+):
+    """The steady advective flow from the Stokes-limit ``velocity`` by ``method``; return it, the work and the status.
+
+    ``march`` repeats chunks of ``check`` RK3 steps at the smaller of ``cfl`` times the Courant limit and the
+    damping limit until the steady residual is under ``tolerance`` of ``reference``. ``newton`` updates the
+    correction to the lift (at most 12 times) by :func:`solvax.gcrot` preconditioned with a loose solve of the
+    Stokes-limit operator. A solve that has not converged is classified by :func:`_watch`. Either root is rebuilt
+    by :func:`solvax.root_solve` on the fixed point of one step, which carries the derivatives.
     """
+    check, cfl, max_steps = controls
     lift, viscous = with_inflow(_lift(problem), problem), problem.viscous_factorizations(RK3)
     flat, unravel = ravel_pytree(jax.lax.stop_gradient(velocity))
     fixed, zero = jax.lax.stop_gradient(field_scale), (0.0, 0.0, 0.0)
@@ -371,42 +401,74 @@ def _march(problem, velocity, factorization, field_scale, tolerance, reference, 
             cfl * RK3.limit * advective_step_limit(unravel(x)), _DAMPING_COURANT / jnp.maximum(rate, 1e-300)
         )
 
+    def steady(x, scale, of=problem, inflow=1.0):
+        found = steady_residual(unravel(x), of, factorization, forcing=zero, field_scale=scale, inflow=inflow)
+        return ravel_pytree(found)[0]
+
     def chunk(x):
         dt = step_size(x, fixed)
         return jax.lax.fori_loop(
             0, check, lambda _, carry: advance(carry[0], dt, fixed, carry[1]), (x, guess)
         )[0]
 
-    def residual(x, scale):
-        value = steady_residual(
-            unravel(x), problem, factorization, forcing=zero, field_scale=scale, inflow=1.0
-        )
-        return _norm(value)
+    def residual(x):
+        return jnp.linalg.norm(steady(x, fixed))
 
-    found = solvax.fixed_point_iteration(
-        chunk,
-        flat,
-        residual_norm=lambda x: residual(x, fixed) / jax.lax.stop_gradient(reference),
-        atol=tolerance,
-        rtol=0.0,
-        max_steps=max_steps // check,
-    )
+    if method == "march":
+        found = solvax.fixed_point_iteration(
+            chunk,
+            flat,
+            residual_norm=lambda x: residual(x) / jax.lax.stop_gradient(reference),
+            atol=tolerance,
+            rtol=0.0,
+            max_steps=max_steps // check,
+        )
+        root, work, converged = found.x, found.iterations * check, found.converged
+    else:
+        stokes, flat_lift = dataclasses.replace(problem, advection="off"), ravel_pytree(lift)[0]
+        weights = ravel_pytree(_face_weights(stokes))[0]
+
+        def inside(w):
+            return ravel_pytree(_orthogonal_projection(unravel(w), problem, factorization))[0]
+
+        def function(w):
+            # Extended off the divergence-free fields by the identity: invertible on every vector.
+            return steady(flat_lift + inside(w), fixed) + (w - inside(w))
+
+        def inverse(r):
+            solved = solvax.pcg(
+                lambda y: -steady(y / weights, fixed, stokes, None),
+                -inside(r),
+                precond=lambda r: ravel_pytree(precond(unravel(r)))[0] * weights,
+                rtol=0.1,
+                max_steps=4_000,
+            )
+            return solved.x / weights + (r - inside(r))
+
+        def update(carry):
+            w, count, total, _ = carry
+            value, linear = jax.linearize(function, w)
+            krylov = solvax.gcrot(linear, -value, precond=inverse, m=120, k=10, rtol=1e-3, max_restarts=30)
+            return w + krylov.x, count + 1, total + krylov.iterations, jnp.linalg.norm(function(w + krylov.x))
+
+        def going(carry):
+            return (carry[1] < 12) & (carry[3] > tolerance * reference) & jnp.isfinite(carry[3])
+
+        w = inside(jax.lax.stop_gradient(flat) - flat_lift)
+        w, _, work, norm = jax.lax.while_loop(going, update, (w, 0, 0, jnp.linalg.norm(function(w))))
+        root, converged = flat_lift + inside(w), norm <= 10.0 * tolerance * reference
 
     status = jax.lax.cond(
-        found.converged,
-        lambda _: jnp.asarray(CONVERGED),
-        lambda x: _watch(chunk, lambda y: residual(y, fixed), x),
-        found.x,
+        converged, lambda _: jnp.asarray(CONVERGED), lambda x: _watch(chunk, residual, x), root
     )
-
-    dt = step_size(found.x, fixed)
+    dt = step_size(root, fixed)
     root = solvax.root_solve(
         lambda x: advance(x, dt, field_scale, guess)[0] - x,
-        found.x,
+        root,
         lambda function, x: x,
         tangent_solve=_tangent_solve,
     )
-    return unravel(root), found.iterations * check, status
+    return unravel(root), work, status
 
 
 def _watch(chunk, residual, x):

@@ -2,8 +2,8 @@
 
 ``solve_open_duct`` solves a duct with an inlet and an outlet. Without advection
 it is the inertialess (Stokes) flow; with ``advection="central"`` the flow is
-marched from that one to its steady state by the Runge-Kutta stepper, at a step
-that keeps the transport and the Lorentz damping stable. It is worth using to
+taken from that one to its steady state by Newton's method or by marching the
+Runge-Kutta stepper, whichever ``method="auto"`` finds faster. It is worth using to
 check the inertial share: the share below is the change of the fringe pressure
 drop when transport is switched on. Keep ``growth=1.0`` (small cell Reynolds
 number). This Ha 30 case is cheap; the measured share at Ha 100-200 and Re
@@ -49,10 +49,12 @@ def build(reynolds, advection):
     )
 
 
-# Run the Stokes-limit solve and the march at each Reynolds number.
+# Run the Stokes-limit solve and the inertial solve at each Reynolds number.
 rows = []
 for reynolds in REYNOLDS_NUMBERS:
-    print(f"Ha = {HARTMANN_NUMBER:g}, Re = {reynolds:g}: Stokes, then the march...", flush=True)
+    print(
+        f"Ha = {HARTMANN_NUMBER:g}, Re = {reynolds:g}: Stokes, then the steady inertial solve...", flush=True
+    )
     start = time.perf_counter()
     stokes = solve_open_duct(build(reynolds, "off"))
     full = solve_open_duct(build(reynolds, "central"))
@@ -64,7 +66,7 @@ for reynolds in REYNOLDS_NUMBERS:
             "drop_stokes": drop_stokes,
             "drop_with_transport": drop_full,
             "inertial_share_percent": 100.0 * abs(drop_full - drop_stokes) / abs(drop_stokes),
-            "march_steps": int(full.iterations),
+            "iterations": int(full.iterations),
             "status": int(full.status),
             "relative_residual": float(full.residual_norm / full.initial_residual_norm),
             "seconds": time.perf_counter() - start,
@@ -78,7 +80,7 @@ print("Results (half-width, density, viscosity and conductivity are 1):")
 for row in rows:
     print(
         f"  Re {row['reynolds']:g}: drop {row['drop_stokes']:.6g} -> {row['drop_with_transport']:.6g}, "
-        f"inertial share {row['inertial_share_percent']:.3f}%, {row['march_steps']} march steps, "
+        f"inertial share {row['inertial_share_percent']:.3f}%, {row['iterations']} iterations, "
         f"{row['seconds']:.0f} s"
     )
 print(f"Wrote {OUTPUT_DIR / 'open_duct_inertia_summary.json'}")

@@ -540,8 +540,9 @@ range, against TM-228's 0.0932.
 #### Inertia on the open axis: the inertial share (1.9d)
 
 `solve_open_duct` solves an advective open duct (`advection="central"` or
-`"limited"`) by marching the Stokes-limit solution to its steady state (H3, from
-2026-10-26). The stepper is the RK3 scheme of `lmhdx.core3d`: the exact
+`"limited"`) from the Stokes-limit solution to its steady state by Newton's method
+or by marching (H3, from 2026-10-26). `method="auto"` marches while the Courant
+step is at most four damping steps (below) and takes Newton otherwise. The stepper is the RK3 scheme of `lmhdx.core3d`: the exact
 constrained stage at each of three substeps, Crank-Nicolson damping and
 viscosity, central transport, the lift carrying the inlet. A step is the smaller
 of 0.9 of the Courant limit $\sqrt3/\sum_a\max|u_a|/\Delta x_a$ and
@@ -557,6 +558,23 @@ change between chunks turns through sixty degrees). The root is differentiated b
 the implicit function theorem on the fixed point of one step
 (`solvax.root_solve`), tangent and transposed solves by GMRES on that step's
 linearization.
+
+*Newton, and which to use.* Newton's method takes the same residual and start: the
+unknown is the correction to the lift, extended off the divergence-free fields by
+the identity, each update a flexible GMRES solve (`solvax.gcrot`, 120 per cycle,
+tolerance 1e-3) preconditioned by the Stokes-limit operator's inverse, a
+conjugate-gradient solve to 0.1; at most twelve updates. Its root is rebuilt and
+differentiated by the same `solvax.root_solve` as the march's, so the two agree
+on the drop and its gradient to $10^{-6}$ (tested). Warm medians on the loaded
+laptop, $62\times12\times12$ (Ha 20) and $62\times16\times16$ (Ha 100), seconds,
+Newton / march, with the ratio $\Delta t_C/\Delta t_D$ of the Courant step of the
+inlet flow to the damping step $4/\lambda_{\max}$: Ha 20, Re 40 15.9 / 5.35
+(1.6); Re 20 5.2 / 3.4 (3.1); Re 10 1.7 / 3.9 (6.3); Ha 100, Re 20 33.8 / 41.6
+(76). The march took 200, 150, 250 and 1,150 steps (a step that damping limits
+shrinks with $Ha^2$), Newton 28, 68, 206 and 69 outer iterations (they grow with
+Re), so `auto` marches for a ratio of 4 or less. The threshold sits between the
+3.1 and the 6.3 of four measured ducts (fitted, not derived), and the ratio
+moves with the mesh through the Courant step.
 
 *The outlet.* The outlet face owns half a cell and had no transport in the first
 form of the term (the zero edge of a wall face): a Newton solve still finds the

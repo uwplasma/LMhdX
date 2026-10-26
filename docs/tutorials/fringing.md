@@ -66,8 +66,8 @@ What is and is not established:
 - Doubling the buffers moves the drop over TM-228's window `[-6, 2]` by
   3.5e-9 at Ha 100.
 - With advection on (`advection="central"`), `solve_open_duct` adds inertia by
-  marching the Stokes-limit solution to its steady state with the Runge-Kutta
-  stepper (status `converged`, `stagnated` or `unsteady`); [Numerics](../physics/numerics.md) gives the measured inertial share
+  Newton-Krylov or marching the Stokes-limit solution to its steady state with the
+  Runge-Kutta stepper, whichever `method="auto"` finds faster (status `converged`, `stagnated` or `unsteady`); [Numerics](../physics/numerics.md) gives the measured inertial share
   ("Inertia on the open axis").
 - On the ANL case the excess drop over the locally fully developed drop agrees
   within 1 % with the inertialess core-flow model (`lmhdx.coreflow`, TM-228

@@ -83,7 +83,7 @@ value, derivative = jax.value_and_grad(drop)(1.0)
 
 `python examples/fringe_duct_example.py` checks this derivative against central
 differences (relative difference about 1e-9 on that mesh; the test gate is
-1e-6). With advection on, the marched fixed point is differentiated the same way, by the implicit function theorem on one step. The
+1e-6). With advection on, the steady root, by Newton or by the march, is differentiated the same way, by the implicit function theorem on one step. The
 wall conductance, geometry and flow rate are fixed when the problem is built; see the
 [fringe tutorial](fringing.md).
 

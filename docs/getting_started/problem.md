@@ -43,10 +43,12 @@ built and refused at `solve`.
 ## Solvers
 
 `method` is `stokes` (one certified conjugate-gradient solve), `newton` (the same with advection on),
-`march` (an open duct with advection on, marched to its steady state), `euler` (the projection step as one
-compiled scan, or with `thermal` the heat step) or `ifrk4` (the Q2D integrator). `auto` picks `euler` if
-`steps` is given and `stokes`, `newton` or `march` otherwise. `rk3` and `implicit` are named for plan step
-H2.2 and raise until it exists.
+`march` (an open duct with advection on, marched to its steady state instead), `euler` (the projection step as
+one compiled scan, or with `thermal` the heat step) or `ifrk4` (the Q2D integrator). `auto` picks `euler` if
+`steps` is given and `stokes` or `newton` otherwise; on an open duct with advection it picks `march` while the
+Courant step of the inlet flow is at most four damping steps, and `newton` when the field binds harder
+(`lmhdx.axial.method_for`; `Solver().resolve(problem)` tells which). Both reach the same root and derivative to
+1e-6. `rk3` and `implicit` are named for plan step H2.2 and raise until it exists.
 
 ## Derivatives
 

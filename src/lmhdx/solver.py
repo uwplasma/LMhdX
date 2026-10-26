@@ -5,10 +5,11 @@ the kernel it describes, so a concrete problem gives the older entry point's res
 ``method`` maps to the kernels as follows: ``stokes`` is :func:`lmhdx.steady.solve_compiled`
 (:func:`lmhdx.axial.solve_open_duct` on an :class:`~lmhdx.problem.Open` axis,
 :func:`lmhdx.pipe.solve_pipe` on a polar grid), ``newton`` the same with advection on, ``march`` the
-open duct with advection on (the RK3 march of :func:`lmhdx.axial.solve_open_duct`), ``euler`` the
+open duct with advection on solved by the RK3 march instead of Newton (:func:`lmhdx.axial.solve_open_duct`), ``euler`` the
 projection step (:func:`lmhdx.core3d.advance`, or :func:`lmhdx.thermal.advance_thermal` with
 ``Problem.thermal``) and ``ifrk4`` :func:`lmhdx.q2d.solve_q2d`. ``auto`` takes ``euler`` if ``steps``
-is given, else ``stokes``, ``newton`` or ``march`` by the advection and the axes; ``rk3`` and
+is given, else ``stokes`` or ``newton``, which on an open duct is ``march`` where :func:`lmhdx.axial.method_for`
+says it is faster; ``rk3`` and
 ``implicit`` are reserved for plan step H2.2 and raise.
 
 :func:`jax.grad` through the leaves of a problem runs the implicit derivative of the steady solve.
@@ -26,8 +27,8 @@ import jax
 import jax.numpy as jnp
 
 from . import configure
+from .axial import method_for, solve_open_duct
 from .axial import pressure_drop as _pressure_drop
-from .axial import solve_open_duct
 from .cases import NumericalFailure
 from .cases import solve as _solve_model
 from .core3d import advance
@@ -75,11 +76,12 @@ class Solver:
             raise ValueError(f"method must be one of {list(_METHODS)}, got {self.method!r}")
         q2d, method = isinstance(problem, Q2D), self.method
         steady = None if q2d else "stokes" if problem.advection == "off" else "newton"
-        if steady == "newton" and isinstance(problem.ends(0), Open):
-            steady = "march"
+        opened = steady == "newton" and isinstance(problem.ends(0), Open)
         if method == "auto":
             method = "ifrk4" if q2d else "euler" if self.steps is not None else steady
-        allowed = ("ifrk4",) if q2d else ("euler", steady)
+            if method == "newton" and opened:
+                method = method_for(channel_kernel(problem, self.dt or 1.0, self.precision)[0])
+        allowed = ("ifrk4",) if q2d else ("euler", steady, *(("march",) if opened else ()))
         if method not in allowed:
             raise ValueError(f"method {method!r} does not fit this problem; use one of {allowed}")
         if method in ("euler", "ifrk4") and (self.dt is None or self.steps is None):
@@ -143,7 +145,7 @@ def _program(kernel, tolerance: float):
     return jax.jit(run)
 
 
-def _steady(problem: Problem, solver: Solver) -> Solution:
+def _steady(problem: Problem, solver: Solver, method: str) -> Solution:
     kernel, forcing, scale, factor = channel_kernel(
         problem, 1.0 if solver.dt is None else solver.dt, solver.precision
     )
@@ -152,7 +154,7 @@ def _steady(problem: Problem, solver: Solver) -> Solution:
         if any(primal(f, "the forcing") for f in problem.forcing):
             raise ValueError("an open duct is driven by its flow_rate, not a forcing")
         found = solve_open_duct(
-            kernel, field_scale=scale, tolerance=1.0e-9 if solver.tol is None else solver.tol
+            kernel, field_scale=scale, tolerance=1.0e-9 if solver.tol is None else solver.tol, method=method
         )
         fields = {"velocity": found.velocity, "pressure": found.pressure, "potential": found.potential}
         fields["currents"], residual = found.currents, found.residual_norm
@@ -323,4 +325,4 @@ def solve(problem: object, solver: Solver | None = None, start: object = None) -
         return (_thermal if problem.thermal is not None else _transient)(problem, solver, start)
     if start is not None or problem.thermal is not None:
         raise ValueError("a steady solve takes no start and no heat transport (give Solver(dt=, steps=))")
-    return _steady(problem, solver)
+    return _steady(problem, solver, method)
