@@ -85,7 +85,7 @@ jobs:
       - uses: ./.github/actions/setup-lmhdx
         with:
           python-version: "3.10"
-          solvax-version: "0.19.0"
+          solvax-version: "0.34.0"
           cache-suffix: pr-impact
       - name: Run conservatively affected tests
         run: |
@@ -102,7 +102,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [support, operators, physics, channel, plane, steady, programs, fully_developed, gradients]
+        shard: [support, design, operators, physics, channel, plane, steady, programs, fully_developed, gradients, api, anchors]
         include:
           # Coverage on the steady shard peaks near 12 GB of resident memory with four
           # workers, against 16 GB on a hosted runner; two workers keep it well inside.
@@ -113,6 +113,8 @@ jobs:
             cache: steady
           # A split shard starts from its parent's compilation cache.
           - shard: operators
+            cache: support
+          - shard: design
             cache: support
           - shard: plane
             cache: channel
@@ -126,7 +128,7 @@ jobs:
       - uses: ./.github/actions/setup-lmhdx
         with:
           python-version: "3.10"
-          solvax-version: "0.19.0"
+          solvax-version: "0.34.0"
           cache-suffix: ${{ matrix.cache || matrix.shard }}
       - name: Run covered test shard
         env:
@@ -163,6 +165,12 @@ jobs:
         with:
           path: artifacts/test-evidence/support
           key: lmx-test-evidence-${{ github.run_id }}-support
+          fail-on-cache-miss: true
+      - name: Restore design evidence
+        uses: actions/cache/restore@v6
+        with:
+          path: artifacts/test-evidence/design
+          key: lmx-test-evidence-${{ github.run_id }}-design
           fail-on-cache-miss: true
       - name: Restore physics evidence
         uses: actions/cache/restore@v6
@@ -212,6 +220,18 @@ jobs:
           path: artifacts/test-evidence/gradients
           key: lmx-test-evidence-${{ github.run_id }}-gradients
           fail-on-cache-miss: true
+      - name: Restore api evidence
+        uses: actions/cache/restore@v6
+        with:
+          path: artifacts/test-evidence/api
+          key: lmx-test-evidence-${{ github.run_id }}-api
+          fail-on-cache-miss: true
+      - name: Restore anchors evidence
+        uses: actions/cache/restore@v6
+        with:
+          path: artifacts/test-evidence/anchors
+          key: lmx-test-evidence-${{ github.run_id }}-anchors
+          fail-on-cache-miss: true
       - name: Combine and enforce coverage
         run: |
           python -m coverage combine artifacts/test-evidence/*
@@ -233,6 +253,10 @@ jobs:
           - tier: unit
             shard: support
             workers: 4
+            budget: 300
+            cache: pr-unit
+          - tier: unit
+            shard: design
             budget: 300
             cache: pr-unit
           - tier: unit
@@ -267,6 +291,12 @@ jobs:
             budget: 420
             cache: pr-regressionsteady
           - tier: regression
+            shard: api
+            budget: 420
+          - tier: regression
+            shard: anchors
+            budget: 420
+          - tier: regression
             shard: support
             budget: 300
     steps:
@@ -274,7 +304,7 @@ jobs:
       - uses: ./.github/actions/setup-lmhdx
         with:
           python-version: "3.10"
-          solvax-version: "0.19.0"
+          solvax-version: "0.34.0"
           cache-suffix: ${{ matrix.cache || format('pr-{0}{1}', matrix.tier, matrix.label || matrix.shard) }}
       - name: Run uncovered evidence tier
         env:

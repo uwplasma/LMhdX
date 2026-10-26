@@ -677,3 +677,21 @@ def test_resolved_walls_on_two_axes_give_each_corner_cell_its_nearer_wall():
     ]
     dense -= np.sum(dense * volumes) / np.sum(volumes)
     np.testing.assert_allclose(potential, dense, atol=1e-12 * np.max(np.abs(dense)))
+
+
+def test_the_solves_carry_no_cell_sized_constants():
+    """H0.3: reciprocal eigenvalue sums and weights are formed in the trace from one-dimensional vectors."""
+    import re
+
+    from lmhdx.core3d import ChannelProblem, advance
+
+    n = 24
+    grid = Grid(uniform_faces(n, 0.0, 1.0), tanh_faces(n, -1.0, 1.0, 1.4), tanh_faces(n, -1.0, 1.0, 1.4))
+    problem = ChannelProblem(grid=grid, conditions=(WRAPPED, WALL, WALL), magnetic_field=(0.0, 5.0, 0.0))
+    text = jax.jit(lambda: advance(problem, 2, viscous=problem.viscous_factorizations()).velocity[0].data)
+    text = text.lower().as_text()
+    sizes = [
+        int(np.prod([int(d) for d in shape.split("x")]))
+        for shape in re.findall(r'dense<[\["][^\n]*>\s*:\s*tensor<([\dx]+)x', text)
+    ]
+    assert sizes and max(sizes) < n**3 // 2
