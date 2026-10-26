@@ -814,7 +814,7 @@ def build_thermal_step(
             body = face_lorentz_force(_lorentz_from_currents(currents, field, flow), flow)
             fluid = Field(temperature.data[block], _CELL, flow.grid) if walled else temperature
             buoyancy = _buoyancy(fluid, problem)
-            moved, _ = _advance_momentum(velocity, body, flow, pressure, viscous, extra_force=buoyancy)
+            moved = _advance_momentum(velocity, body, flow, viscous, extra_force=buoyancy)[0]
         carrier, entering = velocity, reservoir
         if walled:  # the walls carry nothing: the velocity is zero there, and so on their outlet faces
             carrier = tuple(Field(problem.on_thermal_grid(v.data), v.offset, grid) for v in velocity)
