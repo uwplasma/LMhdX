@@ -107,7 +107,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 import numpy as np
 
-from ._programs import host_array, host_scalar
+from ._programs import host_array, host_scalar, is_traced
 from .grid import CENTER, FACE, NEUMANN, BoundaryCondition, Field, Grid, pad
 
 __all__ = [
@@ -932,7 +932,8 @@ def thin_wall_flux(
     surface Laplacian is taken on the sheet with the wall's own metric: on a polar
     grid the azimuthal term of a radial wall divides by the wall radius, not by the
     radius of the cells beside it. ``tangential`` closes the sheet's edges.
-    ``conductance`` is one value or a ``(lower, upper)`` pair; zero conducts nothing.
+    ``conductance`` is one value or a ``(lower, upper)`` pair, traced if it is under a derivative;
+    a literal zero conducts nothing.
     """
     grid = wall_potential.grid
     index = grid.axis_index(axis)
@@ -941,8 +942,8 @@ def thin_wall_flux(
         raise ValueError(f"the wall potential must live on the faces normal to axis {index}")
     pair = (conductance, conductance) if np.ndim(conductance) == 0 else conductance
     flux = jnp.zeros(grid.face_shape(index), dtype=wall_potential.dtype)
-    for position, value, sign in ((0, float(pair[0]), 1.0), (-1, float(pair[1]), -1.0)):
-        if condition.is_periodic or not value:
+    for position, value, sign in ((0, pair[0], 1.0), (-1, pair[1], -1.0)):
+        if condition.is_periodic or (not is_traced(value) and not value):
             continue
         at = (slice(None),) * index + (slice(position, position + 1) if position == 0 else slice(-1, None),)
         sheet, total = wall_potential.data[at], 0.0

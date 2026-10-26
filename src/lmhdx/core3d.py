@@ -287,6 +287,11 @@ class ChannelProblem:
     potential and current only and spans the fluid's tangential extent. Two axes
     may have them when the third has one cell; a corner cell then takes the
     nearer wall's layer (:func:`lmhdx.poisson.fast_diagonal_thin_wall_poisson`).
+
+    The wall fields are the static pattern and the values the host factorization is built from. A
+    wall parameter under a derivative rides as an argument instead: :meth:`with_walls` attaches the
+    factorization built from it in the trace as ``potential_walls``, which is neither hashed nor
+    compared, so a problem that carries one belongs to one trace and is never a cache key.
     """
 
     grid: Grid
@@ -301,6 +306,7 @@ class ChannelProblem:
     wall_conductance: tuple[float, float, float] = (0.0, 0.0, 0.0)
     precision: str = "state"
     wall_layers: tuple = (None, None, None)
+    potential_walls: object = dataclasses.field(default=None, compare=False, hash=False, repr=False)
 
     def __post_init__(self) -> None:
         if len(self.conditions) != 3:
@@ -494,6 +500,8 @@ class ChannelProblem:
         :func:`lmhdx.poisson.fast_diagonal_thin_wall_poisson`, built once per grid,
         conditions, conductances and precision, and reused under tracing.
         """
+        if self.potential_walls is not None:
+            return self.potential_walls
         if not self.conducting_walls:
             if self.open_axis is None:
                 return self.factorization()
@@ -506,6 +514,29 @@ class ChannelProblem:
             int(self.open_axis is not None),
             self.wall_layers,
         )
+
+    def with_walls(self, conductance: tuple, layers: tuple = (None, None, None)) -> ChannelProblem:
+        """Return this problem with its potential factorization built, in the trace, from traced wall values.
+
+        ``conductance`` is one thin-wall ratio per axis and ``layers`` the ``(lower, upper)`` per-cell
+        ``(ratios, widths)`` of resolved walls, as :func:`lmhdx.poisson.fast_diagonal_thin_wall_poisson`
+        takes them. Which ends conduct, and the cell counts, are the problem's own static pattern: an
+        argument that crossed a ``jit`` boundary has lost the difference between a number and a tracer.
+        """
+        conductance = tuple(c if float(k) > 0.0 else 0.0 for c, k in zip(conductance, self.wall_conductance))
+        layers = tuple(
+            pair and tuple(end if kept else None for end, kept in zip(pair, static))
+            for pair, static in zip(layers, self.wall_layers)
+        )
+        built = _build_thin_wall(
+            self.grid,
+            self.scalar_conditions,
+            conductance,
+            self.precision,
+            int(self.open_axis is not None),
+            layers,
+        )
+        return dataclasses.replace(self, potential_walls=built)
 
 
 def face_currents(
@@ -991,24 +1022,24 @@ def _neumann_factorization(
         )
 
 
-@functools.lru_cache(maxsize=16)
-def _thin_wall_factorization(
-    grid: Grid,
-    conditions: tuple[BoundaryCondition, BoundaryCondition, BoundaryCondition],
-    conductance: tuple[float, float, float],
-    precision: str,
-    corrections: int = 0,
-    layers: tuple = (None, None, None),
+def _build_thin_wall(
+    grid, conditions, conductance, precision, corrections, layers
 ) -> FastDiagonalThinWallPoisson:
-    """Build the thin-wall factorization once; a periodic axis has no wall, so its conductance is ignored."""
+    """The thin-wall factorization; a periodic axis has no wall, so its conductance is ignored."""
     walls = tuple(
         0.0 if condition.is_periodic else value for condition, value in zip(conditions, conductance)
     )
-    with jax.ensure_compile_time_eval():
-        factorization = fast_diagonal_thin_wall_poisson(
-            grid, conditions, walls, precision=precision, layers=layers
-        )
+    factorization = fast_diagonal_thin_wall_poisson(
+        grid, conditions, walls, precision=precision, layers=layers
+    )
     return dataclasses.replace(factorization, corrections=corrections)
+
+
+@functools.lru_cache(maxsize=16)
+def _thin_wall_factorization(grid, conditions, conductance, precision, corrections=0, layers=(None,) * 3):
+    """Build the thin-wall factorization of concrete walls once, on the host."""
+    with jax.ensure_compile_time_eval():
+        return _build_thin_wall(grid, conditions, conductance, precision, corrections, layers)
 
 
 def fringe_field(

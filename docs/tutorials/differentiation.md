@@ -26,7 +26,40 @@ the static problem requires a new trace. Compiled failures remain nonfinite.
 
 A [`Problem`](../getting_started/problem.md) is a pytree: `jax.grad(f)(problem)` returns a `Problem`
 of derivatives with respect to its forcing, flow rate, field amplitude, heat source and initial
-temperature. Properties, wall conductances and the grid are static, so a traced one raises.
+temperature, and the numbers of its conducting walls. Properties and the grid are static, so a traced one raises.
+
+### Wall conductance and thickness
+
+A conducting `Wall` has leaves `conductance`, or `conductivity` and `thickness` (a thin wall of
+`c = sigma_w t_w / sigma`, lengths in the grid's unit), and for resolved walls each `WallLayer`'s
+`conductivity` and `thickness`; the cell counts and which walls conduct are static. The Stokes solve of a
+periodic duct differentiates all of them, by `jax.grad`, `jax.jvp` and `jax.vmap` (a design sweep over
+`c` is one program), and a new value does not recompile:
+
+```python
+import jax
+import lmhdx
+from lmhdx import Wall, duct
+
+lmhdx.enable_x64()
+
+
+def drive(c):
+    # A flow-rate duct: the response is the pressure gradient that carries it.
+    return lmhdx.solve(duct(20, 24, flow_rate=4.0, walls=dict(y=Wall(c)))).pressure_gradient
+
+
+slope = jax.grad(drive)(0.05)  # dp/dx per unit c; central differences agree to 1e-8 on this mesh
+```
+
+Under `jax.jit` the primal of `c` is unknown, so declare the wall `Wall(c, conducting=True)`. A
+conductance of exactly `0.0` is the insulating wall, which is structure and has no derivative: a traced
+zero raises `ValueError` (use a small positive value). The potential of the wall is a fast-diagonal solve
+whose eigenbasis is built in the trace; the mirror sheets of a symmetric duct are an exactly degenerate pair,
+so the solve is differentiated implicitly, `dx = A^-1 (db - dA x)`, not through `eigh`. Open ducts
+(`Open` axis), unsteady and thermal runs, and runs with advection take the primal wall numbers: their
+derivative in a wall number is NaN (never a silent zero), and the other leaves are unaffected. Two resolved
+walls on two axes with traced parameters raise `NotImplementedError`.
 
 ## Steady duct response
 

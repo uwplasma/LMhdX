@@ -26,7 +26,7 @@ arrays by name (`solution.fields`, each also an attribute), the drive of a perio
 | Field | Meaning |
 |---|---|
 | `grid` | A `lmhdx.grid.Grid`; an axis is `lmhdx.grid.axis(cells, lower, upper)` with `beta=` (tanh), `ratio=` (geometric), `layer_thickness=` (wall-resolving) or `blend=` (the sine blend of Krasnov, Zikanov and Boeck, `z = a sin(pi xi/2) + (1 - a) xi`). |
-| `bc` | One entry per axis: `"periodic"`, `"wall"`, `Wall(conductance=, layers=, temperature=, heat_flux=)`, `Sides(lower, upper)` or `Open(profile=None)` (inflow at the lower x end, free outflow at the upper). |
+| `bc` | One entry per axis: `"periodic"`, `"wall"`, `Wall(conductance=, conductivity=, thickness=, layers=, temperature=, heat_flux=)`, `Sides(lower, upper)` or `Open(profile=None)` (inflow at the lower x end, free outflow at the upper). |
 | `density`, `viscosity`, `conductivity` | Material properties. |
 | `B` | `Uniform(bx, by, bz)`, or from `lmhdx.fields` `Fringe`, `Table(path, scale)` and `Func(fn, params)`. |
 | `forcing`, `flow_rate` | The body force, or the flux that sets the drive of a periodic Stokes duct or the inlet of an `Open` axis; one of them. |
@@ -54,7 +54,8 @@ Courant step of the inlet flow is at most four damping steps, and `newton` when 
 
 The leaves are the `forcing`, the `flow_rate`, the field amplitude (`Uniform.strength`,
 `Fringe.strength`, `Table.scale`), the Q2D state and coefficients, a heat source and an initial
-temperature. They run through the implicit derivative of the steady solve, at about the cost of one more
-solve. The grid, boundary kinds, wall conductances, material properties and scheme names are static: a
-traced one raises instead of returning a zero. The factorizations are built on the host from the primal
+temperature, and the numbers of a conducting `Wall` (its conductance, or conductivity and thickness, and those
+of its layers; see [differentiation](../tutorials/differentiation.md)). They run through the implicit derivative
+of the steady solve, at about the cost of one more solve. The grid, boundary kinds, which walls conduct,
+material properties and scheme names are static: a traced one raises instead of returning a zero. The factorizations are built on the host from the primal
 values, so differentiate with `jax.grad` outside `jit`, or close over the problem and `jit` the objective.
