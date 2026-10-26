@@ -109,7 +109,7 @@ power? There are two versions of that question:
 They favour different shapes, so both are computed below. This page screens
 shapes at one fixed area. The design law's own optimization over area and
 aspect, with the flow set by the heat, is the study's
-[Stage 3](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/blob/stage3-v1/results/stage3-thermal/README.md); see the record below.
+[Stage 3](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage3-v1/results/stage3-thermal/README.md); see the record below.
 
 **The specification** is illustrative. None of these values is an engineering
 requirement.
@@ -550,23 +550,23 @@ number. The 2-D law reaches $Ha^* = 6{,}109$.
 ## The record
 
 The full study lives in
-[LMhdX-Duct-Optimization](https://github.com/TylerBrandes/LMhdX-Duct-Optimization).
+[LMhdX-Duct-Optimization](https://github.com/uwplasma/LMhdX-Duct-Optimization).
 That repository holds the optimizer, the checkpointed runs, the figure pipeline
 and the
-[write-up](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/blob/stage2-v1/results/stage2/README.md).
+[write-up](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage2-v1/results/stage2/README.md).
 It also holds a
-[reproduction on LMhdX 1.10.0](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/blob/stage2-v1/results/stage2-repro-1.10.0/README.md),
+[reproduction on LMhdX 1.10.0](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage2-v1/results/stage2-repro-1.10.0/README.md),
 bit-identical on the fully developed path. The release
-[stage2-v1](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/tag/stage2-v1)
+[stage2-v1](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/tag/stage2-v1)
 carries
-[results.json](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-results.json),
-the [figures](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-figures.zip)
-and the [tables](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-tables.zip).
+[results.json](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-results.json),
+the [figures](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-figures.zip)
+and the [tables](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-tables.zip).
 
 The thermal design of plan step 5.5 is the study's forced-convection screening
-of Case P, [Stage 3](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/blob/stage3-v1/results/stage3-thermal/README.md),
+of Case P, [Stage 3](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage3-v1/results/stage3-thermal/README.md),
 with a follow-up,
-[Stage 3 v2](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/blob/stage3-v2/results/stage3-v2/README.md).
+[Stage 3 v2](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage3-v2/results/stage3-v2/README.md).
 Each shape takes its cheapest flow that keeps the developed peaks within
 625 K. The hydraulic power is then minimised over area and aspect, under
 `Re/Ha ≤ 200` and an area cap:
@@ -611,11 +611,11 @@ Re-evaluated on LMhdX 1.11.0, the four designs reproduce the values in
 stage3-v1's results.json exactly. The release lists each asset's SHA-256;
 results.json is
 `2dda7498809683860b889cefb67cc174ae65bf4b5614bfaf05d5c0a9bf1f98ca`. The release
-[stage3-v1](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/tag/stage3-v1) carries
-[results.json](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-results.json),
-the [figures](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-figures.zip)
-and the [figure data](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-figure-data.zip).
+[stage3-v1](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/tag/stage3-v1) carries
+[results.json](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-results.json),
+the [figures](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-figures.zip)
+and the [figure data](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-figure-data.zip).
 The release
-[stage3-v2](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/tag/stage3-v2) carries v2's
-[results.json](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage3-v2/stage3-v2-results.json)
-(`7b4fd3b008fcc9ef5a4461853fd6e7c18ff7eae03843e37a408d84df37acb32a`) and [figures](https://github.com/TylerBrandes/LMhdX-Duct-Optimization/releases/download/stage3-v2/stage3-v2-figures.zip).
+[stage3-v2](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/tag/stage3-v2) carries v2's
+[results.json](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v2/stage3-v2-results.json)
+(`7b4fd3b008fcc9ef5a4461853fd6e7c18ff7eae03843e37a408d84df37acb32a`) and [figures](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v2/stage3-v2-figures.zip).
