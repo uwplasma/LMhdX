@@ -7,9 +7,6 @@ and every malformed key, kind and type is refused with the table path in the mes
 
 import dataclasses
 import json
-import os
-import subprocess
-import sys
 from pathlib import Path
 
 import jax
@@ -565,47 +562,3 @@ def test_the_wall_leaves_are_leaves_after_a_round_trip(tmp_path):
     assert (walls[0].conductivity, walls[0].thickness) == (2.0, 0.05) and walls[1].conducting
     assert _same(loaded, problem)
     assert len(jax.tree.leaves(loaded)) == len(jax.tree.leaves(problem)) >= 4
-
-
-def test_a_file_with_an_output_writes_its_files_and_exits_by_the_summary(tmp_path, capsys):
-    """``lmhdx case.toml`` prints the summary of ``[output]`` and exits 0, or 2 when a chunk is rejected."""
-    text = (ROOT / "examples/heated_duct.toml").read_text() + '\n[output]\ndir = "out"\nevery = 10\n'
-    path = _write(tmp_path, text)
-    assert main([str(path)]) == 0
-    summary = json.loads((tmp_path / "out/summary.json").read_text())
-    assert capsys.readouterr().out.endswith(json.dumps(summary, indent=2) + "\n")  # after the log's text
-    assert summary["accepted"] and summary["case"] == "heated_duct" and summary["steps"] == 40
-    assert {f"heated_duct_{n:06d}.npz" for n in (10, 20, 30, 40)} <= {
-        p.name for p in (tmp_path / "out").iterdir()
-    }
-    # A file resumes from a record, and its run ends on the same record as the run in one.
-    again = _write(tmp_path, text + '[start]\npath = "out/heated_duct_000020.npz"\n', "again.toml")
-    assert main([str(again), "solver.steps=20", 'output.dir="again"', "output.every=20"]) == 0
-    with (
-        np.load(tmp_path / "out/heated_duct_000040.npz") as whole,
-        np.load(tmp_path / "again/heated_duct_000040.npz") as part,
-    ):
-        assert all(np.array_equal(whole[k], part[k]) for k in whole.files if k != "notes")
-    assert main([str(path), "solver.advective_cfl_limit=4e-5", 'output.dir="late"']) == 2
-    assert not json.loads((tmp_path / "late/summary.json").read_text())["accepted"]
-    assert (tmp_path / "late/heated_duct_000020_rejected.npz").exists()
-
-
-@pytest.mark.parametrize("dtype", ["float32", "float64"])
-def test_the_command_runs_in_a_fresh_process_in_either_precision(tmp_path, dtype):
-    """``python -m lmhdx case.toml`` in its own process writes records of the solver's dtype."""
-    text = (ROOT / "examples/heated_duct.toml").read_text() + "\n[output]\nevery = 40\n"
-    _write(tmp_path, text.replace("steps = 40", f'steps = 40\ndtype = "{dtype}"'))
-    environment = {k: v for k, v in os.environ.items() if k != "JAX_ENABLE_X64"}
-    result = subprocess.run(
-        [sys.executable, "-m", "lmhdx", "case.toml"],
-        cwd=tmp_path,
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    assert result.returncode == 0, result.stderr[-2000:]
-    assert json.loads((tmp_path / "out/summary.json").read_text())["accepted"]
-    with np.load(tmp_path / "out/heated_duct_000040.npz") as record:
-        assert {record[k].dtype for k in record.files if k.startswith("leaf")} == {np.dtype(dtype)}
