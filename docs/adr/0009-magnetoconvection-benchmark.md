@@ -7,8 +7,8 @@ Status: proposed 2026-10-19. It restates plan step 5.4 and amends:
 - plan D26: an evolving duct may take an advective outlet instead of D26's (D37);
 - plan D27 and validation row 6: this benchmark moves to row 19 (D35).
 
-Its step 5.4b solves walls that make the solve non-separable with SOLVAX's
-flux-form operator, D5's PCG path.
+Its step 5.4b solves walls that make the solve non-separable by D5's PCG
+path.
 
 Basis:
 
@@ -135,7 +135,10 @@ and the potential.**
   series-resistance faces, a cell-wise shift, `pcg_linear_solve` with implicit
   derivatives, NaN on failure, and a singular variant that reports the removed
   defect. LMhdX calls it and keeps only `SolidWall`, `conjugate_grid`, the
-  material maps and the physics, with no local copy in `poisson.py`.
+  material maps and the physics. It gives each axis one boundary kind, and the
+  open duct's axis has a Dirichlet inlet and a Neumann outlet, so until SOLVAX
+  takes mixed ends (uwplasma/SOLVAX#172) the same operator stays in
+  `poisson.py`, marked to move.
 - **What a solid wall needs:** a thickness, a whole number of equal cells, a
   thermal conductivity, a volumetric heat capacity `ρc_p` and, for the charge,
   an electrical conductivity. These are the fields the 2.0 `WallLayer` gains.
