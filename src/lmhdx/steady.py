@@ -40,6 +40,7 @@ without host callbacks. Optimizers must reject nonfinite values and gradients.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 from dataclasses import dataclass
 
@@ -558,9 +559,16 @@ def _stokes_limit_root(
     a traced closure would leak when an enclosing ``jit`` is differentiated.
     """
     weights = _face_weights(problem)
+    # The wall factorization built from traced values is an argument of the derivative rule, with the
+    # field scale: a rule that closed over it would drop its derivative.
+    wall = problem.potential_walls
+    if wall is not None:
+        problem = dataclasses.replace(problem, potential_walls=None)
 
-    def operator(scale, velocity):
-        return steady_residual(velocity, problem, factorization, forcing=(0.0, 0.0, 0.0), field_scale=scale)
+    def operator(params, velocity):
+        scale, potential = params
+        coupled = problem if potential is None else dataclasses.replace(problem, potential_walls=potential)
+        return steady_residual(velocity, coupled, factorization, forcing=(0.0, 0.0, 0.0), field_scale=scale)
 
     def matvec(weights, scale, state):
         velocity = jax.tree.map(jnp.divide, state, weights)
@@ -636,10 +644,12 @@ def _stokes_limit_root(
         return solution, jax.lax.custom_linear_solve(operator_at, rhs, solve, symmetric=True)
 
     if rhs is None:
-        rhs = steady_residual(start, problem, factorization, forcing=forcing, field_scale=field_scale)
+        coupled = problem if wall is None else dataclasses.replace(problem, potential_walls=wall)
+        rhs = steady_residual(start, coupled, factorization, forcing=forcing, field_scale=field_scale)
+    params = (field_scale, wall)
     primal_inside = jax.lax.stop_gradient(_orthogonal_projection(rhs, problem, factorization))
-    primal_y, diagnostics = cg(weights, jax.lax.stop_gradient(field_scale), primal_inside, None)
-    step = solved(rhs, field_scale, jax.lax.stop_gradient(primal_y), primal_inside, weights)
+    primal_y, diagnostics = cg(weights, jax.lax.stop_gradient(params), primal_inside, None)
+    step = solved(rhs, params, jax.lax.stop_gradient(primal_y), primal_inside, weights)
     return jax.tree.map(lambda u, y, w: u + y / w, start, step, weights), diagnostics
 
 
@@ -652,6 +662,7 @@ def solve_steady_state(
     pseudo_step: float | None = None,
     forcing: tuple[float, float, float] | None = None,
     field_scale: float | jnp.ndarray = 1.0,
+    walls: tuple | None = None,
     linear_tolerance: float = 1.0e-6,
     linear_restart: int = 60,
     linear_max_restarts: int = 200,
@@ -664,10 +675,14 @@ def solve_steady_state(
     ``linear_tolerance`` does not apply. Otherwise matrix-free Newton-Krylov
     runs restarted GMRES. The drive and ``field_scale`` are differentiable
     through implicit linear solves; close over static ``problem`` and solver
-    controls when using :func:`jax.jit`. Factorizations are assembled at trace
+    controls when using :func:`jax.jit`. ``walls`` is ``(conductance, layers)`` for
+    :meth:`~lmhdx.core3d.ChannelProblem.with_walls`: wall values that may be traced, so the
+    solution is differentiable in them (the problem's own wall fields then only fix which walls
+    conduct); the potential factorization is built from them once, in the trace. Factorizations are assembled at trace
     time. Rejected roots raise eagerly or yield nonfinite fields and
     derivatives during tracing.
     """
+    problem = problem if walls is None else problem.with_walls(*walls)
     step = float(problem.dt if pseudo_step is None else pseudo_step)
     for name, value in (
         ("pseudo_step", step),
