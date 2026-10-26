@@ -96,10 +96,8 @@ class Grid:
     geometry: str = CARTESIAN
 
     def __post_init__(self) -> None:
-        for name in _AXES:
-            faces = getattr(self, f"{name}_faces")
-            faces = axis(**faces) if isinstance(faces, dict) else faces  # an axis may be the kwargs of axis()
-            object.__setattr__(self, f"{name}_faces", _validated(faces, name=name))
+        for axis in _AXES:
+            object.__setattr__(self, f"{axis}_faces", _validated(getattr(self, f"{axis}_faces"), name=axis))
         if self.geometry not in _GEOMETRIES:
             raise ValueError(f"geometry must be one of {list(_GEOMETRIES)}, got {self.geometry!r}")
         if self.geometry == POLAR:
@@ -126,8 +124,6 @@ class Grid:
     @property
     def faces(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         return (self.x_faces, self.y_faces, self.z_faces)
-
-    x, y, z = (property(lambda self, name=name: getattr(self, f"{name}_faces")) for name in _AXES)
 
     @property
     def shape(self) -> tuple[int, int, int]:

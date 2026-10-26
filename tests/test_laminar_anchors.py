@@ -43,7 +43,7 @@ def _measures(ha, cells, beta=(5.0, 3.0)):
     problem = _duct(ha, cells, beta=beta)
     found = lmhdx.solve(problem)
     u = np.asarray(found.velocity[0].data[0])
-    dy, dz = (np.diff(faces) for faces in (problem.grid.y, problem.grid.z))
+    dy, dz = (np.diff(faces) for faces in (problem.grid.y_faces, problem.grid.z_faces))
     mid = cells // 2
     hartmann = np.stack([2 * u[0] / dy[0], 2 * u[-1] / dy[-1]])  # du/dy on the walls y = -+1, along z
     side = np.stack([2 * u[:, 0] / dz[0], 2 * u[:, -1] / dz[-1]])  # du/dz on z = -+1, along y

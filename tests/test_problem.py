@@ -6,7 +6,6 @@ the leaves of a ``Problem`` with Taylor remainders, central differences and the 
 """
 
 import dataclasses
-import json
 import os
 import subprocess
 import sys
@@ -18,7 +17,7 @@ import numpy as np
 import pytest
 
 import lmhdx
-from lmhdx import Open, Output, Problem, Sides, Solver, Thermal, Uniform, Wall, duct
+from lmhdx import Open, Problem, Sides, Solver, Thermal, Uniform, Wall, duct
 from lmhdx.axial import fringe_duct as old_fringe_duct
 from lmhdx.axial import pressure_drop, solve_open_duct
 from lmhdx.cases import WallLayer
@@ -46,26 +45,21 @@ def _same(first, second) -> bool:
 
 
 def test_importing_the_facade_changes_no_jax_configuration():
-    """The new modules flip no x64, pin no precision and open no cache; ``configure`` does it, once and explicitly."""
+    """The new modules flip no x64, pin no precision and open no cache; ``configure`` does it, explicitly."""
     code = """
-import jax, logging
+import jax
 import lmhdx, lmhdx.fields, lmhdx.problem, lmhdx.solver
 assert not jax.config.jax_enable_x64
 assert jax.config.jax_default_matmul_precision is None
 assert jax.config.jax_compilation_cache_dir is None
 lmhdx.configure(dtype="float64")
 assert jax.config.jax_enable_x64 and jax.config.jax_default_matmul_precision == "highest"
-for bad in (dict(dtype="float16"), dict(gpu_gemm="x")):
-    try:
-        lmhdx.configure(**bad)
-    except ValueError:
-        continue
-    raise AssertionError(bad)
-lmhdx.configure(gpu_gemm="cublas")
-import os
-assert "--xla_gpu_enable_triton_gemm=false" in os.environ["XLA_FLAGS"]
-lmhdx.configure(gpu_gemm="triton")
-assert os.environ["XLA_FLAGS"].count("xla_gpu_enable_triton_gemm") == 1 and "triton_gemm=true" in os.environ["XLA_FLAGS"]
+try:
+    lmhdx.configure(dtype="float16")
+except ValueError:
+    pass
+else:
+    raise AssertionError
 """
     environment = {
         key: value
@@ -91,9 +85,6 @@ def test_axis_is_one_dispatcher_over_the_face_constructors():
         axis(8, -1, 1, beta=2.0, ratio=1.2)
     with pytest.raises(ValueError, match="blend"):
         axis(8, -1, 1, blend=1.5)
-    grid = Grid(axis(1, 0, 1), dict(cells=8, lower=-1.0, upper=1.0, beta=2.0), axis(4, -1, 1))
-    assert np.array_equal(grid.y_faces, axis(8, -1, 1, beta=2.0))
-    assert grid.x is grid.x_faces and grid.y is grid.y_faces and grid.z is grid.z_faces
 
 
 def test_the_kzb_blend_reproduces_the_published_wall_cells():
@@ -103,7 +94,6 @@ def test_the_kzb_blend_reproduces_the_published_wall_cells():
     assert widths.max() == pytest.approx(4.03e-3, rel=1e-2)
     faces = axis(768, -1.0, 1.0, blend=0.96)
     assert faces[0] == -1.0 and faces[-1] == 1.0 and np.allclose(faces, -faces[::-1], atol=1e-15)
-    assert np.array_equal(axis(768, -1.0, 1.0, blend=1.0), axis(768, -1.0, 1.0, blend=1.0))
     assert np.allclose(axis(8, 0.0, 2.0, blend=1e-12), uniform_faces(8, 0.0, 2.0), atol=1e-9)
 
 
@@ -117,7 +107,7 @@ def test_the_duct_preset_is_the_older_duct_bit_for_bit(conductance):
         (found.velocity, found.pressure, found.potential),
         (expected.velocity, expected.pressure, expected.potential),
     )
-    assert found.drive == 1.0 and found.pressure_gradient == 1.0
+    assert found.pressure_gradient == 1.0
     assert float(found.residual) == float(expected.residual_norm)
 
 
@@ -147,8 +137,8 @@ def test_resolved_walls_are_the_older_wall_layers():
 def test_a_flow_rate_sets_the_drive_of_the_stokes_duct_exactly():
     unit, driven = lmhdx.solve(duct(20, 32)), lmhdx.solve(duct(20, 32, flow_rate=4.0))
     assert float(driven.flow_rate) == pytest.approx(4.0, rel=1e-13)
-    assert float(driven.drive) == pytest.approx(4.0 / float(unit.flow_rate), rel=1e-13)
-    scaled = jax.tree.map(lambda a: a * driven.drive, unit.velocity)
+    assert float(driven.pressure_gradient) == pytest.approx(4.0 / float(unit.flow_rate), rel=1e-13)
+    scaled = jax.tree.map(lambda a: a * driven.pressure_gradient, unit.velocity)
     assert _same(scaled, driven.velocity)
     with pytest.raises(ValueError, match="not both"):
         lmhdx.solve(duct(20, 32).replace(flow_rate=4.0))
@@ -484,19 +474,6 @@ def test_the_root_solve_still_takes_the_older_models():
         lmhdx.solve(legacy, Solver())
 
 
-def test_output_writes_the_summary_and_the_paraview_frame(tmp_path):
-    problem = duct(20, 32)
-    found = lmhdx.solve(problem, output=Output(str(tmp_path / "run")))
-    summary = json.loads((tmp_path / "run" / "summary.json").read_text())
-    assert (
-        summary["flow_rate"] == pytest.approx(float(found.flow_rate), rel=1e-14) and summary["drive"] == 1.0
-    )
-    text = (tmp_path / "run" / "solution.vtr").read_text()
-    assert 'Name="velocity"' in text and 'Name="pressure"' in text and 'Name="potential"' in text
-    lmhdx.solve(problem, output=Output(str(tmp_path / "bare"), paraview=False, summary=False))
-    assert not list((tmp_path / "bare").iterdir())
-
-
 def test_the_channel_preset_follows_the_boeck_krasnov_zienicke_conventions():
     ratio = bulk_ratio(20.0)
     assert (bulk_ratio(10.0), ratio) == (pytest.approx(0.90008, abs=1e-5), pytest.approx(0.95000, abs=1e-5))
@@ -511,9 +488,9 @@ def test_the_channel_preset_follows_the_boeck_krasnov_zienicke_conventions():
     assert problem.grid.extent[:2] == pytest.approx(
         (2 * np.pi, 0.8 * np.pi)
     ) and problem.flow_rate == pytest.approx(1.6 * np.pi)
-    assert np.array_equal(problem.grid.z, axis(32, -1.0, 1.0, blend=0.96))
+    assert np.array_equal(problem.grid.z_faces, axis(32, -1.0, 1.0, blend=0.96))
     assert np.array_equal(
-        channel(re=reynolds, ha=20.0, cells=(4, 4, 32)).grid.y, problem.grid.y
+        channel(re=reynolds, ha=20.0, cells=(4, 4, 32)).grid.y_faces, problem.grid.y_faces
     )  # the same row, by Re
     spanwise = channel(re=6667, ha=30.0, field="spanwise", cells=(4, 4, 16), stretch=dict(beta=2.0))
     assert spanwise.grid.extent[:2] == pytest.approx((2 * np.pi, np.pi)) and spanwise.B.direction == (
@@ -521,7 +498,7 @@ def test_the_channel_preset_follows_the_boeck_krasnov_zienicke_conventions():
         1.0,
         0.0,
     )
-    assert np.array_equal(spanwise.grid.z, axis(16, -1.0, 1.0, beta=2.0))
+    assert np.array_equal(spanwise.grid.z_faces, axis(16, -1.0, 1.0, beta=2.0))
     for bad in (
         dict(re=1000.0, ha=20.0),
         dict(R=700.0, ha=21.0),
@@ -583,7 +560,7 @@ def test_a_spanwise_field_leaves_the_laminar_channel_a_parabola_and_a_wall_norma
         problem = channel(re=6667, ha=30.0, field="spanwise", cells=(1, 1, cells), stretch=dict(ratio=1.0))
         found = lmhdx.solve(problem)
         assert float(found.flow_rate) == pytest.approx(problem.flow_rate, rel=1e-12)
-        return float(found.drive) * 6667
+        return float(found.pressure_gradient) * 6667
 
     result = grid_convergence(drive(16), drive(32), drive(64), 2.0)
     assert 1.95 < result.order < 2.05 and result.extrapolated == pytest.approx(3.0, rel=1e-5)

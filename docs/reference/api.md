@@ -31,7 +31,7 @@ live in the module that owns their concepts.
 
 | Area | Names |
 |---|---|
-| Problems | `Problem`, `Wall`, `Sides`, `Open`, `Thermal`, `Uniform`, `Solver`, `Output`, `duct`, `channel`, `fringe_duct`, `configure`, `solve` |
+| Problems | `Problem`, `Wall`, `Sides`, `Open`, `Thermal`, `Uniform`, `Solver`, `duct`, `channel`, `fringe_duct`, `configure`, `solve` |
 | Staggered core | `ChannelProblem`, `duct_problem`, `solve_steady_state`, `advance` |
 | Cases and solves | `make_hartmann_case`, `make_shercliff_case`, `make_hunt_case`, `make_q2d_case`, `solve_fully_developed_fields`, `evolve_q2d`, `Q2DProblem`, `solve` |
 | Meshes | `generate_rect_duct_mesh_from_faces` (the mesh a case's solution reports) |
@@ -58,7 +58,7 @@ restart, progress, logging, and timing hooks in their owning modules.
 
 ## Problems, fields and the one verb
 
-`lmhdx.solve(problem, solver=None, output=None, start=None)` runs a `Problem` or a `Q2D`;
+`lmhdx.solve(problem, solver=None, start=None)` runs a `Problem` or a `Q2D`;
 the guide is [Problems, solvers and one verb](../getting_started/problem.md).
 `lmhdx.configure` sets the runtime choices that importing the package leaves alone.
 

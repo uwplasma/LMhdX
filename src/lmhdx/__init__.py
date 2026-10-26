@@ -61,7 +61,6 @@ __all__ = [
     "Thermal",
     "Uniform",
     "Solver",
-    "Output",
     "channel",
     "duct",
     "fringe_duct",
@@ -89,31 +88,20 @@ def enable_x64() -> None:
     _pin_matmul_precision()
 
 
-def configure(dtype: str | None = None, cache: str | None = None, gpu_gemm: str | None = None) -> None:
-    """Set the process-wide choices that importing the package leaves alone.
+def configure(dtype: str | None = None) -> None:
+    """Set the process-wide choice that importing the package leaves alone.
 
-    ``dtype="float64"`` enables float64 (and pins the matmul precision, as :func:`enable_x64`),
-    announced once on the ``lmhdx`` logger; ``"float32"`` keeps JAX as it is. ``cache`` is a directory
-    for the persistent compilation cache. ``gpu_gemm="cublas"`` (or ``"triton"``) sets the XLA flag
-    that chooses the GPU matrix-product library, which XLA reads when the GPU backend starts: call it
-    before any JAX computation. :func:`lmhdx.solve` calls ``configure(dtype=solver.dtype)``.
+    ``dtype="float64"`` enables float64 and pins the matmul precision (:func:`enable_x64`), announced
+    once on the ``lmhdx`` logger; ``"float32"`` keeps JAX as it is. :func:`lmhdx.solve` calls
+    ``configure(dtype=solver.dtype)``.
     """
     from jax import config
 
-    if dtype not in (None, "float32", "float64") or gpu_gemm not in (None, "cublas", "triton"):
-        raise ValueError("dtype is 'float32' or 'float64', gpu_gemm 'cublas' or 'triton'")
+    if dtype not in (None, "float32", "float64"):
+        raise ValueError("dtype is 'float32' or 'float64'")
     if dtype == "float64" and not config.jax_enable_x64:
         enable_x64()
         logging.getLogger("lmhdx").info("float64 enabled")
-    if cache is not None:
-        from ._programs import enable_compilation_cache
-
-        enable_compilation_cache(cache, min_compile_time_secs=1.0, share_across_values=True)
-    if gpu_gemm is not None:
-        flags = [f for f in os.environ.get("XLA_FLAGS", "").split() if "xla_gpu_enable_triton_gemm" not in f]
-        os.environ["XLA_FLAGS"] = " ".join(
-            [*flags, f"--xla_gpu_enable_triton_gemm={gpu_gemm == 'triton'}".lower()]
-        )
 
 
 def _pin_matmul_precision() -> str:
@@ -181,7 +169,6 @@ _EXPORTS = {
     "fringe_duct": ("lmhdx.problem", "fringe_duct"),
     "Uniform": ("lmhdx.fields", "Uniform"),
     "Solver": ("lmhdx.solver", "Solver"),
-    "Output": ("lmhdx.solver", "Output"),
     "generate_rect_duct_mesh_from_faces": ("lmhdx.cases", "generate_rect_duct_mesh_from_faces"),
     "WallLayer": ("lmhdx.cases", "WallLayer"),
     "dynamic_to_kinematic_viscosity": ("lmhdx.cases", "dynamic_to_kinematic_viscosity"),

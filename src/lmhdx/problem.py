@@ -1,19 +1,14 @@
 """What is solved: :class:`Problem`, its boundaries, and the presets that fill one.
 
-A :class:`Problem` is a frozen dataclass and a registered pytree. Its continuous
-inputs are leaves: the ``forcing``, the ``flow_rate``, the field amplitude
-(:mod:`lmhdx.fields`), the Q2D state and coefficients, a heat source and the initial
-temperature. The grid, the boundary kinds and walls, the material properties, the
-scheme names and the rest of the thermal numbers are static. Properties and wall
-conductances become leaves when the kernels take them traced (plan H4.2); until
-then they stay out of the tree, so ``jax.grad`` never returns a silent zero for one.
+A :class:`Problem` is a frozen dataclass and a registered pytree. Its leaves are the inputs the
+kernels differentiate: the ``forcing``, the ``flow_rate``, the field amplitude (:mod:`lmhdx.fields`),
+the Q2D state and coefficients, a heat source and the initial temperature. The grid, boundary kinds,
+walls, material properties and scheme names are static, so ``jax.grad`` never returns a silent zero
+for one; properties and wall conductances become leaves when the kernels take them traced (plan H4.2).
 
-``solve`` (:mod:`lmhdx.solver`) translates a problem to the kernels that exist:
-:class:`~lmhdx.core3d.ChannelProblem`, :class:`~lmhdx.thermal.ThermalProblem`,
-:class:`~lmhdx.pipe.PipeProblem` and :class:`~lmhdx.q2d.Q2DProblem`. The presets
-return the same grids and fields as :func:`lmhdx.core3d.duct_problem`,
-:func:`lmhdx.axial.fringe_duct`, :func:`lmhdx.pipe.pipe_problem` and
-:func:`lmhdx.q2d.make_q2d_case`.
+:func:`lmhdx.solve` translates a problem to :class:`~lmhdx.core3d.ChannelProblem`,
+:class:`~lmhdx.thermal.ThermalProblem`, :class:`~lmhdx.pipe.PipeProblem` or
+:class:`~lmhdx.q2d.Q2DProblem`; the presets return the grids and fields of the older constructors.
 """
 
 from __future__ import annotations
@@ -310,53 +305,41 @@ def thermal_kernel(problem: Problem, flow: ChannelProblem) -> ThermalProblem:
     )
 
 
-def _cross_section(ha: float, ny: int, nz: int, a: float, b: float, cells_in_layer: int):
-    """The Hartmann (``a/Ha``, along y) and side (``a/sqrt(Ha)``) layers resolved with the gentlest stretching."""
-    faces = []
-    for count, half, layer in ((ny, a, a / ha if ha else np.inf), (nz, b, a / sqrt(ha) if ha else np.inf)):
-        wall = dict(layer_thickness=layer, cells_in_layer=cells_in_layer, max_ratio=None)
-        faces.append(axis(count, -half, half, **wall if layer < half else {}))
-    return faces
+def _cross_section(ha: float, cells: int, cells_in_layer: int):
+    """The y and z faces of the unit-half-width section, resolving the Hartmann (``1/Ha``) and side (``1/sqrt(Ha)``) layers."""
+    layers = (1.0 / ha, 1.0 / sqrt(ha)) if ha else (np.inf, np.inf)
+    wall = dict(cells_in_layer=cells_in_layer, max_ratio=None)
+    return [axis(cells, -1.0, 1.0, **(wall | {"layer_thickness": t} if t < 1.0 else {})) for t in layers]
 
 
 def duct(
     ha: float,
-    cells: int | tuple[int, int] = 48,
+    cells: int = 48,
     *,
     wall_conductance: float = 0.0,
-    width: float = 2.0,
-    height: float = 2.0,
-    length: float = 1.0,
     cells_in_layer: int = 6,
     walls: dict | None = None,
     flow_rate: float | None = None,
     **fields: object,
 ) -> Problem:
-    """A rectangular duct at Hartmann number ``ha``, field along y, periodic in x, as :func:`duct_problem`.
+    """A square duct of unit half-width at Hartmann number ``ha``, field along y, periodic in x, as :func:`duct_problem`.
 
-    ``width`` (y, along the field) and ``height`` (z) are the section; with unit
-    properties ``ha`` is the field on the half-width ``width / 2``. The cross-section
-    resolves the layers that exist, ``a/Ha`` at the Hartmann walls (y) and ``a/sqrt(Ha)`` at the
-    others, in ``cells_in_layer`` cells each. ``wall_conductance`` is the thin
-    conductance of the Hartmann walls; ``walls=dict(y=Wall(...), z=...)`` replaces
-    ``bc`` entries (resolved Hunt walls). The drive is a unit pressure gradient unless
-    ``flow_rate`` (the volumetric flux) is given. Any other :class:`Problem` field is
-    a keyword. ``cells`` is ``n`` or ``(ny, nz)``.
+    The section resolves the layers that exist, ``1/Ha`` at the Hartmann walls (y) and ``1/sqrt(Ha)``
+    at the others, in ``cells_in_layer`` cells each. ``wall_conductance`` is the thin conductance of the
+    Hartmann walls; ``walls=dict(y=Wall(...), z=...)`` replaces ``bc`` entries (resolved Hunt walls). The
+    drive is a unit pressure gradient unless ``flow_rate`` (the volumetric flux) is given. Any other
+    :class:`Problem` field is a keyword.
     """
-    ha, a = float(ha), 0.5 * width
+    ha = float(ha)
     if ha < 0.0:
         raise ValueError("ha must not be negative")
-    ny, nz = (cells, cells) if isinstance(cells, int) else cells
-    y, z = _cross_section(ha, ny, nz, a, 0.5 * height, cells_in_layer)
-    sigma = fields.get("conductivity", 1.0)
-    rho_nu = fields.get("density", 1.0) * fields.get("viscosity", 1.0)
-    bc = ("periodic", Wall(wall_conductance), "wall")
-    if walls:
-        bc = ("periodic", walls.get("y", bc[1]), walls.get("z", bc[2]))
+    y, z = _cross_section(ha, cells, cells_in_layer)
+    nu = fields.get("density", 1.0) * fields.get("viscosity", 1.0) / fields.get("conductivity", 1.0)
+    bc = {"y": Wall(wall_conductance), "z": "wall"} | (walls or {})
     return Problem(
-        Grid(axis(1, 0.0, length), y, z),
-        bc=bc,
-        B=Uniform(0.0, ha / (a * sqrt(sigma / rho_nu)) if ha else 0.0, 0.0),
+        Grid(axis(1, 0.0, 1.0), y, z),
+        bc=("periodic", bc["y"], bc["z"]),
+        B=Uniform(0.0, ha * sqrt(nu), 0.0),
         flow_rate=flow_rate,
         **{
             "conductivity": 1.0 if ha else 0.0,
@@ -476,7 +459,7 @@ def fringe_duct(
     and is uniform outside, with ``upstream`` and ``downstream`` half-widths of buffer; the
     conductance is on all four walls; ``flow_rate`` 4 is a unit mean velocity.
     """
-    y, z = _cross_section(float(ha), cells, cells, 1.0, 1.0, cells_in_layer)
+    y, z = _cross_section(float(ha), cells, cells_in_layer)
     window = (-half_length - min(half_length, upstream), half_length)
     x = axial_faces(-half_length - upstream, half_length + downstream, window, spacing, growth)
     return Problem(

@@ -26,8 +26,7 @@ the static problem requires a new trace. Compiled failures remain nonfinite.
 
 A [`Problem`](../getting_started/problem.md) is a pytree: `jax.grad(f)(problem)` returns a `Problem`
 of derivatives with respect to its forcing, flow rate, field amplitude, heat source and initial
-temperature, by the same implicit solves as below, and `jax.jvp` and `jax.vjp` pair as the tests
-check. Properties, wall conductances and the grid are static in this release, so a traced one raises.
+temperature. Properties, wall conductances and the grid are static, so a traced one raises.
 
 ## Steady duct response
 

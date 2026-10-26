@@ -1,15 +1,13 @@
 """Imposed magnetic fields of a :class:`lmhdx.problem.Problem`: four small pytrees.
 
-Each field samples itself on a grid with ``sample(grid)``, which returns what the
-kernels take (three numbers, or an :class:`lmhdx.core3d.ImposedField`) and a
-``scale`` that multiplies it. The scale is the one channel the kernels
-differentiate a field through (``field_scale`` of :func:`lmhdx.steady.solve_steady_state`),
-so a field's continuous leaf is its amplitude: ``Uniform.strength``,
-``Fringe.strength``, ``Table.scale``. Under :func:`jax.grad` the field is sampled
-at the primal value and ``scale`` carries the derivative, which is exact because the
-force is linear in the amplitude. Sampling needs a concrete primal, so differentiate
-with :func:`jax.grad` or :func:`jax.value_and_grad`, or close over the field when
-using :func:`jax.jit`.
+Each field samples itself on a grid with ``sample(grid)``, which returns what the kernels take (three
+numbers or an :class:`lmhdx.core3d.ImposedField`) and a ``scale`` that multiplies it. The scale is the
+channel the kernels differentiate a field through (``field_scale`` of
+:func:`lmhdx.steady.solve_steady_state`), so a field's continuous leaf is its amplitude
+(``Uniform.strength``, ``Fringe.strength``, ``Table.scale``): under :func:`jax.grad` the field is sampled
+at the primal value and ``scale`` carries the derivative, exact because the force is linear in the
+amplitude. Sampling needs a concrete primal: use :func:`jax.grad`, or close over the field under
+:func:`jax.jit`.
 """
 
 from __future__ import annotations

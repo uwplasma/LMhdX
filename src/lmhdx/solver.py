@@ -1,34 +1,24 @@
-"""One verb, ``solve(problem, solver=None, output=None, start=None)``, over the kernels that exist.
+"""One verb, ``solve(problem, solver=None, start=None)``, over the kernels that exist.
 
 :func:`solve` reads a :class:`lmhdx.problem.Problem` (or :class:`~lmhdx.problem.Q2D`) and calls
-the kernel it describes, so the result is the one the older entry point returns for the
-same case, bit for bit on a concrete problem:
+the kernel it describes, so a concrete problem gives the older entry point's result bit for bit.
+``method`` maps to the kernels as follows: ``stokes`` is :func:`lmhdx.steady.solve_compiled`
+(:func:`lmhdx.axial.solve_open_duct` on an :class:`~lmhdx.problem.Open` axis,
+:func:`lmhdx.pipe.solve_pipe` on a polar grid), ``newton`` the same with advection on, ``euler`` the
+projection step (:func:`lmhdx.core3d.advance`, or :func:`lmhdx.thermal.advance_thermal` with
+``Problem.thermal``) and ``ifrk4`` :func:`lmhdx.q2d.solve_q2d`. ``auto`` takes ``euler`` if ``steps``
+is given, else ``stokes`` or ``newton`` by the advection; ``rk3``, ``march`` and ``implicit`` are
+reserved for plan steps H2.2 and H3 and raise.
 
-=============  ======================================================================
-``stokes``     one certified conjugate-gradient solve, :func:`lmhdx.steady.solve_compiled`;
-               an :class:`~lmhdx.problem.Open` axis is :func:`lmhdx.axial.solve_open_duct`;
-               a polar grid is :func:`lmhdx.pipe.solve_pipe`
-``newton``     the same entry points with advection on (Newton-Krylov)
-``euler``      :func:`lmhdx.core3d.advance`, or with ``Problem.thermal``
-               :func:`lmhdx.thermal.advance_thermal`
-``ifrk4``      :func:`lmhdx.q2d.solve_q2d` (:class:`~lmhdx.problem.Q2D`)
-=============  ======================================================================
-
-``auto`` takes ``euler`` if ``steps`` is given, else ``stokes`` or ``newton`` by the advection.
-``rk3``, ``march`` and ``implicit`` are reserved for plan steps H2.2, H3 and H2.2 and raise.
-
-Differentiation: :func:`jax.grad` through the leaves of a :class:`Problem` (``forcing``,
-``flow_rate``, a field amplitude, a heat source, the Q2D state) runs the implicit
-derivative of the steady solve, and :func:`jax.jit` is for the objective with the problem
-closed over: the factorizations are built on the host from the primal values.
+:func:`jax.grad` through the leaves of a problem runs the implicit derivative of the steady solve.
+The factorizations are built on the host from the primal values, so :func:`jax.jit` is for the
+objective with the problem closed over.
 """
 
 from __future__ import annotations
 
 import functools
-import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import NamedTuple
 
 import jax
@@ -41,15 +31,14 @@ from .cases import NumericalFailure
 from .cases import solve as _solve_model
 from .core3d import advance
 from .fields import Uniform, host, is_traced, primal
-from .grid import CENTER, Field
-from .ops import cell_average
+from .grid import Field
 from .pipe import PipeProblem, solve_pipe
 from .pipe import flow_rate as _pipe_flow_rate
 from .problem import Q2D, Problem, channel_kernel, thermal_kernel
 from .q2d import Q2DProblem, evolve_q2d, solve_q2d
 from .steady import _MAX_STEPS, solve_compiled, solve_steady_state
 
-__all__ = ["Output", "Solution", "Solver", "solve"]
+__all__ = ["Solution", "Solver", "solve"]
 
 _RESERVED = {"rk3": "H2.2", "march": "H3", "implicit": "H2.2"}
 _METHODS = ("auto", "stokes", "newton", "euler", "ifrk4")
@@ -59,14 +48,11 @@ _METHODS = ("auto", "stokes", "newton", "euler", "ifrk4")
 class Solver:
     """How a problem is solved.
 
-    ``method`` is one of ``auto``, ``stokes``, ``newton``, ``euler``, ``ifrk4``. ``dt`` and
-    ``steps`` are the time step and count of an unsteady run (a steady solve takes ``dt``
-    only as the pseudo-step of its preconditioner, 1 by default). ``tol`` is the relative
-    residual of the steady solve (kernel default 1e-9; the pipe's 1e-11). ``history`` is the
-    stride of the diagnostics (thermal, default every step) or of the Q2D frames (default
-    none). ``precision`` is ``"state"`` or ``"mixed"``, ``dtype`` ``"float64"`` or ``"float32"``;
-    the thermal run's acceptance limits are ``advective_cfl_limit``, ``buoyancy_courant_limit``
-    and ``divergence_tolerance``.
+    ``dt`` and ``steps`` are the time step and count of an unsteady run (a steady solve takes ``dt``
+    only as the pseudo-step of its preconditioner). ``tol`` is the relative residual of the steady
+    solve (kernel default 1e-9; the pipe's 1e-11). ``history`` is the stride of the thermal
+    diagnostics (default every step) or of the Q2D frames (default none). ``precision`` is
+    ``"state"`` or ``"mixed"``, ``dtype`` ``"float64"`` or ``"float32"``.
     """
 
     method: str = "auto"
@@ -77,9 +63,6 @@ class Solver:
     dtype: str = "float64"
     checkpoint: bool = True
     history: int | None = None
-    advective_cfl_limit: float | None = None
-    buoyancy_courant_limit: float | None = None
-    divergence_tolerance: float = 1.0e-10
 
     def resolve(self, problem) -> str:
         """Return the concrete method for ``problem``, refusing what the kernels cannot do."""
@@ -102,74 +85,30 @@ class Solver:
 
 
 class Solution(NamedTuple):
-    """The result of :func:`solve`: fields by name, the drive and flux, the residual and the history.
+    """The result of :func:`solve`; ``fields`` holds the named arrays and each is also an attribute.
 
-    ``fields`` holds ``velocity`` (the staggered components), ``pressure``, ``potential``,
-    and ``currents``, ``temperature`` or ``vorticity`` where the run has them. ``drive`` is the
-    pressure fall per length of a periodic duct (the body force, or the one that meets
-    ``flow_rate``); ``flow_rate`` the flux through the first x face; ``residual`` the kernel's
-    residual norm.
+    ``velocity`` is the staggered components; ``pressure``, ``potential``, ``currents``,
+    ``temperature`` and ``vorticity`` appear where the run has them. ``pressure_gradient`` is the
+    drive of a periodic duct (the body force, or the one that meets ``flow_rate``), ``flow_rate``
+    the flux through the first x face, ``residual`` the kernel's residual norm.
     """
 
     fields: dict
-    drive: object = None
+    pressure_gradient: object = None
     flow_rate: object = None
     residual: object = None
     iterations: object = None
     history: object = None
 
-    @property
-    def velocity(self):
-        return self.fields["velocity"]
-
-    @property
-    def pressure(self):
-        return self.fields["pressure"]
-
-    @property
-    def potential(self):
-        return self.fields["potential"]
-
-    @property
-    def temperature(self):
-        return self.fields["temperature"]
-
-    @property
-    def pressure_gradient(self):
-        """The magnitude of the axial pressure gradient of a periodic duct, ``-dp/dx``."""
-        return self.drive
+    def __getattr__(self, name):
+        try:
+            return self.fields[name]
+        except KeyError:
+            raise AttributeError(name) from None
 
     def pressure_drop(self, start: float, end: float):
         """The pressure drop between two stations of an open duct."""
         return _pressure_drop(self.pressure, start, end)
-
-
-@dataclass(frozen=True)
-class Output:
-    """Where a solution goes: ``summary.json`` and, for a Cartesian run, a ParaView ``solution.vtr``."""
-
-    dir: str = "out"
-    paraview: bool = True
-    summary: bool = True
-
-    def write(self, solution: Solution, problem) -> Path:
-        directory = Path(self.dir)
-        directory.mkdir(parents=True, exist_ok=True)
-        if self.summary:
-            keys = ("drive", "flow_rate", "residual", "iterations")
-            numbers = {k: None if (v := getattr(solution, k)) is None else float(v) for k in keys}
-            (directory / "summary.json").write_text(json.dumps(numbers, indent=2) + "\n")
-        if self.paraview and isinstance(problem, Problem) and not problem.grid.is_polar:
-            cells = {}
-            for name, value in solution.fields.items():
-                if isinstance(value, tuple) and all(isinstance(f, Field) for f in value):
-                    cells[name] = jnp.stack([cell_average(f, i).data for i, f in enumerate(value)], axis=-1)
-                elif isinstance(value, Field) and value.offset == (CENTER,) * 3:
-                    cells[name] = value.data
-            from .io import write_vtr
-
-            write_vtr(directory / "solution", problem.grid.faces, **cells)
-        return directory
 
 
 def _flux(axial: Field):
@@ -318,21 +257,10 @@ def _thermal(problem: Problem, solver: Solver, start) -> Solution:
         velocity = solve_steady_state(kernel).velocity if start == "steady" else None
         state = initial_thermal_state(heat_problem, thermal.initial_temperature, velocity)
     heat = Field(jnp.full(grid.shape, thermal.heat_source, dtype=jnp.result_type(float)), _CELL, grid)
-    limits = {
-        "advective_cfl": solver.advective_cfl_limit
-        if solver.advective_cfl_limit is not None
-        else _SCHEMES[thermal.advection],
-        "buoyancy_courant": solver.buoyancy_courant_limit,
-    }
+    limits = {"advective_cfl": _SCHEMES[thermal.advection], "buoyancy_courant": None}
     concrete = not is_traced((state, heat))
     if concrete:
-        validate_thermal_inputs(
-            heat_problem,
-            state,
-            heat,
-            divergence_tolerance=solver.divergence_tolerance,
-            **{f"{name}_limit": value for name, value in limits.items() if value is not None},
-        )
+        validate_thermal_inputs(heat_problem, state, heat, divergence_tolerance=1.0e-10)
     step = build_thermal_step(heat_problem, dtype=jnp.result_type(float))
     stride = solver.history or 1
     final, history = jax.jit(
@@ -348,10 +276,8 @@ def _thermal(problem: Problem, solver: Solver, start) -> Solution:
     return Solution(fields, history=history)
 
 
-def solve(
-    problem: object, solver: Solver | None = None, output: Output | None = None, start: object = None
-) -> object:
-    """Solve ``problem`` with ``solver`` and write it to ``output``; the older models go to :func:`lmhdx.cases.solve`.
+def solve(problem: object, solver: Solver | None = None, start: object = None) -> object:
+    """Solve ``problem`` with ``solver``; the older models go to :func:`lmhdx.cases.solve`.
 
     ``start`` is the initial state of an unsteady run: for a thermal run ``None`` (rest, at the
     problem's initial temperature), ``"steady"`` (the steady flow, temperature at rest) or a
@@ -359,24 +285,20 @@ def solve(
     solve takes none.
     """
     if not isinstance(problem, (Problem, Q2D)):
-        if solver is not None or output is not None or start is not None:
-            raise TypeError(f"{type(problem).__name__} takes no solver, output or start")
+        if solver is not None or start is not None:
+            raise TypeError(f"{type(problem).__name__} takes no solver or start")
         return _solve_model(problem)
     solver = Solver() if solver is None else solver
     method = solver.resolve(problem)
     configure(dtype=solver.dtype)
     if isinstance(problem, Q2D):
-        result = _q2d(problem, solver)
-    elif problem.grid.is_polar:
+        return _q2d(problem, solver)
+    if problem.grid.is_polar:
         if method != "stokes":
             raise NotImplementedError("a pipe is solved in the Stokes limit")
-        result = _pipe(problem, solver)
-    elif method == "euler":
-        result = (_thermal if problem.thermal is not None else _transient)(problem, solver, start)
-    elif start is not None or problem.thermal is not None:
+        return _pipe(problem, solver)
+    if method == "euler":
+        return (_thermal if problem.thermal is not None else _transient)(problem, solver, start)
+    if start is not None or problem.thermal is not None:
         raise ValueError("a steady solve takes no start and no heat transport (give Solver(dt=, steps=))")
-    else:
-        result = _steady(problem, solver)
-    if output is not None:
-        output.write(result, problem)
-    return result
+    return _steady(problem, solver)
