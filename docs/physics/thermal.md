@@ -224,8 +224,10 @@ The coupling's time error is set by the step over the buoyancy time scale,
 `buoyancy_courant` $=\Delta t\sqrt{\beta|\mathbf g|\,G}$, reported beside
 `advective_cfl`, with $G$ the largest absolute face-normal gradient on any face,
 one component rather than a colocated gradient magnitude. In the Bénard onset of
-#252 the critical Rayleigh number is about 15 % low near 0.2 and under 3 % near
-0.025, at first order. That calibrates that case; it is not a general bound.
+#252 the critical Rayleigh number reads 1675.9 near 0.4 and 1675.6 near 0.025,
+flat to 0.02 % in the step and 1.9 % below 1707.76 (the 16-cell mesh). The
+momentum stage before it was first order and read 15 % low near 0.2 and under
+3 % near 0.025. That calibrates that case; it is not a general bound.
 `validate_thermal_inputs(..., buoyancy_courant_limit=...)` refuses a start
 above a chosen limit.
 
@@ -353,7 +355,7 @@ scale with the cells, and the ratio is what carries over.
 - A steady solve of the coupled equations. The developed duct below is the one steady thermal solve, for a given flow.
 - An inflow-outflow axis read from TOML. A run from TOML (below) covers closed
   ducts; an open one runs from Python.
-- Dispatch through `lmhdx.solve`.
+- Dispatch of a `ThermalProblem` through `lmhdx.solve`; a `Problem` with `thermal=Thermal(...)` and `Solver(dt=, steps=)` runs the same step there.
 
 A closed domain with net heating has no steady temperature. The state returned
 is not a `cases.MHDState` or an archive-compatible `Solution`. The final
@@ -630,21 +632,14 @@ onset its rate then depends on that noise.
 The reference is Chandrasekhar's eigenproblem solved by Chebyshev collocation
 (`validation.thermal.chandrasekhar_onset`). It reproduces his tabulated values
 for $Q\le100$, as quoted by Basak & Kumar (2015), to within 0.01 %, which the
-tests check. LMhdX's onset converges at first order in the time step, and the
-extrapolated value is within 0.9 % of the reference across the tenfold rise of
-$Ra_c$. The tests run the Bénard onset at $Q=0$ and require it within 4 % of
-1707.76; the full sweep is rerun by the figure script.
-
-These runs use the stabilised momentum step, which damps each velocity
-component without matching the damping in its pressure correction. With the
-field vertical the fluid at rest stays at rest, but the perturbations are still
-affected at a finite time step. In a trial with a corrected stage, the Q = 1000
-onset at $\Delta t_0$ moved from 4.5 % to 0.8 % low, while the extrapolated
-values moved by less than 0.1 %. The figure will be regenerated once the
-corrected step is merged; the Q = 0 result does not change.
+tests check. On the exact momentum stage (#297) LMhdX's onset does not depend on
+the time step: $\Delta t_0$ and $\Delta t_0/2$ agree to 0.01 %. It lies 0.2 to
+0.8 % below the reference across the tenfold rise of $Ra_c$, which is the error of
+the 32-cell layer mesh. The tests run the Bénard onset at $Q=0$ and require it
+within 4 % of 1707.76; the full sweep is rerun by the figure script.
 
 ```{image} ../_static/thermal_magnetoconvection.webp
-:alt: Critical Rayleigh number against the Chandrasekhar number, the critical rolls at Q = 0 and 1000, and the error against the time step
+:alt: Critical Rayleigh number against the Chandrasekhar number, the critical rolls at Q = 0 and 1000, and the error at two time steps
 :align: center
 ```
 

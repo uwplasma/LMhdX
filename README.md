@@ -172,16 +172,15 @@ drive buoyant flow, and every step checks the heat budget. The module is still
 research stage. Far down a heated duct LMhdX matches the exact Nusselt numbers
 of rectangular ducts and of Hartmann plates to within 0.35 %, and in a vertical
 field it follows Chandrasekhar's tenfold rise of the critical Rayleigh number to
-within 0.9 %. The
+within 0.8 %. The
 [heat transport page](https://lmhdx.readthedocs.io/en/latest/physics/thermal.html)
 gives each comparison, its conditions and the command that redraws it.
 
-[![A liquid-metal layer heated from below, without a field and in a horizontal field](docs/_static/thermal_convection_3d_preview.webp)](https://github.com/uwplasma/LMhdX/releases/download/showcase-thermal/thermal_convection_3d.webp)
+![A liquid-metal layer heated from below, without a field and in a horizontal field](docs/_static/thermal_convection_3d.webp)
 
-*Liquid metal heated from below (Ra = 10⁴, Pr = 0.1); the image links to the
-movie. Without a field the cells keep rearranging; a horizontal field leaves
-rolls along it, as in Burr & Müller (2002). An illustration, not a
-quantitative result.*
+*Liquid metal heated from below (Ra = 10⁴, Pr = 0.1). Without a field the cells
+keep rearranging; a horizontal field leaves rolls along it, as in Burr & Müller
+(2002). An illustration, not a quantitative result.*
 
 ## Design with gradients
 
