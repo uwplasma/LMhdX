@@ -6,19 +6,16 @@ is solved on the staggered core by :mod:`lmhdx.fully_developed`: steady cases by
 :func:`~lmhdx.fully_developed.solve_fully_developed_transient`. This module also
 holds the material and nondimensional relations (Hartmann, Reynolds and
 interaction numbers, wall conductance ratios and wall stacks), the structured
-mesh a solution reports, tabulated imposed fields, TOML run configurations and
-the streaming solver log.
+mesh a solution reports, tabulated imposed fields and TOML run configurations.
 """
 
 from __future__ import annotations
 
 import math
-import sys
-import time
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence, TextIO
+from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence
 
 import jax.numpy as jnp
 import numpy as np
@@ -641,7 +638,12 @@ class CaseSpec:
 
 
 class NumericalFailure(RuntimeError):
-    """Raised when a solver produces nonfinite numerical state."""
+    """Raised when a solver produces nonfinite numerical state or a run is rejected.
+
+    A rejected run that wrote files carries its ``summary``.
+    """
+
+    summary = None
 
 
 def require_finite(stage: str, **values) -> None:
@@ -920,163 +922,6 @@ def load_run_config(path: str | Path) -> RunConfig:
         restart=restart,
         input_path=input_path,
     )
-
-
-@dataclass(frozen=True)
-class RestartLogInfo:
-    enabled: bool = False
-    path: str | None = None
-    start_time: float = 0.0
-    reset_histories: bool = True
-
-
-@dataclass(frozen=True)
-class SolverStepRecord:
-    step_index: int
-    time: float
-    u_max: float
-    mean_velocity: float
-    current_max: float
-    lorentz_max: float
-    residual: float
-    potential_residual: float
-    potential_iterations: float
-    linear_residual: float
-    linear_iterations: float
-    applied_forcing: float
-    courant_like: float
-    ohmic_power: float
-    volumetric_flow_rate: float
-    div_current_max: float
-    gauge_residual: float
-    interface_current_residual: float
-    charge_balance_residual: float = 0.0
-    potential_initial_residual: float = 0.0
-    linear_initial_residual: float = 0.0
-
-
-class StreamingSolverLogger:
-    def __init__(self, config: LoggingSpec | None = None, *, stream: TextIO | None = None) -> None:
-        self.config = config or LoggingSpec()
-        self.streams: list[TextIO] = [stream or sys.stdout]
-        self._start_time = time.perf_counter()
-        self._max_steps: int | None = None
-        self._target_final_time: float | None = None
-
-    def add_stream(self, stream: TextIO) -> None:
-        self.streams.append(stream)
-
-    def _write(self, line: str = "") -> None:
-        for stream in self.streams:
-            print(line, file=stream, flush=self.config.flush)
-
-    def emit_header(
-        self,
-        *,
-        case: CaseSpec,
-        mesh,
-        mode: str,
-        potential_solver: str,
-        target_mean_velocity: float | None,
-        reference_mean_velocity: float | None,
-        restart: RestartLogInfo | None = None,
-    ) -> None:
-        if not self.config.is_enabled():
-            return
-        self._max_steps = int(case.time_stepper.max_steps)
-        self._target_final_time = float(case.time_stepper.t_final)
-        if self.config.banner:
-            self._write("LMhdX solver")
-        solver = getattr(case, "solver", None)
-        solver_kind = getattr(solver, "kind", "fully_developed_inductionless")
-        self._write(
-            f"case={case.name} mode={mode} solver={solver_kind} geometry={case.geometry.kind} "
-            f"cells=({mesh.nx},{mesh.ny},{mesh.nz})"
-        )
-        self._write(
-            f"domain=({case.geometry.length:.6e},{case.geometry.width:.6e},{case.geometry.height:.6e}) "
-            f"dt={case.time_stepper.dt:.6e} end={case.time_stepper.t_final:.6e} max_steps={self._max_steps}"
-        )
-        self._write(f"potential={potential_solver}")
-        self._write(
-            f"field={case.magnetic_field.kind} value={case.magnetic_field.value} forcing={case.forcing:.6e} "
-            f"target_mean_velocity={target_mean_velocity} reference_mean_velocity={reference_mean_velocity}"
-        )
-        if restart is not None and restart.enabled:
-            self._write(
-                f"restart={restart.path} start={restart.start_time:.6e} reset_histories={restart.reset_histories}"
-            )
-
-    def _progress_fraction(self, record: SolverStepRecord) -> float | None:
-        candidates: list[float] = []
-        if self._max_steps is not None and self._max_steps > 0:
-            candidates.append(record.step_index / float(self._max_steps))
-        if self._target_final_time is not None and self._target_final_time > 0.0:
-            candidates.append(record.time / float(self._target_final_time))
-        if not candidates:
-            return None
-        return min(max(max(candidates), 0.0), 1.0)
-
-    @staticmethod
-    def _format_seconds(seconds: float | None) -> str:
-        if seconds is None or not math.isfinite(float(seconds)):
-            return "unknown"
-        total = max(float(seconds), 0.0)
-        minutes, secs = divmod(total, 60.0)
-        hours, minutes = divmod(minutes, 60.0)
-        if hours >= 1.0:
-            return f"{int(hours):02d}:{int(minutes):02d}:{secs:04.1f}"
-        return f"{int(minutes):02d}:{secs:04.1f}"
-
-    def emit_step(self, record: SolverStepRecord) -> None:
-        if not self.config.is_enabled():
-            return
-        if record.step_index > 1 and (record.step_index - 1) % max(self.config.step_stride, 1) != 0:
-            return
-        elapsed = time.perf_counter() - self._start_time
-        progress = self._progress_fraction(record)
-        average_step = elapsed / max(record.step_index, 1)
-        estimated_total = elapsed / progress if progress is not None and progress > 0.0 else None
-        remaining = estimated_total - elapsed if estimated_total is not None else None
-        self._write(
-            f"step={record.step_index} time={record.time:.6e} residual={record.residual:.6e} "
-            f"max_u={record.u_max:.6e} mean_u={record.mean_velocity:.6e} Q={record.volumetric_flow_rate:.6e}"
-        )
-        self._write(
-            f"potential_residual={record.potential_residual:.6e} potential_steps={int(record.potential_iterations)} "
-            f"linear_residual={record.linear_residual:.6e} linear_steps={int(record.linear_iterations)}"
-        )
-        self._write(
-            f"max_j={record.current_max:.6e} max_lorentz={record.lorentz_max:.6e} "
-            f"div_j={record.div_current_max:.6e} charge={record.charge_balance_residual:.6e} "
-            f"gauge={record.gauge_residual:.6e} interface_current={record.interface_current_residual:.6e}"
-        )
-        self._write(
-            f"forcing={record.applied_forcing:.6e} courant={record.courant_like:.6e} "
-            f"ohmic_power={record.ohmic_power:.6e}"
-        )
-        if progress is None:
-            self._write(f"elapsed={elapsed:.3f}s average_step={average_step:.3f}s")
-        else:
-            self._write(
-                f"progress={100.0 * progress:.1f}% elapsed={elapsed:.3f}s average_step={average_step:.3f}s "
-                f"remaining={self._format_seconds(remaining)} total={self._format_seconds(estimated_total)}"
-            )
-        self._write("")
-
-    def emit_footer(self, solution: Solution) -> None:
-        if not self.config.is_enabled() or not self.config.print_footer:
-            return
-        elapsed = time.perf_counter() - self._start_time
-        self._write(
-            f"completed case={solution.case_name} time={solution.state.time:.6e} "
-            f"residual={solution.state.residual:.6e} elapsed={elapsed:.3f}s"
-        )
-
-
-def default_log_path(out_dir: str | Path, case_name: str) -> Path:
-    out_dir = Path(out_dir)
-    return out_dir / f"{case_name}.log"
 
 
 # The named duct cases and the solve entry point.

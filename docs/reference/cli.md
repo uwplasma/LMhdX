@@ -47,12 +47,13 @@ is the template:
 | `[problem.B]` | `kind` is `uniform` (`value = [bx, by, bz]`), `fringe`, `table` or `func` | a `func` has `fn = "module:function"` or `"file.py:function"` and `params` |
 | `[problem.thermal]` | `Thermal(**table)` | |
 | `[solver]` | `Solver(**table)` | |
-| `[start]` | `state = "rest"` or `"steady"` | |
+| `[start]` | `Start(**table)`: `state = "rest"` or `"steady"`, or `path` of a record and its `mode` | `"resume"` (default) or `"import"` |
+| `[output]` | `Output(**table)`: `dir`, `name`, `every`, `fields`, `paraview`, `restart`, `summary`, `log` | files of a run; see [Restart and write output](../how_to/restart_and_output.md) |
 
-Relative paths (`Table.path`, `file.py:function`) resolve against the file. An unknown key, a missing
+Relative paths (`Table.path`, `file.py:function`, `output.dir`, `start.path`) resolve against the file. An unknown key, a missing
 key, a wrong TOML type and an unknown `kind` are refused before anything is solved, with the table path
-in the message: an integer stands for a number, a float or a boolean never for an integer. `[output]`
-takes no keys until `Output` exists (plan step H4.4).
+in the message: an integer stands for a number, a float or a boolean never for an integer. A run with an
+`[output]` prints its log and the summary, and exits 2 if a chunk was rejected.
 
 ```console
 lmhdx examples/heated_duct.toml solver.steps=20 problem.B.value=[0,20,0]
@@ -60,8 +61,9 @@ lmhdx upgrade old.toml > new.toml
 ```
 
 Any `table.key=value` after the file replaces a value (the value is TOML; a bare word is a string).
-`lmhdx upgrade` converts a schema 1 (thermal) or schema 2 (case) file; settings schema 3 cannot hold yet
-(output, logging, restart, run limits) are listed as comments, and a schema 2 case other than a
+`lmhdx upgrade` converts a schema 1 (thermal) or schema 2 (case) file; a schema 1 file's `[run]`, `[output]` and
+`[restart]` become `[solver]`, `[output]` and `[start]`, what schema 3 cannot hold (a held flow, a schema 2 file's
+output, logging and restart) is listed as comments, and a schema 2 case other than a
 rectangular duct of one fluid with a constant field and insulating walls is refused with the tables to
 write by hand. From Python:
 
@@ -69,7 +71,7 @@ write by hand. From Python:
 import lmhdx
 from lmhdx.config import dumps, load
 
-case = load("examples/heated_duct.toml")      # a Case: problem, solver, start, name
+case = load("examples/heated_duct.toml")      # a Case: problem, solver, start, name, output
 solution = lmhdx.solve(case)
 print(dumps(case.problem, case.solver))       # the same text back: any problem without a lambda
 ```
@@ -95,8 +97,5 @@ configuration rather than entering the numerical solve.
 
 ## Thermal runs
 
-A file with `[solver] kind = "thermal"` runs the heat-transport solver, with its
-own tables (`[grid]`, `[flow]`, `[thermal]`, `[run]`, `[output]`, `[restart]`;
-see [Heat transport](../physics/thermal.md)). Its top-level
-`schema_version` is the integer `1`, the only version; it may be left out, and
-any other value is refused before the run is built.
+A file with `[solver] kind = "thermal"` is schema 1, which does not run: `lmhdx upgrade FILE` converts it to
+schema 3 (see [Heat transport](../physics/thermal.md)).

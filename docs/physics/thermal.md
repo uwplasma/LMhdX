@@ -592,111 +592,53 @@ for problem in (thermal, dataclasses.replace(thermal, expansion_coefficient=0.02
 
 ## A run from TOML
 
-A thermal case runs from a TOML file, `lmhdx case.toml`. The keys are the Python
-argument names, and `schema_version = 1` (the only version, and the default) opens
-the file. Before the run is built, every table, the top level included,
-refuses an unknown or missing key and a value of the wrong TOML type: a count is
-an integer and a flag a boolean, neither converted.
-- `[grid]`: each axis as `{cells, lower, upper}`, with `layer_thickness` and
-  `cells_in_layer` for wall-resolving faces;
-- `[flow]`: `ChannelProblem`'s values, with `conditions` `"periodic"` or `"wall"`
-  per axis and `initial_velocity` `"rest"` or `"steady"`;
-- `[thermal]`: `ThermalProblem`'s values, `hold_flow`, and a uniform
-  `initial_temperature` and `heat_source`;
-- `[thermal.y]` and `[thermal.z]`: each wall axis's `thermal_boundary` (`kind`
-  `"temperature"` or `"heat_flux"`, `lower`, `upper`), required for a wall axis
-  and refused for a periodic one;
-- `[run]`: `steps`, compiled in chunks of `chunk`, and optional limits,
-  `advective_cfl_limit` and `buoyancy_courant_limit`;
-- `[output]`: the `directory`, `write_paraview` and `write_restart`;
-- `[restart]`: an optional record's `path`, and its `mode`.
+A thermal case runs from a TOML file, `lmhdx case.toml`: `examples/heated_duct.toml` is the template (see the
+[CLI and TOML reference](../reference/cli.md)), and `[problem.thermal]` is `Thermal(**table)`. Add an
+`[output]` table to write its files:
 
 ```toml
-schema_version = 1
-
-[case]
-name = "heated_duct"
-units = "nondimensional"
-
-[solver]
-kind = "thermal"
-
-[grid]
-x = { cells = 1, lower = 0.0, upper = 1.0 }
-y = { cells = 8, lower = -1.0, upper = 1.0 }
-z = { cells = 8, lower = -1.0, upper = 1.0 }
-
-[flow]
-conditions = ["periodic", "wall", "wall"]
-magnetic_field = [0.0, 10.0, 0.0]
-forcing = [1.0, 0.0, 0.0]
-dt = 2.0e-3
-
-[thermal]
-specific_heat = 1.0
-thermal_conductivity = 0.05
-reference_temperature = 0.0
-expansion_coefficient = 0.02
-gravity = [0.0, 0.0, -1.0]
-heat_source = 0.5
-
-[thermal.y]
-kind = "heat_flux"
-
-[thermal.z]
-kind = "heat_flux"
-upper = 1.0
-
-[run]
-steps = 40
-chunk = 10
-
 [output]
-directory = "out"
+dir = "out"
+every = 10
 ```
 
-Each chunk is accepted or rejected after it runs. Every sample in it, not only
-the last, must pass these checks:
+The run is taken in compiled chunks of `every` steps. Each chunk is accepted or rejected after it runs.
+Every sample in it, not only the last, must pass these checks:
 - it is finite, and the outlet is valid;
 - its advective Courant number is within the scheme's limit: 0.8 for upwind,
-  0.5 for van Leer, none for conduction alone. `advective_cfl_limit` replaces that limit, and the
+  0.5 for van Leer, none for conduction alone. `[solver] advective_cfl_limit` replaces that limit, and the
   summary records it as an override;
-- its buoyancy Courant number is within `buoyancy_courant_limit`, if one is
+- its buoyancy Courant number is within `[solver] buoyancy_courant_limit`, if one is
   given. That limit is a policy calibrated on particular cases, not a stability
   bound.
 
-The start is held to the same limits. An accepted chunk writes two files:
+The start is held to the same limits, and to `divergence_tolerance`. An accepted chunk writes two files:
 - a record, `heated_duct_000010.npz` and so on;
 - a frame, `heated_duct_000010.vtr`, gathered in `heated_duct.pvd`.
 
 The first rejected chunk stops the run. It writes only
-`heated_duct_000020_rejected.npz`. That record names its reasons in its run
-provenance, so it can be imported but not resumed.
-
-`thermal_summary.json` holds these entries:
+`heated_duct_000020_rejected.npz`. That record imports but does not resume. `summary.json` holds these entries:
 - `accepted`;
 - the first rejected sample's step, reasons and Courant numbers;
 - the limits;
 - the last diagnostics and `time`, the time they are at: on a rejection both belong to the rejected chunk
   (its last sample and its end), while `steps` counts the accepted steps only;
-- the run's largest heat balance residual, Courant numbers and Boussinesq
-  measure. No limit applies to the residual or the Boussinesq measure.
+- the run's largest value of each diagnostic. No limit applies to the heat balance residual or the Boussinesq
+  measure.
 
-The command exits with 2 if the run was rejected.
-
-To resume, name a record. Its time sets the step count of the frames that
-follow, gathered in a series of their own, `heated_duct_from_000020.pvd`, so
-that the first series is kept:
+The command exits with 2 if the run was rejected. To resume, name a record in `[start]`; its step numbers
+the frames that follow, gathered in a series of their own, `heated_duct_from_000020.pvd`, so that the first series
+is kept:
 
 ```toml
-[restart]
+[start]
 path = "out/heated_duct_000020.npz"
 ```
 
-With `steps = 20`, that run ends on the same record, bit for bit, as the run of
-40 steps. Each record keeps the run's heat source and `hold_flow`:
-- `mode = "resume"`, the default, refuses a record written with others;
-- `mode = "import"` starts another experiment from the record's state.
+With `steps = 20`, that run ends on the same record, bit for bit, as the run of 40 steps.
+`mode = "resume"`, the default, refuses a record written for another problem or solver (the run's length
+excluded); `mode = "import"` starts another experiment from the record's state. Files of schema 1,
+which this page described before, convert with `lmhdx upgrade` (a held flow, `hold_flow`, is not carried over).
 
 ## Measured cost
 

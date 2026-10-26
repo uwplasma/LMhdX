@@ -1,6 +1,6 @@
 # Problems, solvers and one verb
 
-`Problem` says what is solved, `Solver` how, and `solve(problem, solver=None, start=None)` runs it.
+`Problem` says what is solved, `Solver` how, and `solve(problem, solver=None, output=None, start=None)` runs it; an `Output` writes records, ParaView files, a summary and a log.
 A preset such as `duct` only fills a `Problem`; a case no preset covers builds one directly.
 
 ```python

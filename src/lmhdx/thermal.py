@@ -53,11 +53,8 @@ heat load, with derivatives.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import NamedTuple
 
 import jax
@@ -66,7 +63,6 @@ import numpy as np
 
 from .core3d import (
     ChannelProblem,
-    ImposedField,
     _advance_momentum,
     _lorentz_from_currents,
     enforce_face_constraints,
@@ -107,18 +103,15 @@ __all__ = [
     "LoadAttribution",
     "ThermalDiagnostics",
     "ThermalProblem",
-    "ThermalRun",
     "ThermalState",
     "advance_thermal",
     "build_thermal_step",
     "developed_heat",
     "initial_thermal_state",
     "load_attribution",
-    "load_thermal_record",
     "thermal_boundary",
     "validate_developed_inputs",
     "validate_thermal_inputs",
-    "write_thermal_record",
 ]
 
 _KINDS = {"temperature": DIRICHLET, "heat_flux": NEUMANN, "periodic": PERIODIC}
@@ -528,7 +521,7 @@ def validate_thermal_inputs(
     A held flow keeps its Courant number for the whole run. An evolving flow is
     checked at its start only, which a start from rest passes trivially; compare
     the ``advective_cfl`` each step of :func:`advance_thermal` reports with the
-    limit, as :func:`lmhdx.io.run_thermal` does at every step.
+    limit, as :func:`lmhdx.solver.solve` does at every step.
     """
     if not (np.isfinite(divergence_tolerance) and divergence_tolerance >= 0.0):
         raise ValueError("divergence_tolerance must be nonnegative and finite")
@@ -743,133 +736,6 @@ def advance_thermal(
 
     body = jax.checkpoint(block) if checkpoint else block
     return jax.lax.scan(body, state, xs=None, length=steps // diagnostics)
-
-
-_RECORD_SCHEMA, _RECORD_VERSION = "lmhdx.thermal.state", 1
-
-
-def _described(problem: ThermalProblem) -> str:
-    """The problem as plain data, JSON: what a record must be given again to resume bit for bit."""
-    flow = problem.flow
-
-    def condition(item: BoundaryCondition) -> dict:
-        return {
-            "kinds": list(item.kinds),
-            "lower": np.asarray(item.lower, float).tolist(),
-            "upper": np.asarray(item.upper, float).tolist(),
-        }
-
-    field = flow.magnetic_field
-    if isinstance(field, ImposedField):  # its shapes, dtypes and placement as well as its bytes
-        arrays = [*field.components, *(field.faces or ())]
-        layout = repr([(array.shape, str(array.dtype)) for array in arrays] + [field.faces is None]).encode()
-        field = hashlib.sha256(layout + b"".join(np.asarray(array).tobytes() for array in arrays)).hexdigest()
-    names = (
-        "density",
-        "viscosity",
-        "conductivity",
-        "dt",
-        "forcing",
-        "wall_conductance",
-        "advection",
-        "precision",
-    )
-    thermal = ("specific_heat", "thermal_conductivity", "reference_temperature", "expansion_coefficient")
-    thermal += ("gravity", "joule_heating", "advection", "outlet_backflow")
-    return json.dumps(
-        {
-            "faces": [np.asarray(faces, float).tolist() for faces in flow.grid.faces],
-            "flow": {name: getattr(flow, name) for name in names},
-            "magnetic_field": field if isinstance(field, str) else [float(value) for value in field],
-            "wall_layers": flow.wall_layers,
-            "flow_conditions": [condition(item) for item in flow.conditions],
-            "thermal": {name: getattr(problem, name) for name in thermal},
-            "thermal_conditions": [condition(item) for item in problem.thermal_conditions],
-        },
-        sort_keys=True,
-        default=float,
-    )
-
-
-def write_thermal_record(
-    path: str | Path, problem: ThermalProblem, state: ThermalState, *, units: str, run: dict | None = None
-) -> Path:
-    """Write ``state`` as a versioned NPZ record, its staggered velocity, temperature and time exactly.
-
-    The record holds its schema, version and ``units``, a label the caller
-    declares (such as ``"SI"``) and :func:`load_thermal_record` checks, and the
-    problem it belongs to, as plain data. ``run`` is the provenance of the run's
-    other inputs, plain JSON data such as its heat source, whether its flow is held
-    and an outlet's backflow temperature, kept so that a resume can check it.
-    Returns the path written.
-    """
-    path = Path(path).with_suffix(".npz")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    arrays = {f"velocity_{name}": np.asarray(field.data) for name, field in zip("xyz", state.velocity)}
-    np.savez(
-        path,
-        schema=_RECORD_SCHEMA,
-        version=_RECORD_VERSION,
-        units=units,
-        problem=_described(problem),
-        run=json.dumps(run, sort_keys=True),
-        temperature=np.asarray(state.temperature.data),
-        time=np.asarray(state.time),
-        **arrays,
-    )
-    return path
-
-
-def load_thermal_record(
-    path: str | Path, problem: ThermalProblem, *, units: str, run: dict | None = None
-) -> ThermalState:
-    """Return the state a :func:`write_thermal_record` record holds, raising ``ValueError`` unless it fits.
-
-    The schema and version must be this one's, ``units`` the record's, and
-    ``problem`` the one it was written with, in every value the step depends on.
-    Every field must be finite, of the problem's shape and the compute dtype, and
-    the time a finite scalar of that dtype; all is checked before a state is made.
-    Given ``run``, the load is an exact resume and the record's run provenance must
-    equal it; without, it is a state import, the start of another experiment.
-    """
-    dtype, grid = jnp.result_type(float), problem.flow.grid
-    with np.load(Path(path), allow_pickle=False) as record:
-        arrays = {name: np.asarray(record[name]) for name in record.files}
-    names = ("schema", "version", "units", "problem", "run", "temperature", "time")
-    missing = sorted(set(names + tuple(f"velocity_{name}" for name in "xyz")) - set(arrays))
-    if missing:
-        raise ValueError(f"{path} lacks {', '.join(missing)}")
-
-    def scalar(name: str, kinds: str):
-        value = arrays[name]
-        if value.shape or value.dtype.kind not in kinds:
-            raise ValueError(f"{path}: {name} is not a scalar of kind {kinds!r}")
-        return value[()]
-
-    if str(scalar("schema", "U")) != _RECORD_SCHEMA or int(scalar("version", "iu")) != _RECORD_VERSION:
-        raise ValueError(f"{path} is not a {_RECORD_SCHEMA} record of version {_RECORD_VERSION}")
-    if str(scalar("units", "U")) != units:
-        raise ValueError(f"{path} is in units {str(arrays['units'])!r}, not {units!r}")
-    written, expected = json.loads(str(scalar("problem", "U"))), json.loads(_described(problem))
-    if written != expected:
-        differing = sorted(key for key in expected if written.get(key) != expected[key])
-        raise ValueError(f"{path} was written for another problem: {', '.join(differing)} differ")
-    if run is not None and json.loads(str(scalar("run", "U"))) != json.loads(json.dumps(run)):
-        raise ValueError(f"{path} was written by a run with other inputs: {str(arrays['run'])}")
-    time = arrays["time"]
-    if time.shape or time.dtype != dtype or not np.isfinite(time):
-        raise ValueError(f"{path}: the time must be a finite {dtype} scalar")
-    pieces = [(arrays[f"velocity_{name}"], velocity_offset(axis)) for axis, name in enumerate("xyz")]
-    pieces.append((arrays["temperature"], _CELL))
-    for data, offset in pieces:
-        if data.shape != grid.offset_shape(offset) or data.dtype != dtype:
-            raise ValueError(
-                f"{path} holds a {data.dtype} array of shape {data.shape}, not {dtype} {grid.offset_shape(offset)}"
-            )
-        if not np.all(np.isfinite(data)):
-            raise ValueError(f"{path} holds a field that is not finite")
-    fields = [Field(jnp.asarray(data), offset, grid) for data, offset in pieces]
-    return ThermalState(tuple(fields[:3]), fields[3], jnp.asarray(time))
 
 
 class LoadAttribution(NamedTuple):
@@ -1219,28 +1085,3 @@ def validate_developed_inputs(
     flow_rate = float(np.sum(grid.face_areas(axial)[_end(axial, 0)] * along[_end(axial, 0)]))
     if not flow_rate > flow_rate_tolerance:
         raise ValueError(f"the flow rate {flow_rate:.4g} is not above flow_rate_tolerance")
-
-
-class ThermalRun(NamedTuple):
-    """A thermal run read by :func:`lmhdx.io.thermal_run_from_toml`: the problem, its start, and how to run and record it.
-
-    ``provenance`` holds the run's other inputs, its heat source and held flow, kept in each record so that a
-    resume can check them; ``limits`` the advective Courant and buoyancy limits each chunk's samples must meet
-    (None: the scheme's own, or none); ``restart`` the record it started from and how, or None.
-    """
-
-    name: str
-    units: str
-    problem: ThermalProblem
-    state: ThermalState
-    heat_source: Field
-    hold_flow: bool
-    steps: int
-    chunk: int
-    divergence_tolerance: float
-    directory: Path
-    write_paraview: bool
-    write_restart: bool
-    provenance: dict
-    limits: dict
-    restart: dict | None

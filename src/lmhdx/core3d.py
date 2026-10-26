@@ -1240,6 +1240,7 @@ def advance(
     force: Callable[[jnp.ndarray], tuple[Field, Field, Field]] | None = None,
     time: float = 0.0,
     checkpoint: bool = True,
+    pressure: Field | None = None,
 ) -> Trajectory:
     """Run ``steps`` steps of ``scheme`` as one compiled scan, from ``time``.
 
@@ -1247,7 +1248,8 @@ def advance(
     factorizations are built once on the host, outside the trace, because their
     assembly reads concrete arrays; passing ``viscous`` takes diffusion
     implicitly, which is what lets a long run choose its step for accuracy.
-    ``viscous`` and ``force(t)`` are those of :func:`step`.
+    ``viscous`` and ``force(t)`` are those of :func:`step`. ``pressure``, a run's last (zero if omitted),
+    starts the first solve: with it a run in chunks is the run in one, bit for bit.
 
     The compiled run is kept per problem, ``steps``, factorizations, ``scheme`` and
     ``checkpoint``: a restart in chunks compiles once, and only the state and the time are
@@ -1260,10 +1262,16 @@ def advance(
     try:
         hash(problem)
     except TypeError:
-        return _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint)(velocity, time)
+        return _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint)(
+            velocity, time, pressure
+        )
     if force is not None:
-        return _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint)(velocity, time)
-    return _compiled_trajectory(problem, steps, factorization, viscous, scheme, checkpoint)(velocity, time)
+        return _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint)(
+            velocity, time, pressure
+        )
+    return _compiled_trajectory(problem, steps, factorization, viscous, scheme, checkpoint)(
+        velocity, time, pressure
+    )
 
 
 def _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint):
@@ -1278,11 +1286,11 @@ def _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoin
         history = (*trajectory_diagnostics(updated, problem), *solves)
         return (updated, pressure, potential, now + problem.dt), history
 
-    def run(velocity, time):
+    def run(velocity, time, pressure=None):
         # The last pressure and potential ride in the carry: stacked as scan outputs they cost two
         # cell fields per step (3.1 GiB over 100 steps at 128^3 in float64) to return the last one.
         cell = Field(jnp.zeros(problem.grid.shape, velocity[0].dtype), (CENTER,) * 3, problem.grid)
-        start = (velocity, cell, cell, jnp.asarray(time, velocity[0].dtype))
+        start = (velocity, cell if pressure is None else pressure, cell, jnp.asarray(time, velocity[0].dtype))
         body = jax.checkpoint(single) if checkpoint else single
         (final, pressure, potential, _), history = jax.lax.scan(body, start, xs=None, length=steps)
         return Trajectory(final, pressure, potential, *history)

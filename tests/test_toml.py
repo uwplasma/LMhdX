@@ -15,13 +15,14 @@ import pytest
 
 import lmhdx
 from lmhdx import Open, Problem, Sides, Solver, Thermal, Uniform, Wall, duct
-from lmhdx.cases import WallLayer, _load_toml, load_run_config
+from lmhdx.cases import WallLayer, load_run_config
 from lmhdx.config import dumps, load, upgrade
 from lmhdx.fields import Fringe, Func, Table
 from lmhdx.fully_developed import channel_problem
 from lmhdx.grid import Grid, axis
-from lmhdx.io import main, thermal_run_from_toml
-from lmhdx.problem import channel, channel_kernel, fringe_duct, pipe, q2d, thermal_kernel
+from lmhdx.io import main
+from lmhdx.output import Output, Start
+from lmhdx.problem import channel, channel_kernel, fringe_duct, pipe, q2d
 
 pytestmark = pytest.mark.numerical  # the api shard runs in the regression tier
 
@@ -109,13 +110,17 @@ def test_every_preset_and_field_kind_round_trips(tmp_path, name):
     assert dumps(loaded) == text
 
 
-def test_solver_start_and_name_round_trip(tmp_path):
-    solver = Solver("euler", 1e-3, 5, 1e-8, "mixed", "float32", False, 3)
-    text = dumps(duct(20, 24), solver, "steady", "demo")
-    case = load(_write(tmp_path, text))
-    assert (case.solver, case.start, case.name) == (solver, "steady", "demo")
-    assert dumps(case) == text
+def test_solver_start_output_and_name_round_trip(tmp_path):
+    solver = Solver("euler", 1e-3, 5, 1e-8, "mixed", "float32", False, 3, 0.5, 2.0, 1e-8)
+    output = Output(str(tmp_path / "out"), "demo", 5, ("velocity",), False, True, False, True)
+    for start in ("steady", Start(path="a.npz", mode="import")):
+        text = dumps(duct(20, 24), solver, start, "demo", output)
+        case = load(_write(tmp_path, text))
+        expected = start if isinstance(start, str) else Start(path=str(tmp_path / "a.npz"), mode="import")
+        assert (case.solver, case.start, case.name, case.output) == (solver, expected, "demo", output)
+        assert dumps(case) == text.replace("a.npz", str(tmp_path / "a.npz"))
     assert load(_write(tmp_path, dumps(duct(20, 24)))).solver is None
+    assert load(_write(tmp_path, dumps(duct(20, 24), output=Output()))).output == Output()
     with pytest.raises(ValueError, match="only the start 'steady'"):
         dumps(duct(20, 24), start=[1.0])
     with pytest.raises(ValueError, match="cannot be imported back"):
@@ -260,11 +265,12 @@ _REFUSED = (
     (_BASE + "[solver]\nmethod = 3\n", "solver.method must be a string"),
     (_BASE + "[solver]\nbogus = 3\n", r"\[solver\] has unknown keys \['bogus'\]"),
     (_BASE + "[start]\nstate = 'warm'\n", r"\[start\] state is \"rest\" or \"steady\""),
-    (
-        _BASE + "[start]\npath = 'x.npz'\n",
-        r"\[start\] has unknown keys \['path'\]; valid keys are \['state'\]",
-    ),
-    (_BASE + "[output]\ndir = 'out'\n", "Output arrives with plan step H4.4"),
+    (_BASE + "[start]\nmode = 'copy'\n", r"\[start\] state is \"rest\" or \"steady\" and mode"),
+    (_BASE + "[start]\npath = 'x.npz'\nbogus = 1\n", r"\[start\] has unknown keys \['bogus'\]"),
+    (_BASE + "[output]\nevery = -1\n", r"\[output\] every is a number of steps"),
+    (_BASE + "[output]\ndir = 3\n", "output.dir must be a string"),
+    (_BASE + "[output]\nfields = [3]\n", "output.fields"),
+    (_BASE + "[output]\nbogus = 1\n", r"\[output\] has unknown keys \['bogus'\]"),
     ("schema_version = 2\n" + _BASE, "schema_version 2 is not 3"),
     ("schema_version = 3.0\n" + _BASE, "schema_version must be an integer"),
     ("colour = 1\n" + _BASE, r"unknown keys \['colour'\]"),
@@ -397,71 +403,116 @@ def test_a_schema_2_file_beyond_the_converter_is_refused(tmp_path, text, message
     )
 
 
-def _page_toml() -> str:
-    page = (ROOT / "docs/physics/thermal.md").read_text()
-    return page.split("## A run from TOML", 1)[1].split("```toml\n", 1)[1].split("```", 1)[0]
+_SCHEMA1 = """
+schema_version = 1
+
+[case]
+name = "heated_duct"
+units = "nondimensional"
+
+[solver]
+kind = "thermal"
+
+[grid]
+x = { cells = 1, lower = 0.0, upper = 1.0 }
+y = { cells = 8, lower = -1.0, upper = 1.0 }
+z = { cells = 8, lower = -1.0, upper = 1.0 }
+
+[flow]
+conditions = ["periodic", "wall", "wall"]
+magnetic_field = [0.0, 10.0, 0.0]
+forcing = [1.0, 0.0, 0.0]
+dt = 2.0e-3
+
+[thermal]
+specific_heat = 1.0
+thermal_conductivity = 0.05
+reference_temperature = 0.0
+expansion_coefficient = 0.02
+gravity = [0.0, 0.0, -1.0]
+heat_source = 0.5
+
+[thermal.y]
+kind = "heat_flux"
+
+[thermal.z]
+kind = "heat_flux"
+upper = 1.0
+
+[run]
+steps = 40
+chunk = 10
+
+[output]
+directory = "out"
+"""
 
 
-def test_a_schema_1_file_upgrades_to_the_run_the_old_loader_built(tmp_path):
-    old = _write(tmp_path, _page_toml(), "old.toml")
-    text = upgrade(old)
-    assert text.startswith(
-        "# not carried over: [run] chunk = 10\n# not carried over: [output] directory = 'out'\n"
-    )
+def test_a_schema_1_file_upgrades_to_the_run_it_described(tmp_path):
+    text = upgrade(_write(tmp_path, _SCHEMA1, "old.toml"))
+    assert "not carried over" not in text
     case = load(_write(tmp_path, text, "new.toml"))
-    run = thermal_run_from_toml(_load_toml(old), tmp_path)
-    flow = channel_kernel(case.problem, case.solver.dt)[0]
-    assert flow == run.problem.flow and thermal_kernel(case.problem, flow) == run.problem
-    assert case.solver == Solver("euler", 2.0e-3, 40) and case.start is None
-    # The page's heated duct is the shipped example, so one solve covers both.
+    # The file is the shipped example, plus the run's chunks and directory.
     assert _same(case.problem, load(ROOT / "examples/heated_duct.toml").problem)
+    assert case.solver == Solver("euler", 2.0e-3, 40) and case.start is None and case.name == "heated_duct"
+    assert case.output == Output(str(tmp_path / "out"), every=10)
 
 
 _VARIANTS = (
-    ((("dt = 2.0e-3", 'dt = 2.0e-3\ninitial_velocity = "steady"'),), True, False),
-    ((('kind = "heat_flux"\nupper = 1.0', 'kind = "temperature"\nlower = 0.5\nupper = 1.0'),), False, False),
-    (
-        (("dt = 2.0e-3", 'dt = 2.0e-3\nwall_conductance = [0.0, 0.03, 0.03]\nadvection = "central"'),),
-        False,
-        False,
+    (  # a steady start
+        (("dt = 2.0e-3", 'dt = 2.0e-3\ninitial_velocity = "steady"'),),
+        lambda case, here: case.start == "steady",
     ),
-    (
+    (  # temperature walls
+        (('kind = "heat_flux"\nupper = 1.0', 'kind = "temperature"\nlower = 0.5\nupper = 1.0'),),
+        lambda case, here: case.problem.bc[2] == Sides(Wall(temperature=0.5), Wall(temperature=1.0)),
+    ),
+    (  # conducting walls and central transport
+        (("dt = 2.0e-3", 'dt = 2.0e-3\nwall_conductance = [0.0, 0.03, 0.03]\nadvection = "central"'),),
+        lambda case, here: (
+            case.problem.advection == "central"
+            and channel_kernel(case.problem)[0].wall_conductance == (0.0, 0.03, 0.03)
+        ),
+    ),
+    (  # a wall-resolving axis
         (
             (
                 "cells = 8, lower = -1.0, upper = 1.0 }\nz",
                 "cells = 12, lower = -1.0, upper = 1.0, layer_thickness = 0.1, cells_in_layer = 3 }\nz",
             ),
         ),
-        False,
-        False,
+        lambda case, here: len(case.problem.grid.y) == 13,
     ),
-    (
+    (  # limits, and a record to resume from
         (
+            ("[run]\n", "[run]\nadvective_cfl_limit = 0.5\nbuoyancy_courant_limit = 2.0\n"),
             (
-                '[thermal.y]\nkind = "heat_flux"',
-                '[thermal.y]\nkind = "heat_flux"\nlower = 0.25\nupper = 0.25',
+                '[output]\ndirectory = "out"',
+                '[restart]\npath = "out/a.npz"\nmode = "import"\n[output]\nwrite_paraview = false\ndirectory = "out"',
             ),
-            ("[thermal]\n", "[thermal]\nhold_flow = true\ninitial_temperature = 0.1\n"),
         ),
-        False,
-        True,
+        lambda case, here: (
+            (case.solver.advective_cfl_limit, case.solver.buoyancy_courant_limit) == (0.5, 2.0)
+            and case.start == Start(path=str(here / "out/a.npz"), mode="import")
+            and not case.output.paraview
+        ),
     ),
 )
 
 
-@pytest.mark.parametrize(("changes", "steady", "held"), _VARIANTS)
-def test_schema_1_variants_upgrade_to_the_same_kernels(tmp_path, changes, steady, held):
-    text = _page_toml()
+@pytest.mark.parametrize(("changes", "holds"), _VARIANTS)
+def test_schema_1_variants_upgrade_to_the_same_kernels(tmp_path, changes, holds):
+    text = _SCHEMA1
     for old, new in changes:
         assert text.count(old) == 1, old
         text = text.replace(old, new)
-    old = _write(tmp_path, text, "old.toml")
-    case = load(_write(tmp_path, upgrade(old), "new.toml"))
-    run = thermal_run_from_toml(_load_toml(old), tmp_path)
-    flow = channel_kernel(case.problem, case.solver.dt)[0]
-    assert flow == run.problem.flow and thermal_kernel(case.problem, flow) == run.problem
-    assert (case.start == "steady") == steady
-    assert ("# not carried over: [thermal] hold_flow = True" in upgrade(old)) == held
+    case = load(_write(tmp_path, upgrade(_write(tmp_path, text, "old.toml")), "new.toml"))
+    assert holds(case, tmp_path)
+
+
+def test_a_held_flow_is_not_carried_over(tmp_path):
+    text = _SCHEMA1.replace("[thermal]\n", "[thermal]\nhold_flow = true\n")
+    assert "# not carried over: [thermal] hold_flow = True" in upgrade(_write(tmp_path, text, "old.toml"))
 
 
 def test_files_that_are_not_run_configurations_are_refused_by_upgrade():

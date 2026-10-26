@@ -26,20 +26,17 @@ import numpy as np
 from .cases import (
     Diagnostics,
     MHDState,
-    RestartLogInfo,
     RunConfig,
     Solution,
-    StreamingSolverLogger,
     StructuredMesh,
     _load_toml,
-    default_log_path,
     load_run_config,
     make_hartmann_case,
     make_hunt_case,
     make_shercliff_case,
 )
 from .fully_developed import case_mesh, solve_fully_developed, solve_fully_developed_transient
-from .ops import cell_average
+from .output import RestartLogInfo, StreamingSolverLogger, write_pvd, write_vtk
 
 
 @dataclass(frozen=True)
@@ -392,66 +389,11 @@ class RestartBundle:
     geometry_kind: str
 
 
-def _array_text(array: jnp.ndarray) -> str:
-    return " ".join(f"{float(value):.12e}" for value in jnp.ravel(array))
-
-
-def write_vtr(path: str | Path, faces, **cells) -> Path:
-    """Write named cell arrays as a ParaView rectilinear grid; returns ``path`` with the ``.vtr`` suffix.
-
-    ``faces`` is the three axes' face coordinates, and each array is ``(nx, ny, nz)`` or has a trailing
-    component axis of three; the cells are written with x varying fastest, as VTK orders them.
-    """
-    target = Path(path).with_suffix(".vtr")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    extent = " ".join(f"0 {np.size(axis) - 1}" for axis in faces)
-
-    def entry(name, data, extra=""):
-        return (
-            f'<DataArray type="Float64" Name="{name}"{extra} format="ascii">{_array_text(data)}</DataArray>'
-        )
-
-    def cell(name, data):
-        data = np.asarray(data)
-        vector = data.ndim == 4
-        data = np.transpose(data, (2, 1, 0, 3) if vector else (2, 1, 0))
-        return entry(name, data, ' NumberOfComponents="3"' if vector else "")
-
-    target.write_text(
-        '<?xml version="1.0"?>\n<VTKFile type="RectilinearGrid" version="0.1" byte_order="LittleEndian">\n'
-        f'<RectilinearGrid WholeExtent="{extent}">\n<Piece Extent="{extent}">\n<CellData>\n'
-        + "\n".join(cell(name, data) for name, data in cells.items())
-        + "\n</CellData>\n<Coordinates>\n"
-        + "\n".join(entry(name, axis) for name, axis in zip("XYZ", faces))
-        + "\n</Coordinates>\n</Piece>\n</RectilinearGrid>\n</VTKFile>\n"
-    )
-    return target
-
-
-def write_pvd(entries: list[tuple[float, str]], out_dir: str | Path, name: str = "series") -> Path:
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / f"{name}.pvd"
-    datasets = "\n".join(
-        f'<DataSet timestep="{time:.8f}" group="" part="0" file="{filename}"/>' for time, filename in entries
-    )
-    content = (
-        '<?xml version="1.0"?>\n'
-        '<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n'
-        "<Collection>\n"
-        f"{datasets}\n"
-        "</Collection>\n"
-        "</VTKFile>\n"
-    )
-    target.write_text(content)
-    return target
-
-
 def write_paraview(solution: Solution, out_dir: str | Path) -> list[Path]:
     mesh, state = solution.mesh, solution.state
     cells = {name: getattr(state, name)[None] for name in ("u", "phi", "jy", "jz", "lorentz_x")}
     paths = [
-        write_vtr(Path(out_dir) / solution.case_name, (mesh.x_faces, mesh.y_faces, mesh.z_faces), **cells)
+        write_vtk(Path(out_dir) / solution.case_name, (mesh.x_faces, mesh.y_faces, mesh.z_faces), **cells)
     ]
     paths.append(write_pvd([(solution.state.time, paths[0].name)], out_dir, name=solution.case_name))
     return paths
@@ -918,10 +860,10 @@ def _write_run_summary(summary: dict[str, object], case, out_dir: Path) -> Path 
 
 
 def _summary_exit_code(summary: dict[str, object]) -> int:
-    """Return failure for a recorded unconverged steady result or a rejected thermal run."""
+    """Return failure for a recorded unconverged steady result or a rejected run."""
 
-    if summary.get("solver_mode") == "thermal":
-        return 0 if summary.get("accepted") else 2
+    if summary.get("accepted") is False:
+        return 2
     return 2 if summary.get("solver_mode") == "steady" and summary.get("converged") is False else 0
 
 
@@ -936,7 +878,7 @@ def _run_config(config: RunConfig) -> dict[str, object]:
     log_handle = None
     log_path: Path | None = None
     if logger is not None:
-        log_path = default_log_path(out_dir, case.name)
+        log_path = out_dir / f"{case.name}.log"
         log_handle = open(log_path, "w", encoding="utf-8")  # noqa: SIM115
         logger.add_stream(log_handle)
     solve_start = time.perf_counter()
@@ -1011,287 +953,6 @@ def _run_config(config: RunConfig) -> dict[str, object]:
     return summary
 
 
-def _thermal_rejection(history, limits: dict, done: int) -> dict | None:
-    """Return the first sample of a chunk's ``history`` outside the run's ``limits``, its step and reasons, or None.
-
-    Every sample is checked, so a violation inside a chunk is not hidden by a valid last one; a NaN fails.
-    """
-    checks = {
-        "not finite": ~np.asarray(history.finite),
-        "the flow returns through the outlet": ~np.asarray(history.backflow_boundary_valid),
-    }
-    for name in ("advective_cfl", "buoyancy_courant"):
-        if limits[name] is not None:
-            checks[f"{name} over {limits[name]}"] = ~(np.asarray(getattr(history, name)) <= limits[name])
-    failing = {reason: np.flatnonzero(mask) for reason, mask in checks.items()}
-    samples = [int(found[0]) for found in failing.values() if found.size]
-    if not samples:
-        return None
-    sample = min(samples)
-    reasons = [reason for reason, found in failing.items() if sample in found]
-    values = {
-        name: float(np.asarray(getattr(history, name))[sample])
-        for name in ("advective_cfl", "buoyancy_courant")
-    }
-    return {"step": done + sample + 1, "reasons": reasons, **values}
-
-
-def run_thermal(run) -> dict[str, object]:
-    """Run a :class:`lmhdx.thermal.ThermalRun` in compiled chunks, accepting each before recording it.
-
-    Every sample of a chunk must be finite, keep a valid outlet, and stay within the scheme's advective Courant
-    limit (upwind 0.8, van Leer 0.5, none for conduction alone) and a configured ``buoyancy_courant_limit``; the start is held
-    to the same limits. ``[run] advective_cfl_limit`` replaces the scheme's, recorded as an override. An accepted
-    chunk writes the record ``{name}_{step:06d}.npz`` and the frame ``{name}_{step:06d}.vtr``, ``step`` counted
-    from the record's own time on a restart, gathered in ``{name}.pvd`` from step 0 and in
-    ``{name}_from_{first:06d}.pvd`` from a restart, so a resume keeps the earlier series. The first rejected
-    chunk stops the run and writes only ``{name}_{step:06d}_rejected.npz``, whose run provenance names the
-    reasons, so it imports but does not resume. ``thermal_summary.json`` holds ``accepted``, the first rejected
-    sample (its step, reasons and Courant numbers), the limits, the last diagnostics
-    and the time they are at (the end of the rejected chunk on a rejection, otherwise of the run) and the extremes over the
-    run of the ledger, the Courant numbers and the Boussinesq measure, which no limit applies to.
-    """
-    from .thermal import (
-        _SCHEMES,
-        advance_thermal,
-        build_thermal_step,
-        validate_thermal_inputs,
-        write_thermal_record,
-    )
-
-    problem, state, heat = run.problem, run.state, run.heat_source
-    grid = problem.flow.grid
-    scheme = _SCHEMES[problem.advection]
-    courant = run.limits["advective_cfl"] if problem.advection != "off" else None
-    limits = {
-        "advective_cfl": scheme if courant is None else courant,
-        "advective_cfl_override": courant is not None and courant != scheme,
-        "buoyancy_courant": run.limits["buoyancy_courant"],
-    }
-    start_limits = {"buoyancy_courant_limit": limits["buoyancy_courant"]}
-    if limits["advective_cfl"] is not None:
-        start_limits["advective_cfl_limit"] = limits["advective_cfl"]
-    validate_thermal_inputs(
-        problem, state, heat, divergence_tolerance=run.divergence_tolerance, **start_limits
-    )
-    thermal_step = build_thermal_step(problem, dtype=jnp.result_type(float), hold_flow=run.hold_flow)
-    chunk = jax.jit(lambda start: advance_thermal(thermal_step, start, heat, run.chunk))
-    first, frames, histories, rejected = round(float(state.time) / float(problem.flow.dt)), [], [], None
-    accepted, done = state, first
-    for index in range(run.steps // run.chunk):
-        state, history = chunk(accepted)
-        histories.append(history)
-        rejected, label = _thermal_rejection(history, limits, done), f"{run.name}_{done + run.chunk:06d}"
-        if rejected is not None:
-            rejected["chunk"] = index
-            if run.write_restart:
-                provenance = {**run.provenance, "rejected": rejected["reasons"]}
-                write_thermal_record(
-                    run.directory / f"{label}_rejected", problem, state, units=run.units, run=provenance
-                )
-            break
-        accepted, done = state, done + run.chunk
-        if run.write_restart:
-            write_thermal_record(run.directory / label, problem, state, units=run.units, run=run.provenance)
-        if run.write_paraview:
-            centred = [cell_average(field, axis).data for axis, field in enumerate(state.velocity)]
-            cells = {"temperature": state.temperature.data, "velocity": jnp.stack(centred, axis=-1)}
-            frames.append((float(state.time), write_vtr(run.directory / label, grid.faces, **cells).name))
-    if frames:
-        write_pvd(frames, run.directory, name=run.name if first == 0 else f"{run.name}_from_{first:06d}")
-    history = jax.tree_util.tree_map(
-        lambda *parts: np.concatenate([np.asarray(p) for p in parts]), *histories
-    )
-    last = {name: float(np.asarray(values)[-1]) for name, values in history._asdict().items()}
-    largest = ("heat_balance_residual", "advective_cfl", "buoyancy_courant", "boussinesq_measure")
-    summary = {
-        "case": run.name,
-        "solver_mode": "thermal",
-        "units": run.units,
-        "accepted": rejected is None,
-        "rejected": rejected,
-        "limits": limits,
-        "restart": run.restart,
-        "steps": done - first,
-        "time": float(state.time),
-        "finite": bool(np.all(history.finite)),
-        "last": last,
-        "largest": {name: float(np.max(np.abs(getattr(history, name)))) for name in largest},
-    }
-    run.directory.mkdir(parents=True, exist_ok=True)
-    (run.directory / "thermal_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-    return summary
-
-
-_TOML_TYPES = {
-    "table": dict,
-    "array": list,
-    "string": str,
-    "boolean": bool,
-    "integer": int,
-    "number": (int, float),
-}
-_TOML_SCHEMA = {  # each table's keys and TOML types, "name:type"; "vector" is an array of three numbers
-    "": "schema_version:integer case:table solver:table grid:table flow:table thermal:table run:table"
-    " output:table restart:table",
-    "case": "name:string units:string",
-    "solver": "kind:string",
-    "grid": "x:table y:table z:table",
-    "axis": "cells:integer lower:number upper:number layer_thickness:number cells_in_layer:integer",
-    "flow": "conditions:array advection:string initial_velocity:string dt:number density:number viscosity:number"
-    " conductivity:number magnetic_field:vector forcing:vector wall_conductance:vector",
-    "thermal": "joule_heating:boolean advection:string hold_flow:boolean gravity:vector x:table y:table z:table"
-    " specific_heat:number thermal_conductivity:number reference_temperature:number"
-    " expansion_coefficient:number initial_temperature:number heat_source:number",
-    "wall": "kind:string lower:number upper:number",
-    "run": "steps:integer chunk:integer divergence_tolerance:number advective_cfl_limit:number"
-    " buoyancy_courant_limit:number",
-    "output": "directory:string write_paraview:boolean write_restart:boolean",
-    "restart": "path:string mode:string",
-}
-
-
-def _toml_table(table, schema: str, where: str, required: str = "") -> dict:
-    """Return a copy of ``table`` with every key ``schema`` knows, of its TOML type, and every ``required`` one."""
-    kinds = dict(item.split(":") for item in _TOML_SCHEMA[schema].split())
-    if not isinstance(table, dict):
-        raise ValueError(f"[{where}] must be a table")
-    unknown, missing = sorted(set(table) - set(kinds)), [key for key in required.split() if key not in table]
-    if unknown or missing:
-        raise ValueError(f"[{where}] has unknown keys {unknown}" if unknown else f"[{where}] lacks {missing}")
-
-    def typed(kind, value):
-        if kind == "vector":
-            return (
-                isinstance(value, list) and len(value) == 3 and all(typed("number", item) for item in value)
-            )
-        return isinstance(value, _TOML_TYPES[kind]) and (kind == "boolean" or not isinstance(value, bool))
-
-    for key, value in table.items():
-        if not typed(kinds[key], value):
-            label = "array of three numbers" if kinds[key] == "vector" else kinds[key]
-            raise ValueError(f"[{where}] {key} must be a TOML {label}, not {value!r}")
-    return {key: tuple(value) if kinds[key] == "vector" else value for key, value in table.items()}
-
-
-def _toml_grid(table: dict):
-    """Build the :class:`lmhdx.grid.Grid` of ``[grid]``: each axis ``{cells, lower, upper}``, wall-resolving
-    with ``layer_thickness`` (and ``cells_in_layer``)."""
-    from .grid import Grid, uniform_faces, wall_resolving_faces
-
-    faces = []
-    for axis in "xyz":
-        spec = _toml_table(table[axis], "axis", f"grid.{axis}", "cells lower upper")
-        ends, layer = (spec["cells"], spec["lower"], spec["upper"]), spec.get("layer_thickness")
-        if layer is None and "cells_in_layer" in spec:
-            raise ValueError(f"[grid.{axis}] cells_in_layer needs layer_thickness")
-        faces.append(
-            uniform_faces(*ends)
-            if layer is None
-            else wall_resolving_faces(
-                *ends, layer_thickness=layer, cells_in_layer=spec.get("cells_in_layer", 4), max_ratio=None
-            )
-        )
-    return Grid(*faces)
-
-
-def _toml_flow(table: dict, grid):
-    """Build the :class:`lmhdx.core3d.ChannelProblem` of ``[flow]`` and its ``initial_velocity``: ``conditions``
-    are ``"periodic"`` or ``"wall"`` per axis (an inflow-outflow axis is not read from TOML yet)."""
-    from .core3d import ChannelProblem
-    from .grid import NEUMANN, PERIODIC
-    from .grid import BoundaryCondition as Boundary
-
-    kinds, table = {"periodic": PERIODIC, "wall": NEUMANN}, dict(table)
-    conditions, start = table.pop("conditions"), table.pop("initial_velocity", "rest")
-    if len(conditions) != 3 or any(kind not in kinds for kind in conditions):
-        raise ValueError(
-            '[flow] conditions are three of "periodic" and "wall"; an open axis is not read from TOML yet'
-        )
-    if start not in ("rest", "steady"):
-        raise ValueError('[flow] initial_velocity is "rest" or "steady"')
-    return (
-        ChannelProblem(grid, tuple(Boundary(kinds[kind]) for kind in conditions), **table),
-        conditions,
-        start,
-    )
-
-
-def thermal_run_from_toml(root: dict, base: str | Path = ".", *, version: int = 1):
-    """Read a thermal run from a parsed TOML document with ``[solver] kind = "thermal"``; ``base`` resolves paths.
-
-    The tables are those of ``docs/physics/thermal.md``, with the Python names as keys. Each refuses an unknown
-    or missing key and a value of the wrong TOML type (neither converted) before the run is built;
-    ``schema_version`` is 1, the only one, and may be left out. A wall axis, and only that, has a table
-    ``[thermal.y]`` for :func:`lmhdx.thermal.thermal_boundary`. ``[restart]`` is a record of
-    :func:`lmhdx.thermal.write_thermal_record`: ``"resume"``, the default, continues the run that wrote it,
-    ``"import"`` starts from its state.
-    """
-    from .grid import PERIODIC, Field
-    from .grid import BoundaryCondition as Boundary
-    from .steady import solve_steady_state
-    from .thermal import (
-        _CELL,
-        ThermalProblem,
-        ThermalRun,
-        initial_thermal_state,
-        load_thermal_record,
-        thermal_boundary,
-    )
-
-    base, tables = Path(base), _toml_table(root, "", "top level")
-    if tables.get("schema_version", version) != version:
-        raise ValueError(f"schema_version must be {version}")
-    required = {"case": "name units", "solver": "kind", "flow": "conditions dt", "run": "steps"}
-    required |= {"thermal": "specific_heat thermal_conductivity reference_temperature", "output": "directory"}
-    case, solver, flow, run, thermal, output, restart = (
-        _toml_table(tables.get(name, {}), name, name, keys)
-        for name, keys in (required | {"restart": ""}).items()
-    )
-    if solver["kind"] != "thermal":
-        raise ValueError('a thermal run needs [solver] kind = "thermal"')
-    flow, conditions, start = _toml_flow(
-        flow, _toml_grid(_toml_table(tables.get("grid", {}), "grid", "grid", "x y z"))
-    )
-    hold_flow, temperature, source = (
-        thermal.pop(key, value)
-        for key, value in (("hold_flow", False), ("initial_temperature", 0.0), ("heat_source", 0.0))
-    )
-    boundaries = []
-    for axis, kind in zip("xyz", conditions):
-        if (axis in thermal) == (kind == "periodic"):
-            raise ValueError(f"[thermal.{axis}] is needed for a wall axis and refused for a periodic one")
-        if kind == "periodic":
-            boundaries.append(Boundary(PERIODIC))
-            continue
-        wall = _toml_table(thermal.pop(axis), "wall", f"thermal.{axis}", "kind")
-        if wall["kind"] not in ("temperature", "heat_flux"):
-            raise ValueError(f'[thermal.{axis}] kind is "temperature" or "heat_flux"')
-        ends, k = (wall.get("lower", 0.0), wall.get("upper", 0.0)), thermal["thermal_conductivity"]
-        boundaries.append(thermal_boundary(wall["kind"], *ends, conductivity=k))
-    steps, chunk = run["steps"], run.get("chunk", run["steps"])
-    if steps < 1 or chunk < 1 or steps % chunk:
-        raise ValueError("[run] steps must be a positive multiple of chunk")
-    restart = {"mode": "resume", **restart} if restart else None
-    if restart is not None and ("path" not in restart or restart["mode"] not in ("resume", "import")):
-        raise ValueError('[restart] needs a path, and mode "resume" or "import"')
-    problem = ThermalProblem(flow, tuple(boundaries), **thermal)
-    provenance = {"heat_source": float(source), "hold_flow": hold_flow}
-    if restart is not None:
-        resume = provenance if restart["mode"] == "resume" else None
-        state = load_thermal_record(base / restart["path"], problem, units=case["units"], run=resume)
-    else:
-        velocity = solve_steady_state(flow).velocity if start == "steady" else None
-        state = initial_thermal_state(problem, temperature, velocity)
-    heat = Field(jnp.full(flow.grid.shape, source, dtype=jnp.result_type(float)), _CELL, flow.grid)
-    limits = {key: run.get(f"{key}_limit") for key in ("advective_cfl", "buoyancy_courant")}
-    return ThermalRun(
-        case["name"], case["units"], problem, state, heat, hold_flow, steps, chunk,
-        float(run.get("divergence_tolerance", 1e-10)), base / output["directory"],
-        output.get("write_paraview", True), output.get("write_restart", True), provenance, limits, restart,
-    )  # fmt: skip
-
-
 def run_from_toml(path: str | Path, *overrides: str) -> dict[str, object]:
     """Run a TOML file: schema 3 (:mod:`lmhdx.config`, with ``table.key=value`` overrides) or an older one."""
     root = _load_toml(path)
@@ -1303,7 +964,7 @@ def run_from_toml(path: str | Path, *overrides: str) -> dict[str, object]:
     if overrides:
         raise ValueError("overrides apply to schema 3 files; convert this one with `lmhdx upgrade FILE`")
     if root.get("solver", {}).get("kind") == "thermal":
-        return run_thermal(thermal_run_from_toml(root, Path(path).resolve().parent))
+        raise ValueError(f"{path} is a schema 1 (thermal) file: `lmhdx upgrade FILE` converts it to schema 3")
     config = load_run_config(path)
     return _run_config(config)
 
