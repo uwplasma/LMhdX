@@ -12,6 +12,7 @@ amplitude. Sampling needs a concrete primal: use :func:`jax.grad`, or close over
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import jax
@@ -153,7 +154,7 @@ class Table:
 class Func:
     """A field ``fn(x, y, z, params) -> (Bx, By, Bz)`` sampled at the cell centres; ``params`` is any pytree."""
 
-    fn: callable
+    fn: Callable
     params: object = ()
 
     def sample(self, grid):

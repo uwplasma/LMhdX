@@ -826,7 +826,7 @@ def test_curated_examples_declare_user_facing_contracts(tmp_path: Path) -> None:
     inventory = build_inventory()["inventory"]
     curated = inventory["curated_examples"]
     assert {item["path"] for item in curated} == set(inventory["examples"])
-    assert len(curated) == 9
+    assert len(curated) == 10
     for item in curated:
         assert item["command"]
         assert item["outputs"]
