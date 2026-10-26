@@ -189,7 +189,9 @@ def test_the_open_axis_takes_an_inlet_profile_and_a_thermal_wall_its_temperature
 
     problem = fringe_duct(10.0, upstream=2.0, downstream=2.0, spacing=1.0, cells=8, cells_in_layer=2)
     profile = np.linspace(0.0, 1.0, 64).reshape(8, 8)
-    kernel, forcing, scale, rate = channel_kernel(problem.replace(bc=(Open(profile), Wall(0.02), Wall(0.02))))
+    kernel, forcing, scale, rate, _ = channel_kernel(
+        problem.replace(bc=(Open(profile), Wall(0.02), Wall(0.02)))
+    )
     assert (
         kernel.open_axis == 0
         and kernel.conditions[0].is_mixed
@@ -427,7 +429,9 @@ def test_what_cannot_be_differentiated_yet_is_refused_not_silently_zero():
     with pytest.raises(NotImplementedError, match="viscosity"):
         jax.grad(lambda nu: lmhdx.solve(base.replace(viscosity=nu)).flow_rate)(1.0)
     with pytest.raises(NotImplementedError, match="wall conductance"):
-        jax.grad(lambda c: lmhdx.solve(base.replace(bc=("periodic", Wall(c), "wall"))).flow_rate)(0.05)
+        jax.grad(
+            lambda c: lmhdx.solve(pipe(20, 16, 16).replace(bc=(Wall(c), "periodic", "periodic"))).flow_rate
+        )(0.05)
     with pytest.raises(TypeError, match="abstract"):
         jax.jit(lambda ha: lmhdx.solve(base.replace(B=Uniform(0.0, ha, 0.0))).flow_rate)(20.0)
     with pytest.raises(ValueError, match="nonzero primal"):
@@ -584,3 +588,164 @@ def test_the_beginner_example_solves_and_differentiates_the_duct(tmp_path):
     assert 1.0 < values["d(pressure gradient)/d(field strength)"] < 1.2
     drive = values["d(pressure gradient)/d(flow rate)"]
     assert drive == pytest.approx(values["pressure gradient"] / 4.0, rel=1e-6)
+
+
+# Differentiable walls (plan H4.2, T35). The drive of a flow-rate duct is the response: G(c) = dp/dx.
+
+
+def _drive(problem):
+    return lmhdx.solve(problem).pressure_gradient
+
+
+def _hunt(wall, cells=24, ha=20.0):
+    return duct(ha, cells, flow_rate=4.0, walls=dict(y=wall))
+
+
+def _central(function, x, step):
+    return (function(x * (1 + step)) - function(x * (1 - step))) / (2 * x * step)
+
+
+def test_a_walls_numbers_are_leaves_and_the_insulating_wall_is_structure():
+    assert jax.tree.leaves(Wall()) == [] and jax.tree.leaves(Wall(0.0)) == []
+    assert jax.tree.leaves(Wall(0.05)) == [0.05]
+    assert jax.tree.leaves(Wall(conductivity=2.0, thickness=0.025)) == [2.0, 0.025]
+    layered = Wall(layers=(WallLayer("a", 2.0, 0.1, 3), WallLayer("b", 0.5, 0.2, 2)), temperature=1.0)
+    leaves, tree = jax.tree.flatten(layered)
+    assert leaves == [2.0, 0.1, 0.5, 0.2]
+    assert (
+        jax.tree.unflatten(tree, leaves) == layered
+    )  # the cell counts and the thermal condition are structure
+    problem = duct(20, 24, walls=dict(y=Wall(0.05), z=Sides(Wall(), Wall(conductivity=3.0, thickness=0.1))))
+    flat, tree = jax.tree.flatten(problem)
+    assert flat[-3:] == [0.05, 3.0, 0.1] and len(flat) == 7
+    assert jax.tree.unflatten(tree, flat).bc == problem.bc
+    with pytest.raises(ValueError, match="not both"):
+        lmhdx.solve(_hunt(Wall(0.05, conductivity=1.0, thickness=0.05)))
+    with pytest.raises(ValueError, match="together"):
+        lmhdx.solve(_hunt(Wall(conductivity=1.0)))
+    with pytest.raises(ValueError, match="conducting fluid"):
+        lmhdx.solve(duct(0, 24, flow_rate=4.0, walls=dict(y=Wall(conductivity=1.0, thickness=0.05))))
+
+
+def test_the_thin_wall_forms_its_conductance_from_conductivity_and_thickness():
+    by_conductance = lmhdx.solve(_hunt(Wall(0.05)))
+    by_material = lmhdx.solve(_hunt(Wall(conductivity=2.0, thickness=0.025)))
+    assert _same(
+        (by_material.velocity, by_material.potential), (by_conductance.velocity, by_conductance.potential)
+    )
+    # c = sigma_w t_w / sigma: a wall as conducting as a fluid of twice the conductivity is half as conducting.
+    heavy = _hunt(Wall(conductivity=2.0, thickness=0.05)).replace(conductivity=2.0)
+    assert _same(
+        lmhdx.solve(heavy).velocity, lmhdx.solve(heavy.replace(bc=("periodic", Wall(0.05), "wall"))).velocity
+    )
+
+
+def test_the_wall_conductance_derivative_meets_the_derivative_standard():
+    """T35: central differences with the plateau, Taylor order 2, JVP against VJP, and one program for every value."""
+    lmhdx.enable_x64()
+
+    def drive(c):
+        return _drive(_hunt(Wall(c, conducting=True)))
+
+    value, slope = jax.value_and_grad(drive)(0.05)
+    assert float(value) == pytest.approx(float(_drive(_hunt(Wall(0.05)))), rel=1e-9)
+    for step in (1e-3, 1e-4):
+        assert float(slope) == pytest.approx(float(_central(drive, 0.05, step)), rel=1e-6)
+    assert float(jax.jvp(drive, (0.05,), (1.0,))[1]) == pytest.approx(float(slope), rel=1e-9)
+    remainders = [
+        abs(float(drive(0.05 + eps)) - float(value) - eps * float(slope)) for eps in (0.016, 0.008, 0.004)
+    ]
+    assert 3.6 < remainders[0] / remainders[1] < 4.4 and 3.6 < remainders[1] / remainders[2] < 4.4
+    # A new conductance is a new argument of the same compiled program: no retrace, no recompile.
+    from lmhdx.solver import _program
+
+    objective, before = jax.jit(jax.grad(drive)), _program.cache_info()
+    values = [float(objective(c)) for c in (0.03, 0.05, 0.07)]
+    assert objective._cache_size() == 1 and _program.cache_info().misses <= before.misses + 1
+    assert values[1] == pytest.approx(float(slope), rel=1e-9) and values[0] > values[1] > values[2] > 0.0
+    sweep = jax.vmap(jax.grad(drive))(jnp.array([0.03, 0.05, 0.07]))
+    np.testing.assert_allclose(sweep, values, rtol=1e-9)
+
+
+def test_conductivity_and_thickness_are_distinct_directions_of_the_conductance():
+    sigma, thickness = 2.0, 0.025
+
+    def drive(k, t):
+        return _drive(_hunt(Wall(conductivity=k, thickness=t)))
+
+    c_slope = jax.grad(lambda c: _drive(_hunt(Wall(c))))(sigma * thickness)
+    d_k, d_t = jax.grad(drive, argnums=(0, 1))(sigma, thickness)
+    assert float(d_k) == pytest.approx(
+        thickness * float(c_slope), rel=1e-9
+    )  # the chain rule, each through its own leaf
+    assert float(d_t) == pytest.approx(sigma * float(c_slope), rel=1e-9)
+    assert float(d_k) == pytest.approx(float(_central(lambda k: drive(k, thickness), sigma, 1e-3)), rel=1e-6)
+    assert float(d_t) == pytest.approx(float(_central(lambda t: drive(sigma, t), thickness, 1e-3)), rel=1e-6)
+    mixed = jax.jvp(drive, (sigma, thickness), (0.3, -0.7))[1]
+    assert float(mixed) == pytest.approx(0.3 * float(d_k) - 0.7 * float(d_t), rel=1e-9)
+    assert abs(float(d_k) / float(d_t) - thickness / sigma) < 1e-9 and float(d_t) > 0.0
+
+
+def test_the_wall_leaves_of_a_problem_pair_forward_and_reverse_mode():
+    base = _hunt(Wall(0.05)).replace(bc=("periodic", Wall(0.05), Wall(conductivity=1.5, thickness=0.04)))
+
+    def response(problem):
+        found = lmhdx.solve(problem)
+        return jnp.concatenate([found.velocity[0].data[0, ::5, ::5].ravel(), found.pressure_gradient[None]])
+
+    leaves, tree = jax.tree.flatten(base)
+    assert len(leaves) == 8
+    keys = jax.random.split(jax.random.PRNGKey(3), 2)
+    tangent = jax.tree.unflatten(tree, [jax.random.normal(keys[0], jnp.shape(leaf)) for leaf in leaves])
+    primal, forward = jax.jvp(response, (base,), (tangent,))
+    reverse = jax.vjp(response, base)[1](weight := jax.random.normal(keys[1], primal.shape))[0]
+    right = sum(
+        float(jnp.vdot(a, b)) for a, b in zip(jax.tree.leaves(tangent), jax.tree.leaves(reverse), strict=True)
+    )
+    assert float(jnp.vdot(forward, weight)) == pytest.approx(right, rel=1e-8)
+    assert all(np.isfinite(np.asarray(g)).all() for g in jax.tree.leaves(reverse))
+
+
+def test_resolved_layers_differentiate_in_conductivity_and_thickness_as_the_thin_wall_does_to_a_percent():
+    def drive(k, t):
+        return _drive(_hunt(Wall(layers=(WallLayer("steel", k, t, 6),)), cells=32))
+
+    k, t = 1.0, 0.05
+    d_k, d_t = jax.grad(drive, argnums=(0, 1))(k, t)
+    assert float(d_k) == pytest.approx(float(_central(lambda x: drive(x, t), k, 1e-3)), rel=1e-6)
+    assert float(d_t) == pytest.approx(float(_central(lambda x: drive(k, x), t, 1e-3)), rel=1e-6)
+    thin = jax.grad(lambda x: _drive(_hunt(Wall(conductivity=k, thickness=x), cells=32)))(t)
+    assert float(d_t) == pytest.approx(float(thin), rel=1e-2) and float(d_t) != float(thin)
+    # Measured 0.76 % and 0.55 %: Hunt's wall depends on the product, to the percent by which a resolved wall differs from a thin one.
+    assert float(d_k * k / (d_t * t)) == pytest.approx(1.0, rel=1e-2)
+
+
+def test_two_conducting_axes_differentiate_through_the_corner_correction():
+    both = duct(20, 24, flow_rate=4.0, walls=dict(y=Wall(0.05), z=Wall(0.1)))
+    for index, c in ((1, 0.05), (2, 0.1)):
+
+        def drive(x, index=index):
+            walls = [Wall(0.05), Wall(0.1)]
+            walls[index - 1] = Wall(x)
+            return _drive(both.replace(bc=("periodic", *walls)))
+
+        assert float(jax.grad(drive)(c)) == pytest.approx(float(_central(drive, c, 1e-3)), rel=1e-6)
+
+
+def test_the_wall_derivative_is_refused_where_it_is_not_defined_or_not_yet_available():
+    lmhdx.enable_x64()
+    with pytest.raises(ValueError, match="insulating"):
+        jax.grad(lambda c: _drive(_hunt(Wall(c))))(0.0)
+    with pytest.raises(TypeError, match="conducting=True"):
+        jax.jit(lambda c: _drive(_hunt(Wall(c))))(0.05)
+    with pytest.raises(NotImplementedError, match="one conductance"):
+        jax.grad(
+            lambda c: _drive(_hunt(Wall(c)).replace(bc=("periodic", Sides(Wall(c), Wall(2.0 * c)), "wall")))
+        )(0.05)
+    # An open duct and an unsteady run take the primal; their derivative in a wall number is NaN, not a silent zero.
+    small = dict(_SMALL_FRINGE) | dict(wall_conductance=0.02)
+    fringe = fringe_duct(10.0, **small)
+    gradient = jax.grad(lambda q: lmhdx.solve(q).pressure_drop(-1.0, 1.0))(fringe)
+    assert np.isnan(float(gradient.bc[1].conductance)) and np.isfinite(float(gradient.flow_rate))
+    exact = lmhdx.solve(fringe.replace(bc=(Open(), Wall(jnp.asarray(0.02)), Wall(0.02))))
+    assert float(exact.pressure_drop(-1.0, 1.0)) == float(lmhdx.solve(fringe).pressure_drop(-1.0, 1.0))

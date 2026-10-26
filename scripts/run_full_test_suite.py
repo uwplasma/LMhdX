@@ -78,6 +78,7 @@ _TEST_SHARDS = {
             "test_the_adjoint_matches_finite_differences_in_a_varying_field",
             "test_a_rejected_root_cannot_produce_a_finite_objective_or_gradient",
             "test_a_failed_tangent_solve_is_rejected_eagerly_and_under_jit",
+            "test_the_wall_adjoint_matches_finite_differences_in_a_varying_field",
         )
     ),
     "physics": (
