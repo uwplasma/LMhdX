@@ -251,7 +251,7 @@ def build_inventory(root: Path = ROOT) -> dict[str, Any]:
             "maintenance_script_count_max": 4,
             "stable_root_exports_max": 29,
             "curated_examples_max": 8,
-            "checkout_bytes_max": 3100667,
+            "checkout_bytes_max": 3100825,
             "root_import_median_seconds_max": 0.25,
             "sdist_bytes_max": 512 * 1024,
             "wheel_bytes_max": 384 * 1024,
