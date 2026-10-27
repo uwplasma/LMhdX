@@ -1521,7 +1521,7 @@ def test_the_spectral_nusselt_reference_meets_the_exact_series():
     H1 double-sine series, H2's 3.08738 (Wang; the package's Richardson value) and T's 2.97753, on 32 points."""
     from validation.shercliff import developed_nusselt
 
-    assert developed_nusselt(0.0, 32) == pytest.approx(_h1_nusselt(1.0, 1.0), rel=1e-7)
+    assert developed_nusselt(0.0, 32) == pytest.approx(h1_series(1.0, 1.0), rel=1e-7)
     assert developed_nusselt(0.0, 32, heating="H2") == pytest.approx(3.08738, rel=1e-5)
     assert developed_nusselt(0.0, 32, heating="T") == pytest.approx(_SQUARE_T, rel=1e-5)
 
