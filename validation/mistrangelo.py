@@ -7,7 +7,8 @@ cells on both transverse axes, which LMhdX supports today. The paper's developed
 ``sigma u0 B0^2`` (p. 8), then fixes the wall's conductivity ratio (:func:`infer_wall_ratio`). The ratio is
 pinned in the specification, beside the measured value it differs from by 5.3 %.
 
-``python -m validation.mistrangelo`` prints the check on three meshes, and at Matolich's measured ratio.
+``python -m validation.mistrangelo`` prints the check on three meshes, and at Matolich's measured ratio. The
+reference curves it compares against are written by ``scripts/digitize_mistrangelo.py``.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from lmhdx.steady import solve_steady_state
 
 __all__ = [
     "PIN_MESH",
+    "REFERENCES",
     "SPEC",
     "developed_gradient",
     "developed_section",
@@ -175,6 +177,11 @@ def infer_wall_ratio(
         a, fa, b = b, fb, b - fb * (b - a) / (fb - fa)
         fb = residual(b)
     return float(b)
+
+
+# The reference curves of plan step 5.4a, written by ``scripts/digitize_mistrangelo.py`` (ADR 0009 D38).
+
+REFERENCES = _DATA / "references" / "mistrangelo2025-case1.json"
 
 
 def main() -> None:

@@ -134,6 +134,115 @@ axes, at Ha 235 (`python -m validation.mistrangelo`).
 - the 48/6 section's gradient, within 0.5 % of 0.0863. This is a mesh-convergence
   check of the pin, not of the paper.
 
+## Reference curves (Case 1)
+
+`src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json` holds
+Figures 6–13, read by `scripts/digitize_mistrangelo.py`.
+
+- The figures are xmgrace plots embedded in the PDF as images.
+- They are extracted with `pymupdf` (`Document.extract_image(xref)`).
+  `python scripts/digitize_mistrangelo.py DIR` regenerates the file from them
+  byte for byte, and writes every code's curve to
+  `DIR/mistrangelo2025-case1-curves.json`. The images are not in the
+  repository, so the digitizer is not in the package or in `validation/`.
+- The images and the per-code curves, the extraction's intermediates, are a
+  release asset, since the paper is CC BY 4.0. Part 2 records them in
+  `benchmarks/provenance.json` with their SHA-256s.
+- Each record carries:
+  - the image's PDF page (the journal's is one less), xref and SHA-256;
+  - the axis calibration;
+  - whether the y axis is logarithmic (`y_scale`);
+  - the codes it omits, and why;
+  - whether the paper or my reading chose the band's codes (`agree_basis`).
+- The file is 52 KB for these figures. A record keeps the band and the curves
+  that are not one of the six codes: Figure 13's analytical markers and
+  Figure 11's stations.
+  - Each is simplified to within half a pixel of every extracted pixel column,
+    with nothing decimated before. The kept vertices keep their extracted x,
+    and the values are rounded to a tenth of a pixel.
+  - Against the full extraction, every record is within 0.51 px, log axes in
+    decades.
+  - The per-code curves, every column of them, are not shipped: they are in
+    the release asset.
+
+**How a figure is read.**
+- **Frame and ticks.** The plot frame, its legend and the major ticks outside
+  the frame are found in the image.
+- **Calibration.**
+  - Two labelled anchors per axis label the detected ticks.
+  - Every tick inside the frame must land on the axis's label lattice, and at
+    least three ticks must. A tick on a frame line counts only where it lands
+    on the lattice. A wrong anchor value is an error.
+  - The map is the least-squares fit to those ticks. Every axis fits within
+    0.5 px.
+- **Curves.** Each code is picked out by its colour: one value per pixel
+  column, the median of that colour's pixels.
+  - A curve that covers under 1 % of the columns is omitted, as hidden.
+  - In Figure 13, the analytical solution's open red circles are split from the
+    rest of the red by shape. CFX's line cannot be separated from the markers,
+    so it is omitted there.
+  - The analytical solution has no samples at the jets' peaks: its markers
+    merge with the lines there.
+
+**What each record holds.**
+- **A band.** The spread of the codes that the paper says agree, with the page
+  where it says so. Where it does not, the choice is mine, marked "as read" and
+  `agree_basis = "my reading"`.
+  - Each code's curve has its gaps of up to 15 px (a dash period) closed
+    before the spread is taken.
+  - The band records how many codes it spans at each sample.
+  - Where the paper limits the agreement, as in Figure 6 (−0.75 < x < 0.8 m,
+    p. 7), the band keeps to that window. This is what a gate can use.
+- **The curves** that are not a code's: the analytical markers and the
+  stations. A code's own curve, read in full by `digitize`, is not shipped.
+  Where curves coincide, the one drawn on top hides the rest, so
+  FLUENT_CIEMAT's black is seldom visible.
+
+**The digitizing uncertainty** is in each record, `uncertainty`, per axis in
+the axis's units. It sums three parts, 2.3–2.5 px in all:
+- the read line, within 1.5 px;
+- the compact record, within 0.6 px of it (both bounds are from the synthetic
+  figure below);
+- the axis's calibration misfit, which each axis also carries in its units
+  (`misfit`).
+
+The band's spread is the codes', apart from it. A comparison's acceptance band
+is the two combined (ADR 0009 D35). For scale:
+
+| | x per px | y per px |
+|:--|--:|--:|
+| Figure 6 | 0.0047 m | 0.028 K |
+| Figure 12 | 7.9e-5 m | 2.3e-4 m/s |
+
+**Two checks.**
+- **The pressure scale.** Figure 8's band slope over |x| < 0.4 m is
+  −568.8 Pa/m. The printed −0.0855, taken in σu₀B₀² with the pinned PbLi,
+  gives −564.5 Pa/m, 0.8 % apart.
+  - This confirms the σu₀B₀² scale (`tests/test_steady.py`, within 1 %).
+  - It cannot tell the pinned σ from Martelli's, which is 0.4 % away
+    (−566.9 Pa/m).
+- **The developed section against Figure 13's analytical solution.**
+  - In the core (|z| ≤ 0.7 a) the section on the pin's 96/12 mesh lies within
+    2.09 px of each of the markers' 37 columns, 0.62 % low on average. This is
+    gated, within the record's uncertainty (2.44 px) and 1 %.
+  - On the steep flanks of the jets, one value per column is a poor trace.
+  - The section's jets are 0.0841 m/s. The codes' band peaks at 0.0850 on the
+    heated side and 0.0821 on the other, at x = 0, where buoyancy makes them
+    unequal.
+  - At x = −0.3 m (Figure 12), only 0.1 m into the uniform field, the codes'
+    jets are 0.081 m/s: the flow there is still developing.
+
+`tests/test_steady.py` checks:
+- every record, with `_check_reference_record`: its hash, its calibration
+  within 0.6 px, its uncertainty, its band and curves;
+- the developed section's core against Figure 13;
+- the digitizer itself, on a synthetic figure in CI. It is a drawn frame with
+  ticks, a solid and a dashed line and rings. The compact record must keep the
+  band within 0.6 px, and a wrong tick label must be refused.
+
+Figures 15–19 and 38, and Case 2's, follow in later parts, with the sources in
+`benchmarks/provenance.json`.
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
