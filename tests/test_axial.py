@@ -117,19 +117,37 @@ def test_the_open_stokes_operator_is_symmetric_in_the_face_volume_inner_product(
     assert float(jnp.max(jnp.abs(first[0].data[0]))) == 0.0, "the correction has no inlet flux"
 
 
-def test_a_uniform_field_duct_is_its_fully_developed_flow_to_round_off():
-    """With nothing to develop, the open duct reproduces the inlet profile and its gradient everywhere."""
+@pytest.mark.parametrize("walls", ["thin", "resolved"])
+def test_a_uniform_field_duct_is_its_fully_developed_flow_to_round_off(walls):
+    """With nothing to develop, the open duct reproduces the inlet profile and its gradient everywhere, its walls
+    thin or resolved in cells. The inlet section is solved, and the open duct built, with the duct's own walls:
+    the profile is the walled section's own developed flow, which it was not when resolved walls were dropped."""
+    import dataclasses
+
+    from lmhdx.steady import solve_steady_state
+
     base = _small_fringe(spacing=1.0, upstream=2.0, downstream=2.0)
+    layer = ((0.2, 0.2), (0.05, 0.05))  # c = 0.02, as the thin walls
     uniform = ChannelProblem(
         grid=base.grid,
         conditions=(BoundaryCondition(PERIODIC), _WALL, _WALL),
         conductivity=1.0,
         magnetic_field=(0.0, 10.0, 0.0),
-        wall_conductance=(0.0, 0.02, 0.02),
         dt=1.0,
+        **(
+            {"wall_conductance": (0.0, 0.02, 0.02)}
+            if walls == "thin"
+            else {"wall_layers": (None, (layer, layer), None)}
+        ),
     )
     problem = open_duct(uniform, 4.0)
-    _, gradient = fully_developed_inlet(problem, 4.0)
+    profile, gradient = fully_developed_inlet(problem, 4.0)
+    assert problem.wall_layers == uniform.wall_layers
+    section = Grid(uniform_faces(1, 0.0, 1.0), uniform.grid.y_faces, uniform.grid.z_faces)
+    periodic = dataclasses.replace(uniform, grid=section, forcing=(1.0, 0.0, 0.0))
+    own = np.asarray(solve_steady_state(periodic, tolerance=1e-9).velocity[0].data[0])
+    own = own * 4.0 / float(np.sum(own * section.face_areas(0)[0]))
+    np.testing.assert_allclose(profile, own, rtol=0, atol=1e-8 * np.max(own))
     solution = solve_open_duct(problem)
     axial = np.asarray(solution.velocity[0].data)
     np.testing.assert_allclose(

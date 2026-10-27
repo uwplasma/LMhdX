@@ -1216,7 +1216,7 @@ def _corner_fix(factorization: FastDiagonalThinWallPoisson, grid: Grid, axes: li
             )
         )
     corner = wall[0][:, None] & wall[1][None, :]
-    nearer_first = depth[0][:, None] <= depth[1][None, :]
+    nearer_first = _nearer_first_wall(depth[0], depth[1])
     sigma = np.where(
         corner,
         np.where(nearer_first, ratio[0][:, None], ratio[1][None, :]),
@@ -1269,6 +1269,16 @@ def _corner_fix(factorization: FastDiagonalThinWallPoisson, grid: Grid, axes: li
     projected = solved.reshape(basis.shape[1], -1)[:, indices] @ basis
     capacitance = np.linalg.inv(np.diag(1.0 / eigenvalues) + projected)
     return indices, basis, capacitance, difference
+
+
+def _nearer_first_wall(first: np.ndarray, second: np.ndarray) -> np.ndarray:
+    """Where a corner cell at depths ``first`` and ``second`` into two axes' walls is nearer the first axis's wall.
+
+    Depths equal to rounding are ties, which go to the first axis: walls of equal cells on both axes would
+    otherwise split their corners by the rounding of their centres, unevenly about the duct's middle.
+    """
+    scale = np.maximum(np.abs(first)[:, None], np.abs(second)[None, :])
+    return first[:, None] <= second[None, :] + 1e-9 * scale
 
 
 def _corner_gain(vectors, values, scales, edge: int) -> np.ndarray | None:
