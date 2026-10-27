@@ -46,7 +46,7 @@ serve one benchmark; *gate* = a measured condition with a stated tolerance.
 | G5 | Parallelised with strong scaling | **not met, measured**: two A4000s run the Q2D solve to a bit-identical answer but at 0.25 efficiency in float64 and 0.14 in float32 at 2048², because the cards are PCIe-joined with no NVLink and the unaided partitioning of a 2-D transform all-gathers every step. Split from 2026-09-13: **G5a** ensembles across the two cards (Ha sweeps, design, gradient checks) at ≥ 0.9 efficiency; **G5b** spatial decomposition only where a run does not fit one card, or ≥ 0.6 measured at 256³ with an explicit slab (step 2.4b) |
 | G6 | FreeMHD, OpenFOAM and other codes as inspiration | Ni et al. consistent-and-conservative scheme (FreeMHD, HIMAG, epotFoam, MHD-UCLA); CaNS / CaNS-EIGEN and Oceananigans for mixed transform–tridiagonal Poisson solves; Krasnov et al. 2023 for the thin wall inside a direct solver; jax-cfd solver architecture; jaxDecomp for distributed transforms |
 | G7 | B1/B2 validation | **tiered (D20)**: ANL analytic fringe within 1 %; B2 axial pressure gradient within 5–10 % of experiment through the inertialess core-flow model with the measured field and the pressure-tap correction, transverse Δp by shape and sign; code-to-code (FreeMHD, core-flow model, 3-D core at moderate N) within 1–2 %; B1 through the core-flow model; a resolved 3-D B2 only as a cost-bounded cross-check |
-| G8 | Retire experimental lanes | The B1/B2 and generic extruded lanes (6,002 lines) deleted from `main` after the new core carries the fully developed cases at parity (1.10b) and the fringing rows 6–7 (1.9); history kept at `lmx-b2-lane-v1` |
+| G8 | Retire experimental lanes | The B1/B2 and generic extruded lanes (6,002 lines) deleted from `main` after the new core carries the fully developed cases at parity (1.10b) and the fringing rows 6–7 (1.9); history kept at `lmx-b2-lane-v1`, a record of the retired lane, not a production claim |
 | G9 | Useful design results | A fully developed inverse-design example and a device-informed channel example with verified gradients |
 | G10 | Thermal channel physics | Passive-scalar energy equation with conjugate walls on the new core, verified against laminar limits |
 | G11 | Steady solves and adjoints at blanket Ha | Certified adjoints to Ha 1000 in the regression tier (today the tests stop at Ha 5 and the shipped tangent solve fails at Ha 300); a 3-D 128³ steady solve within 16 GB; Krylov iterations reported against Ha |
@@ -99,6 +99,11 @@ loop, explicit precision, VJP NaN) or superseded by the rows below.
 | Benchmark provenance | `benchmarks/results/*.json` name commit `a0b2c2b-dirty`, which no longer exists after the #122 history rewrite; the office nightly of #75 is not deployed; GPU step times vary 2× between runs on the shared box (128³ float32: 4.0 ms recorded, 8.7 ms on 2026-09-13) | 2.0, 2.3 — **partly resolved: #142 carries provenanced GPU reports; the CPU pair and the JSON on `main` remain** |
 
 ### 2.3 Pull-request state after this review
+
+*Historical, as of 2026-09-13.* By 2026-10-22, #130 and #75 are closed, #142
+is closed without merging and #123 is merged. The current state is the
+capability table and its open blockers in the thermal status section below,
+and plan H.10.9 once Program H lands.
 
 | PR / issue | Disposition |
 |---|---|
@@ -1368,6 +1373,102 @@ Step 5.1 is the fluid-only temperature equation of D31, one pull request per
 row. Conjugate walls, inlet-outlet transport, higher-order transport and
 variable properties are later steps, added when a step below needs them.
 
+**Current status (2026-10-19).** Steps 5.1–5.3 and 5.6 are merged, as #266
+(the integration of #230–#265) and #267 (its cleanup), and released in 1.11.0.
+Two of D31's later steps now exist in a narrower form: inlet-outlet transport
+on a held flow (5.3) and a limited second-order face value
+(`advection="van_leer"`). Still pending:
+
+- evolving open-duct flow, with or without buoyancy;
+- higher-order time integration;
+- conjugate walls;
+- variable properties;
+- polar thermal transport (the pipe).
+
+The capability table below is the current claim. ADR 0008's last section is
+the matching record, and says what is not yet compared or validated. The step
+table after it records how 5.1–5.3 and 5.6 were built and what 5.4–5.5 still
+need.
+
+The statuses are:
+
+- *implemented*: in `main` with tests;
+- *verified*: against an exact or independent reference, at a measured order;
+- *compared*: code to code;
+- *validated*: against experiment.
+
+| Capability | Status | Evidence | Boundary of the claim |
+|---|---|---|---|
+| Fluid heat equation: implicit conduction, upwind transport, Joule and external heat (5.1) | verified | conduction at second order, upwind at first, measured; Joule integral equal to `energy_budget(...).joule` within 1e-11; ledger at its rounding floor; manufactured advection–diffusion | constant properties; fluid only |
+| Limited transport, `advection="van_leer"` (D31.2) | verified, steady | face value at order 1.95 and 1.98 on the open duct's plug flow; gradients against central differences on the buoyant duct | coupled step first order in time; Courant limit 0.5 is a tested envelope; not affine, so no load attribution |
+| Boussinesq buoyancy (5.1e, D32) | verified | `β = 0` matches `step`; first order in dt; Bénard onset at the critical Rayleigh number | research-stage, outside the 2.0 gates; gravity along a periodic axis refused while `β > 0`; no buoyancy on an open duct (a held flow refuses it, an evolving one is refused outright); tested with momentum transport off only |
+| Developed duct (5.2, D33) | verified | H1 against the exact double-sine series (square, aspect 0.5, slug flow) at second order; H2 against 3.091 as cited (secondary); Hartmann plates against their closed form | Shah & London's tables not inspected; uniform wall temperature and the pipe: pending |
+| Open duct on a held flow (5.3, D31.1) | verified | the exact plug-flow profile at first order (upwind; 1.95 and 1.98 with van Leer); a manufactured returning-outlet solution at first order; inlet, outlet, Joule, wall heat and storage balance to 1e-6 on the heated Hunt duct; the reservoir derivative lives on returning faces only | held flow only; a returning outlet face needs a reservoir temperature or is refused |
+| Load attribution | implemented | the credited load balances to 1e-12; the delivered fraction within 0.03 of the exact steady value on one mesh | upwind or no transport; the load must not move the flow |
+| Runs from TOML, restart, VTK, CLI acceptance (5.6) | implemented | restart bit for bit through `lmhdx case.toml`; VTK XML layout checked by parsing it | closed ducts only (open ducts run from Python); acceptance checks the declared numerical policies, not engineering limits; no test opens ParaView |
+| Thermal design (5.5) | pending | — | — |
+| Conjugate walls, evolving open coupling, Mistrangelo et al. 2025 | pending | — | step 5.4 |
+
+**Open blockers** (known defects that bound the claims above):
+- the stabilised transient momentum step does not keep a pressure-balanced
+  state at rest with the field along `y`: it picks up a spurious velocity that
+  shrinks with the time step;
+- the momentum reconstruction on stretched and periodic grids uses raw index
+  differences and mirrored end widths.
+
+Steady and held-flow results are not affected: thermal transport on a held
+flow is supported, and the validation of thermal transport on a moving flow is
+blocked on the corrected momentum step.
+
+**Unresolved, kept visible:**
+- ALEX B1's pressure tap: row 6 is met at a side-wall tap (0.86 / 1.39) and not
+  for the section-mean pressure (2.4 / 5.1). Which one the experiment used is
+  to be confirmed from its record, since choosing the tap by agreement would be
+  calibration.
+- The thermal references: H2's 3.091 is a secondary citation, and Shah &
+  London's tables are not inspected.
+
+**Interfaces of a thermal run (5.6, after #267).**
+
+- `lmhdx.io.thermal_run_from_toml` reads a parsed TOML document and checks
+  `schema_version = 1` (`docs/reference/cli.md`).
+- `io.run_thermal` accepts every sample on the host: finite, a valid outlet,
+  within the scheme's Courant limit and any configured buoyancy limit. A
+  rejected run stops after the chunk holding its first failing sample, reports
+  that sample, and writes the chunk's end state as a record that imports but
+  does not resume.
+- `io.write_vtr` is the one rectilinear writer.
+- `thermal.write_thermal_record` and `load_thermal_record` write and read the
+  versioned record with its provenance (`docs/how_to/restart_and_output.md`).
+
+**Derivatives** (validation row 20). A prepared step (`build_thermal_step`) is
+bound on the host to its problem's properties, time step, boundary data and
+precision. A gradient is supported only in what the step or solve takes as
+input:
+
+| Input | Kind | Path | Tested against |
+|---|---|---|---|
+| initial temperature | leaf | `advance_thermal`, plain and checkpointed | central differences within 1e-5, upwind and van Leer; the checkpointed gradient equal to the plain one within 1e-12 |
+| external heat source | leaf | `advance_thermal` | central differences within 1e-5, both schemes |
+| reservoir temperature | leaf | open duct on a held flow | central differences within 1e-8 (upwind) and 1e-7 (van Leer) |
+| field scale, through the steady velocity | leaf | developed duct after the steady solve | central differences within 1e-5 (`dNu`) |
+| heat source and axial gradient `γ` | leaf | developed duct | stated in `docs/physics/thermal.md`, not yet tested |
+| velocity (initial, or the held flow) | leaf | the thermal state | supported, not yet tested |
+| the flow, for the developed duct at a uniform wall temperature (pending) | leaf | its eigenvalue | the first derivative of Nu at a converged solve only; no profile sensitivity, no second derivative |
+| wall conductance and wall thickness | planned | the 2.0 problem, as traced leaves | — |
+| conductivity, heat capacity, `σ`, `β`, `g`, `T_r`, the magnetic field, density, viscosity, `dt`, geometry, boundary data | rebuild only | bound on the host by a prepared step | not differentiable through it: rebuild the problem and the step (and the boundary data when `k` or a flux changes, since a flux is stored as `q/k`) |
+
+**Size.** The 2026-10-19 log row's remaining target, about 1,100 lines in
+`thermal.py`, is retired. A thermal change is judged on:
+
+- total package size;
+- duplication;
+- import dependencies;
+- measured cost.
+
+Redundant exposition is shortened first. The developed duct stays with the
+thermal physics unless a better boundary is shown.
+
 | Step | Action | Exit |
 |---|---|---|
 | 5.1a **done** (#231) | `core3d`: the current-to-Lorentz-force map of `electric_state` and the predictor and projection of `step` become two private helpers; the second takes an optional face force density. `step` keeps its signature and result | `step` before and after agree to its existing tolerance (identical where the arithmetic is unchanged): explicit and implicit viscosity, insulating, thin and resolved walls, stretched cells, a one-cell periodic axis |
@@ -1378,11 +1479,11 @@ variable properties are later steps, added when a step below needs them.
 | 5.1f **done** (#237) | Coupled step and heat ledger | ledger residual at its rounding and solve floor; manufactured advection–diffusion; temperature and velocity first order in dt |
 | 5.1g **done** (#238) | `advance_thermal`: scan, derivatives, compilation | scan equals eager steps; gradients in initial temperature and source within 1e-5 of central differences; no retrace for value changes; no field history in the loop |
 | 5.1h **done** (#239) | `docs/physics/thermal.md`: equations, envelope, failure behaviour, an executable workflow exercised by a test; cold, warm and memory record | docs build with `-W`; workflow test |
-| 5.2 **done** (#240) | Thermally fully developed duct (D33): one periodic axial cell, uniform axial heat input, steady transverse solve; bulk temperature by enthalpy-flux weighting; Nusselt number and peak wall temperature with implicit gradients. Pipe values (Nu = 48/11, 3.66) wait for a polar thermal operator | rectangular-duct Nusselt numbers (Shah & London) within 0.5 %; heat balance closed |
+| 5.2 **done** (#240) | Thermally fully developed duct (D33): one periodic axial cell, uniform axial heat input, steady transverse solve; bulk temperature by enthalpy-flux weighting; Nusselt number and peak wall temperature with implicit gradients. The pipe's 48/11 and 3.66 followed on the polar grid (log, 2026-10-19) | rectangular-duct Nusselt numbers (Shah & London) within 0.5 %; heat balance closed |
 | 5.3 **done** (#241) | Heated Hunt duct with Joule heating; balance of inlet/outlet enthalpy, heat input, Joule heating, storage (needs inlet-outlet transport) | balance to 1e-6 |
-| 5.4 | Mistrangelo et al. 2025 heated conducting duct (Ha 235; needs inlet-outlet transport and conjugate walls) | comparison figure; deviations explained |
+| 5.4 | Mistrangelo et al. 2025 heated conducting duct (Ha 235; needs inlet-outlet transport and conjugate walls). Its substeps and their exits are set by ADR 0009 (proposed) | comparison figure; deviations explained |
 | 5.5 | First thermal design: replace the mean-velocity bound of the duct design law (3b.3) with 5.2's peak wall temperature or Nusselt number; minimise hydraulic power subject to heat removal, temperature, throughput and geometry constraints; distinguish fixed-flow from fixed-pump-power comparisons | feasible candidate confirmed on a finer mesh |
-| 5.6 **done** (#259, #260, #262) | Thermal runs read from TOML, restart from a versioned record of the staggered velocity, temperature and time, and write ParaView output, as the isothermal paths do; explicit schema, version and units (review of #239) | a TOML-driven thermal run restarts bit for bit and opens in ParaView. *Met as:* the restart bit for bit, through `lmhdx case.toml`; the VTK XML layout checked by parsing it, x varying fastest. No test opens it in ParaView |
+| 5.6 **done** (#259, #260, #262) | Thermal runs read from TOML, restart from a versioned record of the staggered velocity, temperature and time, and write ParaView output, as the isothermal paths do; explicit schema, version and units (review of #239) | a TOML-driven thermal run restarts bit for bit and opens in ParaView. *Met as:* the restart bit for bit, through `lmhdx case.toml`; the VTK XML layout checked by parsing it, x varying fastest. No test opens it in ParaView. |
 
 Effort: estimated per step in the step 5.1 issue.
 
@@ -1441,6 +1542,12 @@ stack, no Q2D trims below a profiled 10 %, no thermal or device work before
 1.10b.
 
 ### Order of work from 2026-09-22
+
+Its thermal and device embargo (D21) is lifted: 1.10b (#166) and 1.9c (#163)
+have merged. Phase 5's steps 5.1–5.3 and 5.6 are merged (#266, #267); its
+current work is the status table and steps 5.4–5.5 in Phase 5. The rest of
+this block stands, and so does Section 9's limit on open PRs outside Phases
+1, 2 and 4 (D21) until 4.6 lands.
 
 Decided with the owner on 2026-09-22: the name stays LMX, 1.9c comes before
 1.9b, and G4 is restated (ADR 0006). The critical path is now 1.9c → 1.9d →
@@ -2197,7 +2304,7 @@ those steps start.
 | 3 | Shercliff | Ha 20–10⁴ | Table I flow rates (Smolentsev 2015) | 0.5 % | 1.7 |
 | 4 | Hunt | Ha 20–10⁴, c 0.01–0.1 | series; Table I | 0.5 %; wall current 1 % | 1.7 |
 | 5 | Conducting pipe | Ha 100–6600, c 0.027 | Chang–Lundgren / Gold | 0.5 % | 1.8 |
-| 6 | Fringing duct, code-to-code and experiment (D27) | Mistrangelo et al. 2025 six-code benchmark (Ha 235, fringe of the KIT MaPLE magnet); ALEX pipe as in Ni et al. 2007 Part II (Ha 6640, domain −20a/+15a) | published code-to-code scatter; uniform-region ∂p/∂x −0.0863 analytic | inside the published scatter; 1 % on the uniform-region gradient | 1.9d *Status (2026-10-05)*: run on the ALEX B1 pipe (packaged data; the 2025 case needs buoyancy and has no packaged reference), with `lmhdx.axial.solve_open_pipe` in the Stokes limit at Ha 6600, c 0.027, the measured field table: cross-section and axial mesh converged (≤ 3e-5 per station); upstream gradient 0.0266 against 0.0250 (inside the 0.002 uncertainty), integrated excess −3.3 % (frozen gate 10 %), station-wise weighted RMS 2.4 and L∞ 5.1 (frozen 1 and 2): **not met station by station**. The model peaks at x = −3 and falls faster than the data downstream (x ≥ −1), where the local N b² drops to 600–40 at Re ≈ 4,100; inertia there is the named candidate, not tested *Revised (2026-10-20)*: the shape gap is the observable, not the model: the wall pressure at the walls parallel to the field gives RMS 0.86 / L∞ 1.39 (met), the section mean 2.4 / 5.1; the tap position is not in the packaged data and must be confirmed from the ALEX report; interpolant, table uncertainty and c do not move it (log 2026-10-20) *Scope (R3, 2026-10-15)*: not met station by station; the inertia hypothesis is untested (Newton on the open axis costs hours, #225) |
+| 6 | Fringing duct, code-to-code and experiment (D27) | Mistrangelo et al. 2025 six-code benchmark (Ha 235, fringe of the KIT MaPLE magnet); ALEX pipe as in Ni et al. 2007 Part II (Ha 6640, domain −20a/+15a) | published code-to-code scatter; uniform-region ∂p/∂x −0.0863 analytic | inside the published scatter; 1 % on the uniform-region gradient | 1.9d *Status (2026-10-05)*: run on the ALEX B1 pipe (packaged data; the 2025 case needs buoyancy and has no packaged reference), with `lmhdx.axial.solve_open_pipe` in the Stokes limit at Ha 6600, c 0.027, the measured field table: cross-section and axial mesh converged (≤ 3e-5 per station); upstream gradient 0.0266 against 0.0250 (inside the 0.002 uncertainty), integrated excess −3.3 % (frozen gate 10 %), station-wise weighted RMS 2.4 and L∞ 5.1 (frozen 1 and 2): **not met station by station**. The model peaks at x = −3 and falls faster than the data downstream (x ≥ −1), where the local N b² drops to 600–40 at Re ≈ 4,100; inertia there is the named candidate, not tested *Revised (2026-10-20)*: the shape gap is the observable, not the model: the wall pressure at the walls parallel to the field gives RMS 0.86 / L∞ 1.39 (met), the section mean 2.4 / 5.1; the tap position is not in the packaged data and must be confirmed from the ALEX report; interpolant, table uncertainty and c do not move it (log 2026-10-20) *Scope (R3, 2026-10-15)*: not met station by station; the inertia hypothesis is untested (Newton on the open axis costs hours, #225) *Revised (2026-10-21, #225)*: inertia is demoted: where N b² ≥ 125 it changes the local gradient by at most 2.3 %, about 30 times too small for the gap. |
 | 7 | ANL fringe (inertialess SOR solution, 0.1 % stopping; TM-228 verified 2026-09-22) | square duct, x0 = 3, c = 0.02, `B_y = ½(1 − sin(πx/2x0))`, x ∈ [−6, 2] | ΔP_total 0.0932, locally fully developed 0.0754; gated: the excess 0.0178 (D27a) | 1 % on the excess Δp − Δp_FD, both from LMX on one mesh; absolute Δp reported, not gated (D27a) | 1.9c, 1.9d *Status (Lane A, 2026-10-04)*: not met, and not reachable on the 3-D core at c 0.02: the excess at Ha 2e4 is 33 % above 0.0178 because of the layers' conductance (1 % needs c sqrt(Ha) ≳ 70, Ha ≳ 1e7); Ha → ∞ fits in Ha^-1/2 and Ha^-1 give 0.0183–0.0211. Restating the gate as the layer-corrected comparison of row 24 is the owner's call **Final (owner, 2026-10-04): closed as not reachable on the 3-D core; physical model difference.** Evidence (#204): converged meshes (Ha 1e4 192² 0.025772, 128² 0.02576, axial spacing halved 0.025783; Ha 2e4 0.023749, 33 % above 0.0178); the layers add k/(c sqrt(Ha)) = 55 % to the side-wall conductance at Ha 1e4; 1 % needs c sqrt(Ha) ≳ 70 (Ha ≳ 1e7). Not waived; the finite-Ha comparison is row 24 *Scope (R3, 2026-10-15)*: TM-228's 0.0178 is an inertialess thin-layer Ha → ∞ asymptote; LMhdX's Ha → ∞ fits give 0.0183–0.0211, 3–18 % above it: a fit band, not a 1 % check |
 | 8 | Manufactured 3-D | non-uniform grid, convection on | MMS | second order | 1.5 |
 | 9 | FreeMHD Shercliff/Hunt | Ha 20–1000 | long-run FreeMHD | 3 % | 4.2 |
@@ -2209,9 +2316,10 @@ those steps start.
 | 15 | Q2D Tithof flow | α 0.064, β 1 | Re_c 7.60, q_c 0.465 | 2 % | 3.2 *Status (2026-10-20)*: **met**, Re_c 7.694 (+1.2 %), q_c 0.462; `test_q2d_identities` |
 | 16 | Q2D cross-code | 256², identical initial data | GeophysicalFlows.jl / Dedalus | 1e-3 | 3.3 |
 | 17 | Fully developed design | Hartmann, Shercliff, Hunt | analytic response, synthetic recovery | 1e-6; finer mesh | 3b |
-| 18 | Thermal limits | pipe/duct laminar | Nu 48/11, 3.66; Shah & London | 0.5 % | 5.2 |
-| 19 | Heated conducting duct | Ha 235 | Mistrangelo 2025 | figure | 5.4 |
-| 20 | Derivatives | every continuous input | FD sweeps, Taylor, duality | 1e-6 fp64 | 1.7, 3.1, 3b, 6.3 |
+| 18a | Thermal limits, rectangular duct and plates (verified) | H1: square, aspect 0.5, square slug flow; H2: square; Hartmann plates at Ha 0, 10 and slug flow, the plates' own Nu (their wall temperature, not the four-wall mean), D_h = 4a | H1: exact double-sine series; H2: Shah & London's 3.091 as cited in the review of #240 (secondary); plates: closed form | 0.5 % | 5.2 |
+| 18b | Thermal limits, pipe and uniform wall temperature (pending) | pipe H and T (Nu 48/11, 3.66); rectangular duct under uniform wall temperature | exact and Shah & London | 0.5 % | 5.2 |
+| 19 | Heated conducting duct | Ha 235 | Mistrangelo 2025 (code to code) | 5.4's gates, declared before the run | 5.4 |
+| 20 | Derivatives | each path's dynamic inputs; for thermal ones, Phase 5's input matrix (properties, time step, geometry and boundary data rebuild the step) | FD sweeps, Taylor, duality | 1e-6 fp64; 1e-5 for the thermal paths (transient and developed duct) | 1.7, 3.1, 3b, 5.1g, 5.2, 5.3, 6.3 |
 | 21 | Performance | 3-D 64³–256³; Q2D 512²–2048²; matmul precision recorded | JSON + figure | G4/G5 | 2.1, 2.5 |
 | 22 | Hunt, conducting Hartmann walls | Ha 500–5000, c 0.01 | Smolentsev 2015 Table I (A2) | 0.3 % | 1.3b |
 | 23 | KIT MEKKA pipe entry | Ha 2000, N 200, c 0.071 thick wall | Bühler, Brinkmann & Mistrangelo 2020 (digitised) | stated uncertainty | 4.5 |
@@ -2376,7 +2484,9 @@ Process: pyOpenSci README guide · JOSS review criteria · Google small CLs · D
    evidence, not checkout bases.
 10. **Read Section 2.5 and the latest "Order of work" block (2026-09-22) first.** The next
     unblocked step is there; a step outside it needs the D21 exception stated
-    in the issue.
+    in the issue. For thermal work, read Phase 5's current-status table as
+    well; the block's thermal and device embargo is lifted, and Section 9's
+    open-PR limit still applies.
 11. **Speed and derivative claims** quote Section 2.5's protocol: warm forward,
     gradient, ratio, iterations and cold compile, before and after, on named
     hardware with the host load; run the JAX 0.6.2 floor stack locally before
@@ -2488,6 +2598,9 @@ Process: pyOpenSci README guide · JOSS review criteria · Google small CLs · D
 | 2026-10-19 | Release 1.11.0. Phase 5's thermal module, by Tyler Brandes (#266), slimmed in #267: temperature on the staggered core with implicit conduction, upwind or van Leer transport, Joule heat, optional Boussinesq buoyancy, the thermally developed duct, heated open and Hunt ducts, TOML runs, restarts, ParaView output and a checkpointing recipe. Also in this release: Table I fully gated (#160); the duct design law (#221); the `lmhdx.pipe` split (#223); open-duct and pressure fixes (#229); support for JAX 0.11 (#243) and NumPy 2.5 (#257); the GCI table and claim wording (#253); examples and docs (#224) | slimming of the developed-duct section; #225, the open-axis preconditioner |
 | 2026-10-19 | Phase 5 showcase, benchmarks (Tyler Brandes): `scripts/make_showcase_figures.py` gains three heat-transfer figures, each set against an exact solution or the literature and drawn in a journal style (STIX type, boxed axes, sentence-case labels, a categorical order checked for color-vision deficiency, upright vertical labels on the 3-D panels). `--only developed`: rectangular H1 ducts, aspect 1 to 1/8, within 0.35 % of the double-sine series on 32 cells across the short side, on Shah & London's (1978) fit; Hartmann plates carrying the package's own Hartmann flow within 0.2 % of the closed form over Ha 1–1000 (128 cells); the square duct from 3.61 to 6.67 at Ha 1000, 6 % short of slug flow; second order. `--only entrance`: heated Hartmann plates in an open duct (held flow, van Leer, Pe 400) within 1.3 % of the Graetz eigen-expansion past x+ = 1e-3 and 0.3 % past 1e-2 at Ha 0, 10, 50; the inlet excess is axial conduction (1.3 % to 0.14 % at x+ = 1e-3 from Pe 400 to 1600, unchanged by finer cells across or along). `--only onset`: Rayleigh–Bénard onset in a vertical field from growth rates at 0.97 and 1.03 Ra_c by power iteration on the time stepper (the perturbation rescaled to 1e-6 every half time unit, converged to five digits by the third rescaling; a perturbation decaying toward 1e-10 met a round-off floor from the hydrostatic balance on the layer-resolving mesh and gave rates near onset that moved with 1e-5 changes in the wavenumber), two time steps: within 0.8 % of Chandrasekhar's eigenproblem for Q = 0–1000 (Chebyshev collocation, reproducing his tabulated values to 0.01 %), and independent of dt to 0.01 % on the exact momentum stage of #297 (the stabilised stage before it gave first order in dt, −4.5 to −4.9 % at dt0). The small solves are pinned to the CPU, where they run faster than on a GPU. Stills are 256-color (median cut) lossless WebP, 169 KB with their larger text; the media stay under the 1 MB budget (0.97 MB) | 5.4, 5.5; the showcase movies |
 | 2026-10-19 | Phase 5 showcase, movies (Tyler Brandes, stacked on the benchmarks): `scripts/make_showcase_figures.py` gains two 3-D movies of lmhdx.thermal. `--only convection`: a periodic 4 × 4 × 1 liquid-metal layer heated from below, Ra 1e4, Pr 0.1, 64 × 64 × 32 cells, van Leer heat and limited momentum transport, Courant ≤ 0.47; without a field the cells keep rearranging, a horizontal field of Q = 1000 leaves steady rolls along it, as in the NaK experiments of Burr & Müller (2002). `--only heated-duct`: a square duct at Ha 1000, Pe 2000, heated through one side wall downstream of a cold inlet on the developed profile held in an open duct, Joule heat left out; with conducting Hartmann walls (c = 0.05) the side-layer jets at 8.4 times the mean lower the heated wall's hottest rise by 25 % (25.0 % on 32 and on 40 cells across); both ducts steady, storage 1e-12 of the outflow. On a laptop RTX 3060 in float64 the movie takes about twelve minutes on main's exact momentum stage (#297), which iterates by the plates (three minutes on the stabilised stage before it). The movies are tracked in `docs/_static`, 110 and 96 KB, and shown in the README and the docs; with Rogerio Jorge's agreement the Git media budget rises from 1 MB to 1.18 MB to hold them (tracked media 1,179,326 bytes; the convection movie at WebP quality 44 keeps it inside). The three stills stay 256-colour lossless WebP, 169 KB; the published release `showcase-thermal` also carries the movies | 5.4, 5.5 |
+| 2026-10-19 | The developed duct at a uniform wall temperature, the T condition (Tyler Brandes): `lmhdx.thermal.developed_wall_temperature` solves the section's eigenproblem -L(theta) = Lambda (u/u_mean) theta by inverse iteration with the fast-diagonal factorization, and returns the decay rate Lambda alpha/u_mean, the profile at a unit bulk excess and Nu_T = Lambda D_h A/P_w. Lambda is the Rayleigh quotient of the converged profile, so its derivative needs none of the iteration (the field-scale gradient meets central differences to 1e-5). Slug flow is exact to 3e-16, since sampled sines are exact discrete eigenfunctions; the square duct converges at order 1.97 to 2.97753, an independent Chebyshev collocation extrapolated from 40, 48 and 56 nodes, with Richardson 2.97749; Shah & London list 2.976, 0.05 % below. Plates (cell-mean velocity) at Ha 0 and 10 converge at order 2.0 to their one-dimensional Chebyshev values 7.54070 and 8.96255. Removed from the docs' not-covered list | the polar developed duct (pipe Nu = 48/11, 3.66); the MHD Nu campaign |
+| 2026-10-19 | The developed pipe on its polar grid (Tyler Brandes, stacked on the T condition): `ThermalProblem` accepts a polar flow for the developed solves, whose time step and its validation refuse it. `developed_heat` and `developed_wall_temperature` factorize the section with `fast_diagonal_polar_poisson` on a polar grid. The wall is each non-periodic transverse end with area, so the pipe's is the outer radius alone (the azimuth wraps, the axis face has no area) and D_h = 2R. Joule heat is refused there, since a pipe's currents come from lmhdx.pipe. On solve_pipe's Poiseuille flow, the uniform flux gives 48/11 and one wall temperature 3.65679 (a radial Chebyshev solve); on slug flow, 8 and j_{0,1}^2. Each converges at order 2.0, within 0.025 % on 64 radial cells | the MHD Nu campaign |
+| 2026-10-19 | MHD Nusselt campaign, as #248's review suggested (Tyler Brandes, stacked on the pipe): Shercliff's square duct in H1, H2 and T against an independent spectral solve and a published analysis, on its own page (`docs/validation/mhd_nusselt.md`), rerun by `python -m validation.mhd_nusselt`. `validation.shercliff.developed_nusselt` solves the temperature by Chebyshev collocation on that module's velocity (3.60795, 3.08738 and 2.97753 at Ha 0). LMhdX on 128-cell `duct_problem` meshes agrees with it within 0.06 % from Ha 1 to 316 (Ha on the half-width), converged to 0.02 % at Ha 100; one point, 48 cells at Ha 10, is gated within 0.3 %. Bluck, Wolfendale & Marquis (2015), Figs. 4 and 6 read from the manuscript's vector paths into `bluck2015-shercliff-nusselt.json` with their calibration and the PDF's SHA-256: Figure 4 (H1) takes Ha on the half-width, 0.03-0.07 % at Ha 1-10 and 0.49 % and 1.2 % low at 100 and 316; Figure 6 (H2) on the full width, a factor of 2, 0.17-0.43 % low up to an equivalent 15.8 and 2.0 % low at 158, with the figure's own 0.15 % uncertainty. Above Ha ≈ 30 the spectral solve is the reference | other conductances and aspect ratios (Hunt: Bluck & Wolfendale 2017) |
 | 2026-10-20 | Literature anchors of the #253 audit, Section 3.8.6 (c)–(e). (d) Ni et al. 2007 Part I, Tables 2–4, run in `tests/test_table_i.py` (`table_i_flow_rate` takes the layer thickness factor 2 for the paper's meshes): LMhdX flow-rate errors against Ni's on 38², 46², 62² at Ha 50/500/1000 (2.6/3.4, 0.8–1.3/0.9–1.1, 0.35–1.1/0.27–0.47 %), Ni's analytic Hunt ∇p·Re 5854.302 and 9531.4475 vs the spectral solve (+4.9e-4, +4.2e-4); not reproduced: Table 1 orders and the 0.06 % 3-D error. (c) `validation/q2d_campaigns.py`: row 15 Re_c 7.694 (+1.2 % from 7.60), q_c 0.462, gated in `test_q2d_identities` (7 s); row 13 vortex lattice C 4.2–6.3 at Re_α 28–66 and 2.8–2.9 at 14, 1.3 at 6.7, condensation not reached; docs/validation/q2d.md. (e) row 7: the 1/B floor is not the cause of order 1.63 (cap 1e3 → 1e6: 8e-6); cross-section-only order 2.05 and axis-only 1.97 cancel in the joint sequence, separable value 0.017805; `test_coreflow` gates it; no code change. Audit budgets raised by what was added | rows 13 (upper Re_α only), 14, 16; rows 6/7 anchors still wait on #225 |
 | 2026-10-20 | Row 6 sensitivity (lane row 6, branch fringe-row6-sensitivity; `pipe.py`, tests, docs, plan only; `axial.py` untouched). Measured runs of the ALEX B1 open pipe: field interpolant (monotone cubic, linear, spline) changes the side-wall RMS by 0.03; table ±0.03 and a ±0.5 ramp shift give 0.51–1.17 there and 2.1–2.7 for the section mean; c 0.020 / 0.035 / 0.054 miss the upstream gradient by 18 % / 39 % / 108 % and score 2.2 / 2.5 / 7.8 at the wall (Ha 1600). The finding: the section-mean pressure was the wrong observable for a tap. `lmhdx.pipe.wall_pressure_gradient` reads the wall cell: at Ha 6600 (48×64×76, 11,250 CG iterations, 618 s on the Mac CPU) RMS / L∞ are 0.86 / 1.39 at the walls parallel to the field, 3.11 / 6.60 at the walls normal to it, 1.79 / 3.82 for the ring and 2.43 / 5.08 for the section mean. Row 6 is therefore met station by station at the side-wall tap, conditional on ALEX having taps there (the digitized table does not say; the scanned report must be read). Inertia is not needed for the shape. Open: tap position; finite-thickness wall and B_x (need `axial.py`) | the tap position; confirm at Ha 6600 on the GPU |
 | 2026-10-21 | 1.9d, #225: the inertial share fitted on the uniform-buffer 124×32² mesh at Ha 100 (Re 10, 20, 33) and Ha 200 (Re 10, 20, 40): 0.42–2.11 % and 0.40–2.33 %, share ≈ 0.045 %·Re^1.31·Ha^-0.16; `solve_open_duct` cycle 120 and inner tolerance 1e-1, `fringe_duct(growth=)`. Krylov recycling across Newton steps and continuation measured and rejected (Re 20: 313 to 224 and 289 to 206 outer iterations; Ha 100, Re 33: 5,302 to 11,202); outer iterations still grow faster than Re. Row 6 inertia bounded at about 30× too small, consistent with the wall-tap finding of #282 (the shape does not need inertia). No tolerance changed, no test moved; budgets raised by the lines added. |
