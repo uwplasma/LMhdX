@@ -263,8 +263,8 @@ failing value is not repaired by clipping.
 ## Supported envelope
 
 **Geometry**
-- Cartesian grids, with periodic axes and closed no-slip walls. Polar grids are
-  refused when the problem is built.
+- Cartesian grids, with periodic axes and closed no-slip walls. A polar grid
+  serves the developed pipe only (below); a time step refuses it.
 - An inflow-outflow duct carries its heat on a held flow:
   - pass the steady velocity of `axial.solve_open_duct` in the state;
   - build the step with `hold_flow=True`;
@@ -547,8 +547,53 @@ exact eigenfunctions of the cell-centred Dirichlet Laplacian, which is why that
 row is exact. The plates carry the cell means of the analytical velocity, with
 the plates' own $D_h=4a$; their references are one-dimensional Chebyshev solves.
 
+**The pipe.** On the polar grid of `lmhdx.pipe`, both developed solves use the
+polar Poisson factorization. The azimuth wraps and the face on the axis has no
+area, so the wall is the outer radius alone, and $D_h=2R$. The flow is
+`solve_pipe`'s, placed on the axial faces. Joule heat is refused there, since a
+pipe forms its currents in `lmhdx.pipe`, not in the core, so a pipe's
+`ThermalProblem` needs `joule_heating=False`:
+
+```python
+import dataclasses
+
+import jax.numpy as jnp
+
+import lmhdx
+from lmhdx.core3d import ChannelProblem, zero_velocity
+from lmhdx.grid import CENTER, NEUMANN, PERIODIC, BoundaryCondition, Field
+from lmhdx.pipe import pipe_problem, solve_pipe
+from lmhdx.thermal import ThermalProblem, developed_heat, developed_wall_temperature, thermal_boundary
+
+lmhdx.enable_x64()
+pipe = pipe_problem(hartmann=0.0, radial=32, azimuthal=16)  # radius, azimuth and one axial cell
+periodic, wall = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN)
+flow = ChannelProblem(pipe.grid, (wall, periodic, periodic))
+rest = zero_velocity(flow)
+axial = jnp.broadcast_to(solve_pipe(pipe)[0].data, rest[2].shape)  # the developed flow on the axial faces
+velocity = (*rest[:2], rest[2].replace_data(axial))
+heated = thermal_boundary("heat_flux", -1.0, -1.0, conductivity=1.0)  # a unit flux in through the wall
+thermal = ThermalProblem(flow, (heated, periodic, periodic), 1.0, 1.0, 0.0, joule_heating=False)
+zero = Field(jnp.zeros(pipe.grid.shape), (CENTER,) * 3, pipe.grid)
+flux = float(developed_heat(thermal, velocity, zero).nusselt)  # 48/11 to 0.07 %
+conditions = (thermal_boundary("temperature"), periodic, periodic)
+held = float(developed_wall_temperature(dataclasses.replace(thermal, thermal_conditions=conditions), velocity).nusselt)
+print(f"Nu_H {flux:.4f}, Nu_T {held:.4f}")  # 3.65679 to 0.02 %
+```
+
+| Pipe: mean Nu on the diameter, $D_h=2R$ | Exact | 16 / 32 / 64 radial cells | Order |
+|:--|--:|:--|:--|
+| H (uniform flux; H1 and H2 coincide in a pipe), Poiseuille | 48/11 = 4.36364 | +0.28 % / +0.071 % / +0.018 % | 2.0 |
+| H, slug | 8 | −0.39 % / −0.098 % / −0.024 % | 2.0 |
+| T (one wall temperature), Poiseuille | 3.65679 | +0.077 % / +0.019 % / +0.0049 % | 2.0 |
+| T, slug | $j_{0,1}^2=5.78319$ | −0.12 % / −0.031 % / −0.0077 % | 2.0 |
+
+The 3.65679 is a radial Chebyshev solve of the same eigenproblem across the
+diameter. The T numbers come from `developed_wall_temperature`, so its derivative
+contract holds here too: the first derivative of $Nu_T$ at a converged solve is
+supported, and the profile's sensitivity is not.
+
 Not covered:
-- the pipe;
 - an MHD duct against a published $Nu$, for example a square insulating duct
   near Ha 100 (Tao & Ni 2013; Smolentsev et al.). That is a documentation
   campaign to come, not a CI gate.
