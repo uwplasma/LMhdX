@@ -151,17 +151,13 @@ def fully_developed_inlet(
         if any(np.ptp(slab) > 1e-12 * max(1.0, float(np.max(np.abs(slab)))) for slab in slabs):
             raise ValueError("the inlet field must be uniform over the inlet cross-section")
         field = tuple(float(slab.flat[0]) for slab in slabs)
-    periodic = ChannelProblem(
+    periodic = dataclasses.replace(  # the duct's own walls, thin or resolved, with every other field
+        problem,
         grid=section,
         conditions=(BoundaryCondition(PERIODIC), *problem.conditions[1:]),
-        density=problem.density,
-        viscosity=problem.viscosity,
-        conductivity=problem.conductivity,
         magnetic_field=field,
         forcing=(1.0, 0.0, 0.0),
-        dt=problem.dt,
-        wall_conductance=problem.wall_conductance,
-        precision=problem.precision,
+        advection="off",
     )
     # A compiled program (shared by problems of one shape), not hundreds of eagerly dispatched operations.
     if tolerance == 1.0e-9 and not controls:
@@ -181,18 +177,11 @@ def open_duct(problem: ChannelProblem, flow_rate: float, **controls) -> ChannelP
     :func:`fully_developed_inlet`.
     """
     profile, _ = fully_developed_inlet(problem, flow_rate, **controls)
-    return ChannelProblem(
-        grid=problem.grid,
+    return dataclasses.replace(  # every other field, the walls resolved in cells among them, carries over
+        problem,
         conditions=(BoundaryCondition(DIRICHLET, lower=profile, upper_kind=NEUMANN), *problem.conditions[1:]),
-        density=problem.density,
-        viscosity=problem.viscosity,
-        conductivity=problem.conductivity,
-        magnetic_field=problem.magnetic_field,
         forcing=(0.0, 0.0, 0.0),
-        dt=problem.dt,
         wall_conductance=(0.0, *problem.wall_conductance[1:]),
-        advection=problem.advection,
-        precision=problem.precision,
     )
 
 
