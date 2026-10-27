@@ -245,6 +245,25 @@
       "title": "FreeMHD"
     },
     {
+      "authors": "M. J. Bluck, M. J. Wolfendale and A. J. Marquis",
+      "availability": "open-access",
+      "filename": "Paper.pdf (accepted manuscript)",
+      "id": "bluck2015-shercliff",
+      "kind": "article",
+      "sha256": "2253016253b823ec9f1e9d62e3e8ed793cd46f62ce35b597625712406e32e061",
+      "title": "An analytical solution to the heat transfer problem in Shercliff flow",
+      "url": "https://spiral.imperial.ac.uk/entities/publication/c7756718-08cb-4be2-8ea7-d37d7972915b",
+      "year": 2015
+    },
+    {
+      "availability": "repository",
+      "id": "bluck2015-shercliff-nusselt",
+      "kind": "reference_data",
+      "path": "lmhdx/data/benchmarks/references/bluck2015-shercliff-nusselt.json",
+      "sha256": "6ad48ae86febca1b1ad10345372f71fd99e19debb12d9521d615cda64d4cf80d",
+      "title": "Bluck et al. 2015, Figs. 4 and 6: the square duct's H1 and H2 Nusselt numbers, read from the vector paths"
+    },
+    {
       "availability": "open-access",
       "doi": "10.1088/1741-4326/ae0800",
       "filename": "paper_references/mistrangelo2025/mistrangelo2025_nf65_116006.pdf",
