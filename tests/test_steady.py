@@ -1525,6 +1525,39 @@ def test_the_t_condition_snippet_runs_as_written():
     assert float(namespace["result"].nusselt) == pytest.approx(2.98226, rel=1e-5)
 
 
+def test_the_spectral_nusselt_reference_meets_the_exact_series():
+    """``validation.shercliff.developed_nusselt``, the reference of the MHD Nusselt campaign: at Ha 0 it gives the
+    H1 double-sine series, H2's 3.08738 (Wang; the package's Richardson value) and T's 2.97753, on 32 points."""
+    from validation.shercliff import developed_nusselt
+
+    assert developed_nusselt(0.0, 32) == pytest.approx(_h1_nusselt(1.0, 1.0), rel=1e-7)
+    assert developed_nusselt(0.0, 32, heating="H2") == pytest.approx(3.08738, rel=1e-5)
+    assert developed_nusselt(0.0, 32, heating="T") == pytest.approx(_SQUARE_T, rel=1e-5)
+
+
+def test_the_mhd_nusselt_numbers_meet_the_spectral_solve_at_one_point():
+    """docs/validation/mhd_nusselt.md at one point: LMhdX on 48 cells at Ha 10 against
+    ``validation.shercliff.developed_nusselt``, within 0.3 % in H1, H2 and T (0.06 % on the page's 128 cells). The
+    record's stored spectral values are the function's, to their six digits, and provenance holds its SHA-256."""
+    import hashlib
+    import json
+    from pathlib import Path
+
+    from validation.mhd_nusselt import READINGS, lmhdx_nusselt
+    from validation.shercliff import developed_nusselt
+
+    stored = json.loads(READINGS.read_text())["spectral"]
+    provenance = json.loads((Path(__file__).resolve().parents[1] / "benchmarks/provenance.json").read_text())
+    entry = {source["id"]: source for source in provenance["sources"]}["bluck2015-shercliff-nusselt"]
+    assert entry["sha256"] == hashlib.sha256(READINGS.read_bytes()).hexdigest(), (
+        "the record changed; provenance not"
+    )
+    for heating, value in lmhdx_nusselt(10.0, cells=48).items():
+        reference = developed_nusselt(10.0, 48, heating=heating)
+        assert stored[heating][stored["hartmann"].index(10.0)] == pytest.approx(reference, rel=2e-6), heating
+        assert value == pytest.approx(reference, rel=3e-3), heating
+
+
 def test_the_uniform_wall_temperature_refuses_an_ill_posed_duct():
     """No wall at a temperature, walls at different temperatures, or a wall taking in heat: not the T condition.
     Nor a tolerance that is not positive and finite, or an iteration bound that is not a positive integer."""

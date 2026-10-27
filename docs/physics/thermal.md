@@ -593,10 +593,14 @@ diameter. The T numbers come from `developed_wall_temperature`, so its derivativ
 contract holds here too: the first derivative of $Nu_T$ at a converged solve is
 supported, and the profile's sensitivity is not.
 
+**An MHD Nusselt campaign.** Shercliff's square duct is compared in H1, H2 and
+T against an independent spectral solve, within 0.06 % from Ha 1 to 316, and
+against the published curves of Bluck, Wolfendale & Marquis (2015), on its own
+page: [MHD Nusselt campaign](../validation/mhd_nusselt.md).
+
 Not covered:
-- an MHD duct against a published $Nu$, for example a square insulating duct
-  near Ha 100 (Tao & Ni 2013; Smolentsev et al.). That is a documentation
-  campaign to come, not a CI gate.
+- other wall conductances and aspect ratios against a published $Nu$, for
+  example Hunt's duct (Bluck & Wolfendale 2017).
 
 ## An open duct
 
