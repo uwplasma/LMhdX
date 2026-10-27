@@ -1915,3 +1915,65 @@ def test_a_heated_hunt_duct_balances_its_enthalpy():
         float(history.joule_power[-1] - history.conductive_heat_out[-1]),
     )
     assert abs(float(history.storage_rate[-1])) <= 1e-6 * leaving and leaving == pytest.approx(made, rel=1e-6)
+
+
+# Mistrangelo et al. 2025, the heated conducting duct (plan step 5.4a, ADR 0009).
+
+
+def test_the_magnetoconvection_specification_reproduces_its_printed_numbers():
+    """What the specification checks against something else: Martelli's PbLi falls 0.8 %, 1.9 % and 4.0 % short of
+    Case 1's printed Ha, Re and Gr (Gr goes as 1/nu^2); eq. 1 holds at its anchors; and the heated patch over the
+    full outer width gives Fig. 17's rise of about 10 K. The pinned PbLi is derived from the printed groups, so it
+    reproduces them by construction and is not checked here."""
+    from validation import mistrangelo
+
+    record = mistrangelo.spec()
+    assert record["status"] == "frozen" and mistrangelo.developed_gradient(record) == 0.0863
+    calibration = record["calibration"]
+    assert "pressure gradient" in calibration["not_acceptance"]
+    assert not any("pressure" in check for check in calibration["independent"])
+    case, a, b0 = record["cases"]["case1"], record["geometry"]["half_width_m"], record["field"]["peak_T"]
+    u0, q, g = (
+        case["mean_velocity_m_per_s"],
+        case["heat_flux_W_per_m2"],
+        record["gravity"]["acceleration_m_per_s2"],
+    )
+
+    def groups(pbli):
+        rho, mu, k = (
+            pbli["density_kg_per_m3"],
+            pbli["dynamic_viscosity_Pa_s"],
+            pbli["thermal_conductivity_W_per_m_K"],
+        )
+        nu = mu / rho
+        return np.array([
+            b0 * a * np.sqrt(pbli["electrical_conductivity_S_per_m"] / mu),
+            a * u0 / nu,
+            g * pbli["expansion_coefficient_per_K"] * q * a**4 / (k * nu**2),
+        ])  # fmt: skip
+
+    printed = np.array([case["hartmann"], case["reynolds"], case["grashof"]])
+    assert groups(record["properties"]["pbli"]) / printed - 1.0 == pytest.approx(
+        [-0.0077, -0.0195, -0.0396], abs=5e-4
+    )
+    assert mistrangelo.field(0.7315, record) == pytest.approx(b0 / 2, rel=1e-15)
+    assert mistrangelo.field(np.array([0.0, 0.4, -1.0]), record) / b0 == pytest.approx(
+        [1.0, 0.99868, 0.00463], abs=5e-6
+    )
+    pbli, wall = mistrangelo.pinned_pbli(record), record["geometry"]["wall_thickness_m"]
+    heat = q * (2.0 * (a + wall)) * (record["heating"]["x_max_m"] - record["heating"]["x_min_m"])
+    rise = heat / (pbli["density_kg_per_m3"] * pbli["heat_capacity_J_per_kg_K"] * u0 * (2.0 * a) ** 2)
+    assert 10.0 < rise < 10.2
+
+
+def test_the_magnetoconvection_section_converges_to_its_pinned_gradient():
+    """Case 1's developed section, steel resolved on both axes at the pinned ratio: the ratio is fitted on 96/12
+    cells to the printed -0.0863, so this is a mesh-convergence check of the pin, not of the paper. On 48/6 cells
+    -dp/dx is within 0.5 % of it. The section's profile is compared with the paper's Figure 13 with the digitized
+    curves."""
+    from validation import mistrangelo
+
+    record = mistrangelo.spec()
+    ratio = record["properties"]["steel"]["conductivity_ratio_pinned"]
+    flow = mistrangelo.section_flow(ratio, record=record, cells=48, cells_in_layer=6, wall_cells=6)
+    assert flow["gradient"] == pytest.approx(mistrangelo.developed_gradient(record), rel=5e-3)
