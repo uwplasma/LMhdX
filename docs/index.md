@@ -94,6 +94,7 @@ validation/index
 validation/q2d
 validation/freemhd
 validation/mistrangelo
+validation/mhd_nusselt
 ```
 
 ```{toctree}
