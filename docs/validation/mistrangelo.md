@@ -137,7 +137,7 @@ axes, at Ha 235 (`python -m validation.mistrangelo`).
 ## Reference curves (Case 1)
 
 `src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json` holds
-Figures 6–13, read by `scripts/digitize_mistrangelo.py`.
+Figures 6–13, 15–19 and 38, read by `scripts/digitize_mistrangelo.py`.
 
 - The figures are xmgrace plots embedded in the PDF as images.
 - They are extracted with `pymupdf` (`Document.extract_image(xref)`).
@@ -146,15 +146,20 @@ Figures 6–13, read by `scripts/digitize_mistrangelo.py`.
   `DIR/mistrangelo2025-case1-curves.json`. The images are not in the
   repository, so the digitizer is not in the package or in `validation/`.
 - The images and the per-code curves, the extraction's intermediates, are a
-  release asset, since the paper is CC BY 4.0. Part 2 records them in
-  `benchmarks/provenance.json` with their SHA-256s.
+  release asset, `mistrangelo2025-case1-extraction.zip` on the release
+  `mistrangelo2025-references`, since the paper is CC BY 4.0.
+  `benchmarks/provenance.json` records the archive's and the curves' SHA-256s
+  (`extraction`). The release is a draft until the owner publishes it. Until
+  then the archive is reachable only to the repository's maintainers, so the
+  extraction is reproducible publicly from the paper's PDF and this script,
+  not yet from the archive.
 - Each record carries:
   - the image's PDF page (the journal's is one less), xref and SHA-256;
   - the axis calibration;
   - whether the y axis is logarithmic (`y_scale`);
   - the codes it omits, and why;
   - whether the paper or my reading chose the band's codes (`agree_basis`).
-- The file is 52 KB for these figures. A record keeps the band and the curves
+- The file is 90 KB for these figures. A record keeps the band and the curves
   that are not one of the six codes: Figure 13's analytical markers and
   Figure 11's stations.
   - Each is simplified to within half a pixel of every extracted pixel column,
@@ -183,6 +188,11 @@ Figures 6–13, read by `scripts/digitize_mistrangelo.py`.
     so it is omitted there.
   - The analytical solution has no samples at the jets' peaks: its markers
     merge with the lines there.
+  - Figure 19's axis is in decades, and its record says so (`y_scale`). It
+    omits COMSOL, which its caption excludes.
+  - Figure 38 draws both cases in one pair of colours. Each colour is split
+    column by column into its lower curve (Case 1) and its upper (Case 2);
+    where only one is visible, it goes to the nearer of the two tracks.
 
 **What each record holds.**
 - **A band.** The spread of the codes that the paper says agree, with the page
@@ -206,8 +216,17 @@ the axis's units. It sums three parts, 2.3–2.5 px in all:
 - the axis's calibration misfit, which each axis also carries in its units
   (`misfit`).
 
-The band's spread is the codes', apart from it. A comparison's acceptance band
-is the two combined (ADR 0009 D35). For scale:
+The band's spread is the codes', apart from it. It is the envelope of the
+codes chosen to agree, not a statistical confidence interval. A comparison's
+acceptance band is the two combined:
+- `validation.mistrangelo.band_misfit(x, y, figure)` takes arrays and numbers,
+  and returns the largest excess beyond the band, zero inside.
+- It interpolates the band as plotted, in decades on a log axis.
+- Each edge is taken at its extreme over x ± the x uncertainty, then widened by
+  the y uncertainty.
+
+At 5.4e, ADR 0009 D35's band also takes in LMhdX's discretization error, from
+its mesh, time-step, tolerance and outlet-length studies. For scale:
 
 | | x per px | y per px |
 |:--|--:|--:|
@@ -216,7 +235,7 @@ is the two combined (ADR 0009 D35). For scale:
 
 **Two checks.**
 - **The pressure scale.** Figure 8's band slope over |x| < 0.4 m is
-  −568.8 Pa/m. The printed −0.0855, taken in σu₀B₀² with the pinned PbLi,
+  −568.6 Pa/m. The printed −0.0855, taken in σu₀B₀² with the pinned PbLi,
   gives −564.5 Pa/m, 0.8 % apart.
   - This confirms the σu₀B₀² scale (`tests/test_steady.py`, within 1 %).
   - It cannot tell the pinned σ from Martelli's, which is 0.4 % away
@@ -236,12 +255,35 @@ is the two combined (ADR 0009 D35). For scale:
 - every record, with `_check_reference_record`: its hash, its calibration
   within 0.6 px, its uncertainty, its band and curves;
 - the developed section's core against Figure 13;
+- the heated width against Figure 17, and Figure 38's Nu inside Figure 18's
+  acceptance band;
 - the digitizer itself, on a synthetic figure in CI. It is a drawn frame with
   ticks, a solid and a dashed line and rings. The compact record must keep the
   band within 0.6 px, and a wrong tick label must be refused.
 
-Figures 15–19 and 38, and Case 2's, follow in later parts, with the sources in
-`benchmarks/provenance.json`.
+**Two inferences of the specification, confirmed by the figures:**
+- **The heated width.** Figure 17's outlet bulk temperature is 310.08–310.15 °C
+  over 0.4 < x < 0.9 m. The specification's energy balance, with the full
+  50 mm outer width heated, gives 310.12 °C. Over the plateau, every column
+  read, it lies inside the band to half a pixel: at most 0.002 K below its
+  lower edge and 0.012 K above its upper (0.08 and 0.42 px). The test allows
+  half a pixel either way, 0.014 K. A 46 mm patch would be 0.8 K off.
+- **The length in Nu.**
+  - From Figure 38's OF_KIT temperatures at x = 0.29 m, `T_w − T_b` is
+    19.28 K, so `Nu = q'' a / (k (T_w − T_b))` is 2.34 with L = a.
+  - That lies inside Figure 18's band there, 2.23–2.41 (Nu on L = a), and
+    inside its acceptance band (`band_misfit`, tested).
+  - L = 2a would double it.
+
+**The printed asymptote.** "Nu → 2.45" (p. 10, on L = a) matches Figure 18's
+codes near x = 0.3 m, where their band reaches 2.48. It is about 4 % above
+OF_KIT's value from Figure 38, within the digitizing uncertainty: Figure 38's,
+2.5 px on each temperature, is about ±0.14 in Nu.
+
+Case 2's curves follow in a later part. The sources are in
+`benchmarks/provenance.json`: the paper's DOI and SHA-256, and each reference
+file's SHA-256 with the extraction date and the digitizer's SHA-256, which a
+test checks against the files.
 
 ## Sources
 

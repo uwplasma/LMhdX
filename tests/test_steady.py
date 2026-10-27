@@ -2022,6 +2022,35 @@ def _check_reference_record(record):
             assert record["window"][0] <= band["x"][0] and band["x"][-1] <= record["window"][1]
 
 
+def test_the_band_misfit_interpolates_as_plotted_and_widens_by_both_uncertainties():
+    """``band_misfit`` on synthetic records. A semilog band straight from 1 to 100 has its middle at 10 in decades,
+    where interpolating in y then taking the log put it at 50.5, 0.70 decades off; nonpositive values on a log axis
+    are refused. A band that steps from 0 to 10 holds a point at 10 just before the step only within the x
+    uncertainty, the edge taken at its extreme over that window; the y uncertainty widens it as before."""
+    from validation import mistrangelo
+
+    def record(x, lower, upper, scale="linear", across=0.0, along=0.0):
+        band = {"x": x, "lower": lower, "upper": upper, "codes": [1] * len(x)}
+        return {"figure": 0, "band": band, "y_scale": scale, "uncertainty": {"x": across, "y": along}}
+
+    semilog = record([0.0, 1.0], [1.0, 1.0], [100.0, 100.0], "log10")
+    assert mistrangelo.band_misfit(0.5, 10.0, record([0.0, 1.0], [1.0, 1.0], [100.0, 100.0], "log10")) == 0.0
+    narrow = record([0.0, 1.0], [1.0, 100.0], [1.0, 100.0], "log10")
+    assert mistrangelo.band_misfit(0.5, 10.0, narrow) == pytest.approx(0.0, abs=1e-12)
+    assert mistrangelo.band_misfit(0.5, 50.5, narrow) == pytest.approx(np.log10(50.5) - 1.0)
+    with pytest.raises(ValueError, match="positive"):
+        mistrangelo.band_misfit(0.5, 0.0, semilog)
+    step = [0.0, 0.5, 0.51, 1.0], [0.0, 0.0, 10.0, 10.0]
+    assert mistrangelo.band_misfit(0.45, 10.0, record(step[0], step[1], step[1])) == pytest.approx(10.0)
+    assert mistrangelo.band_misfit(0.45, 10.0, record(step[0], step[1], step[1], across=0.1)) == 0.0
+    assert mistrangelo.band_misfit(0.2, 10.0, record(step[0], step[1], step[1], across=0.1)) == pytest.approx(
+        10.0
+    )
+    assert mistrangelo.band_misfit(0.2, 10.0, record(step[0], step[1], step[1], along=4.0)) == pytest.approx(
+        6.0
+    )
+
+
 def test_the_digitizer_reads_a_drawn_figure(tmp_path):
     """A synthetic xmgrace-like figure: a frame with outward ticks, a solid green line, a dashed orange line, red
     rings, and a blue line with a spike two pixels wide and 20 tall and a step of 46. The calibration, the lines and
@@ -2082,10 +2111,13 @@ def test_the_digitizer_reads_a_drawn_figure(tmp_path):
 
 
 def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale():
-    """The reference curves, read from the paper's figures: each record as ``_check_reference_record``, and Fig. 8's
-    slope over |x| < 0.4 m is the printed -0.0855 in sigma u0 B0^2 (with the pinned PbLi; Martelli's sigma is 0.4 %
-    away, which the figure cannot tell apart)."""
+    """The reference curves, read from the paper's figures: each record as ``_check_reference_record``, traced in
+    ``benchmarks/provenance.json`` by its own and the digitizer's SHA-256, and Fig. 8's slope over |x| < 0.4 m is the
+    printed -0.0855 in sigma u0 B0^2 (with the pinned PbLi; Martelli's sigma is 0.4 % away, which the figure cannot
+    tell apart); the figures also confirm the inferred heated width and L = a."""
+    import hashlib
     import json
+    from pathlib import Path
 
     from scripts import digitize_mistrangelo as digitizer
     from validation import mistrangelo
@@ -2094,6 +2126,10 @@ def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressu
     assert sorted(figures) == sorted(digitizer.FIGURES)
     for record in figures.values():
         _check_reference_record(record)
+    provenance = Path(__file__).resolve().parents[1] / "benchmarks" / "provenance.json"
+    entry = {s["id"]: s for s in json.loads(provenance.read_text())["sources"]}["mistrangelo2025-case1"]
+    assert entry["sha256"] == hashlib.sha256(mistrangelo.REFERENCES.read_bytes()).hexdigest()
+    assert entry["digitizer_sha256"] == hashlib.sha256(Path(digitizer.__file__).read_bytes()).hexdigest()
     record, case = mistrangelo.spec(), mistrangelo.spec()["cases"]["case1"]
     band = figures[8]["band"]
     x, middle = np.array(band["x"]), (np.array(band["lower"]) + np.array(band["upper"])) / 2
@@ -2101,3 +2137,40 @@ def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressu
     scale = mistrangelo.pinned_pbli(record)["electrical_conductivity_S_per_m"] * case["mean_velocity_m_per_s"]
     scale *= record["field"]["peak_T"] ** 2
     assert np.polyfit(x[inside], middle[inside], 1)[0] / scale == pytest.approx(-0.0855, rel=0.01)
+    # Fig. 17's outlet bulk temperature is the specification's energy balance (the full outer width heated), and
+    # Fig. 38's temperatures give Fig. 18's Nu with L = a inside its acceptance band; L = 2a would double it.
+    pbli, a = mistrangelo.pinned_pbli(record), record["geometry"]["half_width_m"]
+    q, u0, wall = (
+        case["heat_flux_W_per_m2"],
+        case["mean_velocity_m_per_s"],
+        record["geometry"]["wall_thickness_m"],
+    )
+    rise = (
+        q
+        * 2.0
+        * (a + wall)
+        * 0.6
+        / (pbli["density_kg_per_m3"] * pbli["heat_capacity_J_per_kg_K"] * u0 * 4.0 * a**2)
+    )
+    band, pixel = figures[17]["band"], figures[17]["per_pixel"][1]
+    x, lower, upper = (np.array(band[k]) for k in ("x", "lower", "upper"))
+    plateau = (x > 0.4) & (x < 0.9)  # the outlet's plateau
+    # The balance, 310.12, sits inside the band to half a pixel either way: at most 0.08 px below its lower edge
+    # and 0.42 px above its upper one over the plateau, every column read. The band is a few pixels wide.
+    assert np.all(lower[plateau] - 0.5 * pixel <= 300.0 + rise) and np.all(
+        300.0 + rise <= upper[plateau] + 0.5 * pixel
+    )
+    curves = figures[38]["curves"]
+    wall_t, bulk_t = (np.interp(0.29, curves[k]["x"], curves[k]["y"]) for k in ("T_w case1", "T_b case1"))
+    nusselt = q * a / (pbli["thermal_conductivity_W_per_m_K"] * (wall_t - bulk_t))
+    assert mistrangelo.band_misfit(0.29, nusselt, figures[18]) == 0.0  # inside Fig. 18's acceptance band
+    assert mistrangelo.band_misfit(0.29, 2.0 * nusselt, figures[18]) > 1.0  # L = 2a is far outside it
+    energy = figures[19]["band"]  # a log axis: the band's geometric middle is inside it
+    assert (
+        mistrangelo.band_misfit(
+            energy["x"], np.sqrt(np.multiply(energy["lower"], energy["upper"])), figures[19]
+        )
+        == 0
+    )
+    with pytest.raises(ValueError, match="outside"):
+        mistrangelo.band_misfit(2.0, nusselt, figures[18])
