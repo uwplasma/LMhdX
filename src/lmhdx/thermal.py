@@ -48,7 +48,10 @@ claim is convergence in the time step.
 axial heat input makes ``T = gamma x + theta``, and :func:`developed_heat`
 solves ``theta`` once on the cross-section (ADR 0008, D33): the bulk, mean and
 peak wall temperatures and the Nusselt number of a station, at fixed flow and
-heat load, with derivatives.
+heat load, with derivatives. With the walls held at one temperature instead,
+the excess over the wall decays along the duct in a fixed shape, and
+:func:`developed_wall_temperature` finds that shape and its decay rate as the
+smallest eigenvalue of the cross-section.
 """
 
 from __future__ import annotations
@@ -63,6 +66,7 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 import numpy as np
+import solvax
 
 from .core3d import (
     ChannelProblem,
@@ -104,6 +108,7 @@ from .steady import with_inflow
 
 __all__ = [
     "DevelopedHeat",
+    "DevelopedWallTemperature",
     "LoadAttribution",
     "ThermalDiagnostics",
     "ThermalProblem",
@@ -112,6 +117,7 @@ __all__ = [
     "advance_thermal",
     "build_thermal_step",
     "developed_heat",
+    "developed_wall_temperature",
     "initial_thermal_state",
     "load_attribution",
     "load_thermal_record",
@@ -1093,11 +1099,8 @@ def developed_heat(
     by :func:`jax.jit`. With ``joule_heating`` off no current is formed.
     """
     flow, grid, conditions = problem.flow, problem.flow.grid, problem.thermal_conditions
-    axial, capacity, k = (
-        _developed_axis(problem, axial_gradient),
-        problem.heat_capacity,
-        float(problem.thermal_conductivity),
-    )
+    axial, capacity, k = _developed_axis(problem), problem.heat_capacity, float(problem.thermal_conductivity)
+    _gradient_rule(problem, axial_gradient)
     length = float(np.sum(grid.widths[axial]))
 
     def per_length(data):
@@ -1165,17 +1168,126 @@ def developed_heat(
     )
 
 
-def _developed_axis(problem: ThermalProblem, axial_gradient) -> int:
-    """Return the developed duct's axis: its one periodic axis, one cell long, the static checks of the reduction."""
+class DevelopedWallTemperature(NamedTuple):
+    """The duct of :func:`developed_wall_temperature`; ``docs/physics/thermal.md`` gives the equations.
+
+    ``temperature`` is ``(T - T_w)/(T_b - T_w)``, ``eigenvalue`` is ``Lambda`` in ``-L(theta) = Lambda f theta`` with
+    ``f = u/u_mean``, and ``nusselt`` averages the wall flux over the held walls. ``eigen_residual`` and
+    ``iterations`` are :func:`solvax.inverse_iteration`'s; ``converged`` is its own and the flow's certificate.
+    """
+
+    temperature: Field
+    eigenvalue: jnp.ndarray
+    decay_rate: jnp.ndarray
+    flow_rate: jnp.ndarray
+    hydraulic_diameter: float
+    nusselt: jnp.ndarray
+    eigen_residual: jnp.ndarray
+    iterations: jnp.ndarray
+    converged: jnp.ndarray
+
+
+def developed_wall_temperature(
+    problem: ThermalProblem,
+    velocity: tuple[Field, Field, Field],
+    *,
+    tolerance: float | None = None,
+    max_iterations: int = 2000,
+) -> DevelopedWallTemperature:
+    """The thermally fully developed duct with its walls held at one temperature (the T condition).
+
+    ``theta`` and ``Lambda`` are the smallest eigenpair, by :func:`solvax.inverse_iteration` on the fast-diagonal
+    factorization to ``tolerance`` (1e-10 in float64, 1e-4 in float32), with its derivative contract. The duct is as
+    for :func:`developed_heat`; the held walls share one temperature, a heat-flux wall is adiabatic, and sources and
+    Joule heat are left out.
+
+    ``converged`` also certifies the raw flow, in traced arithmetic: a finite positive mean, every cell forward, the
+    same axial velocity on both axial faces and no transverse velocity (to 1e-9 of the largest in float64, 1e-4 in
+    float32). If not, the eigenvalue, the decay rate and the Nusselt number are NaN.
+    """
+    if tolerance is not None and (
+        isinstance(tolerance, bool) or not (np.isfinite(tolerance) and tolerance > 0.0)
+    ):
+        raise ValueError("tolerance must be positive and finite")
+    if (
+        isinstance(max_iterations, bool)
+        or not isinstance(max_iterations, (int, np.integer))
+        or max_iterations < 1
+    ):
+        raise ValueError("max_iterations must be a positive integer")
+    flow, grid, conditions = problem.flow, problem.flow.grid, problem.thermal_conditions
+    axial = _developed_axis(problem)
+    walls = [(kind, value) for c in conditions for kind, value in zip(c.kinds, (c.lower, c.upper))]
+    held = [np.ravel(value) for kind, value in walls if kind == DIRICHLET]
+    if not held:
+        raise ValueError("the T condition holds at least one wall at a prescribed temperature")
+    if np.ptp(np.concatenate(held)) > 0.0:
+        raise ValueError("the walls of the T condition are held at one temperature")
+    if any(kind == NEUMANN and np.any(value) for kind, value in walls):
+        raise ValueError("a heat-flux wall in the T condition is adiabatic")
+    homogeneous = tuple(condition.homogeneous() for condition in conditions)
+    factorization = fast_diagonal_poisson(grid, homogeneous, precision=flow.precision)
+    speed = cell_average(velocity[axial], axial).data
+    volumes = jnp.asarray(grid.cell_volumes(), dtype=speed.dtype)
+    mean = jnp.sum(volumes * speed) / jnp.sum(volumes)
+    weight = speed / mean
+    if tolerance is None:
+        tolerance = 1e-10 if weight.dtype == jnp.float64 else 1e-4
+    along = velocity[axial].data
+    largest = jnp.max(jnp.abs(along))
+    stray = jnp.max(jnp.stack([jnp.max(jnp.abs(velocity[a].data)) for a in range(3) if a != axial]))
+    stray = jnp.maximum(stray, jnp.max(jnp.abs(along[_end(axial, -1)] - along[_end(axial, 0)])))
+    rough = 1e-9 if weight.dtype == jnp.float64 else 1e-4
+    forward = jnp.isfinite(mean) & (mean > 0.0) & jnp.all(speed > 0.0) & (stray <= rough * largest)
+
+    def solve(rhs):  # K^-1 of the volume-weighted pencil K = V (-L), W = V f
+        return -factorization.solve(Field(rhs / volumes, _CELL, grid)).data
+
+    eigenvalue, theta, info = solvax.inverse_iteration(
+        solve, volumes * weight, weight, tol=tolerance, max_steps=max_iterations
+    )
+    converged = info.converged & forward
+    eigenvalue = jnp.where(converged, eigenvalue, jnp.nan)
+    perimeter, held_perimeter = 0.0, 0.0  # wall areas over the axial length
+    length = float(np.sum(grid.widths[axial]))
+    for axis, condition in enumerate(conditions):
+        if axis == axial:
+            continue
+        for end, kind in zip((0, -1), condition.kinds):
+            faces = float(np.sum(grid.face_areas(axis)[(slice(None),) * axis + (end,)])) / length
+            perimeter, held_perimeter = perimeter + faces, held_perimeter + faces * (kind == DIRICHLET)
+    area = float(np.sum(grid.cell_volumes())) / length
+    bulk = jnp.sum(volumes * weight * theta) / jnp.sum(volumes)
+    return DevelopedWallTemperature(
+        Field(jax.lax.stop_gradient(theta / bulk), _CELL, grid),
+        eigenvalue,
+        eigenvalue * problem.diffusivity / mean,
+        mean * area,
+        4.0 * area / perimeter,
+        eigenvalue * (4.0 * area / perimeter) * area / held_perimeter,
+        info.residual,
+        info.iterations,
+        converged,
+    )
+
+
+def _developed_axis(problem: ThermalProblem) -> int:
+    """Return the developed duct's axis: its one periodic axis, one cell long."""
     conditions = problem.thermal_conditions
     periodic = [axis for axis, condition in enumerate(conditions) if condition.is_periodic]
     if len(periodic) != 1:
         raise ValueError("a developed duct is periodic along exactly one axis, the flow's")
     if problem.flow.grid.shape[periodic[0]] != 1:
         raise ValueError("a developed duct has one cell along its axis")
-    if any(DIRICHLET in condition.kinds for condition in conditions) == (axial_gradient is None):
-        raise ValueError("give axial_gradient exactly when a wall prescribes its temperature")
     return periodic[0]
+
+
+def _gradient_rule(problem: ThermalProblem, axial_gradient) -> None:
+    """``developed_heat`` takes ``axial_gradient`` exactly when a wall prescribes its temperature."""
+    if any(DIRICHLET in condition.kinds for condition in problem.thermal_conditions) == (
+        axial_gradient is None
+    ):
+        raise ValueError("give axial_gradient exactly when a wall prescribes its temperature")
 
 
 def validate_developed_inputs(
@@ -1203,7 +1315,8 @@ def validate_developed_inputs(
     ):
         if not (np.isfinite(value) and value >= 0.0):
             raise ValueError(f"{name} must be nonnegative and finite")
-    axial, grid = _developed_axis(problem, axial_gradient), problem.flow.grid
+    axial, grid = _developed_axis(problem), problem.flow.grid
+    _gradient_rule(problem, axial_gradient)
     if axial_gradient is not None and not np.all(np.isfinite(np.asarray(axial_gradient))):
         raise ValueError("axial_gradient must be finite")
     _check_fields(problem.flow, velocity, [(heat_source, "heat source")])
