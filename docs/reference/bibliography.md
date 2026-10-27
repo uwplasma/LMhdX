@@ -41,9 +41,9 @@ Core references used by the implemented models and validation contracts include:
   the fixed-area optimum aspect ratio of an insulated duct, before the duct
   design law stated it.
 - R. K. Shah and A. L. London, *Laminar Flow Forced Convection in Ducts*,
-  Advances in Heat Transfer, Supplement 1, Academic Press, 1978 — the H2 value
-  of the square duct gated in the tests, and the rectangular-duct H1 fit and
-  the Graetz problem of the heat-transfer figures.
+  Advances in Heat Transfer, Supplement 1, Academic Press, 1978 — the H2 and
+  uniform-wall-temperature values of the square duct gated in the tests, and the
+  rectangular-duct H1 fit and the Graetz problem of the heat-transfer figures.
 - S. Chandrasekhar, *Hydrodynamic and Hydromagnetic Stability*, Clarendon
   Press, 1961 — the onset of convection between rigid plates, with and without
   a vertical field (Ch. II and IV); his rigid-plate values are quoted from
