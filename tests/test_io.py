@@ -1123,7 +1123,9 @@ def test_a_chunk_is_rejected_at_any_sample_past_its_limits():
         ("buoyancy_courant_limit = 9.0e-5", "buoyancy_courant over 9e-05"),
     ],
 )
-def test_a_thermal_run_stops_at_the_first_sample_past_a_limit(tmp_path: Path, limit: str, reason: str):
+def test_a_thermal_run_stops_at_the_first_sample_past_a_limit(
+    tmp_path: Path, limit: str, reason: str, capsys
+):
     """The page's case with its z walls held at zero: from rest and a uniform temperature the start passes either
     limit, and the flow and the buoyancy outgrow it inside the second chunk. The run exits 2 after the first
     chunk's record, writes the second as rejected and names its first sample; that record imports, not resumes."""
@@ -1141,6 +1143,7 @@ def test_a_thermal_run_stops_at_the_first_sample_past_a_limit(tmp_path: Path, li
     summary = json.loads((out / "thermal_summary.json").read_text())
     assert not summary["accepted"] and summary["steps"] == 10 and summary["rejected"]["chunk"] == 1
     assert 10 < summary["rejected"]["step"] < 20 and summary["rejected"]["reasons"] == [reason]
+    assert capsys.readouterr().err.strip() == f"rejected at step {summary['rejected']['step']}: {reason}"
     assert summary["limits"]["advective_cfl_override"] == limit.startswith("advective")
     written = {path.name for path in out.iterdir()}
     assert {"heated_duct_000010.npz", "heated_duct_000020_rejected.npz", "heated_duct.pvd"} <= written
@@ -1167,6 +1170,82 @@ def test_conduction_alone_is_not_held_to_an_advective_limit(tmp_path: Path):
     summary = json.loads((tmp_path / "out/thermal_summary.json").read_text())
     assert summary["accepted"] and summary["limits"]["advective_cfl"] is None and summary["steps"] == 40
     assert summary["largest"]["advective_cfl"] == 0.0  # nothing is carried, though the flow moves
+
+
+def _diagnostics(columns: dict):
+    from lmhdx.thermal import ThermalDiagnostics
+
+    return ThermalDiagnostics(**columns)
+
+
+def test_the_run_summary_reduces_each_chunk_as_the_whole_history_would():
+    """The summary's finite flag, maxima and last sample, kept chunk by chunk, equal the whole history's at every
+    chunking, a NaN inside a chunk included: it clears the flag, and a maximum it enters stays NaN."""
+    from lmhdx.thermal import ThermalDiagnostics
+
+    rng, steps = np.random.default_rng(271), 60
+    whole = {name: rng.standard_normal(steps) for name in ThermalDiagnostics._fields}
+    whole["finite"], whole["backflow_boundary_valid"] = np.ones(steps, bool), np.ones(steps, bool)
+    whole["advective_cfl"][23], whole["finite"][23] = np.nan, False
+    largest = {name: float(np.max(np.abs(whole[name]))) for name in cli._LARGEST}
+    last = {name: float(values[-1]) for name, values in whole.items()}
+    assert np.isnan(largest["advective_cfl"])
+    for size in (1, 7, 20, 60):
+        extremes = {"finite": True, "last": {}, "largest": {}}
+        for start in range(0, steps, size):
+            chunk = _diagnostics({name: values[start : start + size] for name, values in whole.items()})
+            extremes = cli._fold_chunk(extremes, chunk)
+        assert extremes["finite"] is False
+        np.testing.assert_equal(extremes["largest"], largest)
+        np.testing.assert_equal(extremes["last"], last)
+
+
+def test_the_summary_reducer_holds_a_few_floats_at_any_step_count():
+    """Reducer-memory evidence, not a whole-CLI memory bound: 200 chunks of 50 samples are 1.7 MB of diagnostics if
+    kept, and the summary's fold holds a few floats."""
+    import tracemalloc
+
+    from lmhdx.thermal import ThermalDiagnostics
+
+    rng, extremes = np.random.default_rng(5), {"finite": True, "last": {}, "largest": {}}
+    tracemalloc.start()
+    for _ in range(200):
+        chunk = _diagnostics({name: rng.standard_normal(50) for name in ThermalDiagnostics._fields})
+        extremes = cli._fold_chunk(extremes, chunk)
+    held, _ = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert held < 64 * 1024 < 200 * 50 * len(ThermalDiagnostics._fields) * 8 / 10, held
+
+
+def test_a_thermal_run_reports_the_same_at_any_chunk_size(tmp_path: Path):
+    """The page's case run in chunks of 10, 20 and 40 ends on the same record and the same summary; with a limit
+    the flow outgrows inside its second ten steps, chunks of 5 and 10 name the same first rejected sample."""
+    import json
+
+    def run(chunk: int, extra: str = "", page: str | None = None) -> tuple[int, dict, Path]:
+        text = (page or _page_toml()).replace("chunk = 10", f"chunk = {chunk}{extra}")
+        out = f"out_{chunk}{'_limited' if extra else ''}"
+        case = tmp_path / f"{out}.toml"
+        case.write_text(text.replace('directory = "out"', f'directory = "{out}"'))
+        code = cli.main([str(case)])
+        return code, json.loads((tmp_path / out / "thermal_summary.json").read_text()), tmp_path / out
+
+    runs = {chunk: run(chunk) for chunk in (10, 20, 40)}
+    for chunk in (20, 40):
+        code, summary, out = runs[chunk]
+        assert code == 0 and summary["accepted"] and summary["steps"] == runs[10][1]["steps"] == 40
+        for key in ("finite", "last", "largest", "time"):
+            assert summary[key] == runs[10][1][key], key
+        with (
+            np.load(out / "heated_duct_000040.npz") as record,
+            np.load(runs[10][2] / "heated_duct_000040.npz") as reference,
+        ):
+            assert all(np.array_equal(record[name], reference[name]) for name in reference.files)
+    walls = _page_toml().replace('kind = "heat_flux"\nupper = 1.0', 'kind = "temperature"')
+    limited = {chunk: run(chunk, "\nadvective_cfl_limit = 4.0e-5", walls) for chunk in (5, 10)}
+    assert limited[5][0] == limited[10][0] == 2
+    assert limited[5][1]["rejected"]["step"] == limited[10][1]["rejected"]["step"]
+    assert limited[5][1]["rejected"]["reasons"] == limited[10][1]["rejected"]["reasons"]
 
 
 @pytest.mark.parametrize("x64", ["", "true"])
