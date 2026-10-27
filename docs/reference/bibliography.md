@@ -49,6 +49,12 @@ Core references used by the implemented models and validation contracts include:
   a vertical field (Ch. II and IV); his rigid-plate values are quoted from
   A. Basak and K. Kumar, “A model for Rayleigh–Bénard magnetoconvection,”
   [arXiv:1508.02493](https://arxiv.org/abs/1508.02493), 2015, Table I.
+- M. J. Bluck, M. J. Wolfendale and A. J. Marquis, “An analytical solution to
+  the heat transfer problem in Shercliff flow,” *International Journal of Heat
+  and Mass Transfer* 86, 2015, 542–549 (accepted manuscript in Imperial
+  College's Spiral repository) — the published H1 and H2 Nusselt numbers of
+  the square insulating duct in the MHD Nusselt campaign of
+  `docs/physics/thermal.md`.
 - I. Celik et al., “Procedure for estimation and reporting of uncertainty due
   to discretization in CFD applications,” *Journal of Fluids Engineering* 130,
   2008, [doi:10.1115/1.2960953](https://doi.org/10.1115/1.2960953) — the
