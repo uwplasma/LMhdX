@@ -23,6 +23,7 @@ from lmhdx.grid import (
 from lmhdx.ops import face_gradient
 from lmhdx.steady import momentum_terms, solve_steady_state, steady_residual
 from validation.shercliff import flow_rate, hartmann_wall_current, quadrant_flow_rate
+from validation.thermal import h1_series, plate_nusselt
 
 pytestmark = pytest.mark.numerical
 
@@ -1086,22 +1087,6 @@ def test_a_solve_from_rest_traces_the_operator_twice(monkeypatch):
 _WRAP, _WALL = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN)
 
 
-def _h1_nusselt(a: float, b: float, *, slug: bool = False, terms: int = 801) -> float:
-    """Nu of the H1 duct ``[-a, a] x [-b, b]`` from double sine series: no discrete operator involved.
-
-    Velocity and temperature both solve Dirichlet Poisson problems, so with the
-    eigenvalues ``lambda_mn`` and ``S_k = sum 256 ab / (m^2 n^2 pi^4 lambda^k)``
-    over odd ``m, n``, ``Nu = S_1^2 D_h / (P S_3)``; slug flow gives ``16 a^2 b^2 D_h / (P S_1)``.
-    """
-    m, n = np.arange(1, terms, 2)[:, None], np.arange(1, terms, 2)[None, :]
-    eigen = (m * np.pi / (2.0 * a)) ** 2 + (n * np.pi / (2.0 * b)) ** 2
-    weight = 256.0 * a * b / (m**2 * n**2 * np.pi**4)
-    first, perimeter, diameter = np.sum(weight / eigen), 4.0 * (a + b), 4.0 * a * b / (a + b)
-    if slug:
-        return 16.0 * a**2 * b**2 * diameter / (perimeter * first)
-    return first**2 * diameter / (perimeter * np.sum(weight / eigen**3))
-
-
 def _developed_duct(
     cells: int, aspect: float = 1.0, hartmann: float = 0.0, walls: str = "temperature", **extra
 ):
@@ -1147,7 +1132,7 @@ def test_the_developed_nusselt_numbers_meet_their_exact_values(aspect, slug):
     H2, a uniform flux on every wall, on the same square Poiseuille flow: Shah & London's 3.091, within 0.5 % on 64
     cells, at an order between 1.5 and 2.5, and its Richardson value within 0.3 % (#240).
     """
-    exact = _h1_nusselt(1.0, aspect, slug=slug)
+    exact = h1_series(1.0, aspect, slug=slug)
     errors, uniform_flux = [], []
     for cells in (16, 32, 64) if aspect == 1.0 else (64,):  # the square ducts carry the refinement family
         thermal = _developed_duct(cells, aspect)
@@ -1297,23 +1282,29 @@ def _plate_nusselt(hartmann: float, points: int = 400) -> float:
 def test_the_hartmann_plate_reference_meets_its_closed_form_and_limits():
     """Quadrature converged to 1e-12; the closed form at finite Ha to 1e-12; the handoff's values; 140/17 and 12."""
     for hartmann, value in ((1.0, 8.31820244), (5.0, 9.36646553), (10.0, 10.25857521), (30.0, 11.28543472)):
-        tanh, sech = np.tanh(hartmann), 1.0 / np.cosh(hartmann)
-        closed = (
-            4.0
-            * (1.0 - tanh / hartmann) ** 2
-            / (
-                1.0 / 3.0
-                - 2.0 / hartmann**2
-                - sech**2 / (2.0 * hartmann**2)
-                + 5.0 * tanh / (2.0 * hartmann**3)
-            )
-        )
+        closed = float(plate_nusselt(hartmann))  # validation.thermal's closed form, as the figure draws it
         assert abs(_plate_nusselt(hartmann, 200) - _plate_nusselt(hartmann)) <= 1e-12 * closed
         assert _plate_nusselt(hartmann) == pytest.approx(closed, rel=1e-12)
         assert _plate_nusselt(hartmann) == pytest.approx(value, abs=1e-8)
     assert _plate_nusselt(0.0) == pytest.approx(140.0 / 17.0, rel=1e-14)
     assert _plate_nusselt(np.inf) == pytest.approx(12.0, rel=1e-14)
     assert 11.9 < _plate_nusselt(300.0) < 12.0
+
+
+def test_the_figure_references_meet_their_tables_and_limits():
+    """validation.thermal, the references of the heat-transfer figures: Chandrasekhar's onset against his table
+    (0.01 %) and 1707.76, the slug-flow Graetz expansion against its closed form and Poiseuille's against its
+    developed 140/17, and Shah & London's fit against the H1 series at aspect 0.5 (0.06 %)."""
+    from validation.thermal import CHANDRASEKHAR_TABLE, chandrasekhar_onset, graetz, shah_london_h1
+
+    assert chandrasekhar_onset(0.0)[0] == pytest.approx(1707.76, rel=1e-5)
+    for chandrasekhar, tabulated in CHANDRASEKHAR_TABLE[1::2]:
+        assert chandrasekhar_onset(chandrasekhar)[0] == pytest.approx(tabulated, rel=1e-4)
+    xplus, n = np.array([1e-3, 1e-2, 1e-1]), np.arange(1, 20001)
+    series = np.sum(np.exp(-16.0 * n**2 * np.pi**2 * xplus[:, None]) / n**2, axis=1)
+    np.testing.assert_allclose(graetz(np.inf, xplus), 4.0 / (1.0 / 3.0 - 2.0 * series / np.pi**2), rtol=1e-5)
+    assert graetz(0.0, np.array([1.0]))[0] == pytest.approx(140.0 / 17.0, rel=1e-8)
+    assert float(shah_london_h1(0.5)) == pytest.approx(h1_series(1.0, 0.5), rel=1e-3)
 
 
 def _plates(cells: int, hartmann: float):
@@ -1530,7 +1521,7 @@ def test_the_spectral_nusselt_reference_meets_the_exact_series():
     H1 double-sine series, H2's 3.08738 (Wang; the package's Richardson value) and T's 2.97753, on 32 points."""
     from validation.shercliff import developed_nusselt
 
-    assert developed_nusselt(0.0, 32) == pytest.approx(_h1_nusselt(1.0, 1.0), rel=1e-7)
+    assert developed_nusselt(0.0, 32) == pytest.approx(h1_series(1.0, 1.0), rel=1e-7)
     assert developed_nusselt(0.0, 32, heating="H2") == pytest.approx(3.08738, rel=1e-5)
     assert developed_nusselt(0.0, 32, heating="T") == pytest.approx(_SQUARE_T, rel=1e-5)
 

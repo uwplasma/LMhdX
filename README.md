@@ -27,8 +27,9 @@ Reusable solvers and implicit derivatives come from
 *Decaying quasi-2D MHD turbulence with Hartmann-layer friction — 256², 3,000 steps, about 20 s on a laptop CPU with `python scripts/make_showcase_figures.py --only q2d`.*
 
 Scope: fully developed duct and pipe flows are validated; three-dimensional
-convective transport, the fringe in the inertialess limit, the ALEX benchmarks
-and multi-device execution are research stage (see [What is validated, what is research](#what-is-validated-what-is-research)).
+convective transport, [heat transfer](#heat-transfer), the fringe in the
+inertialess limit, the ALEX benchmarks and multi-device execution are research
+stage (see [What is validated, what is research](#what-is-validated-what-is-research)).
 
 ## Installation
 
@@ -163,6 +164,22 @@ python examples/fringe_duct_example.py
   [fringe tutorial](https://lmhdx.readthedocs.io/en/latest/tutorials/fringing.html)
   walks through it.
 
+## Heat transfer
+
+`lmhdx.thermal` adds a temperature field to the flow solver: heat conducts, is
+carried by the flow, can be released by the currents as Joule heating and can
+drive buoyant flow, and every step checks the heat budget. The module is still
+research stage. Far down a heated duct LMhdX matches the exact Nusselt numbers
+of rectangular ducts and of Hartmann plates to within 0.35 %, and in a vertical
+field it follows Chandrasekhar's tenfold rise of the critical Rayleigh number to
+within 0.8 %. The
+[heat transport page](https://lmhdx.readthedocs.io/en/latest/physics/thermal.html)
+gives each comparison, its conditions and the command that redraws it.
+
+![Velocity and temperature of a square duct at Ha 0 and 100 in 3-D, Nusselt numbers against aspect ratio and Hartmann number, and mesh convergence](docs/_static/thermal_developed_duct.webp)
+
+![Critical Rayleigh number against the field strength, the critical rolls at Q = 0 and 1000, and the error at two time steps](docs/_static/thermal_magnetoconvection.webp)
+
 ## Design with gradients
 
 ```python
@@ -266,7 +283,8 @@ PCIe. Correct, not yet faster — the numbers are in
   boundedness but not validated against a reference flow, the fringe is gated
   in the inertialess limit only, the open pipe misses its station-wise
   ALEX B1 tolerance, the ALEX B1/B2 benchmarks are open, and
-  multi-device execution is not yet established. The
+  multi-device execution is not yet established. What the tests check for heat
+  transport is listed under [Heat transfer](#heat-transfer). The
   [validation matrix](https://lmhdx.readthedocs.io/en/latest/validation/index.html)
   and the [plan](plan.md) state each gate.
 
@@ -278,6 +296,7 @@ PCIe. Correct, not yet faster — the numbers are in
 | [`validation/pipe.py`](validation/pipe.py) spectral solve | Pipe flow rates, insulating and conducting walls, Ha 0 → 100 | independent of the package; 0.04 – 0.43 % |
 | Analytic Hartmann, Shercliff, Hunt and Poiseuille | Profiles and flow rates in every limit that has a closed form | `python examples/hartmann_example.py` |
 | FreeMHD (OpenFOAM `epotFoam`), pinned [`freemhd_install`](https://github.com/rogeriojorge/freemhd_install) image, B2 case | Both codes run the frozen B2 inputs weekly ([`validation/freemhd.py`](validation/freemhd.py)); LMhdX through the inertialess core-flow model | executions gated; the cross-code pressure comparison is reported, not gated — **not** a production result |
+| [`validation/thermal.py`](validation/thermal.py): exact series, Shah & London (1978), the Graetz expansion, Chandrasekhar (1961) | Developed and entrance Nusselt numbers, magnetoconvection onset ([Heat transfer](#heat-transfer)) | the references are tested against their tables and limits; the figures' 0.2 – 1.3 % agreement is reported, not tested |
 | ALEX B1 pipe and B2 square duct experiments | Fringing-field pressure drop | production acceptance **open**; specs and digitised references are frozen in [`src/lmhdx/data/benchmarks`](src/lmhdx/data/benchmarks) |
 
 The [validation record](https://lmhdx.readthedocs.io/en/latest/validation/index.html)
