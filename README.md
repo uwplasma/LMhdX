@@ -176,9 +176,11 @@ within 0.8 %. The
 [heat transport page](https://lmhdx.readthedocs.io/en/latest/physics/thermal.html)
 gives each comparison, its conditions and the command that redraws it.
 
-![Velocity and temperature of a square duct at Ha 0 and 100 in 3-D, Nusselt numbers against aspect ratio and Hartmann number, and mesh convergence](docs/_static/thermal_developed_duct.webp)
+![A liquid-metal layer heated from below, without a field and in a horizontal field](docs/_static/thermal_convection_3d.webp)
 
-![Critical Rayleigh number against the field strength, the critical rolls at Q = 0 and 1000, and the error at two time steps](docs/_static/thermal_magnetoconvection.webp)
+*Liquid metal heated from below (Ra = 10⁴, Pr = 0.1). Without a field the cells
+keep rearranging; a horizontal field leaves rolls along it, as in Burr & Müller
+(2002). An illustration, not a quantitative result.*
 
 ## Design with gradients
 

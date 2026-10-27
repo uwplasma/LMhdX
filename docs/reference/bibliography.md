@@ -49,6 +49,10 @@ Core references used by the implemented models and validation contracts include:
   a vertical field (Ch. II and IV); his rigid-plate values are quoted from
   A. Basak and K. Kumar, “A model for Rayleigh–Bénard magnetoconvection,”
   [arXiv:1508.02493](https://arxiv.org/abs/1508.02493), 2015, Table I.
+- U. Burr and U. Müller, “Rayleigh–Bénard convection in liquid metal layers
+  under the influence of a horizontal magnetic field,” *Journal of Fluid
+  Mechanics*, 2002 — the field's alignment of convection rolls shown in the
+  convection movie.
 - M. J. Bluck, M. J. Wolfendale and A. J. Marquis, “An analytical solution to
   the heat transfer problem in Shercliff flow,” *International Journal of Heat
   and Mass Transfer* 86, 2015, 542–549 (accepted manuscript in Imperial
