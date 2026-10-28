@@ -211,8 +211,8 @@ def test_fully_developed_implicit_gradients_match_independent_checks(differentia
     delta = 1e-3
     finite_field = (compiled(1.1, 1.0 + delta) - compiled(1.1, 1.0 - delta)) / (2.0 * delta)
 
-    assert forcing_gradient == pytest.approx(value / 1.1, rel=2e-7)
-    assert field_gradient == pytest.approx(finite_field, rel=2e-5, abs=1e-8)
+    assert forcing_gradient == pytest.approx(float(value) / 1.1, rel=2e-7)
+    assert field_gradient == pytest.approx(float(finite_field), rel=2e-5, abs=1e-8)
 
     def velocity(parameters):
         return solve_fully_developed_fields(
@@ -227,7 +227,7 @@ def test_fully_developed_implicit_gradients_match_independent_checks(differentia
     _, tangent = jax.jvp(velocity, (parameters,), (direction,))
     _, pullback = jax.vjp(velocity, parameters)
     assert jnp.vdot(cotangent, tangent) == pytest.approx(
-        jnp.vdot(direction, pullback(cotangent)[0]), rel=2e-8, abs=1e-10
+        float(jnp.vdot(direction, pullback(cotangent)[0])), rel=2e-8, abs=1e-10
     )
 
 
@@ -242,7 +242,7 @@ def test_shercliff_field_scale_gradient_matches_finite_difference():
     delta = 1e-3
     finite = (compiled(1.0 + delta) - compiled(1.0 - delta)) / (2.0 * delta)
     assert jnp.isfinite(value)
-    assert derivative == pytest.approx(finite, rel=2e-5, abs=1e-8)
+    assert derivative == pytest.approx(float(finite), rel=2e-5, abs=1e-8)
 
 
 @pytest.mark.physics
@@ -278,13 +278,13 @@ def test_q2d_mixed_precision_matches_analytic_fields_and_derivatives(control):
     result = solve_q2d(Q2DProblem(initial, **inputs(value), steps=4, history_stride=2))
     assert result.problem.initial_vorticity.dtype == result.problem.forcing.dtype == jnp.float64
     assert all(field.dtype == jnp.float64 for field in fields)
-    assert result.vorticity == pytest.approx(fields[0], abs=1.0e-12)
-    assert fields[0] == pytest.approx(analytic(value), abs=2.0e-8)
+    assert result.vorticity == pytest.approx(np.asarray(fields[0]), abs=1.0e-12)
+    assert fields[0] == pytest.approx(np.asarray(analytic(value)), abs=2.0e-8)
     actual = jax.jit(jax.value_and_grad(objective))(value)
     expected = jax.value_and_grad(lambda x: jnp.mean(analytic(x) ** 2))(value)
     assert np.asarray(actual) == pytest.approx(np.asarray(expected), rel=2.0e-6, abs=1.0e-10)
     tangent = jax.jvp(objective, (value,), (jnp.ones_like(value),))[1]
-    assert tangent == pytest.approx(actual[1], rel=1.0e-9, abs=1.0e-12)
+    assert tangent == pytest.approx(float(actual[1]), rel=1.0e-9, abs=1.0e-12)
 
 
 @pytest.mark.physics
@@ -566,7 +566,7 @@ def test_q2d_model_contract_refinement_and_failures():
 
     assert result.converged and result.status == "completed" and result.steps == 4
     assert result.fields is result
-    assert result.vorticity == pytest.approx(expected, rel=2.0e-6, abs=2.0e-7)
+    assert result.vorticity == pytest.approx(np.asarray(expected), rel=2.0e-6, abs=2.0e-7)
     assert result.vorticity_history.shape == (3, 18, 18)
     assert result.frame_times == pytest.approx([0.0, 0.02, 0.04])
     assert result.diagnostics.energy_budget_residual < 2.0e-6
@@ -646,16 +646,16 @@ def test_q2d_model_contract_refinement_and_failures():
             -2.0 * 32 * (2.0 * parameters[1] + parameters[2]) * value,
         ]
     )
-    assert gradient == pytest.approx(expected_gradient, rel=3.0e-6, abs=2.0e-7)
+    assert gradient == pytest.approx(np.asarray(expected_gradient), rel=3.0e-6, abs=2.0e-7)
     perturbation = jnp.zeros_like(parameters).at[3].set(3.0e-2)
     finite_forcing = (
         jax.jit(objective)(parameters + perturbation) - jax.jit(objective)(parameters - perturbation)
     ) / 6.0e-2
-    assert gradient[3] == pytest.approx(finite_forcing, rel=1.0e-4)
+    assert gradient[3] == pytest.approx(float(finite_forcing), rel=1.0e-4)
     direction = jnp.asarray([0.2, -0.4, 0.7, 0.1, -0.05, 0.3], dtype=parameters.dtype)
     tangent = jax.jvp(objective, (parameters,), (direction,))[1]
     pullback = jax.vjp(objective, parameters)[1](jnp.ones_like(value))[0]
-    assert tangent == pytest.approx(jnp.vdot(pullback, direction), rel=2.0e-6)
+    assert tangent == pytest.approx(float(jnp.vdot(pullback, direction)), rel=2.0e-6)
 
     bounded = jax.jit(jax.value_and_grad(objective)).lower(parameters).compile()
     full_tape = jax.jit(jax.value_and_grad(lambda values: objective(values, 32))).lower(parameters).compile()
