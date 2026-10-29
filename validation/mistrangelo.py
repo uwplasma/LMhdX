@@ -13,14 +13,10 @@ reference curves it compares against are written by ``scripts/digitize_mistrange
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import numpy as np
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10
-    import tomli as tomllib
 
 from lmhdx import enable_x64
 from lmhdx.core3d import ChannelProblem

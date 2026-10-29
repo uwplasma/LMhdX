@@ -36,15 +36,11 @@ import stat
 import subprocess
 import sys
 import time
+import tomllib
 from itertools import pairwise
 from pathlib import Path, PurePosixPath
 
 import numpy as np
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10
-    import tomli as tomllib
 
 _DATA = Path(__file__).resolve().parents[1] / "src" / "lmhdx" / "data" / "benchmarks"
 SPEC = _DATA / "specs" / "alex-b2-square.toml"

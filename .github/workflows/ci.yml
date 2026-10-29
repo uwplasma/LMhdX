@@ -84,7 +84,8 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-lmhdx
         with:
-          python-version: "3.10"
+          python-version: "3.11"
+          jax-version: "0.7.2"
           solvax-version: "0.34.0"
           cache-suffix: pr-impact
       - name: Run conservatively affected tests
@@ -94,7 +95,7 @@ jobs:
             --budget-seconds 540 --test-timeout-seconds 300
 
   compatibility:
-    name: Python 3.10 (${{ matrix.shard }})
+    name: Python 3.11 (${{ matrix.shard }})
     needs: scope
     if: needs.scope.outputs.full == 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
@@ -127,7 +128,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-lmhdx
         with:
-          python-version: "3.10"
+          python-version: "3.11"
+          jax-version: "0.7.2"
           solvax-version: "0.34.0"
           cache-suffix: ${{ matrix.cache || matrix.shard }}
       - name: Run covered test shard
@@ -302,8 +304,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-lmhdx
+        id: setup
         with:
-          python-version: "3.10"
+          python-version: "3.11"
+          jax-version: "0.7.2"
           solvax-version: "0.34.0"
           cache-suffix: ${{ matrix.cache || format('pr-{0}{1}', matrix.tier, matrix.label || matrix.shard) }}
       - name: Run uncovered evidence tier
@@ -319,3 +323,11 @@ jobs:
           if [[ -n "$WORKERS" ]]; then workers=(--workers "$WORKERS"); fi
           python scripts/run_full_test_suite.py --tier "$TIER" "${shard[@]}" "${workers[@]}" --no-coverage \
             --budget-seconds "$BUDGET" --test-timeout-seconds 300
+      # A run stopped by its budget skips the cache's own save, so a lane whose key prefix is new (a new
+      # Python) would start cold every time; keep what it compiled.
+      - name: Keep the compilation cache of a failed run
+        if: failure()
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/lmx-jax-cache
+          key: ${{ steps.setup.outputs.cache-key }}

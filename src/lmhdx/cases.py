@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 import sys
 import time
+import tomllib
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -499,12 +500,6 @@ def _interpolate_tabulated_field(data: dict[str, np.ndarray], **coordinates: np.
 
 
 # The case schema, solution containers, run configuration and solver log (formerly ``lmhdx.cases``).
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - only used on Python < 3.11
-    import tomli as tomllib
-
 
 RegionKind = Literal["fluid", "solid"]
 GeometryKind = Literal["rect_duct", "layered_duct"]
