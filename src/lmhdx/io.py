@@ -1054,7 +1054,7 @@ def _fold_chunk(extremes: dict, history) -> dict:
         chunk = np.max(np.abs(np.asarray(getattr(history, name))))  # NaN if any sample is
         largest[name] = float(np.maximum(extremes["largest"].get(name, chunk), chunk))  # and NaN stays
     iterations = int(np.max(np.asarray(history.conduction_iterations)))
-    largest["conduction_iterations"] = max(extremes["largest"].get("conduction_iterations", 0), iterations)
+    largest["conduction_iterations"] = max(iterations, extremes["largest"].get("conduction_iterations", 0))
     return {
         "finite": extremes["finite"] and bool(np.all(np.asarray(history.finite))),
         "last": {name: float(np.asarray(values)[-1]) for name, values in history._asdict().items()},

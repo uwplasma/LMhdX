@@ -285,9 +285,13 @@ class ThermalProblem:
 
     def _add_walls(self) -> None:
         """Keep ``walls`` as tuples and, with any, the extended grid and each cell's ``k`` and ``rho c_p``."""
-        conjugate = conjugate_grid(self.flow.grid, ((None, None),) * 3 if self.walls is None else self.walls)
-        object.__setattr__(self, "walls", conjugate.walls)
-        if not any(wall is not None for pair in conjugate.walls for wall in pair):
+        none = ((None, None),) * 3
+        walls = none if self.walls is None else self.walls
+        # A pipe without solid walls skips conjugate_grid, which takes Cartesian grids only.
+        bare = self.flow.grid.is_polar and not any(wall for pair in walls for wall in pair or ())
+        conjugate = None if bare else conjugate_grid(self.flow.grid, walls)
+        object.__setattr__(self, "walls", none if conjugate is None else conjugate.walls)
+        if conjugate is None or not any(wall is not None for pair in conjugate.walls for wall in pair):
             object.__setattr__(self, "_conjugate", None)
             object.__setattr__(self, "_cells", None)
             return
