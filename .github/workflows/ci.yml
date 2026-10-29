@@ -84,7 +84,8 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-lmhdx
         with:
-          python-version: "3.10"
+          python-version: "3.11"
+          jax-version: "0.7.2"
           solvax-version: "0.34.0"
           cache-suffix: pr-impact
       - name: Run conservatively affected tests
@@ -94,7 +95,7 @@ jobs:
             --budget-seconds 540 --test-timeout-seconds 300
 
   compatibility:
-    name: Python 3.10 (${{ matrix.shard }})
+    name: Python 3.11 (${{ matrix.shard }})
     needs: scope
     if: needs.scope.outputs.full == 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
@@ -127,7 +128,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-lmhdx
         with:
-          python-version: "3.10"
+          python-version: "3.11"
+          jax-version: "0.7.2"
           solvax-version: "0.34.0"
           cache-suffix: ${{ matrix.cache || matrix.shard }}
       - name: Run covered test shard
@@ -303,7 +305,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-lmhdx
         with:
-          python-version: "3.10"
+          python-version: "3.11"
+          jax-version: "0.7.2"
           solvax-version: "0.34.0"
           cache-suffix: ${{ matrix.cache || format('pr-{0}{1}', matrix.tier, matrix.label || matrix.shard) }}
       - name: Run uncovered evidence tier
