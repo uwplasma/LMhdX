@@ -145,7 +145,7 @@ def thermal_boundary(
     upper: float | np.ndarray = 0.0,
     *,
     upper_kind: str | None = None,
-    conductivity: float | None = None,
+    conductivity: float | np.ndarray | None = None,
 ) -> BoundaryCondition:
     """Return the temperature condition of one axis from physical data.
 
@@ -153,26 +153,27 @@ def thermal_boundary(
     ``"temperature"`` prescribes the wall temperature, ``"heat_flux"`` the
     conductive heat flux leaving the fluid through that end (positive cools),
     and ``"periodic"`` wraps the axis. A flux is stored as the derivative along
-    the axis, ``q/k`` below and ``-q/k`` above, so ``conductivity``, the fluid's
-    ``k``, is required with any flux end, and a condition built for one ``k``
-    does not hold the same flux under another. Either value may be an array over
-    the two other axes, in their order; it is copied.
+    the axis, ``q/k`` below and ``-q/k`` above, so ``conductivity``, the ``k`` of
+    the cells at that end, is required with any flux end: the fluid's, or a solid
+    wall's, or an array over the end where they differ. A condition built for one
+    ``k`` does not hold the same flux under another. Either value may be an array
+    over the two other axes, in their order; it is copied.
     """
     kinds = (kind, kind if upper_kind is None else upper_kind)
     for name in kinds:
         if name not in _KINDS:
             raise ValueError(f"unknown thermal boundary kind {name!r}; expected one of {sorted(_KINDS)}")
     if "heat_flux" in kinds and not (
-        conductivity is not None and np.isfinite(conductivity) and float(conductivity) > 0.0
+        conductivity is not None and np.all(np.isfinite(conductivity) & (np.asarray(conductivity) > 0.0))
     ):
-        raise ValueError("a heat-flux end needs the fluid's thermal conductivity, positive and finite")
+        raise ValueError("a heat-flux end needs the thermal conductivity there, positive and finite")
     values = []
     for end, data in enumerate((lower, upper)):
         value = np.array(data, dtype=np.float64)
         if not np.all(np.isfinite(value)):
             raise ValueError("thermal boundary data must be finite")
         if kinds[end] == "heat_flux":
-            value = (1.0 if end == 0 else -1.0) * value / float(conductivity)
+            value = (1.0 if end == 0 else -1.0) * value / np.asarray(conductivity, dtype=np.float64)
         values.append(value if value.ndim else float(value))
     mixed = kinds[0] != kinds[1]
     return BoundaryCondition(_KINDS[kinds[0]], *values, upper_kind=_KINDS[kinds[1]] if mixed else None)
