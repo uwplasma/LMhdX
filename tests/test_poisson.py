@@ -141,7 +141,7 @@ def test_only_an_insulated_or_periodic_axis_has_a_null_eigenvalue(kind):
     """The null mode is read from the conditions, not from small row sums. On widths 0.5, 1e-4, 1e-4 and 0.5 a
     Dirichlet axis's rows sum to 8e-8 of its largest entry in float32, yet its least-negative eigenvalue is near -8:
     zeroed, ``(I - 1e5 L) x = 1`` would solve to 1 instead of 1.25e-6. Against the eigenvalues and a dense solve of
-    the assembled operator, the Helmholtz factorization agrees to 1e-9; only an insulated or periodic axis has an
+    the assembled operator, the Helmholtz factorization agrees to rounding; only an insulated or periodic axis has an
     exact zero, in the Poisson factorization too, and only there does a uniform right-hand side solve to
     ``1/shift``."""
     from lmhdx.poisson import fast_diagonal_helmholtz
@@ -162,7 +162,10 @@ def test_only_an_insulated_or_periodic_axis_has_a_null_eigenvalue(kind):
     values = np.sort(inverse.values[1])
     null = kind in ("neumann", "periodic")
     assert bool(values[-1] == 0.0) == null and values[-1] <= 0.0
-    np.testing.assert_allclose(values[: len(values) - null], exact[: len(exact) - null], rtol=1e-9)
+    rounding = 50.0 * np.finfo(float).eps * np.max(np.abs(exact))  # the 2e8 eigenvalue sets the scale
+    np.testing.assert_allclose(
+        values[: len(values) - null], exact[: len(exact) - null], rtol=0, atol=rounding
+    )
     assert abs(exact[-1]) < 1e-9 * abs(exact[0]) if null else exact[-1] < -2.0  # -8.0 Dirichlet, -2.3 mixed
     solved = np.asarray(inverse.solve(Field(jnp.ones(line.shape), (CENTER,) * 3, line)).data).ravel()
     if null:  # the exact answer is 1/shift; a dense solve amplifies its rounding null eigenvalue by 1e5
