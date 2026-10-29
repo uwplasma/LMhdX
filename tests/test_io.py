@@ -1186,8 +1186,10 @@ def test_the_run_summary_reduces_each_chunk_as_the_whole_history_would():
     rng, steps = np.random.default_rng(271), 60
     whole = {name: rng.standard_normal(steps) for name in ThermalDiagnostics._fields}
     whole["finite"], whole["backflow_boundary_valid"] = np.ones(steps, bool), np.ones(steps, bool)
+    whole["conduction_iterations"] = rng.integers(0, 30, steps)
     whole["advective_cfl"][23], whole["finite"][23] = np.nan, False
     largest = {name: float(np.max(np.abs(whole[name]))) for name in cli._LARGEST}
+    largest["conduction_iterations"] = int(np.max(whole["conduction_iterations"]))
     last = {name: float(values[-1]) for name, values in whole.items()}
     assert np.isnan(largest["advective_cfl"])
     for size in (1, 7, 20, 60):

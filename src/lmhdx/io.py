@@ -1043,7 +1043,8 @@ _LARGEST = ("heat_balance_residual", "advective_cfl", "buoyancy_courant", "bouss
 
 
 def _fold_chunk(extremes: dict, history) -> dict:
-    """The summary's finite flag, largest magnitude of each of ``_LARGEST`` and last sample, with one chunk more.
+    """The summary's finite flag, largest magnitude of each of ``_LARGEST``, most conduction iterations and last
+    sample, with one chunk more.
 
     Only floats are kept: the summary's retention, not every output of a run, does not grow with the step count.
     A NaN, once seen, stays, as a maximum over the whole history would give.
@@ -1052,6 +1053,8 @@ def _fold_chunk(extremes: dict, history) -> dict:
     for name in _LARGEST:
         chunk = np.max(np.abs(np.asarray(getattr(history, name))))  # NaN if any sample is
         largest[name] = float(np.maximum(extremes["largest"].get(name, chunk), chunk))  # and NaN stays
+    iterations = int(np.max(np.asarray(history.conduction_iterations)))
+    largest["conduction_iterations"] = max(iterations, extremes["largest"].get("conduction_iterations", 0))
     return {
         "finite": extremes["finite"] and bool(np.all(np.asarray(history.finite))),
         "last": {name: float(np.asarray(values)[-1]) for name, values in history._asdict().items()},
@@ -1083,7 +1086,7 @@ def run_thermal(run) -> dict[str, object]:
     )
 
     problem, state, heat = run.problem, run.state, run.heat_source
-    grid = problem.flow.grid
+    grid = problem.thermal_grid
     scheme = _SCHEMES[problem.advection]
     courant = run.limits["advective_cfl"] if problem.advection != "off" else None
     limits = {
@@ -1118,7 +1121,10 @@ def run_thermal(run) -> dict[str, object]:
         if run.write_restart:
             write_thermal_record(run.directory / label, problem, state, units=run.units, run=run.provenance)
         if run.write_paraview:
-            centred = [cell_average(field, axis).data for axis, field in enumerate(state.velocity)]
+            centred = [
+                problem.on_thermal_grid(cell_average(field, axis).data)  # zero in any solid wall
+                for axis, field in enumerate(state.velocity)
+            ]
             cells = {"temperature": state.temperature.data, "velocity": jnp.stack(centred, axis=-1)}
             frames.append((float(state.time), write_vtr(run.directory / label, grid.faces, **cells).name))
     if frames:
