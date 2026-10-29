@@ -304,6 +304,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-lmhdx
+        id: setup
         with:
           python-version: "3.11"
           jax-version: "0.7.2"
@@ -322,3 +323,11 @@ jobs:
           if [[ -n "$WORKERS" ]]; then workers=(--workers "$WORKERS"); fi
           python scripts/run_full_test_suite.py --tier "$TIER" "${shard[@]}" "${workers[@]}" --no-coverage \
             --budget-seconds "$BUDGET" --test-timeout-seconds 300
+      # A run stopped by its budget skips the cache's own save, so a lane whose key prefix is new (a new
+      # Python) would start cold every time; keep what it compiled.
+      - name: Keep the compilation cache of a failed run
+        if: failure()
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/lmx-jax-cache
+          key: ${{ steps.setup.outputs.cache-key }}

@@ -23,6 +23,11 @@ inputs:
     required: false
     default: default
 
+outputs:
+  cache-key:
+    description: Key of the persistent JAX compilation cache this lane restores
+    value: ${{ steps.cache-key.outputs.key }}
+
 runs:
   using: composite
   steps:
@@ -37,11 +42,16 @@ runs:
         enable-cache: true
         cache-dependency-glob: pyproject.toml
 
+    - name: Name the JAX compilation cache
+      id: cache-key
+      shell: bash
+      run: echo "key=lmx-jax-${{ runner.os }}-${{ runner.arch }}-py${{ inputs.python-version }}-${{ inputs.cache-suffix }}-${{ hashFiles('pyproject.toml', 'src/**/*.py') }}" >> "$GITHUB_OUTPUT"
+
     - name: Restore JAX compilation cache
       uses: actions/cache@v6
       with:
         path: ${{ runner.temp }}/lmx-jax-cache
-        key: lmx-jax-${{ runner.os }}-${{ runner.arch }}-py${{ inputs.python-version }}-${{ inputs.cache-suffix }}-${{ hashFiles('pyproject.toml', 'src/**/*.py') }}
+        key: ${{ steps.cache-key.outputs.key }}
         restore-keys: lmx-jax-${{ runner.os }}-${{ runner.arch }}-py${{ inputs.python-version }}-${{ inputs.cache-suffix }}-
 
     - name: Enable bounded persistent compilation caching
