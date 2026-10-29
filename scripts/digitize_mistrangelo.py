@@ -1,13 +1,14 @@
 """Digitize the figures of Mistrangelo et al. (2025) into the compact references of plan step 5.4a (ADR 0009 D38).
 
-``python scripts/digitize_mistrangelo.py DIR`` rewrites ``mistrangelo2025-case1.json`` from the paper's figure
-images in ``DIR``, and writes every code's curve to ``DIR/mistrangelo2025-case1-curves.json``, a release asset. They are extracted from the journal's PDF (doi:10.1088/1741-4326/ae0800) with ``pymupdf``,
+``python scripts/digitize_mistrangelo.py DIR`` rewrites ``mistrangelo2025-case1.json`` and ``-case2.json`` from the
+paper's figure images in ``DIR``, and writes every code's curve to ``DIR/mistrangelo2025-case<n>-curves.json``, a
+release asset. The images are extracted from the journal's PDF (doi:10.1088/1741-4326/ae0800) with ``pymupdf``,
 ``Document.extract_image(xref)``, as ``x<xref>.png`` or ``.jpeg``, and are not in the repository, so this script
 is not part of the package or of ``validation/``. ``benchmarks/provenance.json`` records its SHA-256 beside each
 reference file's.
 
 A reference keeps, per figure, the image's hash, the calibration of both axes, the codes that agree and where the
-paper says so (``agree_basis``: "the paper", or "my reading" where it does not), and the band of those codes, with
+paper says so (``agree_basis``: "the paper", or "figure reading" where it does not), and the band of those codes, with
 the curves that are not one of the six codes. Each is simplified to within half a pixel of every extracted column,
 nothing decimated before, and rounded to a tenth of one. Each axis carries its calibration misfit in its own units, and the record its digitizing uncertainty, which a
 test uses as its tolerance. ``digitize`` returns every code's curve in full, for a figure read again.
@@ -22,9 +23,8 @@ from pathlib import Path
 
 import numpy as np
 
-REFERENCES = (
-    Path(__file__).resolve().parents[1] / "src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json"
-)
+_DATA = Path(__file__).resolve().parents[1] / "src/lmhdx/data/benchmarks/references"
+REFERENCES, REFERENCES_CASE2 = _DATA / "mistrangelo2025-case1.json", _DATA / "mistrangelo2025-case2.json"
 
 # The reference curves (plan step 5.4a). The paper's figures are xmgrace plots embedded as raster images, extracted
 # with ``pymupdf`` (``Document.extract_image(xref)``) as ``x<xref>.png`` or ``.jpeg``; each record carries the image's
@@ -75,6 +75,23 @@ FIGURES = {
     18: dict(pdf_page=12, xref=309, x=((-0.3, 83), (0.3, 730), 0.1), y=((20, 8), (0, 468), 5), quantity="Nu, eq. 7, against x [m]", agree=SIX[:1] + SIX[2:], cite="as read: FLUENT_UK, as p. 10 says of Fig. 16; Nu -> 2.45 printed (p. 10)"),
     19: dict(pdf_page=12, xref=311, x=((-1.25, 68), (1.25, 726), 0.5), y=((1e-3, 33), (1e-7, 461.5), 1), quantity="E_t, eq. 8, against x [m]", agree=("FLUENT_CIEMAT", "OF_ORNL", "OF_KIT"), cite="as read: FLUENT_UK as in the previous figures (p. 10); CFX lower, its diffusion (p. 16)", log=True, omit={"COMSOL": "not shown: its caption excludes it"}),
     38: dict(pdf_page=17, xref=486, x=((-1, 88.5), (1, 777), 0.5), y=((400, 44.5), (300, 481), 20), quantity="T_w at y = 0, z = -0.023 m and T_b [C] against x [m], OF_KIT, both cases (case1 dashed, below)", agree=(), cite="p. 16", colours=PAIRS, branches=("case1", "case2")),
+}
+ALL_BUT = {code: tuple(c for c in SIX if c != code) for code in SIX}
+OUTLET = "COMSOL's outlet backflow beyond x = 0.7 m (pp. 12, 14) is outside the window"
+FIGURES_CASE2 = {
+    23: dict(pdf_page=14, xref=368, x=((-1.5, 84), (1.5, 691), 0.5), y=((0.025, 7.5), (0.005, 434), 0.005), quantity="u [m/s] on y = z = 0 against x [m]", agree=("FLUENT_CIEMAT", "FLUENT_UK", "OF_KIT", "COMSOL"), cite=f"p. 12: CFX differs; OF_ORNL fluctuates, numerical problems; {OUTLET}", window=(-1.0, 0.7)),
+    24: dict(pdf_page=14, xref=370, x=((-1.5, 81), (1.5, 692.5), 0.5), y=((375, 43), (285, 428.5), 15), quantity="T [C] on y = z = 0 against x [m]", agree=("FLUENT_CIEMAT", "FLUENT_UK", "OF_KIT", "COMSOL"), cite=f"p. 12: CFX's steeper rise; OF_ORNL fluctuates; {OUTLET}", window=(-1.0, 0.7)),
+    26: dict(pdf_page=14, xref=374, x=((-0.025, 84.5), (0.025, 683), 0.01), y=((0.03, 7), (0.0, 427), 0.01), quantity="u [m/s] at x = -0.3 m, y = 0 against z [m]", agree=ALL_BUT["CFX"], cite="p. 13: all but CFX reproduce the analytical solution", omit={"CFX": "not separable from the analytical markers, which merge in this JPEG"}),
+    27: dict(pdf_page=14, xref=376, x=((-0.025, 84), (0.025, 684), 0.01), y=((0.04, 6), (0.0, 427), 0.01), quantity="u [m/s] at x = 0, y = 0 against z [m]", agree=ALL_BUT["CFX"], cite="as read: CFX's profile differs, as p. 12 says of Fig. 23"),
+    28: dict(pdf_page=15, xref=408, x=((-0.025, 80.5), (0.025, 682), 0.01), y=((310, 7), (300, 390), 2.5), quantity="T [C] at x = -0.3 m, y = 0 against z [m]", agree=("OF_KIT", "COMSOL"), cite="p. 13: COMSOL and OF_KIT fit well together"),
+    29: dict(pdf_page=15, xref=410, x=((-0.025, 78.5), (0.025, 681.5), 0.01), y=((420, 7), (300, 429), 20), quantity="T [C] at x = 0, y = 0 against z [m]", agree=ALL_BUT["CFX"], cite="p. 13: all predict the thicker layer; CFX's 20 K hotter wall left out, as read"),
+    30: dict(pdf_page=15, xref=412, x=((-1.5, 81), (1.5, 692), 0.5), y=((300, 7), (0, 422), 50), quantity="p [Pa] on y = z = 0 against x [m], FLUENT_CIEMAT and CFX offsets removed", agree=SIX, cite=f"p. 14; {OUTLET}", window=(-1.0, 0.7)),
+    31: dict(pdf_page=15, xref=414, x=((-1.5, 90), (1.5, 693), 0.5), y=((20, 6), (-120, 414), 20), quantity="phi [uV] at y = 0 on z = -0.023 m against x [m]", agree=("CFX", "OF_ORNL", "OF_KIT", "COMSOL"), cite=f"p. 14: FLUENT's curves are instantaneous; {OUTLET}", window=(-1.0, 0.7)),
+    32: dict(pdf_page=15, xref=416, x=((-1.5, 83), (1.5, 693), 0.5), y=((120, 15), (-20, 427), 20), quantity="phi [uV] at y = 0 on z = 0.023 m against x [m]", agree=("CFX", "OF_ORNL", "OF_KIT", "COMSOL"), cite=f"p. 14: FLUENT's curves are instantaneous; {OUTLET}", window=(-1.0, 0.7)),
+    33: dict(pdf_page=16, xref=451, x=((-0.025, 82), (0.025, 683), 0.01), y=((150, 7), (-150, 427), 50), quantity="phi [uV] at x = y = 0 against z [m]", agree=ALL_BUT["CFX"], cite="p. 15: good agreement; CFX's offset left out, as read", rows=(214, 221)),
+    34: dict(pdf_page=16, xref=453, x=((-1, 86), (1, 700), 0.25), y=((380, 7), (300, 432), 20), quantity="bulk T [C], eq. 6, against x [m]", agree=("FLUENT_CIEMAT", "FLUENT_UK", "CFX", "OF_KIT"), cite="p. 15 (caption) and p. 16: OF_ORNL and COMSOL unphysical"),
+    35: dict(pdf_page=16, xref=455, x=((-0.5, 284), (1, 723), 0.5), y=((1e-1, 12), (1e-8, 504), 1), quantity="E_t, eq. 8, against x [m]", agree=("FLUENT_CIEMAT", "FLUENT_UK", "OF_KIT"), cite="pp. 15-16: CFX differs; OF_ORNL and COMSOL unphysical in the kinetic energy", log=True),
+    37: dict(pdf_page=17, xref=484, x=((-0.3, 79), (0.3, 769), 0.1), y=((20, 9), (0, 496), 5), quantity="Nu, eq. 7, against x [m]", agree=("FLUENT_CIEMAT", "FLUENT_UK", "OF_KIT"), cite="as read: CFX differs, and OF_ORNL's and COMSOL's bulk temperatures fluctuate (p. 16)"),
 }
 # fmt: on
 
@@ -340,7 +357,7 @@ def _compact(record: dict) -> dict:
         axis: float(f"{spread[axis] * scale:.3g}") for axis, scale in zip("xy", record["per_pixel"])
     }
     out["uncertainty"]["px"] = {axis: round(value, 2) for axis, value in spread.items()}
-    out["agree_basis"] = "my reading" if "as read" in record["agree_source"] else "the paper"
+    out["agree_basis"] = "figure reading" if "as read" in record["agree_source"] else "the paper"
     out["curves"] = {}
     for name, curve in record["curves"].items():
         if name in SIX:
@@ -383,8 +400,9 @@ def write_curves(images: Path, path: Path, figures: dict = FIGURES, case: str = 
 
 def main() -> None:
     images = Path(sys.argv[1])
-    print(write_references(images))
-    print(write_curves(images, images / "mistrangelo2025-case1-curves.json"))
+    for path, figures, case in ((REFERENCES, FIGURES, "case1"), (REFERENCES_CASE2, FIGURES_CASE2, "case2")):
+        print(write_references(images, path, figures, case))
+        print(write_curves(images, images / f"mistrangelo2025-{case}-curves.json", figures, case))
 
 
 if __name__ == "__main__":

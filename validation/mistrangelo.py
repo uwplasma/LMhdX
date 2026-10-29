@@ -31,6 +31,7 @@ from lmhdx.steady import solve_steady_state
 __all__ = [
     "PIN_MESH",
     "REFERENCES",
+    "REFERENCES_CASE2",
     "SPEC",
     "band_misfit",
     "developed_gradient",
@@ -211,6 +212,7 @@ def infer_wall_ratio(
 # The reference curves of plan step 5.4a, written by ``scripts/digitize_mistrangelo.py`` (ADR 0009 D38).
 
 REFERENCES = _DATA / "references" / "mistrangelo2025-case1.json"
+REFERENCES_CASE2 = _DATA / "references" / "mistrangelo2025-case2.json"
 
 
 def main() -> None:
