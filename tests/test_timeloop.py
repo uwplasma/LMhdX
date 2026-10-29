@@ -398,7 +398,21 @@ def _layered_duct() -> ChannelProblem:
     )
 
 
-@pytest.mark.parametrize("walls", ["insulating-uniform", "insulating-stretched", "thin", "layers"])
+def _solid_duct() -> ChannelProblem:
+    """``_layered_duct``'s walls as solid walls, on the extended grid's PCG (plan step 5.4b, part 3)."""
+    import dataclasses
+
+    from lmhdx.core3d import SolidWall
+
+    wall = SolidWall(0.2, 2, 1.0, 1.0, 2.0)
+    return dataclasses.replace(
+        _layered_duct(),
+        wall_layers=(None, None, None),
+        solid_walls=((None, None), (wall, wall), (None, None)),
+    )
+
+
+@pytest.mark.parametrize("walls", ["insulating-uniform", "insulating-stretched", "thin", "layers", "solid"])
 def test_the_deposited_joule_heat_integrates_to_the_budget_joule_power(walls):
     """On one state, the fluid's deposited heat is energy_budget's ``joule`` to 1e-11 (ADR 0008, V12).
 
@@ -415,6 +429,7 @@ def test_the_deposited_joule_heat_integrates_to_the_budget_joule_power(walls):
         "insulating-stretched": lambda: duct_problem(hartmann=20.0, cells=24),
         "thin": lambda: duct_problem(hartmann=20.0, cells=24, wall_conductance=0.05),
         "layers": _layered_duct,
+        "solid": _solid_duct,
     }[walls]()
     keys = jax.random.split(jax.random.PRNGKey(5), 3)
     noise = tuple(
@@ -433,7 +448,7 @@ def test_the_deposited_joule_heat_integrates_to_the_budget_joule_power(walls):
     )
     assert float(jnp.min(heat.data)) >= 0.0 and float(budget.joule) > 0.0
     assert abs(deposited - float(budget.joule)) <= 1e-11 * float(budget.joule)
-    assert (float(budget.wall) > 0.0) == (walls in ("thin", "layers"))
+    assert (float(budget.wall) > 0.0) == (walls in ("thin", "layers", "solid"))
 
 
 def test_no_field_or_a_field_along_the_flow_deposits_no_heat():

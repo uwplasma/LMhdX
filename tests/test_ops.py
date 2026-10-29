@@ -1559,6 +1559,7 @@ def test_walls_build_the_extended_grid_and_its_corners_take_the_nearer_wall():
     mixed = conjugate_grid(fluid, [[None, None], [copper, copper], (steel, steel)])  # lists are pairs too
     k = mixed.cells("thermal_conductivity", 1.0)
     assert (k[0, 0, 0], k[0, 1, 0], k[0, 0, 1], k[0, 6, 7]) == (400.0, 400.0, STEEL[0], 400.0)
+    assert np.array_equal(k, k[:, ::-1]) and np.array_equal(k, k[:, :, ::-1])  # every corner alike
     off_centre = Grid(uniform_faces(1, 0.0, 1.0), *(uniform_faces(5, -0.7, 0.3) for _ in range(2)))
     k = conjugate_grid(off_centre, ((None, None), (copper, copper), (steel, steel))).cells(
         "thermal_conductivity", 1
@@ -1579,6 +1580,80 @@ def test_walls_build_the_extended_grid_and_its_corners_take_the_nearer_wall():
     conduction = variable_helmholtz(fluid, (WRAP, WALL, WALL), 1.0, 1.0, 1.0)
     with pytest.raises(ValueError, match="own kinds"):
         conduction.lift((WRAP, thermal_boundary("temperature", 1.0), WALL))
+
+
+def test_without_a_shift_one_material_is_the_singular_fast_diagonal_inverse():
+    """The nullspace contract of the charge balance, insulated outside. The operator is singular on the constants,
+    so the solve adds ``a V (V . x)/sum V`` and removes the volume mean after. A compatible right-hand side gives the
+    fast-diagonal Poisson inverse, in one iteration for one material, with zero mean. One with a net source is
+    refused, NaN, rather than absorbed by the gauge, and ``defect`` reports the mean that would have been removed."""
+    from lmhdx.poisson import fast_diagonal_poisson
+
+    charge = variable_helmholtz(STRETCHED, (WRAP, WALL, WALL), 2.0, None, 1.0)
+    rhs = jnp.asarray(np.random.default_rng(7).standard_normal(STRETCHED.shape))
+    rhs = rhs - charge.defect(rhs)
+    assert abs(float(charge.defect(rhs))) <= 1e-15 * float(jnp.max(jnp.abs(rhs)))
+    potential, iterations = charge.solve(rhs)
+    direct = fast_diagonal_poisson(STRETCHED, (WRAP, WALL, WALL)).solve(Field(-rhs / 2.0, CELL, STRETCHED))
+    assert np.asarray(potential) == pytest.approx(
+        np.asarray(direct.data), abs=1e-10 * float(jnp.max(jnp.abs(direct.data)))
+    )
+    assert int(iterations) == 1
+    volumes = STRETCHED.cell_volumes()
+    assert abs(float(np.sum(volumes * np.asarray(potential)))) <= 1e-12 * float(np.sum(volumes))
+    source = rhs + 1e-3
+    assert float(charge.defect(source)) == pytest.approx(1e-3, rel=1e-9)
+    assert np.all(np.isnan(np.asarray(charge.solve(source)[0]))), "a net source was absorbed by the gauge"
+    with pytest.raises(ValueError, match="insulated or periodic"):
+        variable_helmholtz(STRETCHED, (WRAP, WALL, thermal_boundary("temperature")), 2.0, None, 1.0)
+
+
+@pytest.mark.parametrize("ratio", [1e-2, 1.0, 1e2, 1e4])
+def test_the_gauged_charge_solve_meets_its_primal_tangent_and_transpose_equations(ratio):
+    """The singular charge solve and its implicit derivatives, through walls ``ratio`` times as conducting as the
+    fluid, each checked by the residual of its own equation. With ``A`` the operator and ``V`` the cell volumes:
+    - primal: ``A x = V b`` for a compatible ``b``, with the gauge ``V . x = 0``;
+    - tangent in the cells' conductivity: ``A dx = -dA x``, with ``V . dx = 0``;
+    - transpose: the gradient of ``g . x`` in ``b``, over ``V``, is the ``m`` with ``A m = g - V (1 . g)/sum V``
+      and ``V . m = 0``; the gauge's rank-one term drops out, since that right-hand side sums to zero;
+    and the JVP and VJP in the conductivity agree. Unconverged, the value and both derivatives are NaN."""
+    walled, _, _ = _walled()
+    fluid = np.zeros(walled.grid.shape, dtype=bool)
+    fluid[walled.fluid] = True
+    conductivity = jnp.asarray(np.where(fluid, 1.0, ratio))
+    charge = variable_helmholtz(walled.grid, (WRAP, WALL, WALL), conductivity, None, 1.0, max_steps=400)
+    rng = np.random.default_rng(11)
+    rhs, weights, pattern = (jnp.asarray(rng.standard_normal(walled.grid.shape)) for _ in range(3))
+    rhs, direction = rhs - charge.defect(rhs), jnp.where(fluid, 0.0, ratio * pattern)  # a change in the walls
+    volumes = jnp.asarray(walled.grid.cell_volumes())
+
+    def solve(sigma, b=rhs, operator=charge):
+        return operator.with_coefficients(conductivity=sigma).solve(b)[0]
+
+    def residual(a, b):
+        return float(jnp.linalg.norm(a - b) / jnp.linalg.norm(b))
+
+    def gauge(values):
+        return abs(float(jnp.vdot(volumes, values))) / float(jnp.sum(volumes) * jnp.max(jnp.abs(values)))
+
+    def applied(sigma, values):
+        return charge.with_coefficients(conductivity=sigma).apply(values)
+
+    potential, tangent = jax.jvp(solve, (conductivity,), (direction,))
+    assert residual(charge.apply(potential), volumes * rhs) < 1e-10 and gauge(potential) < 1e-12
+    change = jax.jvp(lambda sigma: applied(sigma, potential), (conductivity,), (direction,))[1]
+    assert residual(charge.apply(tangent), -change) < 1e-9 and gauge(tangent) < 1e-12
+    adjoint = jax.grad(lambda b: jnp.vdot(weights, solve(conductivity, b)))(rhs) / volumes
+    projected = weights - volumes * jnp.sum(weights) / jnp.sum(volumes)
+    assert residual(charge.apply(adjoint), projected) < 1e-9 and gauge(adjoint) < 1e-12
+    gradient = jax.grad(lambda sigma: jnp.vdot(weights, solve(sigma)))(conductivity)
+    assert float(jnp.vdot(gradient, direction)) == pytest.approx(float(jnp.vdot(weights, tangent)), rel=1e-9)
+    if ratio == 1.0:
+        return  # one material converges in one iteration, its preconditioner being the exact inverse
+    unconverged = dataclasses.replace(charge, max_steps=1)
+    assert np.isnan(float(jnp.vdot(weights, solve(conductivity, operator=unconverged))))
+    stalled = jax.grad(lambda sigma: jnp.vdot(weights, solve(sigma, operator=unconverged)))(conductivity)
+    assert np.all(np.isnan(np.asarray(stalled)))
 
 
 def test_a_float32_fast_diagonal_helmholtz_stays_definite_at_a_large_coefficient():

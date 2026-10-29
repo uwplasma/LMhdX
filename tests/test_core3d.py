@@ -1026,6 +1026,332 @@ def test_resolved_wall_layers_are_frozen_and_checked():
         ChannelProblem(grid, conditions, wall_conductance=(0.0, 0.1, 0.0), wall_layers=problem.wall_layers)
 
 
+# Solid walls in the charge balance (plan step 5.4b, ADR 0009 D36): the potential on the extended grid.
+
+
+_SYMMETRIC = (((4.0, 4, 0.1), (4.0, 4, 0.1)), ((0.5, 4, 0.1), (0.5, 4, 0.1)))
+# Unequal cells and thicknesses per wall, and one end insulated, so no corner depth ties.
+_UNEQUAL = (((4.0, 4, 0.1), (4.0, 3, 0.06)), ((0.5, 2, 0.08), None))
+
+
+def _sections(ends=_SYMMETRIC, cells: int = 12, conductivity: float = 3.0):
+    """One periodic cell of a square duct, its walls resolved on both axes as ``wall_layers`` and as the same
+    cells of ``solid_walls``: each end ``(ratio, cells, thickness)`` or ``None``, the ratio over the fluid's
+    ``conductivity``, which the solid walls take as an absolute value."""
+    from lmhdx.core3d import SolidWall
+
+    base = dataclasses.replace(
+        duct_problem(hartmann=20.0, cells=cells, cells_in_layer=3), conductivity=conductivity
+    )
+
+    def layer(end):
+        return None if end is None else ((end[0],) * end[1], (end[2] / end[1],) * end[1])
+
+    def solid(end):
+        return None if end is None else SolidWall(end[2], end[1], 1.0, 1.0, end[0] * conductivity)
+
+    layered = dataclasses.replace(base, wall_layers=(None, *(tuple(map(layer, pair)) for pair in ends)))
+    return layered, dataclasses.replace(
+        base, solid_walls=((None, None), *(tuple(map(solid, pair)) for pair in ends))
+    )
+
+
+def _noise(problem: ChannelProblem, seed: int = 54):
+    keys = jax.random.split(jax.random.PRNGKey(seed), 3)
+    shapes = [problem.grid.offset_shape(velocity_offset(axis)) for axis in range(3)]
+    noise = tuple(
+        Field(jax.random.normal(keys[axis], shapes[axis]), velocity_offset(axis), problem.grid)
+        for axis in range(3)
+    )
+    return project(noise, problem)[0]
+
+
+@pytest.mark.parametrize("ends", [_SYMMETRIC, _UNEQUAL], ids=["symmetric", "unequal"])
+def test_solid_walls_carry_the_currents_of_the_same_walls_resolved_in_cells(ends):
+    """A 2-D section with Hartmann walls 4x and side walls 0.5x the fluid's conductivity of 3, equal on every end
+    or of unequal cells with one end insulated: PCG on the extended grid gives the resolved path's potential,
+    currents and powers, corners included (both take the nearer wall's material), and the Lorentz work is minus
+    the dissipation in fluid and walls."""
+    from lmhdx.core3d import energy_budget, face_currents
+
+    problems = _sections(ends)
+    velocity = _noise(problems[0])
+    (phi, expected, _), (psi, currents, _) = (face_currents(velocity, problem) for problem in problems)
+    volumes = problems[0].grid.cell_volumes()
+    centred = [
+        np.asarray(p.data) - np.sum(volumes * np.asarray(p.data)) / np.sum(volumes) for p in (phi, psi)
+    ]
+    assert centred[1] == pytest.approx(centred[0], abs=1e-9 * np.max(np.abs(centred[0])))
+    scale = max(float(jnp.max(jnp.abs(current.data))) for current in expected)
+    for want, got in zip(expected, currents):
+        assert np.asarray(got.data) == pytest.approx(np.asarray(want.data), abs=1e-9 * scale)
+    budgets = [energy_budget(velocity, problem) for problem in problems]
+    for name in ("lorentz", "joule", "wall"):
+        assert float(getattr(budgets[1], name)) == pytest.approx(float(getattr(budgets[0], name)), rel=1e-9)
+    work = float(budgets[1].lorentz + budgets[1].joule + budgets[1].wall)
+    assert abs(work) <= 1e-9 * float(budgets[1].joule) and float(budgets[1].wall) > 0.0
+
+
+def test_a_section_in_solid_walls_develops_the_flow_of_its_resolved_walls():
+    from lmhdx.fully_developed import channel_flow_rate
+    from lmhdx.steady import solve_steady_state
+
+    rates = [
+        float(channel_flow_rate(problem, solve_steady_state(problem).velocity[0].data[0]))
+        for problem in _sections()
+    ]
+    assert rates[1] == pytest.approx(rates[0], rel=1e-8)
+
+
+def test_thinner_solid_walls_tend_to_the_thin_wall_model_at_their_conductance():
+    """Hunt's duct at Ha 20: Hartmann walls alone, so no corners, of conductance ratio ``c = sigma_w t / (sigma a)
+    = 0.05``, thinned from a/10 to a/40 at that ``c``, approach the thin-wall model's flow rate at second order in
+    ``t``: 4.3e-3, 1.1e-3 and 2.8e-4."""
+    from lmhdx.core3d import SolidWall
+    from lmhdx.fully_developed import channel_flow_rate
+    from lmhdx.steady import solve_steady_state
+
+    def rate(problem):
+        return float(channel_flow_rate(problem, solve_steady_state(problem).velocity[0].data[0]))
+
+    thin = duct_problem(hartmann=20.0, cells=24, wall_conductance=0.05)
+    reference, errors = rate(thin), []
+    for thickness in (0.1, 0.05, 0.025):
+        wall = SolidWall(thickness, 2, 1.0, 1.0, 0.05 / thickness)
+        walls = ((None, None), (wall, wall), (None, None))
+        errors.append(
+            abs(
+                rate(dataclasses.replace(thin, wall_conductance=(0.0,) * 3, solid_walls=walls)) / reference
+                - 1
+            )
+        )
+    assert errors == pytest.approx([4.3e-3, 1.1e-3, 2.8e-4], rel=0.05)
+
+
+def test_the_charge_balance_closes_in_the_walls_and_none_leaves_them():
+    """The currents through the fluid and its solid walls, on the extended grid. The charge right-hand side's volume
+    mean, which the gauge would remove, is rounding: no real source is absorbed. The divergence vanishes in every
+    cell, fluid and wall, to the solve's 1e-13; the walls carry current; and the insulated outer faces carry none."""
+    from lmhdx.core3d import SolidWall, _motional, _solid_wall_solve
+
+    wall = SolidWall(0.1, 2, 1.0, 1.0, 2.0)
+    problem = ChannelProblem(
+        _duct(10, 10, 4),
+        (PERIODIC_X, WALL, WALL),
+        magnetic_field=(0.0, 10.0, 0.0),
+        forcing=(1.0, 0.0, 0.0),
+        dt=0.01,
+        solid_walls=((None, None), (wall, wall), (wall, wall)),
+    )
+    *_, motional = _motional(_noise(problem), problem)
+    conjugate, charge = _solid_wall_solve(
+        problem.grid, problem.scalar_conditions, problem.solid_walls, 1.0, problem.precision
+    )
+    padded = tuple(Field(conjugate.padded(flux.data), flux.offset, conjugate.grid) for flux in motional)
+    rhs = -divergence(padded).data
+    assert abs(float(charge.defect(rhs))) <= 1e-15 * float(jnp.max(jnp.abs(rhs)))
+    potential, _ = charge.solve(rhs)
+    currents = tuple(
+        flux.replace_data(flux.data - inward.data)
+        for flux, inward in zip(padded, charge.face_fluxes(potential))
+    )
+    scale = max(float(jnp.max(jnp.abs(current.data))) for current in currents)
+    assert float(jnp.max(jnp.abs(divergence(currents).data))) <= 1e-10 * scale
+    solid = np.ones(conjugate.grid.shape, dtype=bool)
+    solid[conjugate.fluid] = False
+    axial = np.asarray(currents[0].data)[:-1]  # the periodic axis repeats its first face
+    assert float(np.max(np.abs(axial[solid]))) > 1e-2 * scale, "the walls carry no current"
+    for axis in (1, 2):
+        ends = np.moveaxis(np.asarray(currents[axis].data), axis, 0)[[0, -1]]
+        assert float(np.max(np.abs(ends))) <= 1e-12 * scale
+
+
+def test_a_solid_wall_s_electrical_conductivity_is_a_leaf_of_the_charge_solve():
+    """Two solid walls' electrical conductivities, put into the cells in the trace, are leaves of the charge solve:
+    the derivative of a weighted sum of the fluid's face currents meets a central-difference sweep, its
+    Taylor remainder falls at second order, it satisfies the JVP/VJP identity, it meets its own central difference
+    on a finer mesh, and a new value does not recompile. The steady solve builds its walls as constants: a gradient
+    of its pressure drop in them is planned with the wall-conductance work, and a traced conductivity is refused."""
+    from lmhdx.core3d import SolidWall, _motional, _solid_wall_currents
+
+    traces = []
+
+    def objective_on(cells):
+        wall = SolidWall(0.1, 2, 1.0, 1.0, 2.0)
+        problem = ChannelProblem(
+            _duct(cells, cells, 1),
+            (PERIODIC_X, WALL, WALL),
+            magnetic_field=(0.0, 10.0, 0.0),
+            forcing=(1.0, 0.0, 0.0),
+            dt=0.01,
+            solid_walls=((None, None), (wall, wall), (wall, wall)),
+        )
+        *_, motional = _motional(_noise(problem), problem)
+        rng = np.random.default_rng(cells)
+        weights = [jnp.asarray(rng.standard_normal(flux.data.shape)) for flux in motional]
+
+        def objective(values):
+            traces.append(None)
+            _, currents = _solid_wall_currents(motional, problem, {(1, 0): values[0], (2, 1): values[1]})
+            return sum(jnp.vdot(weight, current.data) for weight, current in zip(weights, currents))
+
+        return objective
+
+    objective, sigma, direction = objective_on(8), jnp.asarray([2.0, 2.0]), jnp.asarray([1.0, -0.5])
+    slope = float(jax.grad(objective)(sigma) @ direction)
+    errors = [
+        abs(
+            float(objective(sigma + h * direction) - objective(sigma - h * direction)) / (2.0 * h) / slope
+            - 1.0
+        )
+        for h in (1e-2, 1e-3)
+    ]
+    assert errors[1] < 1e-7 and errors[1] < errors[0] / 50.0, errors  # the central difference's own h^2
+    base = objective(sigma)
+    remainders = [abs(float(objective(sigma + h * direction) - base) - h * slope) for h in (0.1, 0.05, 0.025)]
+    assert all(3.5 < coarse / fine < 4.5 for coarse, fine in zip(remainders, remainders[1:])), remainders
+    tangent = float(jax.jvp(objective, (sigma,), (direction,))[1])
+    assert float(jax.vjp(objective, sigma)[1](1.0)[0] @ direction) == pytest.approx(tangent, rel=1e-10)
+    traces.clear()
+    jitted = jax.jit(objective)
+    jitted(sigma), jitted(1.2 * sigma)
+    assert len(traces) == 1, "a new wall conductivity recompiled"
+    finer = objective_on(12)
+    central = (finer(sigma + 1e-3 * direction) - finer(sigma - 1e-3 * direction)) / 2e-3
+    assert float(jax.grad(finer)(sigma) @ direction) == pytest.approx(float(central), rel=1e-6)
+    with pytest.raises(jax.errors.ConcretizationTypeError):
+        jax.grad(lambda s: SolidWall(0.1, 2, 1.0, 1.0, s).electrical_conductivity)(2.0)
+
+
+@pytest.mark.slow
+def test_solid_walls_meet_ni_2007_table_3_hunts_duct_at_ha_300():
+    """A published number for the solid wall. Hunt's duct at Ha 300 has conducting Hartmann walls of
+    c = sigma_w t / (sigma a) = 0.1 and insulating side walls: Ni et al. (2007) Table 3 gives its analytic
+    Re dp/dx at a flow rate of 4 as 5854.302 (``tests/test_table_i.py``, which checks it against the spectral
+    solve). On 48 cells the thin-wall model is 0.66 % below it, converging from 1.6 % on 32. Solid walls of that
+    c, a/10, a/20 and a/40 thick, sit 2.3 %, 0.64 % and 0.16 % below the thin-wall model, approaching it at second
+    order in the thickness."""
+    from lmhdx.core3d import SolidWall
+    from lmhdx.fully_developed import channel_flow_rate
+    from lmhdx.steady import solve_steady_state
+
+    table = 5854.302
+
+    def scaled_gradient(problem):  # Re dp/dx at unit mean velocity, the forcing being one
+        return 4.0 / float(channel_flow_rate(problem, solve_steady_state(problem).velocity[0].data[0]))
+
+    thin = duct_problem(hartmann=300.0, cells=48, wall_conductance=0.1)
+    reference = scaled_gradient(thin)
+    assert reference / table - 1.0 == pytest.approx(-6.55e-3, abs=1e-3)
+    below = []
+    for thickness in (0.1, 0.05, 0.025):
+        wall = SolidWall(thickness, 3, 1.0, 1.0, 0.1 / thickness)
+        solid = dataclasses.replace(
+            thin, wall_conductance=(0.0,) * 3, solid_walls=((None, None), (wall, wall), (None, None))
+        )
+        below.append(1.0 - scaled_gradient(solid) / reference)
+    assert below == pytest.approx([0.0232, 0.00635, 0.00164], rel=0.05)
+    assert all(3.3 < coarse / fine < 4.3 for coarse, fine in zip(below, below[1:]))
+
+
+def test_solid_walls_lift_the_one_axial_cell_limit_and_conserve_charge_in_3d():
+    """Walls resolved in cells on two axes need one axial cell; solid walls take any. In a 3-D duct with a field
+    varying along it, the fluid's charge balance closes near the direct solves' rounding, the walls dissipate what
+    the Lorentz work does not leave in the fluid, the Lorentz force differentiates in the field's scale both
+    ways, and steps run."""
+    from lmhdx.core3d import SolidWall, electric_state, energy_budget, face_currents
+
+    grid = _duct(10, 10, 4)
+    x = np.asarray(grid.centers[0])[:, None, None] * np.ones(grid.shape)
+    field = (0.0, 10.0 * (1.0 + 0.5 * np.cos(2.0 * np.pi * x)), 0.0)
+    layer = ((2.0, 2.0), (0.05, 0.05))
+    with pytest.raises(ValueError, match="one cell along the third"):
+        ChannelProblem(grid, (PERIODIC_X, WALL, WALL), wall_layers=(None, (layer, layer), (layer, layer)))
+    wall = SolidWall(0.1, 2, 1.0, 1.0, 2.0)
+    problem = ChannelProblem(
+        grid,
+        (PERIODIC_X, WALL, WALL),
+        magnetic_field=field,
+        forcing=(1.0, 0.0, 0.0),
+        dt=0.01,
+        solid_walls=((None, None), (wall, wall), (wall, wall)),
+    )
+    velocity = _noise(problem)
+    _, currents, _ = face_currents(velocity, problem)
+    scale = max(float(jnp.max(jnp.abs(current.data))) for current in currents)
+    assert float(jnp.max(jnp.abs(divergence(currents).data))) <= 1e-10 * scale
+    budget = energy_budget(velocity, problem)
+    assert float(budget.wall) > 0.0
+    assert abs(float(budget.lorentz + budget.joule + budget.wall)) <= 1e-9 * float(budget.joule)
+
+    def force(scale):
+        return electric_state(velocity, problem, field_scale=scale)[1][0].data
+
+    # Quadratic in the scale, so the central difference is exact; the gradient runs the adjoint solve.
+    tangent, difference = jax.jvp(force, (1.0,), (1.0,))[1], force(1.5) - force(0.5)
+    assert np.asarray(tangent) == pytest.approx(
+        np.asarray(difference), abs=1e-8 * float(jnp.max(jnp.abs(difference)))
+    )
+    weights = jnp.asarray(np.random.default_rng(8).standard_normal(difference.shape))
+    gradient = float(jax.grad(lambda scale: jnp.vdot(weights, force(scale)))(1.0))
+    assert gradient == pytest.approx(float(jnp.vdot(weights, difference)), rel=1e-8)
+    moved = velocity
+    for _ in range(3):
+        moved = step(moved, problem, problem.factorization(), problem.viscous_factorizations())[0]
+    assert all(bool(jnp.all(jnp.isfinite(component.data))) for component in moved)
+
+
+def test_solid_walls_are_checked_and_the_benchmark_s_charge_takes_few_iterations():
+    """What a flow's solid walls refuse, how a thermal problem takes them, and the benchmark's charge: steel at
+    the pinned 1.2457 times the PbLi's conductivity, 2/23 of the half-width thick on four sides, converges to
+    1e-13 in 10 PCG iterations on a random compatible right-hand side, its solution of zero mean."""
+    from lmhdx.core3d import SolidWall, _solid_wall_solve
+    from lmhdx.thermal import ThermalProblem, thermal_boundary
+
+    base = duct_problem(hartmann=20.0, cells=12, cells_in_layer=3)
+    bare, wall = SolidWall(0.1, 2, 1.0, 1.0), SolidWall(0.1, 2, 1.0, 1.0, 2.0)
+    pair = ((None, None), (wall, wall), (None, None))
+    layer = ((2.0, 2.0), (0.05, 0.05))
+    across = ChannelProblem(base.grid, (PERIODIC_X, BoundaryCondition(PERIODIC), WALL))
+    for problem, overrides, message in (
+        (base, {"solid_walls": ((None, None), (bare, bare), (None, None))}, "electrical_conductivity"),
+        (base, {"solid_walls": ((bare, None), (None, None), (None, None))}, "transverse"),
+        (base, {"wall_conductance": (0.0, 0.05, 0.0), "solid_walls": pair}, "beside them"),
+        (base, {"wall_layers": (None, None, (layer, layer)), "solid_walls": pair}, "beside them"),
+        (
+            base,
+            {"conductivity": 0.0, "magnetic_field": (0.0, 0.0, 0.0), "solid_walls": pair},
+            "conducting fluid",
+        ),
+        (across, {"conductivity": 1.0, "solid_walls": pair}, "periodic"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            dataclasses.replace(problem, **overrides)
+    assert dataclasses.replace(base, solid_walls=None).solid_walls == ((None, None),) * 3
+    steel = SolidWall(2.0 / 23.0, 4, 18.3, 4.27, 1.2457)
+    walls = ((None, None), (steel, steel), (steel, steel))
+    walled = dataclasses.replace(base, solid_walls=walls)
+    insulated = thermal_boundary("heat_flux", conductivity=18.3)
+    thermal = ThermalProblem(walled, (PERIODIC_X, insulated, insulated), 1.0, 1.0, 0.0)  # the flow's walls
+    assert thermal.walls == walls and thermal.thermal_grid.shape == (1, 20, 20)
+    with pytest.raises(ValueError, match="only among the flow's solid_walls"):
+        ThermalProblem(base, (PERIODIC_X, insulated, insulated), 1.0, 1.0, 0.0, walls=walls)
+    with pytest.raises(ValueError, match="give the same, or none"):
+        ThermalProblem(
+            walled,
+            (PERIODIC_X, insulated, insulated),
+            1.0,
+            1.0,
+            0.0,
+            walls=((None, None), (bare, bare), (None, None)),
+        )
+    conjugate, charge = _solid_wall_solve(walled.grid, walled.scalar_conditions, walls, 1.0, "state")
+    rhs = jnp.asarray(np.random.default_rng(5).standard_normal(conjugate.grid.shape))
+    potential, iterations = charge.solve(rhs - charge.defect(rhs))  # compatible: a net source is refused
+    assert int(iterations) <= 12
+    assert abs(float(jnp.sum(jnp.asarray(conjugate.grid.cell_volumes()) * potential))) < 1e-10
+
+
 # Buoyancy in the momentum stages (plan step 5.1e, ADR 0008 D32).
 
 

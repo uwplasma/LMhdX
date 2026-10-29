@@ -1523,6 +1523,7 @@ def _axis_weights(grid: Grid, axis: int, offset_value: float, condition: Boundar
 
 _CELL = (CENTER, CENTER, CENTER)
 _PCG_TOLERANCE = {"float64": 1.0e-11, "float32": 1.0e-5}
+_DEFECT = {"float64": 1.0e-10, "float32": 1.0e-4}  # a singular right-hand side's mean, of its largest entry
 
 
 @dataclass(frozen=True)
@@ -1537,17 +1538,20 @@ class VariableHelmholtz:
     the series resistance of the two half cells: what leaves one cell enters the next, and a material interface is
     a series resistance. The face area and the cell volume enter once, in the divergence. A boundary face takes its
     cell's conductivity, which a Neumann datum, a gradient, is multiplied by. With a positive ``shift`` the operator
-    is symmetric positive definite. It is an implicit conduction step through solid walls: ``shift`` the cells'
-    ``rho c_p``, ``coefficient`` the time step. ``conditions`` are homogeneous; boundary data enter through
-    :meth:`lift`. :meth:`with_coefficients` takes other cell values in the trace.
+    is symmetric positive definite: an implicit conduction step through solid walls, ``shift`` the cells' ``rho c_p``
+    and ``coefficient`` the time step. With ``shift=None`` it is the charge balance through them, insulated or
+    periodic everywhere and so singular: only the compatible part of a right-hand side is solved, for zero volume
+    mean, preconditioned by the fast-diagonal Poisson inverse, and a right-hand side with a net source is refused
+    (:meth:`defect`). ``conditions`` are homogeneous; boundary data enter through :meth:`lift`.
+    :meth:`with_coefficients` takes other cell values in the trace.
     """
 
     grid: Grid
     conditions: tuple[BoundaryCondition, BoundaryCondition, BoundaryCondition]
-    shift: np.ndarray
+    shift: np.ndarray | None
     coefficient: float
     conductances: tuple[np.ndarray, np.ndarray, np.ndarray]
-    preconditioner: FastDiagonalHelmholtz
+    preconditioner: FastDiagonalHelmholtz | FastDiagonalPoisson
     max_steps: int = 200
     tolerance: float | None = None  # PCG's relative tolerance; by default 1e-11 in float64, 1e-5 in float32
 
@@ -1584,35 +1588,60 @@ class VariableHelmholtz:
             return self.divergence(jnp.zeros(self.grid.shape, dtype=jnp.result_type(float)), conditions)
 
     def apply(self, values: jnp.ndarray) -> jnp.ndarray:
-        """The operator, ``V (shift x - coefficient div(G grad x))``."""
-        volumes = jnp.asarray(self.grid.cell_volumes(), values.dtype)
-        shift = jnp.asarray(self.shift, values.dtype)
-        return volumes * (shift * values - self.coefficient * self.divergence(values))
+        """The operator, ``V (shift x - coefficient div(G grad x))``, without the first term when singular."""
+        volumes, conducted = jnp.asarray(self.grid.cell_volumes(), values.dtype), self.divergence(values)
+        if self.shift is None:
+            return -volumes * self.coefficient * conducted
+        return volumes * (jnp.asarray(self.shift, values.dtype) * values - self.coefficient * conducted)
 
     def solve(self, rhs: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Return ``x`` with ``shift x - coefficient div(G grad x) = rhs``, and the PCG iterations; NaN unconverged.
 
-        PCG starts from zero and stops at 1e-11 of ``rhs`` in float64, 1e-5 in float32, so a time step solves for its
-        increment. :func:`solvax.pcg_linear_solve` differentiates it implicitly, its tangent and adjoint solves also
-        from zero.
+        PCG starts from zero and stops at ``tolerance`` of ``rhs``, by default 1e-11 in float64 and 1e-5 in float32,
+        so a time step solves for its increment. :func:`solvax.pcg_linear_solve` differentiates it implicitly, its
+        tangent and adjoint solves also from zero. Singular, it solves the operator plus ``a V (V . x) / sum V``,
+        positive definite, with the preconditioner exact on the constants; removing the volume mean after leaves
+        the compatible part's solution, so every solve converges, a right-hand side compatible only to rounding
+        included; one whose volume mean exceeds rounding, a net source the gauge would absorb, gives NaN.
         """
-        volumes = jnp.asarray(self.grid.cell_volumes(), rhs.dtype)
+        volumes, singular = jnp.asarray(self.grid.cell_volumes(), rhs.dtype), self.shift is None
+        tolerance = _PCG_TOLERANCE[jnp.dtype(rhs.dtype).name] if self.tolerance is None else self.tolerance
+        total = jnp.sum(volumes)
+        null = self.coefficient * jax.lax.stop_gradient(
+            jnp.mean(jnp.stack([jnp.mean(g) for g in self.conductances]))
+        )
+
+        def operator(values):
+            applied = self.apply(values)
+            return applied + null * volumes * jnp.sum(volumes * values) / total if singular else applied
 
         def precondition(residual):
-            return self.preconditioner.solve(Field(residual / volumes, _CELL, self.grid)).data
+            solved = self.preconditioner.solve(Field(residual / volumes, _CELL, self.grid)).data
+            return jnp.sum(residual) / total - solved if singular else solved
 
-        tolerance = _PCG_TOLERANCE[jnp.dtype(rhs.dtype).name] if self.tolerance is None else self.tolerance
-        steps = self.max_steps
         result = solvax.pcg_linear_solve(
-            self.apply, volumes * rhs, precond=precondition, rtol=tolerance, max_steps=steps
+            operator, volumes * rhs, precond=precondition, rtol=tolerance, max_steps=self.max_steps
         )
         failed = ~(result.converged & jnp.isfinite(result.residual_norm))
+        solution = result.x
+        if singular:  # the gauge removes the constants only: a net source is refused, not absorbed
+            solution = solution - jnp.sum(volumes * solution) / total
+            failed = failed | (
+                jnp.abs(self.defect(rhs)) > _DEFECT[jnp.dtype(rhs.dtype).name] * jnp.max(jnp.abs(rhs))
+            )
         # Unconverged, the value is NaN and so are its derivatives in the right-hand side and the coefficients. The
         # implicit adjoint alone returns a zero gradient for a NaN cotangent, since its PCG starts from zero.
-        inputs = jnp.sum(rhs) + jnp.sum(jnp.asarray(self.shift)) + sum(jnp.sum(g) for g in self.conductances)
-        return jnp.where(failed, jnp.nan, result.x) + jnp.where(
-            failed, jnp.nan, 0.0
-        ) * inputs, result.iterations
+        inputs = jnp.sum(rhs) + sum(jnp.sum(g) for g in self.conductances)
+        if not singular:
+            inputs = inputs + jnp.sum(jnp.asarray(self.shift))
+        poison = jnp.where(failed, jnp.nan, 0.0) * inputs
+        return jnp.where(failed, jnp.nan, solution) + poison, result.iterations
+
+    def defect(self, rhs: jnp.ndarray) -> jnp.ndarray:
+        """The volume mean of ``rhs``, which a singular solve's gauge would remove: rounding for a compatible
+        right-hand side, such as a charge balance through insulated walls, and a net source otherwise."""
+        volumes = jnp.asarray(self.grid.cell_volumes(), rhs.dtype)
+        return jnp.sum(volumes * rhs) / jnp.sum(volumes)
 
 
 def _face_conductances(grid: Grid, conditions, conductivity) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
@@ -1628,11 +1657,12 @@ def variable_helmholtz(
     grid: Grid,
     conditions: tuple[BoundaryCondition, BoundaryCondition, BoundaryCondition],
     conductivity: float | np.ndarray,
-    shift: float | np.ndarray,
+    shift: float | np.ndarray | None,
     coefficient: float,
     *,
     precision: str = "state",
     max_steps: int = 200,
+    tolerance: float | None = None,
 ) -> VariableHelmholtz:
     """Build :class:`VariableHelmholtz` on the host; ``conductivity`` and ``shift`` are numbers or cell arrays.
 
@@ -1640,10 +1670,13 @@ def variable_helmholtz(
     four sides, 6 to 24 cells across, at ``dt`` 0.05 and 100: 7-8 iterations at the benchmark's steel and PbLi (``k``
     ratio 0.9, ``rho c_p`` 2.3), 14-33 at copper's ``k`` ratio of 19, and 21-63 at 100. A high contrast costs more
     iterations as the mesh refines.
+    Without a ``shift``, the preconditioner is the singular Poisson inverse, under conditions that are insulated
+    or periodic everywhere. ``tolerance`` replaces the dtype's default relative stop.
     """
     if grid.is_polar:
         raise ValueError("a variable-coefficient solve needs a Cartesian grid")
-    k, s = (np.broadcast_to(np.asarray(value, dtype=float), grid.shape) for value in (conductivity, shift))
+    k = np.broadcast_to(np.asarray(conductivity, dtype=float), grid.shape)
+    s = np.broadcast_to(np.asarray(1.0 if shift is None else shift, dtype=float), grid.shape)
     if not (np.all(np.isfinite(k) & (k > 0.0)) and np.all(np.isfinite(s) & (s > 0.0))):
         raise ValueError("conductivity and shift must be positive and finite in every cell")
     if not (np.isfinite(coefficient) and float(coefficient) > 0.0):
@@ -1652,6 +1685,13 @@ def variable_helmholtz(
     with jax.ensure_compile_time_eval():
         conductances = tuple(np.asarray(g) for g in _face_conductances(grid, homogeneous, k))
     weights = grid.cell_volumes() / np.sum(grid.cell_volumes())
+    settings = dict(coefficient=float(coefficient), conductances=conductances, max_steps=max_steps)
+    settings["tolerance"] = tolerance
+    if shift is None:
+        if any(DIRICHLET in condition.kinds for condition in homogeneous):
+            raise ValueError("a solve without a shift is insulated or periodic on every axis")
+        poisson = fast_diagonal_poisson(grid, homogeneous, precision=precision)
+        return VariableHelmholtz(grid, homogeneous, None, preconditioner=poisson, **settings)
     preconditioner = fast_diagonal_helmholtz(
         grid,
         _CELL,
@@ -1660,9 +1700,7 @@ def variable_helmholtz(
         coefficient=float(coefficient) * float(np.sum(weights * k)),
         precision=precision,
     )
-    return VariableHelmholtz(
-        grid, homogeneous, s.copy(), float(coefficient), conductances, preconditioner, max_steps
-    )
+    return VariableHelmholtz(grid, homogeneous, s.copy(), preconditioner=preconditioner, **settings)
 
 
 _PIPE_NAMES = ("PipeProblem", "flow_rate", "pipe_grid", "pipe_problem", "pipe_residual", "solve_pipe")
