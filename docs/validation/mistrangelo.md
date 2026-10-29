@@ -5,7 +5,7 @@ horizontal duct*, Nucl. Fusion 65 (2025) 116006, compares six codes on a heated
 PbLi duct with conducting steel walls in a fringing field. There is no
 experiment. Plan step 5.4 reproduces it in stages (ADR 0009). This page records
 step 5.4a: the frozen specification, the developed section, and both cases'
-digitized figures.
+digitized figures; and step 5.4c, Case 1's reduced heated zone.
 
 The specification is `src/lmhdx/data/benchmarks/specs/mistrangelo2025.toml`.
 Each value there is marked *printed*, *inferred* or *pinned*, with its source,
@@ -125,6 +125,65 @@ Checks (`tests/test_steady.py`):
 - **Flux, 10 W/cm².** Over 0.5 < x < 0.9 m the top of Figure 34's band is
   375.71–375.99 °C, against 375.93 °C for the energy balance: within the
   record's uncertainty (0.45 K).
+
+## Step 5.4c: the heated zone, its flow held
+
+A reduced Case 1, reported and not gated (ADR 0009). It is set up as follows:
+
+- **Domain and flow.** The heated zone, −0.4 ≤ x ≤ 0.4 m. Its flow is the
+  developed section's at the pinned wall ratio, scaled to u₀ and a, and the
+  same at every station. There is no fringe and no buoyancy.
+- **Walls.** The steel conducts and stores heat in 6 cells per wall (plan
+  step 5.4b).
+- **Thermal conditions.** The PbLi enters at 300 °C and leaves with no
+  conductive flux. The outer bottom surface takes 4 W/cm² for |x| ≤ 0.3 m over
+  its full outer width, and the rest of the outer surface is insulated.
+- **Mesh and transport.** 48 fluid cells across (6 in each layer) and 160
+  along, 576,000 cells with the walls. Van Leer transport at Courant 0.5,
+  Δt = 0.030 s.
+- **The run.** From 300 °C to a steady state, where storage is 1e-4 of the
+  1200 W heat input. That took 2,400 steps and 3.5 minutes on an RTX 3060
+  Laptop GPU in float64 with JAX 0.12: 0.085 s a step warm, with 16 PCG
+  iterations per step at the end.
+
+`python -m validation.mistrangelo heated DIR` writes its record,
+`heated_zone.json`. The record of this run is the release asset
+`mistrangelo2025-case1-heated-zone.json` of
+[LMhdX Research Assets v2](https://github.com/uwplasma/LMhdX/releases/tag/lmhdx-research-assets-v2)
+(ADR 0009 D38), SHA-256 `908708d0d4a53e917088f385c28062c9c5d7adceae70f66abe8e0cdc09c21dc5`.
+
+**Against the digitized references:**
+
+| Figure | Quantity | Inside the codes' band | Within half a pixel | Largest outside | Mean offset |
+|:--|:--|--:|--:|--:|--:|
+| 9 | T(z) at x = −0.3 m, y = 0 | 35 % | 73 % | 0.15 K, in the heated wall | +0.030 K |
+| 10 | T(z) at x = 0, y = 0 | 93 % | 100 % | 0.024 K | −0.079 K |
+| 17 | bulk T(x) | 86 % | 96 % | 0.025 K | +0.021 K |
+| 18 | Nu(x), −0.3 < x < 0.3 m | 98 % | 98 % | 3.3, at the heater's leading edge | +0.12 |
+| 38 | OF_KIT's T_w(x) and T_b(x) | — | — | 2.3 K and 0.79 K at the leading edge; 0.41 K and 0.12 K for \|x\| < 0.28 m | −0.079 K and −0.049 K |
+
+**What the numbers show.**
+- The bands at x = −0.3 m are narrow: 0.01 K, a pixel of Figure 9, where the
+  heat has only begun to enter. So the fractions inside them say little.
+- The outlet bulk rise is 10.12 K. The paper says about 10 K, and Figure 17's
+  band past x = 0.3 m reads 10.04–10.15 K.
+- Nu falls to 2.33 at x = 0.29 m. The paper prints 2.45 toward 0.3 m.
+  Figure 18's band is 2.23–2.41 there, and Figure 38's OF_KIT curves give 2.34
+  (2.29–2.40 if each curve is a pixel off the other way).
+- The largest differences sit at the heater's leading edge, x = −0.3 m, where
+  T_w and Nu jump within a cell of the 5 mm axial mesh: half a cell's shift
+  there is worth kelvins of T_w. Away from the edges, LMhdX stays within 0.41 K
+  of OF_KIT's T_w and 0.12 K of its T_b.
+- So in the heated zone, buoyancy (Ri/N = 0.08) and the fringe change Case 1's
+  temperatures by a few tenths of a kelvin at most, a few percent of the 10 K
+  rise. Its codes' spread is of the same size.
+
+`tests/test_steady.py` runs the same problem on 16 cells across and 16 along.
+The coarse run:
+- closes its ledger over the fluid and the steel;
+- takes T_w as the interface value between the cells either side of it;
+- defines Nu over the heated stations only;
+- is compared with every figure listed here.
 
 ## Sources
 

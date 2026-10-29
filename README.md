@@ -168,11 +168,11 @@ python examples/fringe_duct_example.py
 
 `lmhdx.thermal` adds a temperature field to the flow solver: heat conducts, is
 carried by the flow, can be released by the currents as Joule heating and can
-drive buoyant flow, and every step checks the heat budget. The module is still
-research stage. Far down a heated duct LMhdX matches the exact Nusselt numbers
-of rectangular ducts and of Hartmann plates to within 0.35 %, and in a vertical
-field it follows Chandrasekhar's tenfold rise of the critical Rayleigh number to
-within 0.8 %. The
+drive buoyant flow, and every step checks the heat budget. Far down a heated
+duct LMhdX matches the exact Nusselt numbers of rectangular ducts and of
+Hartmann plates to within 0.35 %, and in a vertical field it follows
+Chandrasekhar's tenfold rise of the critical Rayleigh number to within 0.8 %.
+The
 [heat transport page](https://lmhdx.readthedocs.io/en/latest/physics/thermal.html)
 gives each comparison, its conditions and the command that redraws it.
 
@@ -279,14 +279,14 @@ PCIe. Correct, not yet faster — the numbers are in
   3.6e-14 insulating, 6.3e-14 at wall conductance 0.027); all eight rows of
   Smolentsev et al. (2015) Table I (Ha 500 to 15,000), each gated on three meshes
   for second order, a Richardson value within 1e-3 to 5e-3 and the analytic
-  value inside the fine-mesh GCI band; Q2D decay identities.
+  value inside the fine-mesh GCI band; Q2D decay identities; heat transfer, as
+  listed under [Heat transfer](#heat-transfer).
 - **Research stage:** three-dimensional convective transport (`advection="central"`
   or `"limited"`, from `lmhdx.ops`) is tested for conservation, order and
   boundedness but not validated against a reference flow, the fringe is gated
   in the inertialess limit only, the open pipe misses its station-wise
   ALEX B1 tolerance, the ALEX B1/B2 benchmarks are open, and
-  multi-device execution is not yet established. What the tests check for heat
-  transport is listed under [Heat transfer](#heat-transfer). The
+  multi-device execution is not yet established. The
   [validation matrix](https://lmhdx.readthedocs.io/en/latest/validation/index.html)
   and the [plan](plan.md) state each gate.
 
