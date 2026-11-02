@@ -41,3 +41,13 @@ back a large cached program.
 On import, LMhdX also adds `--xla_gpu_enable_triton_gemm=false` to `XLA_FLAGS`,
 which halves the GPU compile of a steady solve at about 10 % warm cost. A value
 you set yourself wins; `LMHDX_XLA_DEFAULTS=0` leaves `XLA_FLAGS` untouched.
+
+A run uses JAX's default device: one GPU when a CUDA `jaxlib` is installed, else the CPU with XLA's own threads. Multi-device execution is research stage.
+
+| Setting | Default | Change it when |
+| --- | --- | --- |
+| `JAX_PLATFORMS=cpu` | GPU when a CUDA `jaxlib` is installed | Small sections, where the CPU can beat a GPU; time your case |
+| `XLA_PYTHON_CLIENT_PREALLOCATE=false` | JAX preallocates most GPU memory | Several processes share one GPU |
+| `LMHDX_COMPILATION_CACHE` | on, `~/.cache/lmhdx` | `0` turns it off; a path moves it |
+| `share_across_values=False` | shared across field values | Long loops over one compiled function |
+| `LMHDX_XLA_DEFAULTS=0` | cuBLAS GEMMs on GPU | Warm speed matters more than compile time |
