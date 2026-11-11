@@ -90,6 +90,16 @@ markers = [
 source = ["src/lmhdx"]
 branch = true
 
+# Shards run on self-hosted macOS checkouts (/Users/.../_work/<repo>/<repo>) and
+# are combined on hosted Ubuntu (/home/runner/work/<repo>/<repo>); map every
+# absolute prefix onto the combining checkout so ``coverage combine`` finds sources.
+[tool.coverage.paths]
+source = [
+  "src/lmhdx",
+  "*/src/lmhdx",
+  "*/site-packages/lmhdx",
+]
+
 [tool.coverage.report]
 fail_under = 95
 show_missing = true
