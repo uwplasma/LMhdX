@@ -274,6 +274,9 @@ def test_draft_ci_defers_numerics_without_skipping_ready_or_coverage_jobs(tmp_pa
                 for key, value in {
                     "github.event_name": event,
                     "github.event.pull_request.draft": str(draft).lower(),
+                    # The self-hosted fork guard: a same-repository pull request.
+                    "github.event.pull_request.head.repo.full_name": "owner/repo",
+                    "github.repository": "owner/repo",
                     "needs.scope.outputs.full": str(full).lower(),
                     "needs.scope.outputs.targeted": str(targeted).lower(),
                 }.items():

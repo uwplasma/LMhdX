@@ -22,7 +22,8 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-python@v7
+    - if: runner.environment == 'github-hosted'
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ inputs.python-version }}
 
@@ -30,10 +31,13 @@ runs:
       uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
       with:
         version: "0.11.28"
-        enable-cache: true
+        # Self-hosted runners manage Python through uv and share one uv cache.
+        python-version: ${{ runner.environment == 'github-hosted' && '' || inputs.python-version }}
+        enable-cache: ${{ runner.environment == 'github-hosted' }}
         cache-dependency-glob: pyproject.toml
 
     - name: Restore JAX compilation cache
+      if: runner.environment == 'github-hosted'
       uses: actions/cache@v6
       with:
         path: ${{ runner.temp }}/lmx-jax-cache

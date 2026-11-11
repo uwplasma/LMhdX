@@ -27,6 +27,7 @@ env:
 jobs:
   scope:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       full: ${{ steps.scope.outputs.full }}
       targeted: ${{ steps.scope.outputs.targeted }}
@@ -75,9 +76,9 @@ jobs:
   pr-impact:
     name: Changed numerical surface
     needs: scope
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.scope.outputs.targeted == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.scope.outputs.targeted == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, macOS, uwplasma-cpu]
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
@@ -92,13 +93,16 @@ jobs:
           python scripts/run_full_test_suite.py \
             --changed-from "origin/${{ github.base_ref }}" \
             --budget-seconds 540 --test-timeout-seconds 300
+      - name: Free workspace
+        if: always()
+        run: rm -rf .venv
 
   compatibility:
     name: Python 3.10 (${{ matrix.shard }})
     needs: scope
     if: needs.scope.outputs.full == 'true' && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: [self-hosted, macOS, uwplasma-cpu]
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -108,6 +112,8 @@ jobs:
           # workers, against 16 GB on a hosted runner; two workers keep it well inside.
           - shard: steady
             workers: 2
+          - shard: support
+            workers: 1
           - shard: gradients
             workers: 2
             cache: steady
@@ -135,8 +141,7 @@ jobs:
           COVERAGE_FILE: artifacts/test-evidence/${{ matrix.shard }}/.coverage.${{ matrix.shard }}
         run: |
           mkdir -p "artifacts/test-evidence/${{ matrix.shard }}"
-          workers=()
-          if [[ -n "${{ matrix.workers }}" ]]; then workers=(--workers "${{ matrix.workers }}"); fi
+          workers=(--workers "${{ matrix.workers || 3 }}")
           python scripts/run_full_test_suite.py --budget-seconds 1500 \
             --test-timeout-seconds 600 --shard ${{ matrix.shard }} "${workers[@]}" \
             --coverage-fail-under 0 \
@@ -147,6 +152,9 @@ jobs:
         with:
           path: artifacts/test-evidence/${{ matrix.shard }}
           key: lmx-test-evidence-${{ github.run_id }}-${{ matrix.shard }}
+      - name: Free workspace
+        if: always()
+        run: rm -rf .venv
 
   coverage:
     name: Combined branch coverage
@@ -241,9 +249,9 @@ jobs:
   pr-tests:
     name: PR ${{ matrix.tier }}${{ (matrix.label || matrix.shard) && format(' ({0})', matrix.label || matrix.shard) || '' }}
     needs: scope
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.scope.outputs.full == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.scope.outputs.full == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, macOS, uwplasma-cpu]
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -252,7 +260,7 @@ jobs:
           # jobs start from their parent's compilation cache.
           - tier: unit
             shard: support
-            workers: 4
+            workers: 3
             budget: 300
             cache: pr-unit
           - tier: unit
@@ -298,6 +306,7 @@ jobs:
             budget: 420
           - tier: regression
             shard: support
+            workers: 1
             budget: 300
     steps:
       - uses: actions/checkout@v7
@@ -316,6 +325,32 @@ jobs:
           shard=()
           for name in $SHARD; do shard+=(--shard "$name"); done
           workers=()
-          if [[ -n "$WORKERS" ]]; then workers=(--workers "$WORKERS"); fi
+          workers=(--workers "${WORKERS:-3}")
           python scripts/run_full_test_suite.py --tier "$TIER" "${shard[@]}" "${workers[@]}" --no-coverage \
             --budget-seconds "$BUDGET" --test-timeout-seconds 300
+      - name: Free workspace
+        if: always()
+        run: rm -rf .venv
+
+  gpu:
+    name: GPU smoke
+    needs: scope
+    if: needs.scope.outputs.full == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, Linux, uwplasma-gpu]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: false
+      - name: Install LMhdX with CUDA JAX
+        run: uv venv .venv && uv pip install --python .venv/bin/python -e '.[dev]' 'jax[cuda12]'
+      - name: Require the GPU backend
+        run: .venv/bin/python -c "import jax; assert jax.default_backend() == 'gpu', jax.devices()"
+      - name: GPU tests
+        timeout-minutes: 1
+        run: .venv/bin/python -m pytest -m gpu tests/test_gpu.py -q -x -p no:cacheprovider
+      - name: Free workspace
+        if: always()
+        run: rm -rf .venv

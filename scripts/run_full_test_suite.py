@@ -38,6 +38,7 @@ _TEST_SHARDS = {
         "tests/test_ops.py",
         "tests/test_timeloop.py",
         "tests/test_poisson.py",
+        "tests/test_gpu.py",
         "tests/test_em.py",
         "tests/test_momentum_placement_oracle.py",
     ),
