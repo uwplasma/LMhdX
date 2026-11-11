@@ -251,63 +251,28 @@ jobs:
     needs: scope
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.scope.outputs.full == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, macOS, uwplasma-cpu]
-    timeout-minutes: 20
+    timeout-minutes: 28
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Each job is sized to about two thirds of its budget on a hosted runner; split
-          # jobs start from their parent's compilation cache.
+          # Three jobs keep the shared Mac runners free: the unit tier, then the
+          # regression tier in two halves packed on recorded per-shard time (about
+          # 10, 19 and 20 minutes). Each job starts from its own compilation cache.
           - tier: unit
-            shard: support
+            shard: "support design operators physics channel plane steady programs fully_developed gradients"
+            label: unit
             workers: 3
-            budget: 300
-            cache: pr-unit
-          - tier: unit
-            shard: design
-            budget: 300
-            cache: pr-unit
-          - tier: unit
-            shard: "operators physics channel plane steady programs fully_developed gradients"
-            label: numerics
-            budget: 300
+            budget: 900
             cache: pr-unit
           - tier: regression
-            shard: "physics operators"
-            label: physics
-            budget: 420
+            shard: "physics operators steady programs fully_developed support"
+            label: regression-a
+            budget: 1500
           - tier: regression
-            shard: channel
-            budget: 420
-          - tier: regression
-            shard: plane
-            budget: 420
-            cache: pr-regressionchannel
-          - tier: regression
-            shard: steady
-            budget: 420
-          - tier: regression
-            shard: fully_developed
-            budget: 420
-            cache: pr-regressionsteady
-          - tier: regression
-            shard: programs
-            budget: 420
-            cache: pr-regressionsteady
-          - tier: regression
-            shard: gradients
-            budget: 420
-            cache: pr-regressionsteady
-          - tier: regression
-            shard: api
-            budget: 420
-          - tier: regression
-            shard: anchors
-            budget: 420
-          - tier: regression
-            shard: support
-            workers: 1
-            budget: 300
+            shard: "channel plane gradients api anchors"
+            label: regression-b
+            budget: 1500
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-lmhdx
