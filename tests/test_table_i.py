@@ -8,17 +8,13 @@ Shercliff's insulating duct and A2 is Hunt's duct with conducting Hartmann walls
 the analytic column the package ships (validation row 27).
 """
 
+import tomllib
 from importlib.resources import files
 
 import pytest
 
 from validation.gci import TABLE_I_MESHES, TABLE_I_RATIO, grid_convergence, table_i_flow_rate
 from validation.shercliff import quadrant_flow_rate
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python 3.10
-    import tomli as tomllib
 
 pytestmark = pytest.mark.validation
 

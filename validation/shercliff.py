@@ -37,7 +37,14 @@ from __future__ import annotations
 
 import numpy as np
 
-__all__ = ["chebyshev_weights", "duct_flow", "flow_rate", "hartmann_wall_current", "quadrant_flow_rate"]
+__all__ = [
+    "chebyshev_weights",
+    "developed_nusselt",
+    "duct_flow",
+    "flow_rate",
+    "hartmann_wall_current",
+    "quadrant_flow_rate",
+]
 
 
 def _differentiation_matrix(points: int) -> tuple[np.ndarray, np.ndarray]:
@@ -134,6 +141,62 @@ def flow_rate(hartmann: float, points: int = 40, *, forcing: float = 1.0, **wall
     _, velocity, _ = duct_flow(hartmann, points, forcing=forcing, **walls)
     weights = chebyshev_weights(points)
     return float(weights @ velocity @ weights) / 4.0
+
+
+def developed_nusselt(hartmann: float, points: int = 48, *, heating: str = "H1") -> float:
+    """Return the thermally fully developed Nusselt number of Shercliff's square duct, ``D_h = 2``.
+
+    The temperature solves ``laplacian(theta) = c f`` on the same Chebyshev nodes as the velocity, with
+    ``f = u/u_mean``, no Joule heat and a uniform axial heat input. ``heating="H1"`` holds the wall at one
+    temperature (``theta = 0``, ``c = 1``), and ``Nu = 1/|<f theta>|``. ``heating="H2"`` takes in a uniform flux
+    (``d theta/dn = 1``, ``c = P/A = 2``, a corner taking the mean of its two normals, zero mean), and
+    ``Nu = 2/(theta_w - <f theta>)`` with ``theta_w`` the perimeter mean. At Ha 0 these are the double-sine
+    series 3.60795 and 3.08738. ``heating="T"`` holds the wall at one temperature with no axial heat input: the
+    smallest eigenvalue of ``-laplacian(theta) = Lambda f theta``, ``theta = 0`` on the wall, by inverse iteration,
+    and ``Nu = Lambda D_h A/P = Lambda``; 2.97753 at Ha 0 (Shah & London list 2.976).
+    """
+    _, velocity, _ = duct_flow(hartmann, points)
+    derivative, nodes = _differentiation_matrix(points)
+    count = points + 1
+    identity = np.eye(count)
+    laplacian = np.kron(derivative @ derivative, identity) + np.kron(identity, derivative @ derivative)
+    weights = chebyshev_weights(points)
+    profile = (velocity / (weights @ velocity @ weights / 4.0)).ravel()
+    y, z = np.repeat(nodes, count), np.tile(nodes, count)
+    on_y, on_z = np.abs(y) > 1.0 - 1e-12, np.abs(z) > 1.0 - 1e-12
+    inner = ~(on_y | on_z)
+    if heating == "H1":
+        theta = np.zeros(count * count)
+        theta[inner] = np.linalg.solve(laplacian[np.ix_(inner, inner)], profile[inner])
+        return 1.0 / abs(float(weights @ (profile * theta).reshape(count, count) @ weights) / 4.0)
+    if heating == "T":
+        from scipy.linalg import lu_factor, lu_solve
+
+        stiffness, weight = -laplacian[np.ix_(inner, inner)], profile[inner]
+        factors, theta, value = lu_factor(stiffness), weight.copy(), 0.0
+        for _ in range(1000):
+            theta = lu_solve(factors, weight * theta)
+            theta, last = theta / np.max(np.abs(theta)), value
+            value = float(theta @ (stiffness @ theta) / (theta @ (weight * theta)))
+            if abs(value - last) <= 1e-14 * value:
+                return value
+        raise RuntimeError("the inverse iteration did not settle")
+    if heating != "H2":
+        raise ValueError("heating is 'H1', 'H2' or 'T'")
+    operator, source = laplacian.copy(), 2.0 * profile
+    normal_y, normal_z = (
+        np.sign(y)[:, None] * np.kron(derivative, identity),
+        np.sign(z)[:, None] * np.kron(identity, derivative),
+    )
+    operator[on_y & ~on_z], operator[on_z & ~on_y] = normal_y[on_y & ~on_z], normal_z[on_z & ~on_y]
+    operator[on_y & on_z] = 0.5 * (normal_y[on_y & on_z] + normal_z[on_y & on_z])
+    source[on_y | on_z] = 1.0
+    gauge = np.kron(weights, weights)[None]  # the zero mean, appended to the singular system
+    theta = np.linalg.lstsq(np.vstack([operator, gauge]), np.append(source, 0.0), rcond=None)[0].reshape(
+        count, count
+    )
+    wall = (weights @ theta[0] + weights @ theta[-1] + weights @ theta[:, 0] + weights @ theta[:, -1]) / 8.0
+    return 2.0 / (wall - float(weights @ (profile.reshape(count, count) * theta) @ weights) / 4.0)
 
 
 def hartmann_wall_current(hartmann: float, points: int = 64, *, hartmann_wall: float) -> float:

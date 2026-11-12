@@ -141,21 +141,26 @@ from .poisson import (
     FastDiagonalHelmholtz,
     FastDiagonalPoisson,
     FastDiagonalThinWallPoisson,
+    _nearer_first_wall,
     _wall_cells,
     fast_diagonal_helmholtz,
     fast_diagonal_poisson,
     fast_diagonal_thin_wall_poisson,
+    variable_helmholtz,
 )
 
 __all__ = [
     "ChannelProblem",
+    "ConjugateGrid",
     "EULER",
     "EnergyBudget",
     "ImposedField",
     "RK3",
+    "SolidWall",
     "Tableau",
     "Trajectory",
     "advance",
+    "conjugate_grid",
     "courant_step",
     "duct_problem",
     "electric_state",
@@ -267,6 +272,118 @@ class ImposedField:
 
 
 @dataclass(frozen=True)
+class SolidWall:
+    """A solid wall on one end of a transverse axis: ``thickness`` in ``cells`` equal cells of one material.
+
+    ``thermal_conductivity`` and ``heat_capacity``, its ``rho c_p``, are what it conducts and stores heat with,
+    and ``electrical_conductivity`` what it carries current with, in the problem's units, not over the fluid's;
+    ``None`` for a wall that only conducts heat (plan step 5.4b, ADR 0009 D36).
+    """
+
+    thickness: float
+    cells: int
+    thermal_conductivity: float
+    heat_capacity: float
+    electrical_conductivity: float | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.cells, bool) or int(self.cells) != self.cells or self.cells < 1:
+            raise ValueError("a solid wall has a whole, positive number of cells")
+        object.__setattr__(self, "cells", int(self.cells))
+        names = ("thickness", "thermal_conductivity", "heat_capacity", "electrical_conductivity")
+        for name in names[: 3 if self.electrical_conductivity is None else 4]:
+            value = float(getattr(self, name))
+            if not (np.isfinite(value) and value > 0.0):
+                raise ValueError(f"a solid wall's {name} must be positive and finite")
+            object.__setattr__(self, name, value)
+
+
+class ConjugateGrid(NamedTuple):
+    """A grid with solid walls added as cells (:func:`conjugate_grid`): the grid, the fluid's block, the walls."""
+
+    grid: Grid
+    fluid: tuple[slice, slice, slice]
+    walls: tuple
+
+    def cells(self, name: str, fluid, walls: dict | None = None):
+        """Each cell's value of the walls' property ``name``, with ``fluid`` in the fluid's cells.
+
+        ``walls`` maps a wall, ``(axis, side)``, to a value in place of its own. The values may then be traced: the
+        result is a ``jnp`` array and which cell is which stays static, so a wall's conductivity or heat capacity can
+        be a leaf of a solve and a new value does not recompile. A corner cell lies in a wall of both transverse axes
+        and takes the nearer wall's value, the first axis's when they are equally near, as the corner cells of
+        resolved walls do (:func:`lmhdx.poisson.fast_diagonal_thin_wall_poisson`).
+        """
+        slots = [(axis, side) for axis in (1, 2) for side in (0, 1)]
+        own = [
+            fluid if self.walls[axis][side] is None else getattr(self.walls[axis][side], name)
+            for axis, side in slots
+        ]
+        if not walls:
+            return np.asarray([fluid, *own], dtype=float)[self._labels()]
+        if any(slot not in slots or self.walls[slot[0]][slot[1]] is None for slot in walls):
+            raise ValueError("a wall's value is given by (axis, side) of a solid wall of the grid")
+        table = [walls.get(slot, value) for slot, value in zip(slots, own)]
+        return jnp.stack([jnp.asarray(value, dtype=float) for value in (fluid, *table)])[self._labels()]
+
+    def _labels(self) -> np.ndarray:
+        """Each cell's material: 0 the fluid's, ``1 + 2 (axis - 1) + side`` a wall's; a corner the nearer wall's."""
+        labels, depths = [], []
+        for axis in (1, 2):
+            block = self.fluid[axis]
+            faces, centres = np.asarray(self.grid.faces[axis]), np.asarray(self.grid.centers[axis])
+            label = np.zeros(centres.size, dtype=int)
+            label[: block.start], label[block.stop :] = 2 * axis - 1, 2 * axis
+            labels.append(label)
+            inside = (faces[block.start], faces[block.stop])
+            depths.append(np.maximum(inside[0] - centres, 0.0) + np.maximum(centres - inside[1], 0.0))
+        first, second = labels[0][:, None], labels[1][None, :]
+        takes_first = (first > 0) & ((second == 0) | _nearer_first_wall(depths[0], depths[1]))
+        return np.broadcast_to(np.where(takes_first, first, second), self.grid.shape)
+
+    def padded(self, data: jnp.ndarray, axes: tuple[int, ...] = (0, 1, 2)) -> jnp.ndarray:
+        """Fluid data on the cells, or on the faces, of ``axes``, padded with zeros onto the extended grid."""
+        return jnp.pad(
+            data, [(self.fluid[axis].start, self.grid.shape[axis] - self.fluid[axis].stop) for axis in axes]
+        )
+
+    def fluid_faces(self, axis: int) -> tuple[slice, slice, slice]:
+        """The fluid's faces normal to ``axis`` in the extended grid's, its boundary faces among them."""
+        return tuple(slice(b.start, b.stop + 1) if a == axis else b for a, b in enumerate(self.fluid))
+
+
+def conjugate_grid(grid: Grid, walls) -> ConjugateGrid:
+    """Return ``grid`` with solid walls added as cells beyond its faces on the transverse axes 1 and 2.
+
+    ``walls`` gives each axis ``(lower, upper)``, each ``None`` or a :class:`SolidWall`; axis 0 must be the
+    flow's and takes none. A wall spans the extended tangential extent, so walls on both axes meet in corner
+    cells. The fluid's faces are kept exactly, so the fluid's block of the new grid is ``grid`` itself.
+    """
+    if grid.is_polar:
+        raise ValueError("solid walls need a Cartesian grid")
+    walls = tuple((None, None) if pair is None else tuple(pair) for pair in walls)
+    if len(walls) != 3 or any(
+        len(pair) != 2 or any(not (wall is None or isinstance(wall, SolidWall)) for wall in pair)
+        for pair in walls
+    ):
+        raise ValueError("solid walls are a (lower, upper) pair per axis, each None or a SolidWall")
+    if any(walls[0]):
+        raise ValueError("solid walls go on the transverse axes 1 and 2; axis 0 is the flow's")
+    faces, fluid = [np.asarray(grid.faces[0])], [slice(0, grid.shape[0])]
+    for axis in (1, 2):
+        edges, (lower, upper) = np.asarray(grid.faces[axis]), walls[axis]
+        below = (
+            [] if lower is None else edges[0] - lower.thickness * (1.0 - np.arange(lower.cells) / lower.cells)
+        )
+        above = (
+            [] if upper is None else edges[-1] + upper.thickness * np.arange(1, upper.cells + 1) / upper.cells
+        )
+        faces.append(np.concatenate([below, edges, above]))
+        fluid.append(slice(len(below), len(below) + grid.shape[axis]))
+    return ConjugateGrid(Grid(*faces), tuple(fluid), walls)
+
+
+@dataclass(frozen=True)
 class ChannelProblem:
     """A duct segment with uniform material properties and an imposed field.
 
@@ -288,6 +405,15 @@ class ChannelProblem:
     may have them when the third has one cell; a corner cell then takes the
     nearer wall's layer (:func:`lmhdx.poisson.fast_diagonal_thin_wall_poisson`).
 
+    ``solid_walls`` adds walls as cells of an extended grid instead
+    (:func:`conjugate_grid`; plan step 5.4b, ADR 0009 D36): per axis
+    ``(lower, upper)``, each ``None`` or a :class:`SolidWall` with its
+    ``electrical_conductivity``, on the wall-bounded axes 1 and 2, insulated
+    outside. The charge balance is then solved through fluid and walls by PCG
+    (:func:`lmhdx.poisson.variable_helmholtz`), on any number of cells along
+    axis 0, an inflow-outflow axis among them; velocity and pressure stay on
+    ``grid``. They take no thin or resolved wall beside them.
+
     The wall fields are the static pattern and the values the host factorization is built from. A
     wall parameter under a derivative rides as an argument instead: :meth:`with_walls` attaches the
     factorization built from it in the trace as ``potential_walls``, which is neither hashed nor
@@ -306,6 +432,7 @@ class ChannelProblem:
     wall_conductance: tuple[float, float, float] = (0.0, 0.0, 0.0)
     precision: str = "state"
     wall_layers: tuple = (None, None, None)
+    solid_walls: tuple = ((None, None), (None, None), (None, None))
     potential_walls: object = dataclasses.field(default=None, compare=False, hash=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -326,6 +453,7 @@ class ChannelProblem:
             raise ValueError(f"precision must be 'state' or 'mixed', got {self.precision!r}")
         self._freeze_wall_layers()
         self._check_open_axis()
+        self._check_solid_walls()
         field = self.magnetic_field
         if not isinstance(field, ImposedField):
             if len(field) != 3:
@@ -379,6 +507,29 @@ class ChannelProblem:
         if float(self.wall_conductance[mixed[0]]) or self.wall_layers[mixed[0]]:
             raise ValueError("an inflow-outflow axis has no wall")
 
+    def _check_solid_walls(self) -> None:
+        """Keep ``solid_walls`` as tuples; each carries current, beside no other wall model, off periodic axes."""
+        walls = ((None, None),) * 3 if self.solid_walls is None else self.solid_walls
+        walls = tuple((None, None) if pair is None else tuple(pair) for pair in walls)
+        object.__setattr__(self, "solid_walls", walls)
+        if not self.has_solid_walls:
+            return
+        conjugate_grid(self.grid, walls)  # the form, the axes and the geometry
+        for axis, pair in enumerate(walls):
+            if any(pair) and (self.conditions[axis].is_periodic or self.conditions[axis].is_mixed):
+                raise ValueError(f"axis {axis} is periodic or inflow-outflow and takes no solid wall")
+            if any(wall is not None and wall.electrical_conductivity is None for wall in pair):
+                raise ValueError("a flow's solid wall needs its electrical_conductivity")
+        if any(self.wall_layers) or any(float(value) for value in self.wall_conductance):
+            raise ValueError("solid walls take no thin or resolved wall beside them")
+        if not float(self.conductivity):
+            raise ValueError("solid walls carry current from a conducting fluid")
+
+    @property
+    def has_solid_walls(self) -> bool:
+        """Whether any wall is resolved as cells of an extended grid (``solid_walls``)."""
+        return any(wall is not None for pair in self.solid_walls for wall in pair)
+
     @property
     def open_axis(self) -> int | None:
         """The inflow-outflow axis, or ``None``."""
@@ -394,7 +545,10 @@ class ChannelProblem:
 
     @property
     def conducting_walls(self) -> bool:
-        """Whether any wall carries current along itself."""
+        """Whether a thin or resolved wall, the separable solve's, carries current along itself.
+
+        Solid walls are not counted: their charge is solved apart (:attr:`has_solid_walls`).
+        """
         return any(float(value) > 0.0 for value in self.wall_conductance) or any(self.wall_layers)
 
     @property
@@ -551,7 +705,20 @@ def face_currents(
     and the energy budget cannot drift apart in how they close the wall or scale
     the potential. ``field_scale`` multiplies the imposed field and may be traced.
     """
+    field, conductivities, emfs, motional = _motional(velocity, problem, field_scale)
+    if problem.has_solid_walls:
+        return (*_solid_wall_currents(motional, problem), field)
     factorization = problem.factorization() if factorization is None else factorization
+    potential, walls = _solve_potential(divergence(motional), problem, factorization)
+    currents = tuple(
+        _closed_current(potential, walls[axis], conductivities[axis], emfs[axis], axis, problem)
+        for axis in range(3)
+    )
+    return potential, currents, field
+
+
+def _motional(velocity, problem: ChannelProblem, field_scale=1.0):
+    """The imposed field, the face conductivities and electromotive forces, and the motional flux ``sigma u x B``."""
     scalar = problem.scalar_conditions
     field = tuple(
         component.replace_data(field_scale * component.data) for component in _imposed_field(problem)
@@ -569,12 +736,54 @@ def face_currents(
         )
         for axis in range(3)
     )
-    potential, walls = _solve_potential(divergence(motional), problem, factorization)
-    currents = tuple(
-        _closed_current(potential, walls[axis], conductivities[axis], emfs[axis], axis, problem)
-        for axis in range(3)
+    return field, conductivities, emfs, motional
+
+
+def _solid_wall_currents(
+    motional: tuple[Field, Field, Field], problem: ChannelProblem, walls: dict | None = None
+) -> tuple[Field, tuple[Field, Field, Field]]:
+    """Solve the charge balance through the fluid and its solid walls: the fluid's potential and face currents.
+
+    ``div(G grad phi) = div(M)`` on the extended grid, ``M`` the motional flux, zero outside the fluid and on its
+    boundary faces, ``G`` each face's series conductance. The potential has zero mean over fluid and walls, where
+    a resolved wall's has it over the fluid, so the two differ by a constant. The currents ``M - G grad phi`` on
+    the fluid's faces include those into the walls, which the Lorentz force leaves out as it does a resolved
+    wall's. A solve that does not converge gives NaN, which the step's diagnostics report as not finite.
+
+    ``walls`` maps a solid wall, ``(axis, side)``, to an electrical conductivity in place of its own, which may be
+    traced: the walls' conductivity is then a leaf of the charge solve (:meth:`ConjugateGrid.cells`).
+    """
+    conjugate, charge = _solid_wall_solve(
+        problem.grid,
+        problem.scalar_conditions,
+        problem.solid_walls,
+        float(problem.conductivity),
+        problem.precision,
     )
-    return potential, currents, field
+    if walls:
+        sigma = conjugate.cells("electrical_conductivity", float(problem.conductivity), walls)
+        charge = charge.with_coefficients(conductivity=sigma)
+    padded = tuple(Field(conjugate.padded(flux.data), flux.offset, conjugate.grid) for flux in motional)
+    potential, _ = charge.solve(-divergence(padded).data)
+    conducted = charge.face_fluxes(potential)
+    currents = tuple(
+        Field((flux.data - inward.data)[conjugate.fluid_faces(axis)], flux.offset, problem.grid)
+        for axis, (flux, inward) in enumerate(zip(padded, conducted))
+    )
+    return Field(potential[conjugate.fluid], (CENTER, CENTER, CENTER), problem.grid), currents
+
+
+@functools.lru_cache(maxsize=16)
+def _solid_wall_solve(grid: Grid, conditions: tuple, walls: tuple, conductivity: float, precision: str):
+    """The extended grid and its charge operator, built once per grid, potential conditions, walls, fluid
+    conductivity and precision. Its float64 stop is 1e-13, so the charge closes near the direct solves' 1e-13."""
+    conjugate = conjugate_grid(grid, walls)
+    sigma = conjugate.cells("electrical_conductivity", conductivity)
+    tolerance = 1e-13 if jnp.result_type(float) == jnp.float64 else None
+    with jax.ensure_compile_time_eval():
+        return conjugate, variable_helmholtz(
+            conjugate.grid, conditions, sigma, None, 1.0, precision=precision, tolerance=tolerance
+        )
 
 
 def electric_state(
@@ -1276,7 +1485,9 @@ def _wall_power(potential: Field, currents: tuple[Field, Field, Field], problem:
     Joule term is weighted by ``h/2`` where :func:`lmhdx.ops.face_inner_product`
     weights the whole cell; the sheets take the outward current at their own
     potential, ``phi_w = phi_P - J h / (2 sigma)``. With both, the Lorentz work
-    is exactly minus the dissipation. Outward is negative on the lower wall.
+    is exactly minus the dissipation. Outward is negative on the lower wall. A
+    solid wall takes the current into it at that interface potential too, and
+    dissipates what it receives.
     """
     grid = problem.grid
     scalar = problem.scalar_conditions
@@ -1287,7 +1498,9 @@ def _wall_power(potential: Field, currents: tuple[Field, Field, Field], problem:
         return half_cells, total
     for axis in range(3):
         if scalar[axis].is_periodic or not (
-            float(problem.wall_conductance[axis]) or problem.wall_layers[axis]
+            float(problem.wall_conductance[axis])
+            or problem.wall_layers[axis]
+            or any(problem.solid_walls[axis])
         ):
             continue
         area = jnp.asarray(grid.face_areas(axis), dtype=potential.dtype)

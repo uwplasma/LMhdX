@@ -115,17 +115,13 @@ def table_i_flow_rate(
 
 def _campaign():
     """Yield ``(row, case, reference, (coarse, medium, fine), ratio)`` for every three-mesh sequence."""
+    import tomllib
     from importlib.resources import files
 
     import numpy as np
 
     from lmhdx.coreflow import CoreFlow
     from lmhdx.pipe import PipeProblem, flow_rate, pipe_grid, solve_pipe
-
-    try:
-        import tomllib
-    except ModuleNotFoundError:  # Python 3.10
-        import tomli as tomllib
 
     table = tomllib.loads(
         files("lmhdx").joinpath("data/benchmarks/references/samper-table-i.toml").read_text(encoding="utf-8")

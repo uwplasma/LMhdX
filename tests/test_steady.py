@@ -23,6 +23,7 @@ from lmhdx.grid import (
 from lmhdx.ops import face_gradient
 from lmhdx.steady import momentum_terms, solve_steady_state, steady_residual
 from validation.shercliff import flow_rate, hartmann_wall_current, quadrant_flow_rate
+from validation.thermal import h1_series, plate_nusselt
 
 pytestmark = pytest.mark.numerical
 
@@ -265,9 +266,10 @@ def test_the_reused_primal_is_the_general_adjoint(monkeypatch, conductance):
         return np.array([flow[0], *flow[1], *cubic])
 
     reused = gradients()
-    # Differentiating an enclosing jit re-enters the derivative rule outside the first trace.
+    # Differentiating an enclosing jit re-enters the derivative rule outside the first trace. JAX 0.6.2
+    # compiled both to the same numbers; 0.7.2 compiles the nested one apart, 1e-12 to 5e-12 off.
     nested = jax.jit(jax.grad(jax.jit(lambda s: objectives(1.0, s)[0])))(1.0)
-    np.testing.assert_allclose(nested, reused[2], rtol=1e-12, atol=0.0)
+    np.testing.assert_allclose(nested, reused[2], rtol=1e-11, atol=0.0)
     monkeypatch.setattr(steady, "_REUSE_PRIMAL", False)
     general = gradients()
     np.testing.assert_allclose(reused, general, rtol=1e-9, atol=0.0)
@@ -1086,22 +1088,6 @@ def test_a_solve_from_rest_traces_the_operator_twice(monkeypatch):
 _WRAP, _WALL = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN)
 
 
-def _h1_nusselt(a: float, b: float, *, slug: bool = False, terms: int = 801) -> float:
-    """Nu of the H1 duct ``[-a, a] x [-b, b]`` from double sine series: no discrete operator involved.
-
-    Velocity and temperature both solve Dirichlet Poisson problems, so with the
-    eigenvalues ``lambda_mn`` and ``S_k = sum 256 ab / (m^2 n^2 pi^4 lambda^k)``
-    over odd ``m, n``, ``Nu = S_1^2 D_h / (P S_3)``; slug flow gives ``16 a^2 b^2 D_h / (P S_1)``.
-    """
-    m, n = np.arange(1, terms, 2)[:, None], np.arange(1, terms, 2)[None, :]
-    eigen = (m * np.pi / (2.0 * a)) ** 2 + (n * np.pi / (2.0 * b)) ** 2
-    weight = 256.0 * a * b / (m**2 * n**2 * np.pi**4)
-    first, perimeter, diameter = np.sum(weight / eigen), 4.0 * (a + b), 4.0 * a * b / (a + b)
-    if slug:
-        return 16.0 * a**2 * b**2 * diameter / (perimeter * first)
-    return first**2 * diameter / (perimeter * np.sum(weight / eigen**3))
-
-
 def _developed_duct(
     cells: int, aspect: float = 1.0, hartmann: float = 0.0, walls: str = "temperature", **extra
 ):
@@ -1147,7 +1133,7 @@ def test_the_developed_nusselt_numbers_meet_their_exact_values(aspect, slug):
     H2, a uniform flux on every wall, on the same square Poiseuille flow: Shah & London's 3.091, within 0.5 % on 64
     cells, at an order between 1.5 and 2.5, and its Richardson value within 0.3 % (#240).
     """
-    exact = _h1_nusselt(1.0, aspect, slug=slug)
+    exact = h1_series(1.0, aspect, slug=slug)
     errors, uniform_flux = [], []
     for cells in (16, 32, 64) if aspect == 1.0 else (64,):  # the square ducts carry the refinement family
         thermal = _developed_duct(cells, aspect)
@@ -1297,23 +1283,29 @@ def _plate_nusselt(hartmann: float, points: int = 400) -> float:
 def test_the_hartmann_plate_reference_meets_its_closed_form_and_limits():
     """Quadrature converged to 1e-12; the closed form at finite Ha to 1e-12; the handoff's values; 140/17 and 12."""
     for hartmann, value in ((1.0, 8.31820244), (5.0, 9.36646553), (10.0, 10.25857521), (30.0, 11.28543472)):
-        tanh, sech = np.tanh(hartmann), 1.0 / np.cosh(hartmann)
-        closed = (
-            4.0
-            * (1.0 - tanh / hartmann) ** 2
-            / (
-                1.0 / 3.0
-                - 2.0 / hartmann**2
-                - sech**2 / (2.0 * hartmann**2)
-                + 5.0 * tanh / (2.0 * hartmann**3)
-            )
-        )
+        closed = float(plate_nusselt(hartmann))  # validation.thermal's closed form, as the figure draws it
         assert abs(_plate_nusselt(hartmann, 200) - _plate_nusselt(hartmann)) <= 1e-12 * closed
         assert _plate_nusselt(hartmann) == pytest.approx(closed, rel=1e-12)
         assert _plate_nusselt(hartmann) == pytest.approx(value, abs=1e-8)
     assert _plate_nusselt(0.0) == pytest.approx(140.0 / 17.0, rel=1e-14)
     assert _plate_nusselt(np.inf) == pytest.approx(12.0, rel=1e-14)
     assert 11.9 < _plate_nusselt(300.0) < 12.0
+
+
+def test_the_figure_references_meet_their_tables_and_limits():
+    """validation.thermal, the references of the heat-transfer figures: Chandrasekhar's onset against his table
+    (0.01 %) and 1707.76, the slug-flow Graetz expansion against its closed form and Poiseuille's against its
+    developed 140/17, and Shah & London's fit against the H1 series at aspect 0.5 (0.06 %)."""
+    from validation.thermal import CHANDRASEKHAR_TABLE, chandrasekhar_onset, graetz, shah_london_h1
+
+    assert chandrasekhar_onset(0.0)[0] == pytest.approx(1707.76, rel=1e-5)
+    for chandrasekhar, tabulated in CHANDRASEKHAR_TABLE[1::2]:
+        assert chandrasekhar_onset(chandrasekhar)[0] == pytest.approx(tabulated, rel=1e-4)
+    xplus, n = np.array([1e-3, 1e-2, 1e-1]), np.arange(1, 20001)
+    series = np.sum(np.exp(-16.0 * n**2 * np.pi**2 * xplus[:, None]) / n**2, axis=1)
+    np.testing.assert_allclose(graetz(np.inf, xplus), 4.0 / (1.0 / 3.0 - 2.0 * series / np.pi**2), rtol=1e-5)
+    assert graetz(0.0, np.array([1.0]))[0] == pytest.approx(140.0 / 17.0, rel=1e-8)
+    assert float(shah_london_h1(0.5)) == pytest.approx(h1_series(1.0, 0.5), rel=1e-3)
 
 
 def _plates(cells: int, hartmann: float):
@@ -1354,6 +1346,340 @@ def test_heated_hartmann_plates_reach_the_analytical_nusselt_number(hartmann):
             assert plate == pytest.approx(12.0 / (1.0 + 0.5 * (2.0 / cells) ** 2), rel=1e-12)
     orders = np.log2(np.divide(errors[:-1], errors[1:]))
     assert errors[1] < 5e-3 and np.all(orders > (1.5 if np.isinf(hartmann) else 3.5)), (errors, orders)
+
+
+# The uniform wall temperature, the T condition: the smallest eigenvalue of the section.
+
+# Nu_T of the square duct from an independent Chebyshev collocation of the same eigenproblem, n = 24 to 48,
+# extrapolated at its observed order 2.0. Shah & London (1978) list 2.976.
+_SQUARE_T = 2.97753
+
+
+def _plate_t_nusselt(hartmann: float, count: int = 96) -> float:
+    """``Nu_T = 4 Lambda`` of plates at ``y = +-a`` held at one temperature, ``D_h = 4a``: ``-phi'' = Lambda f phi``
+    by Chebyshev collocation on the interior nodes, with no discrete operator of the package."""
+    from scipy.linalg import eig
+
+    from validation.shercliff import _differentiation_matrix
+
+    derivative, nodes = _differentiation_matrix(count)
+    second, eta = (derivative @ derivative)[1:-1, 1:-1], nodes[1:-1]
+    if hartmann == 0.0:
+        profile = 1.5 * (1.0 - eta**2)
+    else:
+        profile = (1.0 - np.cosh(hartmann * eta) / np.cosh(hartmann)) / (1.0 - np.tanh(hartmann) / hartmann)
+    values = eig(-second, np.diag(profile), right=False)
+    return 4.0 * float(np.min(values[np.isfinite(values) & (values.real > 0.0)].real))
+
+
+def test_the_uniform_wall_temperature_nusselt_number_meets_its_exact_and_spectral_values():
+    """The T condition. Slug flow: the sampled sines are exact discrete eigenfunctions of the cell-centred
+    Dirichlet Laplacian, so ``Nu_T = (8/h^2) sin^2(pi h/4)`` to 1e-12, pi^2/2 as h -> 0; the decay rate is
+    ``Lambda alpha/u_mean`` and the profile's bulk is one. The square duct on the package's own Poiseuille flow
+    converges at second order to the Chebyshev value 2.97753; its Richardson value is within 1e-4 of it, and
+    within 0.1 % of Shah & London's 2.976. Compiled whole, it equals the eager result.
+    """
+    from lmhdx.thermal import developed_wall_temperature
+
+    square = []
+    for cells in (16, 32, 64):
+        thermal = _developed_duct(cells)
+        slug = developed_wall_temperature(thermal, _uniform_flow(thermal))
+        width = 2.0 / cells
+        assert float(slug.nusselt) == pytest.approx(
+            8.0 / width**2 * np.sin(np.pi * width / 4.0) ** 2, rel=1e-12
+        )
+        assert float(slug.decay_rate) == pytest.approx(
+            float(slug.eigenvalue) * thermal.diffusivity, rel=1e-13
+        )
+        volumes = np.asarray(thermal.flow.grid.cell_volumes())
+        assert float(np.sum(volumes * slug.temperature.data) / np.sum(volumes)) == pytest.approx(
+            1.0, rel=1e-13
+        )
+        result = developed_wall_temperature(thermal, solve_steady_state(thermal.flow).velocity)
+        assert float(result.eigen_residual) < 1e-9
+        square.append(float(result.nusselt))
+        if cells == 16:
+            velocity = _uniform_flow(thermal)
+            jitted = jax.jit(lambda flow: developed_wall_temperature(thermal, flow).nusselt)(velocity)
+            assert float(jitted) == pytest.approx(float(slug.nusselt), rel=1e-14)
+    coarse, middle, fine = square
+    order = np.log2((coarse - middle) / (middle - fine))
+    extrapolated = fine + (fine - middle) / (2.0**order - 1.0)
+    assert 1.8 < order < 2.2 and abs(fine / _SQUARE_T - 1.0) < 5e-4, square
+    assert abs(extrapolated / _SQUARE_T - 1.0) < 1e-4 and abs(extrapolated / 2.976 - 1.0) < 1e-3, extrapolated
+
+
+@pytest.mark.parametrize("hartmann", [0.0, 10.0], ids=["poiseuille", "hartmann-10"])
+def test_plates_at_one_wall_temperature_reach_the_spectral_nusselt_number(hartmann):
+    """Plates held at one temperature, insulated ends one cell apart, carrying the cell means of the analytical
+    Hartmann velocity: ``4 Lambda`` converges at second order to the Chebyshev value (7.54070 at Ha 0)."""
+    from lmhdx.thermal import developed_wall_temperature, thermal_boundary
+
+    errors = []
+    for cells in (32, 64, 128):
+        thermal, velocity = _plates(cells, hartmann)
+        conditions = (_WRAP, thermal_boundary("temperature"), thermal.thermal_conditions[2])
+        held = dataclasses.replace(thermal, thermal_conditions=conditions)
+        errors.append(
+            abs(
+                4.0
+                * float(developed_wall_temperature(held, velocity).eigenvalue)
+                / _plate_t_nusselt(hartmann)
+                - 1
+            )
+        )
+    orders = np.log2(np.divide(errors[:-1], errors[1:]))
+    assert errors[1] < 1e-3 and np.all(orders > 1.8), (errors, orders)
+
+
+def test_the_uniform_wall_temperature_nusselt_number_differentiates_through_the_flow():
+    """d Nu_T / d(field scale) through the steady solve's implicit derivative and the Rayleigh quotient, at a
+    converged solve. It meets central differences at two steps; its Taylor remainder falls at second order; a
+    tighter tolerance gives the same gradient, and a finer mesh its own central difference. In the velocity, the
+    JVP equals the VJP's dot product. The profile is returned without a gradient."""
+    from lmhdx.thermal import developed_wall_temperature
+
+    def result(scale, cells=16, **options):
+        thermal = _developed_duct(cells, hartmann=10.0)
+        velocity = solve_steady_state(thermal.flow, field_scale=scale).velocity
+        return developed_wall_temperature(thermal, velocity, **options)
+
+    def nusselt(scale, cells=16, **options):
+        return result(scale, cells, **options).nusselt
+
+    gradient = float(jax.grad(nusselt)(1.0))
+    errors = [
+        abs(gradient - float(nusselt(1.0 + h) - nusselt(1.0 - h)) / (2.0 * h)) / abs(gradient)
+        for h in (1e-3, 1e-4)
+    ]
+    assert gradient > 0.0 and min(errors) < 1e-5, (gradient, errors)
+    base = float(nusselt(1.0))
+    remainders = [abs(float(nusselt(1.0 + h)) - base - h * gradient) for h in (0.02, 0.01, 0.005)]
+    assert all(3.0 < coarse / fine < 5.0 for coarse, fine in zip(remainders, remainders[1:])), remainders
+    assert float(jax.grad(lambda x: nusselt(x, tolerance=1e-13))(1.0)) == pytest.approx(gradient, rel=1e-9)
+    finer = float(jax.grad(lambda x: nusselt(x, 24))(1.0))
+    assert finer == pytest.approx(float(nusselt(1.001, 24) - nusselt(0.999, 24)) / 0.002, rel=1e-5)
+    assert float(jax.grad(lambda x: jnp.sum(result(x).temperature.data))(1.0)) == 0.0
+    thermal = _developed_duct(16, hartmann=10.0)
+    velocity = solve_steady_state(thermal.flow).velocity
+
+    def of_flow(axial):
+        return developed_wall_temperature(thermal, (velocity[0].replace_data(axial), *velocity[1:])).nusselt
+
+    direction = jnp.asarray(np.random.default_rng(7).standard_normal(velocity[0].data.shape))
+    tangent = float(jax.jvp(of_flow, (velocity[0].data,), (direction,))[1])
+    cotangent = jax.vjp(of_flow, velocity[0].data)[1](jnp.ones(()))[0]
+    assert float(jnp.sum(cotangent * direction)) == pytest.approx(tangent, rel=1e-12)
+
+
+def test_the_inverse_iteration_stops_on_its_tolerance_and_reports_where_it_stopped():
+    """Each iteration gains the ratio of the two smallest symmetric eigenvalues: about 13 iterations reach 1e-10
+    in the square duct, about 150 in a 1:8 one, where the ratio is near 1.1. Stopped early, the solve is not
+    converged and its eigenvalue and Nusselt number are NaN. So is it for a flow that is not the reduction's
+    forward throughflow, certified on the raw velocity: one cell backward, the whole flow reversed (its speeds
+    over its mean are positive too), no flow, a transverse velocity, or two axial faces that differ."""
+    from lmhdx.thermal import developed_wall_temperature
+
+    for cells, aspect, most in ((16, 1.0, 20), (64, 0.125, 200)):
+        thermal = _developed_duct(cells, aspect)
+        result = developed_wall_temperature(thermal, solve_steady_state(thermal.flow).velocity)
+        assert float(result.eigen_residual) <= 1e-10 and int(result.iterations) <= most, result.iterations
+    velocity = solve_steady_state(thermal.flow).velocity
+    early = developed_wall_temperature(thermal, velocity, max_iterations=20)
+    assert int(early.iterations) == 20 and float(early.eigen_residual) > 1e-6
+    assert not bool(early.converged) and np.isnan(float(early.nusselt)) and np.isnan(float(early.eigenvalue))
+    sign = np.ones(velocity[0].data.shape)
+    sign[:, 3, 4] = -1.0  # one cell's flow runs backward
+    across = velocity[1].replace_data(
+        velocity[1].data.at[0, 3, 4].set(1e-6 * float(jnp.max(velocity[0].data)))
+    )
+    uneven = velocity[0].data.at[-1].multiply(1.01)  # the two axial faces differ
+    for flawed in (
+        (velocity[0].replace_data(velocity[0].data * jnp.asarray(sign)), *velocity[1:]),  # mixed sign
+        (velocity[0].replace_data(-velocity[0].data), *velocity[1:]),  # all reversed: u / mean is positive
+        (velocity[0].replace_data(0.0 * velocity[0].data), *velocity[1:]),  # no flow
+        (velocity[0], across, velocity[2]),  # a transverse velocity
+        (velocity[0].replace_data(uneven), *velocity[1:]),
+    ):
+        result = developed_wall_temperature(thermal, flawed)
+        assert not bool(result.converged) and np.isnan(float(result.nusselt))
+
+
+def test_the_t_condition_snippet_runs_as_written():
+    """The usage snippet of docs/physics/thermal.md's uniform-wall-temperature paragraph."""
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[1] / "docs/physics/thermal.md").read_text()
+    code = page.split("**The uniform wall temperature.**", 1)[1].split("```python\n", 1)[1].split("```", 1)[0]
+    namespace = {"__name__": "t_condition"}
+    exec(compile(code, "thermal.md", "exec"), namespace)
+    assert float(namespace["result"].nusselt) == pytest.approx(2.98226, rel=1e-5)
+
+
+def test_the_spectral_nusselt_reference_meets_the_exact_series():
+    """``validation.shercliff.developed_nusselt``, the reference of the MHD Nusselt campaign: at Ha 0 it gives the
+    H1 double-sine series, H2's 3.08738 (Wang; the package's Richardson value) and T's 2.97753, on 32 points."""
+    from validation.shercliff import developed_nusselt
+
+    assert developed_nusselt(0.0, 32) == pytest.approx(h1_series(1.0, 1.0), rel=1e-7)
+    assert developed_nusselt(0.0, 32, heating="H2") == pytest.approx(3.08738, rel=1e-5)
+    assert developed_nusselt(0.0, 32, heating="T") == pytest.approx(_SQUARE_T, rel=1e-5)
+
+
+def test_the_mhd_nusselt_numbers_meet_the_spectral_solve_at_one_point():
+    """docs/validation/mhd_nusselt.md at one point: LMhdX on 48 cells at Ha 10 against
+    ``validation.shercliff.developed_nusselt``, within 0.3 % in H1, H2 and T (0.06 % on the page's 128 cells). The
+    record's stored spectral values are the function's, to their six digits, and provenance holds its SHA-256."""
+    import hashlib
+    import json
+    from pathlib import Path
+
+    from validation.mhd_nusselt import READINGS, lmhdx_nusselt
+    from validation.shercliff import developed_nusselt
+
+    stored = json.loads(READINGS.read_text())["spectral"]
+    provenance = json.loads((Path(__file__).resolve().parents[1] / "benchmarks/provenance.json").read_text())
+    entry = {source["id"]: source for source in provenance["sources"]}["bluck2015-shercliff-nusselt"]
+    assert entry["sha256"] == hashlib.sha256(READINGS.read_bytes()).hexdigest(), (
+        "the record changed; provenance not"
+    )
+    for heating, value in lmhdx_nusselt(10.0, cells=48).items():
+        reference = developed_nusselt(10.0, 48, heating=heating)
+        assert stored[heating][stored["hartmann"].index(10.0)] == pytest.approx(reference, rel=2e-6), heating
+        assert value == pytest.approx(reference, rel=3e-3), heating
+
+
+def test_the_uniform_wall_temperature_refuses_an_ill_posed_duct():
+    """No wall at a temperature, walls at different temperatures, or a wall taking in heat: not the T condition.
+    Nor a tolerance that is not positive and finite, or an iteration bound that is not a positive integer."""
+    from lmhdx.thermal import developed_wall_temperature, thermal_boundary
+
+    thermal = _developed_duct(8)
+    velocity, held = _uniform_flow(thermal), thermal_boundary("temperature")
+    for conditions, message in (
+        ((_WRAP, thermal_boundary("heat_flux", conductivity=1.0), _WALL), "at least one wall"),
+        ((_WRAP, thermal_boundary("temperature", 0.0, 1.0), held), "one temperature"),
+        ((_WRAP, held, thermal_boundary("heat_flux", -1.0, 0.0, conductivity=1.0)), "adiabatic"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            developed_wall_temperature(dataclasses.replace(thermal, thermal_conditions=conditions), velocity)
+    # tolerance=inf would skip the loop (inf > inf is false) and certify the seed.
+    for tolerance in (np.inf, np.nan, 0.0, -1e-10, True):
+        with pytest.raises(ValueError, match="tolerance"):
+            developed_wall_temperature(thermal, velocity, tolerance=tolerance)
+    for count in (0, -3, True, 2.5, 20.0):
+        with pytest.raises(ValueError, match="max_iterations"):
+            developed_wall_temperature(thermal, velocity, max_iterations=count)
+
+
+# The developed pipe on its polar grid.
+
+
+def _pipe(radial: int, *, slug: bool = False, wall: str = "heat_flux"):
+    """A pipe of unit radius carrying the package's Poiseuille flow (or a uniform one), its wall taking in a
+    unit heat flux or held at one temperature; no Joule heat."""
+    from lmhdx.pipe import pipe_problem, solve_pipe
+    from lmhdx.thermal import ThermalProblem, thermal_boundary
+
+    problem = pipe_problem(hartmann=0.0, radial=radial, azimuthal=16)
+    flow = ChannelProblem(problem.grid, (_WALL, _WRAP, _WRAP))
+    rest = zero_velocity(flow)
+    axial = jnp.ones(rest[2].shape) if slug else jnp.broadcast_to(solve_pipe(problem)[0].data, rest[2].shape)
+    if wall == "heat_flux":
+        held = thermal_boundary("heat_flux", -1.0, -1.0, conductivity=1.0)
+    else:
+        held = thermal_boundary("temperature")
+    thermal = ThermalProblem(flow, (held, _WRAP, _WRAP), 1.0, 1.0, 0.0, joule_heating=False)
+    zero = Field(jnp.zeros(problem.grid.shape), (CENTER,) * 3, problem.grid)
+    return thermal, (*rest[:2], rest[2].replace_data(axial)), zero
+
+
+def _pipe_t_nusselt(count: int = 63) -> float:
+    """``Nu_T = Lambda`` of the Poiseuille pipe, ``D_h = 2R``: ``-(r phi')'/r = Lambda 2(1 - r^2) phi`` by Chebyshev
+    collocation across the diameter (odd ``count``: no node on the axis), with no discrete operator of the package."""
+    from scipy.linalg import eig
+
+    from validation.shercliff import _differentiation_matrix
+
+    derivative, nodes = _differentiation_matrix(count)
+    radial = (derivative @ derivative + np.diag(1.0 / nodes) @ derivative)[1:-1, 1:-1]
+    values = eig(-radial, np.diag(2.0 * (1.0 - nodes[1:-1] ** 2)), right=False)
+    return float(np.min(values[np.isfinite(values) & (values.real > 0.0)].real))
+
+
+def test_the_developed_pipe_meets_its_exact_nusselt_numbers():
+    """The pipe on its polar grid (the polar Poisson factorization; the azimuth wraps and the axis face has no
+    area, so the wall is the outer radius alone and ``D_h = 2R``). A uniform wall flux: 48/11 on the package's
+    Poiseuille flow, 8 on slug flow. One wall temperature: 3.65679, a radial Chebyshev solve, and ``j_{0,1}^2``
+    on slug flow. Each converges at second order, within 0.1 % on 64 radial cells."""
+    from scipy.special import jn_zeros
+
+    from lmhdx.thermal import developed_heat, developed_wall_temperature
+
+    cases = {
+        ("heat_flux", False): 48.0 / 11.0,
+        ("heat_flux", True): 8.0,
+        ("temperature", False): _pipe_t_nusselt(),
+        ("temperature", True): float(jn_zeros(0, 1)[0]) ** 2,
+    }
+    assert cases[("temperature", False)] == pytest.approx(3.656793, abs=1e-6)
+    for (wall, slug), exact in cases.items():
+        errors = []
+        for radial in (16, 32, 64):
+            thermal, velocity, zero = _pipe(radial, slug=slug, wall=wall)
+            if wall == "heat_flux":
+                result = developed_heat(thermal, velocity, zero)
+            else:
+                result = developed_wall_temperature(thermal, velocity)
+            assert result.hydraulic_diameter == pytest.approx(2.0, rel=1e-12)
+            errors.append(abs(float(result.nusselt) / exact - 1.0))
+        orders = np.log2(np.divide(errors[:-1], errors[1:]))
+        assert errors[-1] < 1e-3 and np.all((orders > 1.8) & (orders < 2.3)), (wall, slug, errors, orders)
+
+
+def test_the_pipe_snippet_runs_as_written():
+    """The pipe recipe of docs/physics/thermal.md, run from the page."""
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[1] / "docs/physics/thermal.md").read_text()
+    code = page.split("**The pipe.**", 1)[1].split("```python\n", 1)[1].split("```", 1)[0]
+    namespace = {"__name__": "pipe"}
+    exec(compile(code, "thermal.md", "exec"), namespace)
+    assert namespace["flux"] == pytest.approx(48.0 / 11.0, rel=1e-3)
+    assert namespace["held"] == pytest.approx(3.65679, rel=1e-3)
+
+
+def test_a_pipe_steps_no_time_and_forms_no_current_of_its_own(tmp_path):
+    """A polar grid serves the developed solves only: the time step, its validation, its state and its records
+    refuse it, and Joule heat is refused there, since a pipe's currents come from lmhdx.pipe. Compiled whole, the
+    pipe equals the eager result."""
+    from lmhdx.thermal import (
+        ThermalState,
+        build_thermal_step,
+        developed_heat,
+        initial_thermal_state,
+        load_thermal_record,
+        validate_thermal_inputs,
+        write_thermal_record,
+    )
+
+    thermal, velocity, zero = _pipe(8)
+    state = ThermalState(velocity, zero, jnp.asarray(0.0))
+    for refused in (
+        lambda: build_thermal_step(thermal, dtype=jnp.float64),
+        lambda: validate_thermal_inputs(thermal, state, zero, divergence_tolerance=1e-9),
+        lambda: initial_thermal_state(thermal, 0.0),
+        lambda: write_thermal_record(tmp_path / "pipe", thermal, state, units="SI"),
+        lambda: load_thermal_record(tmp_path / "pipe", thermal, units="SI"),
+    ):
+        with pytest.raises(ValueError, match="polar grid is not qualified"):
+            refused()
+    with pytest.raises(ValueError, match="joule_heating=False"):
+        developed_heat(dataclasses.replace(thermal, joule_heating=True), velocity, zero)
+    eager = developed_heat(thermal, velocity, zero).nusselt
+    jitted = jax.jit(lambda flow: developed_heat(thermal, flow, zero).nusselt)(velocity)
+    assert float(jitted) == pytest.approx(float(eager), rel=1e-13)
 
 
 # Review corrections, part 5b: the reduction's guards, an undefined Nu and physical temperatures (D33).
@@ -1590,3 +1916,306 @@ def test_a_heated_hunt_duct_balances_its_enthalpy():
         float(history.joule_power[-1] - history.conductive_heat_out[-1]),
     )
     assert abs(float(history.storage_rate[-1])) <= 1e-6 * leaving and leaving == pytest.approx(made, rel=1e-6)
+
+
+# Mistrangelo et al. 2025, the heated conducting duct (plan step 5.4a, ADR 0009).
+
+
+def test_the_magnetoconvection_specification_reproduces_its_printed_numbers():
+    """What the specification checks against something else: Martelli's PbLi falls 0.8 %, 1.9 % and 4.0 % short of
+    Case 1's printed Ha, Re and Gr (Gr goes as 1/nu^2); eq. 1 holds at its anchors; and the heated patch over the
+    full outer width gives Fig. 17's rise of about 10 K. The pinned PbLi is derived from the printed groups, so it
+    reproduces them by construction and is not checked here."""
+    from validation import mistrangelo
+
+    record = mistrangelo.spec()
+    assert record["status"] == "frozen" and mistrangelo.developed_gradient(record) == 0.0863
+    calibration = record["calibration"]
+    assert "pressure gradient" in calibration["not_acceptance"]
+    assert not any("pressure" in check for check in calibration["independent"])
+    case, a, b0 = record["cases"]["case1"], record["geometry"]["half_width_m"], record["field"]["peak_T"]
+    u0, q, g = (
+        case["mean_velocity_m_per_s"],
+        case["heat_flux_W_per_m2"],
+        record["gravity"]["acceleration_m_per_s2"],
+    )
+
+    def groups(pbli):
+        rho, mu, k = (
+            pbli["density_kg_per_m3"],
+            pbli["dynamic_viscosity_Pa_s"],
+            pbli["thermal_conductivity_W_per_m_K"],
+        )
+        nu = mu / rho
+        return np.array([
+            b0 * a * np.sqrt(pbli["electrical_conductivity_S_per_m"] / mu),
+            a * u0 / nu,
+            g * pbli["expansion_coefficient_per_K"] * q * a**4 / (k * nu**2),
+        ])  # fmt: skip
+
+    printed = np.array([case["hartmann"], case["reynolds"], case["grashof"]])
+    assert groups(record["properties"]["pbli"]) / printed - 1.0 == pytest.approx(
+        [-0.0077, -0.0195, -0.0396], abs=5e-4
+    )
+    assert mistrangelo.field(0.7315, record) == pytest.approx(b0 / 2, rel=1e-15)
+    assert mistrangelo.field(np.array([0.0, 0.4, -1.0]), record) / b0 == pytest.approx(
+        [1.0, 0.99868, 0.00463], abs=5e-6
+    )
+    pbli, wall = mistrangelo.pinned_pbli(record), record["geometry"]["wall_thickness_m"]
+    heat = q * (2.0 * (a + wall)) * (record["heating"]["x_max_m"] - record["heating"]["x_min_m"])
+    rise = heat / (pbli["density_kg_per_m3"] * pbli["heat_capacity_J_per_kg_K"] * u0 * (2.0 * a) ** 2)
+    assert 10.0 < rise < 10.2
+
+
+def test_the_magnetoconvection_section_converges_to_its_pinned_gradient():
+    """Case 1's developed section, steel resolved on both axes at the pinned ratio: the ratio is fitted on 96/12
+    cells to the printed -0.0863, so this is a mesh-convergence check of the pin, not of the paper. On 48/6 cells
+    -dp/dx is within 0.5 % of it. The section's profile is compared with the paper's Figure 13 with the digitized
+    curves."""
+    from validation import mistrangelo
+
+    record = mistrangelo.spec()
+    ratio = record["properties"]["steel"]["conductivity_ratio_pinned"]
+    flow = mistrangelo.section_flow(ratio, record=record, cells=48, cells_in_layer=6, wall_cells=6)
+    assert flow["gradient"] == pytest.approx(mistrangelo.developed_gradient(record), rel=5e-3)
+
+
+def test_the_magnetoconvection_section_meets_figure_13s_core():
+    """The independent check of 5.4a's section: on the pin's 96/12 cells, the profile at y = 0 against Figure 13's
+    analytical markers. In the core, |z| <= 0.7 a, each marker column is within the record's digitizing uncertainty
+    (2.44 px; 2.09 measured over 37 columns) and the section lies under 1 % below them on average (0.62 %). The jets'
+    flanks differ by about 10 px, which is reported, not gated."""
+    import json
+
+    from validation import mistrangelo
+
+    record = mistrangelo.spec()
+    ratio = record["properties"]["steel"]["conductivity_ratio_pinned"]
+    a, u0 = record["geometry"]["half_width_m"], record["cases"]["case1"]["mean_velocity_m_per_s"]
+    figure = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES.read_text())["figures"]}[13]
+    markers, pixel = figure["curves"]["analytical"], figure["per_pixel"][1]
+    z, u = np.array(markers["x"]) / a, np.array(markers["y"]) / u0
+    flow = mistrangelo.section_flow(ratio, record=record, **mistrangelo.PIN_MESH)
+    offset = (np.interp(z, flow["z"], flow["u_over_u0"]) - u)[np.abs(z) <= 0.7] * u0
+    assert len(offset) >= 10 and np.max(np.abs(offset)) <= figure["uncertainty"]["y"], offset / pixel
+    assert -0.01 < np.mean(offset) / (np.mean(u[np.abs(z) <= 0.7]) * u0) < 0.0
+
+
+def _check_reference_record(record):
+    """One digitized figure as shipped: its image hashed; both axes on their label lattice, three ticks at least and
+    within 0.6 px (the worst measured is 0.54), the misfit and the digitizing uncertainty also in the axis's units;
+    whether the paper or a figure reading chose the band's codes; the kept curves ordered and visible, and the band ordered
+    and inside its window."""
+    assert len(record["sha256"]) == 64 and record["agree_basis"] in ("the paper", "figure reading")
+    for axis, scale in zip("xy", record["per_pixel"]):
+        fit, spread = record["calibration"][axis], record["uncertainty"]["px"][axis]
+        assert fit["misfit_px"] <= 0.6 and fit["ticks"] >= 3
+        assert fit["misfit"] == pytest.approx(fit["misfit_px"] * scale, rel=1e-2)
+        assert spread == pytest.approx(2.1 + fit["misfit_px"], abs=0.01)
+        assert record["uncertainty"][axis] == pytest.approx(spread * scale, rel=1e-2)
+    assert record["curves"] or "band" in record
+    for curve in record["curves"].values():
+        assert np.all(np.diff(curve["x"]) > 0) and curve["coverage"] >= 0.01
+    if "band" in record:
+        band = record["band"]
+        assert np.all(np.array(band["lower"]) <= np.array(band["upper"])) and min(band["codes"]) >= 1
+        if record["window"]:
+            assert record["window"][0] <= band["x"][0] and band["x"][-1] <= record["window"][1]
+
+
+def test_the_band_misfit_interpolates_as_plotted_and_widens_by_both_uncertainties():
+    """``band_misfit`` on synthetic records. A semilog band straight from 1 to 100 has its middle at 10 in decades,
+    where interpolating in y then taking the log put it at 50.5, 0.70 decades off; nonpositive values on a log axis
+    are refused. A band that steps from 0 to 10 holds a point at 10 just before the step only within the x
+    uncertainty, the edge taken at its extreme over that window; the y uncertainty widens it as before."""
+    from validation import mistrangelo
+
+    def record(x, lower, upper, scale="linear", across=0.0, along=0.0):
+        band = {"x": x, "lower": lower, "upper": upper, "codes": [1] * len(x)}
+        return {"figure": 0, "band": band, "y_scale": scale, "uncertainty": {"x": across, "y": along}}
+
+    semilog = record([0.0, 1.0], [1.0, 1.0], [100.0, 100.0], "log10")
+    assert mistrangelo.band_misfit(0.5, 10.0, record([0.0, 1.0], [1.0, 1.0], [100.0, 100.0], "log10")) == 0.0
+    narrow = record([0.0, 1.0], [1.0, 100.0], [1.0, 100.0], "log10")
+    assert mistrangelo.band_misfit(0.5, 10.0, narrow) == pytest.approx(0.0, abs=1e-12)
+    assert mistrangelo.band_misfit(0.5, 50.5, narrow) == pytest.approx(np.log10(50.5) - 1.0)
+    with pytest.raises(ValueError, match="positive"):
+        mistrangelo.band_misfit(0.5, 0.0, semilog)
+    step = [0.0, 0.5, 0.51, 1.0], [0.0, 0.0, 10.0, 10.0]
+    assert mistrangelo.band_misfit(0.45, 10.0, record(step[0], step[1], step[1])) == pytest.approx(10.0)
+    assert mistrangelo.band_misfit(0.45, 10.0, record(step[0], step[1], step[1], across=0.1)) == 0.0
+    assert mistrangelo.band_misfit(0.2, 10.0, record(step[0], step[1], step[1], across=0.1)) == pytest.approx(
+        10.0
+    )
+    assert mistrangelo.band_misfit(0.2, 10.0, record(step[0], step[1], step[1], along=4.0)) == pytest.approx(
+        6.0
+    )
+
+
+def test_the_digitizer_reads_a_drawn_figure(tmp_path):
+    """A synthetic xmgrace-like figure: a frame with outward ticks, a solid green line, a dashed orange line, red
+    rings, and a blue line with a spike two pixels wide and 20 tall and a step of 46. The calibration, the lines and
+    rings within 1.5 px, and the band closed over the dashes are recovered. Against every raw pixel column, spike
+    and step included, the compact record keeps the band within 0.6 px (half a pixel, and the rounding): the
+    extraction is not decimated before the bounded simplification, which could drop the spike. A wrong tick label is
+    refused."""
+    import copy
+
+    from PIL import Image, ImageDraw
+
+    from scripts import digitize_mistrangelo as digitizer
+
+    image = Image.new("RGB", (400, 300), "white")
+    draw = ImageDraw.Draw(image)
+    left, right, top, bottom = 50, 350, 20, 250
+    draw.rectangle([left, top, right, bottom], outline="black", width=2)
+    for k in range(6):  # x from 0 to 5 by 1, y from 0 to 10 by 2
+        x_px, y_px = left + 60 * k, bottom - 46 * k
+        draw.line([x_px, bottom + 1, x_px, bottom + 12], fill="black", width=1)
+        draw.line([left - 12, y_px, left - 1, y_px], fill="black", width=1)
+    px = lambda x: left + 60 * x  # noqa: E731
+    py = lambda y: bottom - 23 * y  # noqa: E731
+    xs = np.linspace(0.2, 4.8, 200)
+    draw.line([(px(x), py(2 + x)) for x in xs], fill=(0, 255, 0), width=2)
+    for start in np.arange(0.2, 4.8, 0.25):  # 15 px on, 3 px off
+        dash = np.linspace(start, start + 0.2, 10)
+        draw.line([(px(x), py(2.5 + x)) for x in dash], fill=(255, 165, 0), width=2)
+    for x in np.arange(0.5, 4.6, 0.5):
+        draw.ellipse([px(x) - 3, py(1) - 3, px(x) + 3, py(1) + 3], outline=(255, 0, 0))
+    blue = [(px(x), py(3 + x + 2.0 * (x > 3.5))) for x in np.linspace(0.2, 4.8, 400)]
+    spike = int(px(2.0))
+    blue = [(a, b - 20 * (spike <= a < spike + 2)) for a, b in blue]
+    draw.line(blue, fill=(0, 0, 255), width=2)
+    path = tmp_path / "x1.png"
+    image.save(path)
+    spec = dict(pdf_page=0, xref=1, x=((0, 50), (5, 350), 1), y=((0, 250), (10, 20), 2), quantity="synthetic",
+                agree=("OF_KIT", "FLUENT_UK", "OF_ORNL"), cite="drawn", circles=True)  # fmt: skip
+    record = digitizer.digitize(path, 0, {0: spec})
+    compact = digitizer._compact(record)
+    _check_reference_record(compact)
+    pixel = record["per_pixel"][1]  # aliased 2-px lines: half a pixel off centre, and a half-pixel staircase
+    green, orange = record["curves"]["OF_KIT"], record["curves"]["FLUENT_UK"]
+    for curve, offset in ((green, 2.0), (orange, 2.5), (record["curves"]["analytical"], None)):
+        error = np.array(curve["y"]) - (offset + np.array(curve["x"]) if offset else 1.0)
+        assert np.max(np.abs(error)) <= 1.5 * pixel and abs(np.mean(error)) <= pixel
+    assert orange["coverage"] < 0.95 and record["band"]["codes"].count(3) > 0.9 * len(record["band"]["codes"])
+    upper, columns = np.array(record["band"]["upper"]), np.array(record["band"]["x"]) / record["per_pixel"][0]
+    assert np.allclose(np.diff(columns), 1.0, atol=1e-3), "the band is not every pixel column"
+    assert np.max(upper - (3.0 + np.array(record["band"]["x"]))) > 15 * pixel  # the raw band holds the spike
+    for edge in ("lower", "upper"):
+        kept = np.interp(record["band"]["x"], compact["band"]["x"], compact["band"][edge])
+        assert np.max(np.abs(kept - np.array(record["band"][edge]))) <= 0.6 * pixel, edge
+    wrong = copy.deepcopy(spec)
+    wrong["y"] = ((0, 250), (12, 20), 2)
+    with pytest.raises(ValueError, match="lattice"):
+        digitizer.digitize(path, 0, {0: wrong})
+
+
+def test_the_digitized_case_1_curves_are_calibrated_and_carry_the_printed_pressure_scale():
+    """The reference curves, read from the paper's figures: each record as ``_check_reference_record``, traced in
+    ``benchmarks/provenance.json`` by its own and the digitizer's SHA-256, and Fig. 8's slope over |x| < 0.4 m is the
+    printed -0.0855 in sigma u0 B0^2 (with the pinned PbLi; Martelli's sigma is 0.4 % away, which the figure cannot
+    tell apart); the figures also confirm the inferred heated width and L = a."""
+    import hashlib
+    import json
+    from pathlib import Path
+
+    from scripts import digitize_mistrangelo as digitizer
+    from validation import mistrangelo
+
+    figures = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES.read_text())["figures"]}
+    assert sorted(figures) == sorted(digitizer.FIGURES)
+    for record in figures.values():
+        _check_reference_record(record)
+    provenance = Path(__file__).resolve().parents[1] / "benchmarks" / "provenance.json"
+    entry = {s["id"]: s for s in json.loads(provenance.read_text())["sources"]}["mistrangelo2025-case1"]
+    assert entry["sha256"] == hashlib.sha256(mistrangelo.REFERENCES.read_bytes()).hexdigest()
+    assert entry["digitizer_sha256"] == hashlib.sha256(Path(digitizer.__file__).read_bytes()).hexdigest()
+    record, case = mistrangelo.spec(), mistrangelo.spec()["cases"]["case1"]
+    band = figures[8]["band"]
+    x, middle = np.array(band["x"]), (np.array(band["lower"]) + np.array(band["upper"])) / 2
+    inside = np.abs(x) < 0.4
+    scale = mistrangelo.pinned_pbli(record)["electrical_conductivity_S_per_m"] * case["mean_velocity_m_per_s"]
+    scale *= record["field"]["peak_T"] ** 2
+    assert np.polyfit(x[inside], middle[inside], 1)[0] / scale == pytest.approx(-0.0855, rel=0.01)
+    # Fig. 17's outlet bulk temperature is the specification's energy balance (the full outer width heated), and
+    # Fig. 38's temperatures give Fig. 18's Nu with L = a inside its acceptance band; L = 2a would double it.
+    pbli, a = mistrangelo.pinned_pbli(record), record["geometry"]["half_width_m"]
+    q, u0, wall = (
+        case["heat_flux_W_per_m2"],
+        case["mean_velocity_m_per_s"],
+        record["geometry"]["wall_thickness_m"],
+    )
+    rise = (
+        q
+        * 2.0
+        * (a + wall)
+        * 0.6
+        / (pbli["density_kg_per_m3"] * pbli["heat_capacity_J_per_kg_K"] * u0 * 4.0 * a**2)
+    )
+    band, pixel = figures[17]["band"], figures[17]["per_pixel"][1]
+    x, lower, upper = (np.array(band[k]) for k in ("x", "lower", "upper"))
+    plateau = (x > 0.4) & (x < 0.9)  # the outlet's plateau
+    # The balance, 310.12, sits inside the band to half a pixel either way: at most 0.08 px below its lower edge
+    # and 0.42 px above its upper one over the plateau, every column read. The band is a few pixels wide.
+    assert np.all(lower[plateau] - 0.5 * pixel <= 300.0 + rise) and np.all(
+        300.0 + rise <= upper[plateau] + 0.5 * pixel
+    )
+    curves = figures[38]["curves"]
+    wall_t, bulk_t = (np.interp(0.29, curves[k]["x"], curves[k]["y"]) for k in ("T_w case1", "T_b case1"))
+    nusselt = q * a / (pbli["thermal_conductivity_W_per_m_K"] * (wall_t - bulk_t))
+    assert mistrangelo.band_misfit(0.29, nusselt, figures[18]) == 0.0  # inside Fig. 18's acceptance band
+    assert mistrangelo.band_misfit(0.29, 2.0 * nusselt, figures[18]) > 1.0  # L = 2a is far outside it
+    energy = figures[19]["band"]  # a log axis: the band's geometric middle is inside it
+    assert (
+        mistrangelo.band_misfit(
+            energy["x"], np.sqrt(np.multiply(energy["lower"], energy["upper"])), figures[19]
+        )
+        == 0
+    )
+    with pytest.raises(ValueError, match="outside"):
+        mistrangelo.band_misfit(2.0, nusselt, figures[18])
+
+
+def test_the_digitized_case_2_curves_confirm_its_inferred_velocity_and_flux():
+    """Case 2's figures, each as ``_check_reference_record``: Fig. 30's slope is the developed -0.0863 sigma u0 B0^2 at
+    the inferred u0 = 0.01 m/s, and the top of Fig. 34's outlet band, the codes that close the balance (FLUENT_UK's
+    plateau sits 4.5 K lower), is the energy balance at the inferred 10 W/cm^2, within the record's uncertainty (2.4
+    px). The file is traced in ``benchmarks/provenance.json`` like Case 1's."""
+    import hashlib
+    import json
+    from pathlib import Path
+
+    from scripts import digitize_mistrangelo as digitizer
+    from validation import mistrangelo
+
+    figures = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES_CASE2.read_text())["figures"]}
+    assert sorted(figures) == sorted(digitizer.FIGURES_CASE2)
+    provenance = Path(__file__).resolve().parents[1] / "benchmarks" / "provenance.json"
+    entry = {s["id"]: s for s in json.loads(provenance.read_text())["sources"]}["mistrangelo2025-case2"]
+    assert entry["sha256"] == hashlib.sha256(mistrangelo.REFERENCES_CASE2.read_bytes()).hexdigest()
+    assert entry["digitizer_sha256"] == hashlib.sha256(Path(digitizer.__file__).read_bytes()).hexdigest()
+    for record in figures.values():
+        _check_reference_record(record)
+    record = mistrangelo.spec()
+    case, pbli, a = (
+        record["cases"]["case2"],
+        mistrangelo.pinned_pbli(record),
+        record["geometry"]["half_width_m"],
+    )
+    u0, q = case["mean_velocity_m_per_s"], case["heat_flux_W_per_m2"]
+    band = figures[30]["band"]
+    x, middle = np.array(band["x"]), (np.array(band["lower"]) + np.array(band["upper"])) / 2
+    scale = pbli["electrical_conductivity_S_per_m"] * u0 * record["field"]["peak_T"] ** 2
+    slope = np.polyfit(x[np.abs(x) < 0.4], middle[np.abs(x) < 0.4], 1)[0]
+    assert slope / scale == pytest.approx(-mistrangelo.developed_gradient(record), rel=0.015)
+    width = 2.0 * (a + record["geometry"]["wall_thickness_m"])
+    rise = q * width * 0.6 / (pbli["density_kg_per_m3"] * pbli["heat_capacity_J_per_kg_K"] * u0 * 4.0 * a**2)
+    band = figures[34]["band"]
+    x, upper = np.array(band["x"]), np.array(band["upper"])
+    # The bulk temperature of time-averaged fields still settles past the heated zone's end at x = 0.3 m: the steel
+    # walls conduct heat on downstream, and the fluctuating part of the heat flux, which time-averaged fields leave
+    # out, decays. The window starts at x = 0.5 m, past that settling length (about 0.1 m in the band), for that
+    # physical reason, not to pass: every sample from x = 0.35 m is within 1.2 px.
+    plateau = (x > 0.5) & (x < 0.9)
+    assert np.max(np.abs(upper[plateau] - 300.0 - rise)) <= figures[34]["uncertainty"]["y"]
