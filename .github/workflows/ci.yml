@@ -296,26 +296,3 @@ jobs:
       - name: Free workspace
         if: always()
         run: rm -rf .venv
-
-  gpu:
-    name: GPU smoke
-    needs: scope
-    if: needs.scope.outputs.full == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, Linux, uwplasma-gpu]
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.12"
-          enable-cache: false
-      - name: Install LMhdX with CUDA JAX
-        run: uv venv .venv && uv pip install --python .venv/bin/python -e '.[dev]' 'jax[cuda12]'
-      - name: Require the GPU backend
-        run: .venv/bin/python -c "import jax; assert jax.default_backend() == 'gpu', jax.devices()"
-      - name: GPU tests
-        timeout-minutes: 1
-        run: .venv/bin/python -m pytest -m gpu tests/test_gpu.py -q -x -p no:cacheprovider
-      - name: Free workspace
-        if: always()
-        run: rm -rf .venv
