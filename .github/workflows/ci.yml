@@ -204,7 +204,7 @@ jobs:
           key: lmx-test-evidence-${{ github.run_id }}-channel
           fail-on-cache-miss: true
       - name: Restore walls evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/walls
           key: lmx-test-evidence-${{ github.run_id }}-walls
@@ -216,7 +216,7 @@ jobs:
           key: lmx-test-evidence-${{ github.run_id }}-steady
           fail-on-cache-miss: true
       - name: Restore steady_thermal evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/steady_thermal
           key: lmx-test-evidence-${{ github.run_id }}-steady_thermal
@@ -240,7 +240,7 @@ jobs:
           key: lmx-test-evidence-${{ github.run_id }}-operators
           fail-on-cache-miss: true
       - name: Restore timeloop evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/timeloop
           key: lmx-test-evidence-${{ github.run_id }}-timeloop
@@ -264,7 +264,7 @@ jobs:
           key: lmx-test-evidence-${{ github.run_id }}-api
           fail-on-cache-miss: true
       - name: Restore api_gradients evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/api_gradients
           key: lmx-test-evidence-${{ github.run_id }}-api_gradients
@@ -386,7 +386,7 @@ jobs:
       # Python) would start cold every time; keep what it compiled.
       - name: Keep the compilation cache of a failed run
         if: failure()
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ runner.temp }}/lmx-jax-cache
           key: ${{ steps.setup.outputs.cache-key }}

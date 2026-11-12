@@ -884,3 +884,11 @@ def test_tracked_text_has_no_machine_paths_handles_or_attribution():
                 continue
             bad += [f"{rel}: {name}: {m.group(0)}" for m in re.finditer(pattern, text)]
     assert not bad, "\n".join(bad[:20])
+
+
+def test_workflow_actions_are_pinned_to_commit_shas():
+    import re
+    from pathlib import Path
+
+    text = "".join(p.read_text() for p in Path(".github").rglob("*.yml"))
+    assert not re.findall(r"uses:\s*(?!\./)\S+(?<!@[0-9a-f]{40})\s*$", text, re.M)
