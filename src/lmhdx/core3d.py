@@ -801,6 +801,10 @@ def step(
 
 def _step(velocity, problem, factorization, viscous, scheme, force, time, pressure=None, dynamic=None):
     """:func:`step` with ``dynamic = (dt, field_scale, lift)``, any of which may be traced, for a marched duct."""
+    if dynamic is None and problem.open_axis is not None:
+        raise NotImplementedError(
+            "an inflow-outflow axis is marched by lmhdx.axial: it needs the lifted inlet"
+        )
     factorization = problem.factorization() if factorization is None else factorization
     stages = (viscous,) if len(scheme.explicit) == 1 else viscous
     carried, solves = None, []

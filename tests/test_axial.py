@@ -23,7 +23,7 @@ from lmhdx.axial import (
     station_flow_rates,
     station_pressure,
 )
-from lmhdx.core3d import EULER, RK3, ChannelProblem, _step, velocity_offset, zero_velocity
+from lmhdx.core3d import EULER, RK3, ChannelProblem, _step, advance, step, velocity_offset, zero_velocity
 from lmhdx.grid import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Grid, pad, uniform_faces
 from lmhdx.poisson import fast_diagonal_helmholtz, fast_diagonal_poisson
 from lmhdx.steady import _face_weights, _orthogonal_projection, steady_residual, with_inflow
@@ -283,6 +283,9 @@ def test_the_rk3_step_leaves_a_stokes_flow_of_an_open_duct_where_it_is_at_any_st
     problem = _small_fringe(spacing=1.0, upstream=2.0, downstream=2.0)
     factorization, viscous = problem.factorization(), problem.viscous_factorizations(RK3)
     lift = with_inflow(_lift(problem), problem)
+    for public in (lambda: step(lift, problem), lambda: advance(problem, 1, lift)):
+        with pytest.raises(NotImplementedError, match="lifted inlet"):
+            public()
     for scale, dt in ((1.0, 0.05), (1.0, 3.0), (1.3, 0.4)):
         state = solve_open_duct(problem, field_scale=scale).velocity
         moved, _, _, (iterations, residual) = _step(

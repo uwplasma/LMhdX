@@ -477,6 +477,9 @@ def _watch(chunk, residual, x):
     A residual that has not halved over them and either grows by half or changes between chunks
     that turn through more than sixty degrees (an oscillation) means a flow with no steady state,
     ``UNSTEADY``; a residual that is flat, or falling too slowly or still falling, is ``STAGNATED``.
+
+    Under ``vmap`` over ``field_scale`` the ``lax.cond`` predicate is batched, so both branches run
+    and every solve pays all its chunks.
     """
 
     def body(x, _):
