@@ -240,7 +240,7 @@ def build_inventory(root: Path = ROOT) -> dict[str, Any]:
             "largest_package_module_lines_max": 1716,
             "maintained_core_lines_max": 14236,
             "test_file_count_max": 26,
-            "test_lines_max": 17109,
+            "test_lines_max": 17146,
             "external_validation_file_count_max": 9,
             "largest_external_validation_lines_max": 595,
             "maintenance_script_count_max": 5,

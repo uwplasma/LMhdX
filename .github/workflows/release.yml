@@ -29,7 +29,9 @@ jobs:
     needs: [external-validation, validation, documentation]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-lmhdx
         with:
           extras: release
@@ -71,7 +73,7 @@ jobs:
           assert jnp.isfinite(derivative)
           PY
       - name: Save distributions for publishing
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: dist
           key: lmhdx-distributions-${{ github.run_id }}-${{ github.sha }}
@@ -86,12 +88,12 @@ jobs:
       name: testpypi
       url: https://test.pypi.org/p/lmhdx
     steps:
-      - uses: actions/cache/restore@v6
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: dist
           key: lmhdx-distributions-${{ github.run_id }}-${{ github.sha }}
           fail-on-cache-miss: true
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
 
@@ -105,9 +107,9 @@ jobs:
       name: pypi
       url: https://pypi.org/p/lmhdx
     steps:
-      - uses: actions/cache/restore@v6
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: dist
           key: lmhdx-distributions-${{ github.run_id }}-${{ github.sha }}
           fail-on-cache-miss: true
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
