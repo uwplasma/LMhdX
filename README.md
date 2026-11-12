@@ -1,7 +1,7 @@
 # LMhdX
 
 [![PyPI version](https://img.shields.io/pypi/v/lmhdx.svg)](https://pypi.org/project/lmhdx/)
-[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
 [![License](https://img.shields.io/github/license/uwplasma/LMhdX)](LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/uwplasma/LMhdX/ci.yml?branch=main&label=ci)](https://github.com/uwplasma/LMhdX/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/readthedocs/lmhdx/latest?label=docs)](https://lmhdx.readthedocs.io/)

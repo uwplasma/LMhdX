@@ -7,15 +7,11 @@ import subprocess
 import sys
 import tarfile
 import textwrap
+import tomllib
 import zipfile
 from pathlib import Path
 
 import pytest
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10
-    import tomli as tomllib
 
 import lmhdx
 from lmhdx.cases import _parse_boundary_value, _wall_conductivity_from_conductance_ratio, load_run_config
@@ -274,9 +270,6 @@ def test_draft_ci_defers_numerics_without_skipping_ready_or_coverage_jobs(tmp_pa
                 for key, value in {
                     "github.event_name": event,
                     "github.event.pull_request.draft": str(draft).lower(),
-                    # The self-hosted fork guard: a same-repository pull request.
-                    "github.event.pull_request.head.repo.full_name": "owner/repo",
-                    "github.repository": "owner/repo",
                     "needs.scope.outputs.full": str(full).lower(),
                     "needs.scope.outputs.targeted": str(targeted).lower(),
                 }.items():

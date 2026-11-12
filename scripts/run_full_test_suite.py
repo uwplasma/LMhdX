@@ -36,13 +36,30 @@ _TEST_SHARDS = {
     "operators": (
         "tests/test_grid.py",
         "tests/test_ops.py",
-        "tests/test_timeloop.py",
         "tests/test_poisson.py",
-        "tests/test_gpu.py",
         "tests/test_em.py",
         "tests/test_momentum_placement_oracle.py",
     ),
-    "channel": ("tests/test_core3d.py", "tests/test_pipe.py"),
+    # Split from operators: the time loop is about half of the operators' unit time.
+    "timeloop": ("tests/test_timeloop.py",),
+    "channel": ("tests/test_core3d.py",),
+    # The pipe and the solid walls of 5.4b, split from channel to keep both inside their budgets.
+    "walls": (
+        "tests/test_pipe.py",
+        *(
+            f"tests/test_core3d.py::{name}"
+            for name in (
+                "test_solid_walls_carry_the_currents_of_the_same_walls_resolved_in_cells",
+                "test_a_section_in_solid_walls_develops_the_flow_of_its_resolved_walls",
+                "test_thinner_solid_walls_tend_to_the_thin_wall_model_at_their_conductance",
+                "test_the_charge_balance_closes_in_the_walls_and_none_leaves_them",
+                "test_a_solid_wall_s_electrical_conductivity_is_a_leaf_of_the_charge_solve",
+                "test_solid_walls_meet_ni_2007_table_3_hunts_duct_at_ha_300",
+                "test_solid_walls_lift_the_one_axial_cell_limit_and_conserve_charge_in_3d",
+                "test_solid_walls_are_checked_and_the_benchmark_s_charge_takes_few_iterations",
+            )
+        ),
+    ),
     "plane": (
         *(
             f"tests/test_core3d.py::{name}"
@@ -69,6 +86,22 @@ _TEST_SHARDS = {
             "test_a_program_stored_on_another_cpu_is_never_loaded",
         )
     ),
+    # The heat-transfer tests, split from steady to keep both inside their budgets.
+    "steady_thermal": tuple(
+        f"tests/test_steady.py::{name}"
+        for name in (
+            "test_the_uniform_wall_temperature_nusselt_number_differentiates_through_the_flow",
+            "test_the_developed_nusselt_number_differentiates_through_the_flow",
+            "test_the_developed_nusselt_numbers_meet_their_exact_values",
+            "test_the_developed_pipe_meets_its_exact_nusselt_numbers",
+            "test_the_mhd_nusselt_numbers_meet_the_spectral_solve_at_one_point",
+            "test_the_uniform_wall_temperature_nusselt_number_meets_its_exact_and_spectral_values",
+            "test_the_magnetoconvection_section_meets_figure_13s_core",
+            "test_the_magnetoconvection_section_converges_to_its_pinned_gradient",
+            "test_a_heated_hunt_duct_balances_its_enthalpy",
+            "test_the_t_condition_snippet_runs_as_written",
+        )
+    ),
     "fully_developed": ("tests/test_fully_developed.py",),
     "gradients": tuple(
         f"tests/test_steady.py::{name}"
@@ -88,6 +121,20 @@ _TEST_SHARDS = {
         "tests/test_stepper.py",
     ),
     "api": ("tests/test_problem.py", "tests/test_toml.py"),
+    # The problem API's derivative tests, split from api to keep both inside their budgets.
+    "api_gradients": tuple(
+        f"tests/test_problem.py::{name}"
+        for name in (
+            "test_resolved_layers_differentiate_in_conductivity_and_thickness_as_the_thin_wall_does_to_a_percent",
+            "test_the_wall_conductance_derivative_meets_the_derivative_standard",
+            "test_two_conducting_axes_differentiate_through_the_corner_correction",
+            "test_the_fringe_duct_gradient_is_the_older_field_scale_derivative",
+            "test_the_wall_derivative_is_refused_where_it_is_not_defined_or_not_yet_available",
+            "test_the_problem_gradient_pairs_forward_and_reverse_mode",
+            "test_ha_derivative_has_a_second_order_taylor_remainder_and_matches_central_differences",
+            "test_the_wall_leaves_of_a_problem_pair_forward_and_reverse_mode",
+        )
+    ),
     "anchors": ("tests/test_laminar_anchors.py",),
 }
 
