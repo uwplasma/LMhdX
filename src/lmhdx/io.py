@@ -863,6 +863,8 @@ def _summary_exit_code(summary: dict[str, object]) -> int:
     """Return failure for a recorded unconverged steady result or a rejected run."""
 
     if summary.get("accepted") is False:
+        rejected = summary["rejected"]
+        print(f"rejected at step {rejected['step']}: {', '.join(rejected['reasons'])}", file=sys.stderr)
         return 2
     return 2 if summary.get("solver_mode") == "steady" and summary.get("converged") is False else 0
 

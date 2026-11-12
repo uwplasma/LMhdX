@@ -22,7 +22,8 @@ the case builders and `lmhdx.solve`. The cell-centred solver it replaced was
 removed in 1.8 (step 4.6). `lmhdx.thermal` (ADR 0008) composes two private stages
 of `lmhdx.core3d`, one electric solve for the Lorentz force and the Joule heat,
 then the predictor and projection with an optional buoyancy force, and adds its
-own conduction inverse; `lmhdx.core3d` does not import it.
+own conduction inverse, or with solid walls the PCG of `poisson.variable_helmholtz`
+on `core3d.conjugate_grid`'s extended grid; `lmhdx.core3d` does not import it.
 
 Package sources live under `src/lmhdx`, so an editable installation and a wheel
 resolve the same module tree. The wheel includes `lmhdx/py.typed`; every root API

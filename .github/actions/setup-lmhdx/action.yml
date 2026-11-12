@@ -14,10 +14,19 @@ inputs:
     description: Optional exact SOLVAX compatibility endpoint
     required: false
     default: ""
+  jax-version:
+    description: Optional exact JAX compatibility endpoint, jaxlib pinned with it
+    required: false
+    default: ""
   cache-suffix:
     description: Stable lane name for the persistent JAX compilation cache
     required: false
     default: default
+
+outputs:
+  cache-key:
+    description: Key of the persistent JAX compilation cache this lane restores
+    value: ${{ steps.cache-key.outputs.key }}
 
 runs:
   using: composite
@@ -33,11 +42,16 @@ runs:
         enable-cache: true
         cache-dependency-glob: pyproject.toml
 
+    - name: Name the JAX compilation cache
+      id: cache-key
+      shell: bash
+      run: echo "key=lmx-jax-${{ runner.os }}-${{ runner.arch }}-py${{ inputs.python-version }}-${{ inputs.cache-suffix }}-${{ hashFiles('pyproject.toml', 'src/**/*.py') }}" >> "$GITHUB_OUTPUT"
+
     - name: Restore JAX compilation cache
       uses: actions/cache@v6
       with:
         path: ${{ runner.temp }}/lmx-jax-cache
-        key: lmx-jax-${{ runner.os }}-${{ runner.arch }}-py${{ inputs.python-version }}-${{ inputs.cache-suffix }}-${{ hashFiles('pyproject.toml', 'src/**/*.py') }}
+        key: ${{ steps.cache-key.outputs.key }}
         restore-keys: lmx-jax-${{ runner.os }}-${{ runner.arch }}-py${{ inputs.python-version }}-${{ inputs.cache-suffix }}-
 
     - name: Enable bounded persistent compilation caching
@@ -60,6 +74,9 @@ runs:
         fi
         if [[ -n "${{ inputs.solvax-version }}" ]]; then
           requirements+=("solvax==${{ inputs.solvax-version }}")
+        fi
+        if [[ -n "${{ inputs.jax-version }}" ]]; then
+          requirements+=("jax==${{ inputs.jax-version }}" "jaxlib==${{ inputs.jax-version }}")
         fi
         uv pip install --python .venv/bin/python "${requirements[@]}"
         echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"

@@ -1,0 +1,227 @@
+{
+ "source": "bluck2015-shercliff",
+ "description": "Bluck, Wolfendale & Marquis (2015): the square duct's (b/a = 1) fully developed Nusselt numbers against the Hartmann number, read from the vector paths of the accepted manuscript's Figs. 4 (H1) and 6 (H2). Each curve's polyline vertices sit on Ha = 10^(k/4), which suggests the authors' computed points but is evidence of the drawn curve only; they are mapped through each figure's own tick marks, which are uniform to 1e-3 pt. No Joule heat; insulating walls.",
+ "nusselt": "the section's mean Nusselt number on D_h = 2a, a the half-width: the wall flux averaged over the whole perimeter against the wall-to-bulk difference; H1 the wall at one temperature around the section with a uniform axial heat input, H2 a uniform wall flux, T the wall at one temperature along the duct",
+ "regenerate": "python -m validation.mhd_nusselt (LMhdX on duct_problem's 128-cell meshes, about ten minutes)",
+ "spectral": {
+  "function": "validation.shercliff.developed_nusselt(Ha, points, heating=...), Ha on a",
+  "hartmann": [
+   1.0,
+   10.0,
+   31.6228,
+   100.0,
+   316.228
+  ],
+  "points": [
+   48,
+   48,
+   48,
+   64,
+   72
+  ],
+  "H1": [
+   3.63517,
+   4.52214,
+   5.39718,
+   6.06155,
+   6.48916
+  ],
+  "H2": [
+   3.10909,
+   3.79852,
+   4.49115,
+   5.05773,
+   5.43924
+  ],
+  "T": [
+   2.99676,
+   3.60234,
+   4.13087,
+   4.48448,
+   4.68653
+  ]
+ },
+ "read": {
+  "date": "2026-10-20",
+  "tool": "PyMuPDF page.get_drawings()",
+  "units": "PDF points, y down"
+ },
+ "figures": {
+  "4": {
+   "heating": "H1",
+   "page": 6,
+   "drawing": 264,
+   "x": {
+    "scale": "log10",
+    "majors_pt": [
+     328.634,
+     372.034,
+     415.434,
+     458.834,
+     502.234,
+     545.634
+    ],
+    "values": [
+     0.01,
+     0.1,
+     1.0,
+     10.0,
+     100.0,
+     1000.0
+    ]
+   },
+   "y": {
+    "scale": "linear",
+    "ticks_pt": [
+     311.0,
+     286.5,
+     262.0,
+     237.5,
+     213.0,
+     188.5,
+     164.0,
+     139.5
+    ],
+    "values": [
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10
+    ]
+   },
+   "check": "the Ha -> 0 plateau reads 3.60678; the paper's Table 1 gives 3.6068",
+   "hartmann_reads_as": "inferred, not confirmed: on the half-width a, where it fits the spectral solve (on D_h, as eq. (8) defines Ha, it lies 3-12 % above)",
+   "hartmann": [
+    0.01,
+    0.0177828,
+    0.0316228,
+    0.0562342,
+    0.1,
+    0.177828,
+    0.316228,
+    0.562341,
+    1.0,
+    1.77828,
+    3.16228,
+    5.62342,
+    10.0,
+    17.7828,
+    31.6228,
+    56.2341,
+    100.0,
+    177.828,
+    316.227,
+    562.341
+   ],
+   "nusselt": [
+    3.60678,
+    3.60678,
+    3.6068,
+    3.60686,
+    3.60705,
+    3.60765,
+    3.60956,
+    3.61552,
+    3.63396,
+    3.68825,
+    3.82922,
+    4.11219,
+    4.5188,
+    4.96697,
+    5.38713,
+    5.74475,
+    6.03161,
+    6.25172,
+    6.41373,
+    6.52896
+   ]
+  },
+  "6": {
+   "heating": "H2",
+   "page": 7,
+   "drawing": 95,
+   "x": {
+    "scale": "log10",
+    "majors_pt": [
+     60.971,
+     114.622,
+     168.273,
+     221.925,
+     275.576
+    ],
+    "values": [
+     0.1,
+     1.0,
+     10.0,
+     100.0,
+     1000.0
+    ]
+   },
+   "y": {
+    "scale": "linear",
+    "ticks_pt": [
+     598.388,
+     570.316,
+     542.243,
+     514.171,
+     486.098,
+     458.026,
+     429.953
+    ],
+    "values": [
+     2.5,
+     3.0,
+     3.5,
+     4.0,
+     4.5,
+     5.0,
+     5.5
+    ]
+   },
+   "check": "the Ha -> 0 plateau reads 3.08235; the paper's Table 2 gives 3.0871",
+   "hartmann_reads_as": "on the hydraulic diameter 2a, as eq. (8) defines it, where it fits the spectral solve (on a it lies up to 10 % below)",
+   "hartmann": [
+    0.1,
+    0.177828,
+    0.316228,
+    0.562341,
+    0.999999,
+    1.77828,
+    3.16228,
+    5.62341,
+    10.0,
+    17.7828,
+    31.6228,
+    56.2341,
+    100.0,
+    177.828,
+    316.228,
+    562.341,
+    1000.0
+   ],
+   "nusselt": [
+    3.08235,
+    3.08247,
+    3.08285,
+    3.08405,
+    3.0878,
+    3.09945,
+    3.13416,
+    3.22695,
+    3.42269,
+    3.71859,
+    4.05953,
+    4.39473,
+    4.69096,
+    4.93382,
+    5.12688,
+    5.2794,
+    5.39693
+   ]
+  }
+ }
+}

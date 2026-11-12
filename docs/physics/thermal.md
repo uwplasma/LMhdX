@@ -191,7 +191,8 @@ Thin conducting walls take much of the dissipation away from the fluid. In the
 developed duct at Ha 20 with $c = 0.05$ the walls dissipate 56 % of it, at
 Ha 100 76 %, and at Ha 20 with $c = 0.5$ 43 % (`energy_budget(...).wall` against
 `.joule`, unchanged from 24 to 48 cells). The fluid-only model leaves that heat
-out until conjugate walls arrive.
+out. So do solid walls (below): the benchmark they are built for has no Joule
+heat.
 
 **Buoyancy** is averaged onto the velocity faces as the Lorentz force is, and
 zeroed on wall faces. It is added before the division by density and the
@@ -249,11 +250,13 @@ At the outlet, `outlet_outflow_rate` and `outlet_backflow_rate` are the volume
 rates leaving and returning, and `outlet_backflow_enthalpy_in` is the
 enthalpy the return brings in. `backflow_boundary_valid` is separate from
 `finite`.
-It closes to its rounding floor, which is about $\varepsilon\,\rho_0 c_p\sum V\,|T|/\Delta t$
+It closes to its rounding floor (with solid walls, to PCG's tolerance, relative
+to the step's change), which is about $\varepsilon\,\rho_0 c_p\sum V\,|T|/\Delta t$
 for temperatures stored in kelvin. The other diagnostics are:
 - `heat_solve_residual`: the largest local residual of the temperature equation;
 - `mass_residual` and `charge_residual`;
 - `advective_cfl`;
+- `conduction_iterations`, with solid walls;
 - `boussinesq_measure`.
 
 `finite` only says every value is a number. A run is accepted by checking
@@ -263,19 +266,21 @@ failing value is not repaired by clipping.
 ## Supported envelope
 
 **Geometry**
-- Cartesian grids, with periodic axes and closed no-slip walls. Polar grids are
-  refused when the problem is built.
+- Cartesian grids, with periodic axes and closed no-slip walls. A polar grid
+  serves the developed pipe only (below); a time step refuses it.
 - An inflow-outflow duct carries its heat on a held flow:
   - pass the steady velocity of `axial.solve_open_duct` in the state;
   - build the step with `hold_flow=True`;
   - a held flow takes no buoyancy.
 - With momentum transport on (`ChannelProblem.advection` other than `"off"`), a
   periodic axis needs at least two cells.
-- Insulating, thin conducting and resolved electrical walls all work, with
-  their electrical dissipation kept outside the fluid. Resolved `wall_layers`
-  widen only the electric solve: the temperature lives on the fluid cells
-  alone, with the fluid's conductivity, and its conditions apply at the fluid's
-  wall faces.
+- Insulating, thin conducting, resolved and solid electrical walls all work,
+  with their electrical dissipation kept outside the fluid. Resolved
+  `wall_layers` widen only the electric solve: the temperature lives on the
+  fluid cells alone, with the fluid's conductivity, and its conditions apply at
+  the fluid's wall faces, unless `walls=` adds thermal walls of the same cells
+  (below). A flow's own `solid_walls` carry current and heat on one extended
+  grid, and become the thermal walls.
 
 **Precision.** The `dtype` given to `build_thermal_step` must be the core's
 compute dtype: float64 after `lmhdx.enable_x64()`, else float32. Set it before
@@ -346,12 +351,13 @@ block's intermediates dominate. The figures are for this grid and step; they
 scale with the cells, and the ratio is what carries over.
 
 **Not included**
-- Conjugate wall conduction.
+- Thermal cells under a thin electrical wall (ADR 0009 D36).
+- Solid walls read from TOML, and in the developed duct below.
 - A flow that evolves in an open duct with the heat. There the flow is held.
 - Transport above second order. The open-duct results below use first-order
   upwinding and quote $Pe_h/2$, its numerical diffusivity over the physical one;
   `advection="van_leer"` removes most of it.
-- Variable properties.
+- Temperature-dependent properties.
 - A steady solve of the coupled equations. The developed duct below is the one steady thermal solve, for a given flow.
 - An inflow-outflow axis read from TOML. A run from TOML (below) covers closed
   ducts; an open one runs from Python.
@@ -360,6 +366,173 @@ scale with the cells, and the ratio is what carries over.
 A closed domain with net heating has no steady temperature. The state returned
 is not a `cases.MHDState` or an archive-compatible `Solution`. The final
 electric fields come from `core3d.face_currents(state.velocity, flow)`.
+
+## Conduction through solid walls
+
+Plan step 5.4b builds conduction through solid walls for the heated duct of
+step 5.4 (ADR 0009 D36): a conduction solve, and the thermal step on it.
+
+**The grid.** `core3d.conjugate_grid(grid, walls)` adds a `core3d.SolidWall`
+(a thickness, a whole number of equal cells, a `thermal_conductivity` and a
+`heat_capacity` $\rho c_p$) at either end of the transverse axes 1 and 2. The
+`ConjugateGrid` it returns holds the extended grid, whose fluid block keeps the
+given faces exactly, the block's slices, and the walls, whose properties
+`cells(name, fluid_value)` spreads over every cell. A corner cell takes the
+nearer wall's material, the first axis's when equally near to rounding, as the
+corners of resolved electrical walls do.
+
+**The solve.** `poisson.variable_helmholtz(grid, conditions, conductivity,
+shift, coefficient)` is $V\,(s\,x - \tau\,\nabla\cdot(k\nabla x))$ for cell-wise
+$k$ and $s$.
+
+**The face-conductance contract.** Between two cells with half widths
+$\delta_1$, $\delta_2$ and conductivities $k_1$, $k_2$, the flux per unit area
+is $(T_2 - T_1)/(\delta_1/k_1 + \delta_2/k_2)$, the half cells' series
+resistance, at a material interface as anywhere else. The face area and the
+cell volume enter once, in the divergence; the conductance does not carry the
+area a second time. So the heat that leaves one cell enters the next. A
+boundary face takes its cell's $k$, which a heat flux there is built with
+(`thermal_boundary(..., conductivity=...)`). One implicit step solves for
+the increment $\delta = T^{n+1} - T^n$,
+
+$$
+\rho c_p\,\delta - \Delta t\,\nabla\cdot(k\nabla\delta)
+= \Delta t\,\bigl(q + \nabla\cdot(k\nabla T^n) + b\bigr),
+$$
+
+$b$ the boundary data's `lift`, so PCG's tolerance is the change's.
+`solvax.pcg_linear_solve` is preconditioned by the fast-diagonal inverse at the
+volume-mean $k$ and $s$, and differentiates implicitly, its tangent and adjoint
+solves from zero. Unconverged, it returns NaN, and NaN derivatives. The
+operator is SOLVAX 0.34.0's `separable.flux_form_operator`, which matches it to
+4e-16; LMhdX moves to it once it takes an axis with a Dirichlet and a Neumann
+end, as the open duct needs (uwplasma/SOLVAX#172).
+
+**What is differentiable.**
+- **The walls' conductivity and heat capacity.** `cells(name, fluid_value,
+  walls={(axis, side): value})` puts a wall's value into the cells in the
+  trace. `VariableHelmholtz.with_coefficients(conductivity, shift)` builds the
+  face conductances from it, and the preconditioner keeps its built means. So a
+  wall's $k$ or $\rho c_p$ is a leaf, and a new value does not recompile.
+- **Static:** a wall's thickness, its cell count, and which cell belongs to
+  which material.
+
+**Tested** (`tests/test_ops.py`):
+- two materials in series, exact, with the same flux through every face;
+- steel brought into contact with fluid: the exact effusivity-weighted contact
+  temperature, at second order;
+- the benchmark's steel and PbLi walled on four sides: symmetric and
+  conservative;
+- **an independent high-contrast check.** Walls of 1000 times the fluid's $k$,
+  held at 0 outside, around a uniformly heated square. The fluid's mean
+  temperature tends to the Dirichlet Poisson series, 0.140577, raised by the
+  walls' own drop $q a t/(2k_w)$. The error falls at about second order, and the
+  Richardson value meets the series within 1e-4.
+- **a wall conductivity's derivative,** to the derivative standard:
+  - central differences at two steps;
+  - a Taylor remainder of second order;
+  - a tighter tolerance and a finer mesh;
+  - the JVP/VJP identity in two walls at once;
+  - no recompilation for a new value;
+  - NaN when PCG has not converged.
+
+| Walls ($k$ and $\rho c_p$ over the fluid's) | PCG iterations, 6 to 24 cells across, $\Delta t$ 0.05 and 100 |
+|:--|:--|
+| the benchmark's steel and PbLi (0.9, 2.3) | 7–8 |
+| copper-like (19, 1.85) | 14–33 |
+| 100, 1.85 | 21–63 |
+
+At a high contrast the count grows as the mesh refines; the copper case is
+tested. These counts are measurements at those contrasts and meshes, not a
+conditioning bound for others. In float32 an insulated axis's null eigenvalue
+came out positive, which turned the shifted fast-diagonal operator indefinite at
+a large $\Delta t\,k$. That eigenvalue is now set to zero, read from the axis's
+conditions, as the Poisson factorization's is.
+
+**In the thermal step.** `ThermalProblem(..., walls=...)` takes a `SolidWall`
+or `None` for each end of the wall-bounded axes 1 and 2. The temperature and
+the heat source then live on `problem.thermal_grid`, `problem.fluid_block`
+picks out the fluid's cells, and `problem.on_thermal_grid` pads fluid data onto
+it. The `thermal_conditions` hold on the outer surface, an inlet profile
+included: a heat flux there is built with the `k` of each boundary cell, an
+array where fluid and wall cells meet the surface. The walls' end faces take
+the axis-0 conditions, so an inflow-outflow axis holds them at the inlet
+temperature and insulates them at the outlet. The walls carry no flow, and
+**Joule heat in the walls is omitted.** `joule_heating` deposits the fluid's
+Joule heat. A solid wall only stores and conducts heat, with no source of its
+own: no Joule heat, as the benchmark's eq. 4 has none. Each step solves for its
+increment, as above. The ledger covers the fluid and its walls: storage and sensible heat
+weigh each cell by its own $\rho c_p$, the conduction out is the solve's own
+flux through the outer surface, and `conduction_iterations` reports the PCG
+iterations, zero without walls. The extremes span every cell; the Boussinesq
+measure and the buoyancy Courant number are the fluid's.
+
+A duct walled on four sides with steel-like walls, heated through part of its
+outer bottom, as the ledger test runs it:
+
+```python
+import jax.numpy as jnp
+import numpy as np
+
+import lmhdx
+from lmhdx.core3d import ChannelProblem, SolidWall, zero_velocity
+from lmhdx.grid import CENTER, DIRICHLET, NEUMANN, BoundaryCondition, Field, Grid, uniform_faces
+from lmhdx.thermal import ThermalProblem, advance_thermal, build_thermal_step, initial_thermal_state, thermal_boundary
+
+lmhdx.enable_x64()
+cells, axial = 6, 8
+fluid = Grid(uniform_faces(axial, 0.0, 1.0), uniform_faces(cells, -1.0, 1.0), uniform_faces(cells, -1.0, 1.0))
+opening = BoundaryCondition(DIRICHLET, lower=np.ones((cells, cells)), upper_kind=NEUMANN)
+flow = ChannelProblem(fluid, (opening, *(BoundaryCondition(NEUMANN),) * 2), forcing=(0.0, 0.0, 0.0), dt=0.5 / axial)
+steel = SolidWall(0.1, 2, 0.18, 2.3)  # 0.1 thick in 2 cells; k 0.9 and rho c_p 2.3 times the fluid's
+patch = np.abs(np.asarray(fluid.centers[0]) - 0.5) < 0.25
+heated = np.where(patch, -3.0, 0.0)[:, None] * np.ones(cells + 4)  # a flux into the outer bottom, walls included
+conditions = (
+    thermal_boundary("temperature", 0.0, upper_kind="heat_flux", conductivity=0.2),
+    thermal_boundary("heat_flux", conductivity=0.18),  # the outer surface takes the wall's k
+    thermal_boundary("heat_flux", heated, 0.0, conductivity=0.18),
+)
+walls = ((None, None), (steel, steel), (steel, steel))
+thermal = ThermalProblem(flow, conditions, 1.0, 0.2, 0.0, joule_heating=False, walls=walls)
+rest = zero_velocity(flow)
+plug = (rest[0].replace_data(jnp.ones_like(rest[0].data)), *rest[1:])  # held, on the fluid's grid
+state = initial_thermal_state(thermal, 0.0, plug)  # the temperature lives on thermal.thermal_grid
+heat = Field(jnp.zeros(thermal.thermal_grid.shape), (CENTER,) * 3, thermal.thermal_grid)
+step = build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True)
+state, history = advance_thermal(step, state, heat, 40)
+print(int(history.conduction_iterations.max()), float(jnp.max(jnp.abs(history.heat_balance_residual))))
+```
+
+One `conduct` serves both solves: PCG through the walls, or the fast-diagonal
+inverse of one material, which stays for a duct without walls. The ledger is
+computed once, for either.
+
+**Tested** (`tests/test_timeloop.py`):
+- **The ledger.** A held flow through a duct walled on four sides and heated
+  through its outer bottom closes every step's ledger, at 300 K, to 1e-10 of
+  its largest term. Its sensible heat grows by the storage.
+- **Fluid and solid energy, region by region.**
+  - Each region stores what its face fluxes bring in, to PCG's tolerance.
+  - The fluid's inflow is the interface flux its walls hand it, plus what
+    crosses its ends. The walls' inflow is the heated face's, 3.3 to rounding,
+    less that same interface flux: equal and opposite.
+  - In the sum the interface cancels.
+- **Time order.** The conjugate step is backward Euler in conduction and
+  explicit in transport. Against a run at a 64th of the step it converges at
+  first order as the step halves.
+- **Walls of the fluid's own material,** of unequal cells, reproduce the
+  separable step on the extended grid to 1e-10, upwind and van Leer.
+- **A moving walled flow** steps exactly as `core3d.step`, and a hot wall cell
+  leaves its buoyancy alone.
+- **Derivatives.** The run differentiates in its heat source and its start.
+  A wall's `k` and `ρc_p` are leaves of the conduction solve
+  (`ConjugateGrid.cells(..., walls=...)`); in the step they are planned, bound
+  for now by `problem.conduction()`.
+
+**The gate and the independent check.** No conjugate-heat anchor other than
+Mistrangelo et al. has been found, so the exact two-material series and contact
+transient stay the CI gate, and step 5.4c's heated duct is the independent
+check.
 
 ## The thermally fully developed duct
 
@@ -435,16 +608,42 @@ uniform slug:
 | square, slug flow | 7.11354 | −1.5 % / −0.38 % / −0.094 % | 1.98, 1.99 |
 | square, H2 (uniform flux on every wall) | 3.091 | +1.3 % / +0.24 % / −0.027 % | 1.97 |
 
-The H2 gate exercises the heat-flux path the design workflow uses. Its 3.091 is
-Shah & London's (1978), as cited in the review of #240; Richardson extrapolation
-gives 3.0873, 0.12 % below. The H1 numbers' comparison with the book's tables
-waits for the book.
-The aspect-0.5 duct is gated at 64 cells; the square ducts carry the
-refinement study.
+The H2 case tests the heat-flux path that the design workflow uses. Its 3.091
+is Shah & London's (1978) value, as cited in the review of #240; Richardson
+extrapolation gives 3.0873, 0.12 % below it. The H1 values lie on Shah &
+London's polynomial fit for rectangular ducts, with the coefficients taken from
+the `ht` library; they have not yet been checked against the book's own tables.
+The tests check the aspect-0.5 duct at 64 cells only, and the refinement study
+uses the square ducts.
 
 A transverse field flattens the core. On 32 cells with Joule heat off, the H1
 Nusselt number of the square duct rises from 3.62 at Ha 0 to 4.56 at Ha 10 and
 5.35 at Ha 30, toward the slug value of 7.09.
+
+```{image} ../_static/thermal_developed_duct.webp
+:alt: Velocity and temperature of an H1 square duct at Ha 0 and 100 in 3-D, Nusselt numbers against aspect ratio and Hartmann number, and mesh convergence
+:align: center
+```
+
+The figure below compares LMhdX with exact results over a wider range than the
+tests cover. This figure and the two below verify the solver against exact or
+independent solutions; none is a comparison with experiment.
+`python scripts/make_showcase_figures.py --only developed` redraws
+it. Its inputs and results are saved in `docs/_static/data/`, as are those of the
+entrance and onset figures further down, so each figure can be checked or
+replotted from the stored numbers. Every value is a mean Nusselt number: the
+wall heat flux averaged over the heated perimeter, made dimensionless with the
+hydraulic diameter $D_h$. The ducts use the H1 condition, and the plates their
+own uniform-flux Nusselt number with $D_h = 4a$.
+- For rectangular ducts with aspect ratios from 1 down to 1/8, LMhdX agrees with
+  the exact series to within 0.35 %, with 32 cells across the short side.
+- For the square duct on the meshes of `duct_problem` (48 cells, with the layers
+  resolved), Nu rises from Ha 0 to 1000 and is still 6 % below the slug-flow
+  value at Ha 1000.
+- For the plates described next, driven by the solver's own steady Hartmann
+  flow rather than the exact cell means, Nu matches the closed form to within
+  0.2 % from Ha 1 to 1000 on 128 layer-resolving cells, and converges at second
+  order on uniform cells.
 
 **An MHD reference.** Hartmann flow between plates at $y=\pm a$, each taking
 in a uniform heat flux with no source and no Joule heat, has
@@ -470,13 +669,137 @@ its discrete answer is exactly $12/(1+h^2/2)$. The public four-wall
 `nusselt` of that fixture averages in the insulated ends, and is a different
 number.
 
+**The uniform wall temperature.** With every wall held at one temperature, the
+T condition, the excess over the wall decays along the duct in a fixed shape,
+$T-T_w=\theta\,e^{-\lambda x}$. Without axial conduction or internal heat,
+$\theta$ is the eigenfunction of $-L(\theta)=\Lambda f\theta$ with the smallest
+eigenvalue, $f=u/\bar u$. `developed_wall_temperature(problem, velocity)` finds
+it with `solvax.inverse_iteration` on the same fast-diagonal factorization, and
+returns:
+- the decay rate $\lambda=\Lambda\alpha/\bar u$;
+- the profile scaled to a unit bulk excess, $(T-T_w)/(T_b-T_w)$;
+- $Nu_T=\Lambda D_hA/P_w$, which is $\Lambda D_h^2/4$ when every wall is held, with
+  the wall flux averaged over the held perimeter $P_w$.
+
+```python
+import lmhdx
+from lmhdx.core3d import ChannelProblem
+from lmhdx.grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces
+from lmhdx.steady import solve_steady_state
+from lmhdx.thermal import ThermalProblem, developed_wall_temperature, thermal_boundary
+
+lmhdx.enable_x64()
+periodic, wall, held = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN), thermal_boundary("temperature")
+grid = Grid(uniform_faces(1, 0.0, 1.0), uniform_faces(32, -1.0, 1.0), uniform_faces(32, -1.0, 1.0))
+flow = ChannelProblem(grid, (periodic, wall, wall), forcing=(1.0, 0.0, 0.0))  # one periodic axial cell
+thermal = ThermalProblem(
+    flow, (periodic, held, held), specific_heat=1.0, thermal_conductivity=1.0, reference_temperature=0.0
+)
+result = developed_wall_temperature(thermal, solve_steady_state(flow).velocity)
+print(f"Nu_T {float(result.nusselt):.4f} in {int(result.iterations)} iterations")  # 2.9823 in 12
+```
+
+The iteration stops once `eigen_residual` is below `tolerance` (1e-10 in
+float64, 1e-4 in float32), or after `max_iterations`: the square duct takes 12
+iterations, a 1:8 duct 146.
+
+$\Lambda$ is the Rayleigh quotient of the converged $\theta$. The quotient is
+stationary at an eigenfunction, so its derivative in the velocity needs none of
+the iteration's; the gradient through the steady solve's field scale meets
+central differences to 1e-5, with a Taylor remainder of second order. **The
+supported derivative** is the first derivative of $\Lambda$, the decay rate and
+$Nu_T$ at a converged solve.
+- **The profile** comes under `stop_gradient`, with a zero gradient, since its
+  sensitivity needs an implicit eigenvector solve. Second derivatives are not
+  supported either. ADR 0010's 2.0 contract, that an unsupported derivative
+  raises, is not implemented here.
+- **Convergence is certified on the raw flow**, in traced arithmetic:
+  - a finite, positive mean flow;
+  - every cell forward;
+  - the same axial velocity on both axial faces;
+  - no transverse velocity.
+
+  A fully reversed flow has positive speeds over its mean, so the raw sign is
+  what rules it out.
+- **Otherwise** the solve returns NaN for $\Lambda$ and $Nu_T$ with `converged`
+  false: when it is unconverged, when the flow is reversed in any cell or
+  overall, when there is no flow, or when it has a transverse component or
+  uneven faces.
+- **The controls are checked on the host.** `tolerance` must be positive and
+  finite (`inf` would skip the loop), and `max_iterations` a positive integer.
+
+A heat-flux wall must be adiabatic, and sources and Joule heat are left out,
+since the T condition has none.
+
+| Duct | Reference | 16 / 32 / 64 cells | Order |
+|:--|--:|:--|:--|
+| square, slug flow | $\pi^2/2=4.93480$; discretely $(8/h^2)\sin^2(\pi h/4)$ | exact to 3e-16 at each | — |
+| square | 2.97753 | +0.63 % / +0.16 % / +0.040 % | 1.97 |
+| plates, Poiseuille (32 / 64 / 128) | 7.54070 | −4.6e‑4 / −1.1e‑4 / −2.9e‑5 | 2.0 |
+| plates, Ha 10 (32 / 64 / 128) | 8.96255 | −6.5e‑4 / −1.6e‑4 / −4.1e‑5 | 2.0 |
+
+The square duct's reference is a Chebyshev collocation of the same
+eigenproblem, extrapolated from 40, 48 and 56 nodes at its observed order 2.0.
+The package's own Richardson value, 2.97749, agrees with it to 1.5e-5. Shah &
+London (1978) list 2.976, 0.05 % below both. The sampled sines of slug flow are
+exact eigenfunctions of the cell-centred Dirichlet Laplacian, which is why that
+row is exact. The plates carry the cell means of the analytical velocity, with
+the plates' own $D_h=4a$; their references are one-dimensional Chebyshev solves.
+
+**The pipe.** On the polar grid of `lmhdx.pipe`, both developed solves use the
+polar Poisson factorization. The azimuth wraps and the face on the axis has no
+area, so the wall is the outer radius alone, and $D_h=2R$. The flow is
+`solve_pipe`'s, placed on the axial faces. Joule heat is refused there, since a
+pipe forms its currents in `lmhdx.pipe`, not in the core, so a pipe's
+`ThermalProblem` needs `joule_heating=False`:
+
+```python
+import dataclasses
+
+import jax.numpy as jnp
+
+import lmhdx
+from lmhdx.core3d import ChannelProblem, zero_velocity
+from lmhdx.grid import CENTER, NEUMANN, PERIODIC, BoundaryCondition, Field
+from lmhdx.pipe import pipe_problem, solve_pipe
+from lmhdx.thermal import ThermalProblem, developed_heat, developed_wall_temperature, thermal_boundary
+
+lmhdx.enable_x64()
+pipe = pipe_problem(hartmann=0.0, radial=32, azimuthal=16)  # radius, azimuth and one axial cell
+periodic, wall = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN)
+flow = ChannelProblem(pipe.grid, (wall, periodic, periodic))
+rest = zero_velocity(flow)
+axial = jnp.broadcast_to(solve_pipe(pipe)[0].data, rest[2].shape)  # the developed flow on the axial faces
+velocity = (*rest[:2], rest[2].replace_data(axial))
+heated = thermal_boundary("heat_flux", -1.0, -1.0, conductivity=1.0)  # a unit flux in through the wall
+thermal = ThermalProblem(flow, (heated, periodic, periodic), 1.0, 1.0, 0.0, joule_heating=False)
+zero = Field(jnp.zeros(pipe.grid.shape), (CENTER,) * 3, pipe.grid)
+flux = float(developed_heat(thermal, velocity, zero).nusselt)  # 48/11 to 0.07 %
+conditions = (thermal_boundary("temperature"), periodic, periodic)
+held = float(developed_wall_temperature(dataclasses.replace(thermal, thermal_conditions=conditions), velocity).nusselt)
+print(f"Nu_H {flux:.4f}, Nu_T {held:.4f}")  # 3.65679 to 0.02 %
+```
+
+| Pipe: mean Nu on the diameter, $D_h=2R$ | Exact | 16 / 32 / 64 radial cells | Order |
+|:--|--:|:--|:--|
+| H (uniform flux; H1 and H2 coincide in a pipe), Poiseuille | 48/11 = 4.36364 | +0.28 % / +0.071 % / +0.018 % | 2.0 |
+| H, slug | 8 | −0.39 % / −0.098 % / −0.024 % | 2.0 |
+| T (one wall temperature), Poiseuille | 3.65679 | +0.077 % / +0.019 % / +0.0049 % | 2.0 |
+| T, slug | $j_{0,1}^2=5.78319$ | −0.12 % / −0.031 % / −0.0077 % | 2.0 |
+
+The 3.65679 is a radial Chebyshev solve of the same eigenproblem across the
+diameter. The T numbers come from `developed_wall_temperature`, so its derivative
+contract holds here too: the first derivative of $Nu_T$ at a converged solve is
+supported, and the profile's sensitivity is not.
+
+**An MHD Nusselt campaign.** Shercliff's square duct is compared in H1, H2 and
+T against an independent spectral solve, within 0.06 % from Ha 1 to 316, and
+against the published curves of Bluck, Wolfendale & Marquis (2015), on its own
+page: [MHD Nusselt campaign](../validation/mhd_nusselt.md).
+
 Not covered:
-- the uniform-wall-temperature condition, an eigenvalue problem ($Nu_T = 2.976$
-  for the square duct);
-- the pipe;
-- an MHD duct against a published $Nu$, for example a square insulating duct
-  near Ha 100 (Tao & Ni 2013; Smolentsev et al.). That is a documentation
-  campaign to come, not a CI gate.
+- other wall conductances and aspect ratios against a published $Nu$, for
+  example Hunt's duct (Bluck & Wolfendale 2017).
 
 ## An open duct
 
@@ -503,6 +826,51 @@ not for a Nusselt number.
 
 A plug flow carrying a uniform source converges to its exact steady profile at
 first order, 0.81 and then 0.91, at $Pe_h/2$ of 0.16, 0.08 and 0.04.
+
+**The thermal entrance.** Near a duct's inlet the temperature profile is still
+developing, and the local Nusselt number falls along the duct towards its
+developed value. The test case is a pair of plates heated with a uniform flux
+downstream of an inlet at temperature 0. They carry the developed Hartmann
+flow, held fixed in an open duct, with van Leer transport. Leaving out axial
+conduction, the Graetz eigen-expansion gives the local Nusselt number;
+`validation.thermal.graetz` evaluates it on 4,000 finite volumes, and for slug
+flow it has the closed form
+$Nu=4/\left(1/3-(2/\pi^2)\sum_n e^{-16n^2\pi^2x^+}/n^2\right)$.
+
+At $Pe=400$, with 64 cells across and 135 along, LMhdX stays within 1.3 % of the
+expansion beyond $x^+=10^{-3}$, and within 0.3 % beyond $10^{-2}$, at Ha 0, 10
+and 50. Closer to the inlet the remaining difference is axial conduction, which
+the expansion leaves out. At $Pe=1600$ the difference at $x^+=10^{-3}$ drops
+from 1.3 % to 0.14 %, while refining the mesh across or along the duct leaves
+it unchanged. The tests check the expansion itself against its slug-flow
+closed form and its developed limit, 140/17; the sweep is rerun with
+`python scripts/make_showcase_figures.py --only entrance`.
+
+```{image} ../_static/thermal_entrance.webp
+:alt: Temperature above the bulk in 3-D, local Nusselt number along heated Hartmann plates against the Graetz expansion, and its error
+:align: center
+```
+
+**A side-layer jet.** A square duct at Ha 1000 and $Pe=2000$, 24 half-widths
+long, is heated with a uniform flux through one side wall downstream of a cold
+inlet, without Joule heat. With conducting Hartmann walls ($c=0.05$) the side
+layers carry jets at 8.4 times the mean velocity along that wall. The wall's
+hottest point then rises 25 % less above the inlet temperature than in the
+insulating duct: 25.0 % on 32 cells across and 64 along, and 25.0 % again on 40
+and 80. The hot strips left along the corners are where the jet meets the
+Hartmann layers. `python scripts/make_showcase_figures.py --only heated-duct`
+runs both meshes in about two minutes on a laptop GPU.
+
+The flow is held fixed, so this is a heat-transfer result in a given flow, not
+a coupled flow and heat result. The 25 % applies at that flow rate, with thin
+electrical walls and no heat conduction through solid walls. It does not mean a
+lower pumping cost: at the same flow rate, conducting walls raise the MHD
+pressure drop. It is not a conjugate-wall result either.
+
+```{image} ../_static/thermal_heated_duct.webp
+:alt: Heated wall, floor and outlet temperatures of an insulating and a Hunt duct in 3-D as heat enters from one side wall
+:align: center
+```
 
 **Crediting a load.** A design that must remove a given duty is judged on what
 the duty itself does, not on the gross outlet enthalpy. Joule heat and a
@@ -536,6 +904,55 @@ diffusion, at $Pe_h/2 = 0.08$. A conductive fluid ($\lambda=0.5$) stays coolest 
 outlet enthalpy, from 7.9 to 32.8 as the flow doubles, but adds nothing to the
 load's credit.
 
+## Buoyant convection
+
+A fluid layer between rigid plates held at fixed temperatures, heated from below,
+becomes unstable at $Ra_c=1707.76$, and a vertical field delays the onset
+(Chandrasekhar 1961, Ch. IV). `python scripts/make_showcase_figures.py --only
+onset` measures the growth rate of the critical roll just below and just above
+Chandrasekhar's critical Rayleigh number, at his critical wavenumber, for
+$Q=Ha^2$ from 0 to 1000. It does so at two time steps,
+$\Delta t_0=0.05/(Q+Ra_c^{1/2})$ and $\Delta t_0/2$.
+
+The growth rate comes from power iteration on the time stepper. Every half time
+unit the perturbation of the conducting state is scaled back to $10^{-6}$, and
+the rate settles to five digits by the third rescaling. Letting the
+perturbation decay towards $10^{-10}$ instead does not work: it reaches a floor
+of round-off from the hydrostatic balance on the layer-resolving mesh, and near
+onset its rate then depends on that noise.
+
+The reference is Chandrasekhar's eigenproblem solved by Chebyshev collocation
+(`validation.thermal.chandrasekhar_onset`). It reproduces his tabulated values
+for $Q\le100$, as quoted by Basak & Kumar (2015), to within 0.01 %, which the
+tests check. On the exact momentum stage (#297) LMhdX's onset does not depend on
+the time step: $\Delta t_0$ and $\Delta t_0/2$ agree to 0.01 %. It lies 0.2 to
+0.8 % below the reference across the tenfold rise of $Ra_c$, which is the error of
+the 32-cell layer mesh. The tests run the Bénard onset at $Q=0$ and require it
+within 4 % of 1707.76; the full sweep is rerun by the figure script.
+
+```{image} ../_static/thermal_magnetoconvection.webp
+:alt: Critical Rayleigh number against the Chandrasekhar number, the critical rolls at Q = 0 and 1000, and the error at two time steps
+:align: center
+```
+
+At $Ra=10^4$ and $Pr=0.1$, a periodic $4\times4\times1$ layer (64 × 64 × 32
+cells, van Leer heat transport, limited momentum transport, Courant number at
+most 0.47) convects in cells that keep rearranging. A horizontal field of
+$Q=1000$ damps every motion that varies along it and leaves steady rolls with
+their axes along the field, as in the NaK experiments of Burr & Müller (2002).
+The movie colours the side walls and the mid-plane by temperature.
+`python scripts/make_showcase_figures.py --only convection` takes about twelve
+minutes on a laptop GPU.
+
+This is a transient run in a field. It shows how the flow evolves, but it is
+not a quantitative result until the stabilised transient step keeps a fluid at
+rest in a field along $y$.
+
+```{image} ../_static/thermal_convection_3d.webp
+:alt: A liquid-metal layer heated from below, without a field and in a horizontal field
+:align: center
+```
+
 ## A worked example
 
 A nondimensional Hartmann duct runs two cases. The first is driven along its
@@ -567,12 +984,12 @@ flow = ChannelProblem(
     grid, (periodic, wall, wall), magnetic_field=(0.0, 10.0, 0.0), forcing=(1.0, 0.0, 0.0), dt=2.0e-3
 )
 k = 0.05
-walls = (
+conditions = (
     periodic,
     thermal_boundary("heat_flux", conductivity=k),  # adiabatic side walls
     thermal_boundary("heat_flux", 0.0, 1.0, conductivity=k),  # the top wall takes out a unit flux
 )
-thermal = ThermalProblem(flow, walls, specific_heat=1.0, thermal_conductivity=k, reference_temperature=0.0)
+thermal = ThermalProblem(flow, conditions, specific_heat=1.0, thermal_conductivity=k, reference_temperature=0.0)
 heat = Field(jnp.full(grid.shape, 0.5), (CENTER,) * 3, grid)
 
 for problem in (thermal, dataclasses.replace(thermal, expansion_coefficient=0.02, gravity=(0.0, 0.0, -1.0))):
@@ -617,7 +1034,7 @@ The start is held to the same limits, and to `divergence_tolerance`. An accepted
 - a frame, `heated_duct_000010.vtr`, gathered in `heated_duct.pvd`.
 
 The first rejected chunk stops the run. It writes only
-`heated_duct_000020_rejected.npz`. That record imports but does not resume. `summary.json` holds these entries:
+`heated_duct_000020_rejected.npz`. That record imports but does not resume. `heated_duct_summary.json` holds these entries:
 - `accepted`;
 - the first rejected sample's step, reasons and Courant numbers;
 - the limits;

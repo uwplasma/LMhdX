@@ -12,15 +12,10 @@ import subprocess
 import sys
 import tarfile
 import time
+import tomllib
 import zipfile
 from pathlib import Path
 from typing import Any
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
-    import tomli as tomllib
-
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = Path("src/lmhdx")
@@ -241,17 +236,17 @@ def build_inventory(root: Path = ROOT) -> dict[str, Any]:
         },
         "targets": {
             "package_module_count_max": 21,
-            "total_package_lines_max": 14967,
-            "largest_package_module_lines_max": 1499,
-            "maintained_core_lines_max": 13856,
+            "total_package_lines_max": 15802,
+            "largest_package_module_lines_max": 1716,
+            "maintained_core_lines_max": 14689,
             "test_file_count_max": 26,
-            "test_lines_max": 15093,
-            "external_validation_file_count_max": 6,
-            "largest_external_validation_lines_max": 599,
-            "maintenance_script_count_max": 4,
+            "test_lines_max": 17003,
+            "external_validation_file_count_max": 9,
+            "largest_external_validation_lines_max": 595,
+            "maintenance_script_count_max": 5,
             "stable_root_exports_max": 41,
             "curated_examples_max": 10,
-            "checkout_bytes_max": 3275600,
+            "checkout_bytes_max": 4197857,
             "root_import_median_seconds_max": 0.25,
             "sdist_bytes_max": 512 * 1024,
             "wheel_bytes_max": 384 * 1024,

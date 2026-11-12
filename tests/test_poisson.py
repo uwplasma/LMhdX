@@ -136,6 +136,80 @@ def test_solution_is_differentiable_and_jits():
     assert abs(float(jnp.sum(gradient * direction)) - float(difference)) < 1e-6 * abs(float(difference))
 
 
+@pytest.mark.parametrize("kind", ["dirichlet", "mixed", "neumann", "periodic"])
+def test_only_an_insulated_or_periodic_axis_has_a_null_eigenvalue(kind):
+    """The null mode is read from the conditions, not from small row sums. On widths 0.5, 1e-4, 1e-4 and 0.5 a
+    Dirichlet axis's rows sum to 8e-8 of its largest entry in float32, yet its least-negative eigenvalue is near -8:
+    zeroed, ``(I - 1e5 L) x = 1`` would solve to 1 instead of 1.25e-6. Against the eigenvalues and a dense solve of
+    the assembled operator, the Helmholtz factorization agrees to rounding; only an insulated or periodic axis has an
+    exact zero, in the Poisson factorization too, and only there does a uniform right-hand side solve to
+    ``1/shift``."""
+    from lmhdx.poisson import fast_diagonal_helmholtz
+
+    condition = {
+        "dirichlet": BoundaryCondition(DIRICHLET),
+        "mixed": BoundaryCondition(DIRICHLET, upper_kind=NEUMANN),
+        "neumann": BoundaryCondition(NEUMANN),
+        "periodic": BoundaryCondition(PERIODIC),
+    }[kind]
+    widths = np.array([0.5, 1e-4, 1e-4, 0.5])
+    line = Grid(uniform_faces(1, 0.0, 1.0), np.cumsum([0.0, *widths]), uniform_faces(1, 0.0, 1.0))
+    ends = (BoundaryCondition(PERIODIC), condition, BoundaryCondition(PERIODIC))
+    operator = assemble_axis_laplacian(line, 1, condition)
+    root = np.sqrt(widths)
+    exact = np.linalg.eigvalsh(0.5 * (root[:, None] * operator / root + (root[:, None] * operator / root).T))
+    inverse = fast_diagonal_helmholtz(line, (CENTER,) * 3, ends, shift=1.0, coefficient=1.0e5)
+    values = np.sort(inverse.values[1])
+    null = kind in ("neumann", "periodic")
+    assert bool(values[-1] == 0.0) == null and values[-1] <= 0.0
+    rounding = 50.0 * np.finfo(float).eps * np.max(np.abs(exact))  # the 2e8 eigenvalue sets the scale
+    np.testing.assert_allclose(
+        values[: len(values) - null], exact[: len(exact) - null], rtol=0, atol=rounding
+    )
+    assert abs(exact[-1]) < 1e-9 * abs(exact[0]) if null else exact[-1] < -2.0  # -8.0 Dirichlet, -2.3 mixed
+    solved = np.asarray(inverse.solve(Field(jnp.ones(line.shape), (CENTER,) * 3, line)).data).ravel()
+    if null:  # the exact answer is 1/shift; a dense solve amplifies its rounding null eigenvalue by 1e5
+        np.testing.assert_allclose(solved, 1.0, rtol=1e-12)
+    else:
+        dense = np.linalg.solve(np.eye(len(widths)) - 1.0e5 * operator, np.ones(len(widths)))
+        np.testing.assert_allclose(solved, dense, rtol=1e-9)
+        assert np.max(solved) < 1e-4
+    poisson = fast_diagonal_poisson(line, ends)
+    assert bool(np.max(poisson.values[1]) == 0.0) == null
+
+
+def test_a_float32_helmholtz_factorization_keeps_its_null_mode_at_zero():
+    """Assembled in a float32 process, a stretched insulated axis's null eigenvalue came out +4e-6 or -1e-5, so at
+    a large coefficient ``shift - coefficient L`` solved a uniform right-hand side, which ``L`` does not see, to
+    4.2 or 0.31 times ``1/shift``. The null mode is zeroed as the Poisson factorization's is. In float64 it was
+    1e-17 of the largest eigenvalue, and a solve moves by 2e-14 at a unit coefficient, 1e-9 at 1e5. A Dirichlet
+    axis whose rows sum to 8e-8 of its largest entry keeps its eigenvalue near -8, and solves to 1.25e-6."""
+    import subprocess
+    import sys
+
+    code = """
+import numpy as np, jax.numpy as jnp
+from lmhdx.grid import CENTER, DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid, tanh_faces, uniform_faces
+from lmhdx.poisson import fast_diagonal_helmholtz
+for cells in (24, 32):
+    grid = Grid(uniform_faces(2, 0.0, 1.0), *(tanh_faces(cells, -1.0, 1.0, 2.0) for _ in range(2)))
+    walls = (BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN), BoundaryCondition(NEUMANN))
+    inverse = fast_diagonal_helmholtz(grid, (CENTER,) * 3, walls, shift=1.0, coefficient=1.0e5)
+    assert all(float(np.max(values)) == 0.0 for values in inverse.values)
+    x = inverse.solve(Field(jnp.ones(grid.shape, jnp.float32), (CENTER,) * 3, grid)).data
+    assert x.dtype == jnp.float32 and np.allclose(np.asarray(x), 1.0, rtol=1e-4), (cells, float(np.min(x)))
+# A Dirichlet axis with tiny interior cells: its rows sum to 8e-8 of its largest entry, but it has no null mode.
+line = Grid(uniform_faces(1, 0.0, 1.0), np.cumsum([0.0, 0.5, 1e-4, 1e-4, 0.5]), uniform_faces(1, 0.0, 1.0))
+ends = (BoundaryCondition(PERIODIC), BoundaryCondition(DIRICHLET), BoundaryCondition(PERIODIC))
+inverse = fast_diagonal_helmholtz(line, (CENTER,) * 3, ends, shift=1.0, coefficient=1.0e5)
+assert -8.1 < float(np.max(inverse.values[1])) < -7.9, inverse.values[1]
+x = np.asarray(inverse.solve(Field(jnp.ones(line.shape, jnp.float32), (CENTER,) * 3, line)).data)
+assert np.allclose(x, 1.2503e-6, rtol=1e-3), x.ravel()
+"""
+    env = {key: value for key, value in __import__("os").environ.items() if key != "JAX_ENABLE_X64"}
+    subprocess.run([sys.executable, "-c", code], check=True, env=env, timeout=300)
+
+
 def test_single_precision_solves_at_single_precision_accuracy():
     grid, conditions = SMALL, (FIXED, FIXED, FIXED)
     factorization = fast_diagonal_poisson(grid, conditions)
@@ -523,6 +597,27 @@ def test_walls_resolved_in_cells_solve_the_dense_conductivity_jump():
         )
 
 
+def test_the_corners_of_walls_of_equal_cells_are_shared_alike():
+    """Walls of the same cells on both axes but of different materials: the corner cells' depths tie exactly, and
+    every tie goes to the first axis alike, so a mirror-symmetric charge has a mirror-symmetric potential. The
+    rounding of the cells' centres split the ties unevenly before."""
+    from lmhdx.poisson import fast_diagonal_thin_wall_poisson
+
+    grid = Grid(uniform_faces(1, 0.0, 1.0), uniform_faces(6, -1.0, 1.0), uniform_faces(6, -1.0, 1.0))
+    periodic, insulating = BoundaryCondition(PERIODIC), BoundaryCondition(NEUMANN)
+    hartmann, side = ((4.0, 4.0), (0.1, 0.1)), ((0.5, 0.5), (0.1, 0.1))
+    solver = fast_diagonal_thin_wall_poisson(
+        grid, (periodic, insulating, insulating), (0.0, 0.0, 0.0), layers=(None, (hartmann,) * 2, (side,) * 2)
+    )
+    rhs = np.random.default_rng(1).standard_normal((6, 6))
+    rhs = rhs + rhs[::-1] + rhs[:, ::-1] + rhs[::-1, ::-1]
+    rhs -= rhs.mean()
+    potential = np.asarray(solver.solve(Field(jnp.asarray(rhs[None]), (CENTER,) * 3, grid)).data[0])
+    scale = 1e-12 * np.max(np.abs(potential))
+    np.testing.assert_allclose(potential[::-1], potential, atol=scale)
+    np.testing.assert_allclose(potential[:, ::-1], potential, atol=scale)
+
+
 def test_resolved_walls_on_two_axes_give_each_corner_cell_its_nearer_wall():
     """The Woodbury corner correction against the five-point operator of fluid, walls and corners."""
     from lmhdx.poisson import fast_diagonal_thin_wall_poisson
@@ -562,7 +657,8 @@ def test_resolved_walls_on_two_axes_give_each_corner_cell_its_nearer_wall():
     hy, sy, dy, ly = axis(walls_y, np.diff(fy))
     hz, sz, dz, lz = axis(walls_z, np.diff(fz))
     wy, wz = dy[:, None] > 0, dz[None, :] > 0
-    sigma = np.where(wy & wz, np.where(dy[:, None] <= dz[None, :], sy[:, None], sz[None, :]), 1.0)
+    nearer = dy[:, None] <= dz[None, :] + 1e-9 * np.maximum(dy[:, None], dz[None, :])  # ties to y, as built
+    sigma = np.where(wy & wz, np.where(nearer, sy[:, None], sz[None, :]), 1.0)
     sigma = np.where(wy & ~wz, sy[:, None], np.where(wz & ~wy, sz[None, :], sigma))
     rows, columns = hy.size, hz.size
     matrix = np.zeros((rows * columns, rows * columns))

@@ -40,12 +40,14 @@ from .cases import solve as _solve_model
 from .core3d import advance, zero_velocity
 from .fields import Uniform, host, is_traced, primal
 from .grid import CENTER, Field
+from .ops import cell_average
 from .output import Output, Session, Start, digest, read_record, rejection
 from .pipe import PipeProblem, solve_pipe
 from .pipe import flow_rate as _pipe_flow_rate
 from .problem import Q2D, Open, Problem, channel_kernel, hold_walls, thermal_kernel
 from .q2d import Q2DProblem, _setup, evolve_q2d, solve_q2d
 from .steady import _MAX_STEPS, solve_compiled, solve_steady_state
+from .thermal import ThermalProblem
 
 __all__ = ["Case", "Solution", "Solver", "solve"]
 
@@ -236,15 +238,27 @@ class _Run(NamedTuple):
     header: dict
     limits: dict | None = None
     check: Callable | None = None
+    first: int = 0
 
 
-def _header(problem, method: str) -> dict:
+def _header(problem, method: str) -> dict:  # noqa: C901
     """The log's description of a run, as :meth:`lmhdx.output.StreamingSolverLogger.emit_header` takes it."""
     mode = "steady" if method in ("stokes", "newton", "march") else "transient"
     if isinstance(problem, Q2D):
         shape = (*problem.initial_vorticity.shape, 1)
         return dict(mode=mode, solver=method, geometry="periodic plane", cells=shape, domain=(*problem.length, 0.0),
                     potential="spectral", field=("none", None), forcing=0.0)  # fmt: skip
+    if isinstance(problem, ThermalProblem):
+        flow = problem.flow
+        grid = flow.grid
+        uniform = isinstance(flow.magnetic_field, tuple)
+        return dict(
+            mode=mode, solver=method, geometry="polar" if grid.is_polar else "cartesian", cells=grid.shape,
+            domain=tuple(float(f[-1] - f[0]) for f in grid.faces),
+            potential="staggered core / PCG through the walls" if problem.has_walls else "staggered core",
+            field=("uniform", tuple(float(c) for c in flow.magnetic_field)) if uniform else ("imposed", None),
+            forcing=float(flow.forcing[0]),
+        )  # fmt: skip
     grid, b = problem.grid, problem.B
     field = (
         ("uniform", tuple(float(b.strength) * d for d in b.direction))
@@ -274,33 +288,36 @@ def _drive(run: _Run, problem, solver: Solver, output: Output | None, record: St
 
     Each chunk is checked against the run's limits before it is written; the first one past them stops the run,
     which raises :class:`~lmhdx.cases.NumericalFailure` once the rejected state and the summary are written.
-    Returns the end state, the history of all chunks and the summary (None without an output).
+    Returns the end state, the history and the summary (None without an output). The history is that of every chunk
+    without an output; with one it is the last chunk's, so that the run's memory does not grow with its length (the
+    summary and ``{name}.jsonl`` hold the rest).
     """
-    identity = _identity(problem, solver) if output or record else None
-    state, first = run.state, 0
+    resume = record is not None and record.mode == "resume"
+    identity = _identity(problem, solver) if output or resume else None
+    state, first = run.state, run.first
     if record is not None:
-        state, first = read_record(record.path, state, identity if record.mode == "resume" else None)
+        state, first = read_record(record.path, state, identity if resume else None)
     if run.check is not None:
         run.check(state)
     steps, session = solver.steps, None
     every = (output.every if output else 0) or steps
-    if steps % every or (solver.history and every % solver.history):
+    if output is not None and (steps % every or (solver.history and every % solver.history)):
         raise ValueError(
             f"steps ({steps}) and the history stride must be multiples of output.every ({every})"
         )
     if output is not None:
         info = None if record is None else {"path": record.path, "mode": record.mode, "step": first}
         session = Session(output, identity, run.grid, solver.dt, first, steps, run.header, run.limits, info)
-    histories, rejected = [], None
+    histories, rejected, stride = [], None, solver.history or 1
     try:
         for done in range(first, first + steps, every):
             new, history = run.advance(state, every)
             concrete = not is_traced(new)
             series = _series(history) if concrete else {}
-            if run.limits and (rejected := rejection(series, run.limits, done)):
+            if run.limits and (rejected := rejection(series, run.limits, done, stride)):
                 break
             state, done = new, done + every
-            histories.append(history)
+            histories[:] = [history] if output is not None else [*histories, history]
             if session:
                 session.accept(state, run.fields(state), series, done)
     except NumericalFailure as error:  # a chunk the kernel itself refused (Q2D's gates)
@@ -326,7 +343,7 @@ def _identity(problem, solver: Solver) -> str:
     """What a record must match to resume: the problem without its initial state, and the solver without its length."""
     if isinstance(problem, Q2D):
         problem = dataclasses.replace(problem, initial_vorticity=None)
-    elif problem.thermal is not None:
+    elif isinstance(problem, Problem) and problem.thermal is not None:
         problem = problem.replace(thermal=dataclasses.replace(problem.thermal, initial_temperature=0.0))
     return digest(problem, dataclasses.replace(solver, steps=None, history=None))
 
@@ -351,8 +368,6 @@ class _Plane(NamedTuple):
 def _q2d(problem: Q2D, solver: Solver, output, record) -> Solution:
     coefficients = dict(viscosity=problem.viscosity, hartmann_friction=problem.hartmann_friction)
     if is_traced(problem):
-        if output is not None:
-            raise ValueError("an Output writes concrete arrays: solve outside jit and grad")
         omega, ux, uy = evolve_q2d(
             problem.initial_vorticity,
             forcing=problem.forcing,
@@ -431,6 +446,23 @@ def _transient(problem: Problem, solver: Solver, start, output, record) -> Solut
 
 
 def _thermal(problem: Problem, solver: Solver, start, output, record) -> Solution:
+    kernel, forcing, scale, _, walls = channel_kernel(problem, solver.dt, solver.precision)
+    if forcing is not None or is_traced(scale) or float(scale) != 1.0:
+        raise NotImplementedError("an unsteady run takes a concrete drive and field")
+    thermal = problem.thermal
+    found = _heated(
+        thermal_kernel(problem, kernel), problem, solver, start, thermal.initial_temperature,
+        thermal.heat_source, output, record,
+    )  # fmt: skip
+    return hold_walls(found, walls)
+
+
+def _heated(heat_problem, subject, solver: Solver, start, temperature, source, output, record) -> Solution:
+    """Run a :class:`~lmhdx.thermal.ThermalProblem`, with solid walls or without, in chunks.
+
+    ``subject`` is what a record is the record of (the :class:`Problem`, or the ``ThermalProblem`` itself), and the
+    temperature lives on the problem's ``thermal_grid``, the walls' cells included.
+    """
     from .thermal import (
         _CELL,
         _SCHEMES,
@@ -441,19 +473,15 @@ def _thermal(problem: Problem, solver: Solver, start, output, record) -> Solutio
         validate_thermal_inputs,
     )
 
-    kernel, forcing, scale, _, walls = channel_kernel(problem, solver.dt, solver.precision)
-    if forcing is not None or is_traced(scale) or float(scale) != 1.0:
-        raise NotImplementedError("an unsteady run takes a concrete drive and field")
-    heat_problem, thermal = thermal_kernel(problem, kernel), problem.thermal
-    grid = kernel.grid
+    flow, grid = heat_problem.flow, heat_problem.thermal_grid
     if isinstance(start, ThermalState):
         state = start
     else:
-        velocity = solve_steady_state(kernel).velocity if start == "steady" else None
-        state = initial_thermal_state(heat_problem, thermal.initial_temperature, velocity)
-    heat = Field(jnp.full(grid.shape, thermal.heat_source, dtype=jnp.result_type(float)), _CELL, grid)
-    scheme = _SCHEMES[thermal.advection]
-    courant = solver.advective_cfl_limit if thermal.advection != "off" else None
+        velocity = solve_steady_state(flow).velocity if start == "steady" else None
+        state = initial_thermal_state(heat_problem, temperature, velocity)
+    heat = Field(jnp.full(grid.shape, source, dtype=jnp.result_type(float)), _CELL, grid)
+    scheme = _SCHEMES[heat_problem.advection]
+    courant = solver.advective_cfl_limit if heat_problem.advection != "off" else None
     limits = {
         "advective_cfl": scheme if courant is None else courant,
         "advective_cfl_override": courant is not None and courant != scheme,
@@ -475,28 +503,51 @@ def _thermal(problem: Problem, solver: Solver, start, output, record) -> Solutio
         ),
         static_argnums=1,
     )
-    fields = lambda s: {"velocity": s.velocity, "temperature": s.temperature}  # noqa: E731
-    run = _Run(state, chunk, fields, grid, _header(problem, "euler"), limits, check)
-    state, history, summary = _drive(run, problem, solver, output, record)
-    return hold_walls(Solution(fields(state), history=history, summary=summary), walls)
+
+    def fields(s):
+        velocity = s.velocity
+        if (
+            heat_problem.has_walls
+        ):  # ParaView draws cells: the velocity, zero in any wall, padded onto the grid
+            velocity = tuple(
+                Field(heat_problem.on_thermal_grid(cell_average(v, a).data), _CELL, grid)
+                for a, v in enumerate(velocity)
+            )
+        return {"velocity": velocity, "temperature": s.temperature}
+
+    first = round(float(state.time) / flow.dt) if not is_traced(state) else 0
+    run = _Run(state, chunk, fields, grid, _header(subject, "euler"), limits, check, first)
+    state, history, summary = _drive(run, subject, solver, output, record)
+    return Solution(
+        {"velocity": state.velocity, "temperature": state.temperature}, history=history, summary=summary
+    )
 
 
 def _written(solution: Solution, problem, solver: Solver, method: str, output: Output) -> Solution:
     """Write a steady solution: its fields as the one record, the file, the summary and the log."""
     session = Session(output, _identity(problem, solver), problem.grid, 1.0, 0, 0, _header(problem, method))
-    session.accept(solution.fields, solution.fields, {}, 0)
-    scalars = {
-        n: float(getattr(solution, n))
-        for n in ("pressure_gradient", "flow_rate", "residual")
-        if getattr(solution, n) is not None
-    }
-    return solution._replace(summary=session.close(method=method, **scalars))
+    try:
+        session.accept(solution.fields, solution.fields, {}, 0)
+        scalars = {
+            n: float(getattr(solution, n))
+            for n in ("pressure_gradient", "flow_rate", "residual")
+            if getattr(solution, n) is not None
+        }
+        return solution._replace(summary=session.close(method=method, **scalars))
+    except BaseException:
+        session.abort()
+        raise
 
 
 def solve(
     problem: object, solver: Solver | None = None, output: Output | None = None, start: object = None
 ) -> object:
     """Solve ``problem`` with ``solver``; the older models go to :func:`lmhdx.cases.solve`.
+
+    A :class:`lmhdx.thermal.ThermalProblem`, which may have solid walls the :class:`Problem` has not, is an
+    unsteady run at its flow's ``dt`` with Joule heating alone, from rest at zero temperature, the ``"steady"``
+    flow or a given :class:`~lmhdx.thermal.ThermalState`; its temperature is on ``thermal_grid`` and so are the
+    ParaView cells, the velocity zero in a wall.
 
     ``start`` is the initial state of an unsteady run: for a thermal run ``None`` (rest, at the
     problem's initial temperature), ``"steady"`` (the steady flow, temperature at rest) or a
@@ -515,20 +566,26 @@ def solve(
         start = case.start if start is None else start
         if output is not None and not output.name:
             output = dataclasses.replace(output, name=case.name)
-    if not isinstance(problem, (Problem, Q2D)):
+    if not isinstance(problem, (Problem, Q2D, ThermalProblem)):
         if solver is not None or start is not None or output is not None:
             raise TypeError(f"{type(problem).__name__} takes no solver, output or start")
         return _solve_model(problem)
-    if output is not None and is_traced(problem):
-        raise ValueError("an Output writes concrete arrays: solve outside jit and grad")
     if isinstance(start, (str, os.PathLike)) and start not in ("rest", "steady"):
         start = Start(path=os.fspath(start))
     if isinstance(start, Start) and not start.path:
         start = start.state
     record, start = (start, None) if isinstance(start, Start) else (None, start)
+    if (output is not None or record is not None) and is_traced(problem):
+        raise ValueError(
+            "an Output and a Start record write and read concrete arrays: solve outside jit and grad"
+        )
     solver = Solver() if solver is None else solver
     method = solver.resolve(problem)
     configure(dtype=solver.dtype)
+    if isinstance(problem, ThermalProblem):
+        if method != "euler" or solver.dt not in (None, problem.flow.dt):
+            raise ValueError("a ThermalProblem is an unsteady run at its flow's dt: give Solver(dt=, steps=)")
+        return _heated(problem, problem, solver, start, 0.0, 0.0, output, record)
     if isinstance(problem, Q2D):
         return _q2d(problem, solver, output, record)
     if problem.grid.is_polar:

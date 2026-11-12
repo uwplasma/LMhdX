@@ -3,8 +3,9 @@
 ``solve(problem, solver, output=Output("out", every=20))`` runs in compiled chunks of 20 steps. An accepted chunk
 writes the record ``{name}_{step:06d}.npz`` (the state, exactly) and the ParaView file ``{name}_{step:06d}.vtr``
 (``.vts`` on a polar grid), gathered in ``{name}.pvd``; the first rejected chunk stops the run and writes only
-``{name}_{step:06d}_rejected.npz``, which imports but does not resume. ``summary.json`` holds ``accepted``, the
-rejection and the last and largest diagnostics; the log is the solver's text (:class:`StreamingSolverLogger`)
+``{name}_{step:06d}_rejected.npz``, which imports but does not resume. ``{name}_summary.json`` holds ``accepted``,
+the rejection and the finite flag, last and largest of each diagnostic, folded chunk by chunk so that it does not
+grow with the run; the log is the solver's text (:class:`StreamingSolverLogger`, to stderr and ``{name}.log``)
 beside a JSON line per chunk in ``{name}.jsonl``. A record resumes the run that wrote it bit for bit, because a
 step boundary is the whole state; ``Start(path=, mode="import")`` takes only its fields.
 """
@@ -26,6 +27,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from .cases import LoggingSpec
+from .fields import Table
 from .grid import FACE, Field, Grid
 from .ops import cell_average
 
@@ -77,10 +79,19 @@ _SCHEMA, _VERSION = "lmhdx.record", 1
 
 
 def digest(*objects) -> str:
-    """A hash of problems and solvers: arrays by their bytes, functions by name, classes by their fields."""
+    """A hash of problems and solvers: arrays by their bytes, functions by their code and closure, a ``Table``
+    by the bytes of its file, classes by their fields."""
     hasher = hashlib.sha256()
 
     def feed(item):
+        if isinstance(item, Table):
+            hasher.update(b"table" + Path(item.path).read_bytes())
+        if callable(item) and hasattr(item, "__code__"):
+            code = item.__code__
+            hasher.update(f"{item.__module__}:{item.__qualname__}".encode() + code.co_code)
+            hasher.update(repr((code.co_consts, code.co_names)).encode())
+            feed([cell.cell_contents for cell in item.__closure__ or ()] + list(item.__defaults__ or ()))
+            return
         if dataclasses.is_dataclass(item) and not isinstance(item, type):
             hasher.update(type(item).__name__.encode())
             item = [getattr(item, f.name) for f in dataclasses.fields(item)]
@@ -393,10 +404,12 @@ _STEP = {  # a history series to the log's field
 }
 
 
-def rejection(series: dict, limits: dict, done: int) -> dict | None:
+def rejection(series: dict, limits: dict, done: int, stride: int = 1) -> dict | None:
     """Return the first sample of a chunk's ``series`` outside the run's ``limits``, its step and reasons, or None.
 
     Every sample is checked, so a violation inside a chunk is not hidden by a valid last one; a NaN fails.
+    Sample ``i`` is step ``done + (i + 1) * stride``, ``stride`` being the history stride: only the kept samples
+    are checked.
     """
     if not series:
         return None
@@ -416,7 +429,7 @@ def rejection(series: dict, limits: dict, done: int) -> dict | None:
         n: float(np.asarray(series[n])[sample]) for n in ("advective_cfl", "buoyancy_courant") if n in series
     }
     return {
-        "step": done + sample + 1,
+        "step": done + (sample + 1) * stride,
         "reasons": [r for r, found in failing.items() if sample in found],
         **values,
     }
@@ -433,11 +446,11 @@ class Session:
         output = dataclasses.replace(output, name=output.name or "run")
         self.output, self.identity, self.grid, self.dt, self.first = output, identity, grid, dt, first
         self.limits, self.restart = limits, restart
-        self.dir, self.frames, self.series, self.rejected = Path(output.dir), [], [], None
+        self.dir, self.frames, self.extremes, self.rejected = Path(output.dir), [], {}, None
         self.done, self.time, self.handles, self.log = first, first * dt, [], None
         self.dir.mkdir(parents=True, exist_ok=True)
         if output.log:
-            self.log, mode = StreamingSolverLogger(), "a" if first else "w"
+            self.log, mode = StreamingSolverLogger(stream=sys.stderr), "a" if first else "w"
             self.handles = [
                 open(self.dir / f"{output.name}{suffix}", mode, encoding="utf-8")
                 for suffix in (".log", ".jsonl")
@@ -466,7 +479,7 @@ class Session:
             self.frames.append(
                 (self.time, write_vtk(self._label(step), self.grid, **cells_of(fields, o.fields)).name)
             )
-        self.series.append(series)
+        self.fold(series)
         if self.log and series:
             last = {name: float(np.asarray(v)[-1]) for name, v in series.items()}
             known = {_STEP[n]: v for n, v in last.items() if n in _STEP}
@@ -483,9 +496,26 @@ class Session:
         self.time = float(getattr(state, "time", self.time))
         if self.output.restart and state is not None:
             write_record(f"{self._label(step)}_rejected", state, "", step, rejected=rejected)
-        self.series.append(series)
+        self.fold(series)
         if self.log:
             self.log._write(f"rejected at step {rejected['step']}: {'; '.join(rejected['reasons'])}")
+
+    def fold(self, series: dict) -> None:
+        """Fold a chunk's ``series`` into the summary's last, largest magnitude and finite flag.
+
+        Only floats are kept, so the summary's memory does not grow with the step count. A NaN, once seen, stays,
+        as a maximum over the whole history would give.
+        """
+        for name, values in series.items():
+            values = np.asarray(values)
+            if not values.size:
+                continue
+            seen = self.extremes.get(name, {"largest": -math.inf, "finite": True})
+            self.extremes[name] = {
+                "last": float(values[-1]),
+                "largest": float(np.maximum(seen["largest"], np.max(np.abs(values)))),
+                "finite": seen["finite"] and bool(np.all(np.isfinite(values))),
+            }
 
     def abort(self) -> None:
         """Close the log of a run that raised something else."""
@@ -493,16 +523,12 @@ class Session:
             handle.close()
 
     def close(self, **info) -> dict:
-        """Write the pvd and ``summary.json`` and close the log; return the summary."""
+        """Write the pvd and ``{name}_summary.json`` and close the log; return the summary."""
         o = self.output
         if self.frames:
             write_pvd(
                 self.frames, self.dir, name=o.name if self.first == 0 else f"{o.name}_from_{self.first:06d}"
             )
-        series = [s for s in self.series if s]
-        merged = {
-            n: np.concatenate([np.asarray(s[n]) for s in series]) for n in (series[0] if series else ())
-        }
         summary = {
             "case": o.name,
             "accepted": self.rejected is None,
@@ -511,12 +537,13 @@ class Session:
             "time": self.time,
             "limits": self.limits,
             "restart": self.restart,
-            "last": {n: float(v[-1]) for n, v in merged.items()},
-            "largest": {n: float(np.max(np.abs(v))) for n, v in merged.items()},
+            "finite": all(e["finite"] for e in self.extremes.values()),
+            "last": {n: e["last"] for n, e in self.extremes.items()},
+            "largest": {n: e["largest"] for n, e in self.extremes.items()},
         }
         summary |= info
         if o.summary:
-            (self.dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+            (self.dir / f"{o.name}_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
         if self.log:
             self.log.emit_footer(o.name, self.time, float(info.get("residual") or math.nan))
             self.abort()

@@ -30,6 +30,7 @@ from lmhdx.cases import (
     Solution,
     make_hartmann_case,
 )
+from lmhdx.fields import Table
 from lmhdx.fully_developed import _header
 from lmhdx.fully_developed import case_mesh as _build_mesh
 from lmhdx.io import (
@@ -42,7 +43,17 @@ from lmhdx.io import (
     write_solution_npz,
     write_solution_outputs,
 )
-from lmhdx.output import Output, RestartLogInfo, SolverStepRecord, Start, StreamingSolverLogger, read_record
+from lmhdx.output import (
+    Output,
+    RestartLogInfo,
+    Session,
+    SolverStepRecord,
+    Start,
+    StreamingSolverLogger,
+    digest,
+    read_record,
+    rejection,
+)
 from lmhdx.problem import duct, pipe, q2d
 
 pytestmark = pytest.mark.unit
@@ -881,7 +892,11 @@ def test_a_run_in_chunks_or_from_its_record_is_the_run_in_one_bit_for_bit(tmp_pa
     whole = lmhdx.solve(problem, solver)
     for chunk in (0, every):  # an Output changes no number, whether the run is one chunk or several
         found = lmhdx.solve(problem, solver, Output(str(tmp_path / f"c{chunk}"), every=chunk))
-        assert _same(found.fields, whole.fields) and _same(found.history, whole.history)
+        assert _same(found.fields, whole.fields)
+        # The history kept is the last chunk's, so that its memory does not grow with the run.
+        length = len(jax.tree.leaves(found.history)[0])
+        assert _same(found.history, jax.tree.map(lambda x: x[-length:], whole.history))
+        assert length == (len(jax.tree.leaves(whole.history)[0]) if chunk == 0 else length)
     # 20 + 20 steps are 40: the second half starts from the first half's record.
     lmhdx.solve(problem, half, Output(str(tmp_path / "half")))
     record = tmp_path / "half" / f"run_{half.steps:06d}.npz"
@@ -949,9 +964,9 @@ def test_a_steady_solve_writes_its_fields_once(tmp_path):
         "hartmann.pvd",
         "hartmann.log",
         "hartmann.jsonl",
-        "summary.json",
+        "hartmann_summary.json",
     }
-    summary = json.loads((tmp_path / "summary.json").read_text())
+    summary = json.loads((tmp_path / "hartmann_summary.json").read_text())
     assert summary["accepted"] and summary["steps"] == 0 and summary["method"] == "stokes"
     assert summary["flow_rate"] == float(found.flow_rate) and summary["residual"] == float(found.residual)
     assert found.summary == summary
@@ -998,7 +1013,7 @@ def test_a_rejected_chunk_stops_the_run_and_keeps_the_chunk_before(tmp_path):
     problem, solver = _heated_duct()[0], Solver(dt=2.0e-3, steps=40, advective_cfl_limit=4.0e-5)
     with pytest.raises(NumericalFailure, match="rejected at step") as caught:
         lmhdx.solve(problem, solver, Output(str(tmp_path), every=10))
-    summary = json.loads((tmp_path / "summary.json").read_text())
+    summary = json.loads((tmp_path / "run_summary.json").read_text())
     assert caught.value.summary == summary and not summary["accepted"] and summary["steps"] == 10
     assert summary["rejected"]["reasons"] == ["advective_cfl over 4e-05"] and summary["rejected"]["step"] > 10
     written = {p.name for p in tmp_path.iterdir()}
@@ -1053,8 +1068,10 @@ def test_a_file_with_an_output_writes_its_files_and_exits_by_the_summary(tmp_pat
     text = (ROOT / "examples/heated_duct.toml").read_text() + '\n[output]\ndir = "out"\nevery = 10\n'
     path = _write(tmp_path, text)
     assert cli.main([str(path)]) == 0
-    summary = json.loads((tmp_path / "out/summary.json").read_text())
-    assert capsys.readouterr().out.endswith(json.dumps(summary, indent=2) + "\n")  # after the log's text
+    summary = json.loads((tmp_path / "out/heated_duct_summary.json").read_text())
+    captured = capsys.readouterr()
+    assert captured.out == json.dumps(summary, indent=2) + "\n"  # stdout is the summary, the log is stderr
+    assert "step=40" in captured.err
     assert summary["accepted"] and summary["case"] == "heated_duct" and summary["steps"] == 40
     assert {f"heated_duct_{n:06d}.npz" for n in (10, 20, 30, 40)} <= {
         p.name for p in (tmp_path / "out").iterdir()
@@ -1068,7 +1085,7 @@ def test_a_file_with_an_output_writes_its_files_and_exits_by_the_summary(tmp_pat
     ):
         assert all(np.array_equal(whole[k], part[k]) for k in whole.files if k != "notes")
     assert cli.main([str(path), "solver.advective_cfl_limit=4e-5", 'output.dir="late"']) == 2
-    assert not json.loads((tmp_path / "late/summary.json").read_text())["accepted"]
+    assert not json.loads((tmp_path / "late/heated_duct_summary.json").read_text())["accepted"]
     assert (tmp_path / "late/heated_duct_000020_rejected.npz").exists()
 
 
@@ -1087,6 +1104,182 @@ def test_the_command_runs_in_a_fresh_process_in_either_precision(tmp_path, dtype
         timeout=600,
     )
     assert result.returncode == 0, result.stderr[-2000:]
-    assert json.loads((tmp_path / "out/summary.json").read_text())["accepted"]
+    assert json.loads((tmp_path / "out/heated_duct_summary.json").read_text())["accepted"]
     with np.load(tmp_path / "out/heated_duct_000040.npz") as record:
         assert {record[k].dtype for k in record.files if k.startswith("leaf")} == {np.dtype(dtype)}
+
+
+def _walled_periodic_duct():
+    """A heated periodic duct whose y and z sides are solid walls 0.1 thick, heated through the outer bottom."""
+    from lmhdx.core3d import ChannelProblem, SolidWall
+    from lmhdx.grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces
+    from lmhdx.thermal import ThermalProblem, thermal_boundary
+
+    grid = Grid(uniform_faces(2, 0.0, 1.0), uniform_faces(6, -1.0, 1.0), uniform_faces(6, -1.0, 1.0))
+    wall = BoundaryCondition(NEUMANN)
+    flow = ChannelProblem(grid, (BoundaryCondition(PERIODIC), wall, wall), forcing=(1.0, 0.0, 0.0), dt=2.0e-3)
+    solid = SolidWall(0.1, 2, 0.18, 2.3)
+    conditions = (
+        BoundaryCondition(PERIODIC),
+        thermal_boundary("heat_flux", conductivity=0.18),
+        thermal_boundary("heat_flux", -1.0, 0.0, conductivity=0.18),
+    )
+    return ThermalProblem(
+        flow,
+        conditions,
+        1.0,
+        0.2,
+        0.0,
+        joule_heating=False,
+        walls=((None, None), (solid, solid), (solid, solid)),
+    )
+
+
+def test_a_run_with_solid_walls_is_recorded_on_the_extended_grid_and_resumes_exactly(tmp_path):
+    """The temperature, its record and its ParaView cells are on ``thermal_grid``, the walls' cells included, the
+    velocity zero in a wall; the run in two halves is the run in one, bit for bit."""
+    thermal, solver = _walled_periodic_duct(), Solver(dt=2.0e-3, steps=6)
+    grid = thermal.thermal_grid
+    assert grid.shape != thermal.flow.grid.shape
+    whole = lmhdx.solve(thermal, solver, Output(str(tmp_path / "whole"), every=3))
+    assert whole.temperature.shape == grid.shape and whole.summary["accepted"]
+    kind, extent, arrays = _vtk(tmp_path / "whole/run_000006.vtr")
+    assert extent == " ".join(f"0 {n}" for n in grid.shape) and arrays["temperature"].size == np.prod(
+        grid.shape
+    )
+    speed = np.abs(arrays["velocity"].reshape(*grid.shape[::-1], 3)).max(axis=(2, 3))  # (nz, ny)
+    inside = np.zeros_like(speed, bool)
+    inside[2:-2, 2:-2] = True  # the walls are two cells thick on each side
+    assert speed[~inside].max() == 0.0 and speed[inside].max() > 0.0
+    lmhdx.solve(thermal, dataclasses.replace(solver, steps=3), Output(str(tmp_path / "half")))
+    again = lmhdx.solve(
+        thermal,
+        dataclasses.replace(solver, steps=3),
+        Output(str(tmp_path / "again")),
+        start=tmp_path / "half/run_000003.npz",
+    )
+    assert _same(again.fields, whole.fields)
+    with (
+        np.load(tmp_path / "again/run_000006.npz") as resumed,
+        np.load(tmp_path / "whole/run_000006.npz") as full,
+    ):
+        assert all(np.array_equal(resumed[k], full[k]) for k in full.files if k != "notes")
+    other = dataclasses.replace(thermal, walls=None, thermal_conditions=thermal.thermal_conditions)
+    with pytest.raises(ValueError, match="another problem|walls"):
+        lmhdx.solve(other, dataclasses.replace(solver, steps=3), start=tmp_path / "half/run_000003.npz")
+
+
+def test_a_history_stride_is_refused_only_with_an_output_and_a_rejection_reports_the_right_step(tmp_path):
+    plane = q2d(shape=(16, 16))
+    assert (
+        lmhdx.solve(plane, Solver(dt=0.01, steps=20, history=3)).history is not None
+    )  # no Output, no refusal
+    with pytest.raises(ValueError, match="multiples of output.every"):
+        lmhdx.solve(plane, Solver(dt=0.01, steps=20, history=3), Output(str(tmp_path / "q"), every=10))
+    problem = _heated_duct()[0]
+    steps = {}
+    for stride in (None, 5):
+        solver = Solver(dt=2.0e-3, steps=40, history=stride, advective_cfl_limit=4.0e-5)
+        with pytest.raises(NumericalFailure) as caught:
+            lmhdx.solve(problem, solver, Output(str(tmp_path / f"s{stride}"), every=10))
+        steps[stride] = caught.value.summary["rejected"]["step"]
+    # Sample i of a stride-5 history is step 5 (i + 1): a multiple of 5, and not before the stride-1 step.
+    assert steps[5] % 5 == 0 and steps[5] >= steps[None] and steps[5] - steps[None] < 5
+
+
+def test_a_rejection_names_the_step_of_the_kept_sample():
+    series = {"finite": np.ones(4, bool), "advective_cfl": np.array([0.1, 0.9, 0.2, 0.1])}
+    limits = {"advective_cfl": 0.8, "buoyancy_courant": None}
+    assert rejection(series, limits, 40)["step"] == 42
+    assert rejection(series, limits, 40, 5)["step"] == 50
+    assert rejection(series, {"advective_cfl": None, "buoyancy_courant": None}, 0) is None
+    nan = {"finite": np.array([1, 0, 1, 1], bool), "buoyancy_courant": np.array([0, np.nan, 0, 0])}
+    found = rejection(nan, {**limits, "buoyancy_courant": 1.0}, 0)
+    assert found["step"] == 2 and found["reasons"] == ["not finite", "buoyancy_courant over 1.0"]
+
+
+def test_the_summary_folds_each_chunk_as_the_whole_series_would_in_a_few_floats(tmp_path):
+    """Finite flag, last and largest magnitude, kept chunk by chunk, equal the whole series' at every chunking, a
+    NaN included (it clears the flag and stays in the maximum); the fold holds a few floats at any step count."""
+    import tracemalloc
+
+    rng, steps = np.random.default_rng(271), 60
+    whole = {"a": rng.standard_normal(steps), "b": rng.standard_normal(steps)}
+    whole["b"][23] = np.nan
+    for size in (1, 7, 20, 60):
+        session = Session(Output(str(tmp_path / str(size)), log=False), "", None, 1.0, 0, steps, {})
+        for start in range(0, steps, size):
+            session.fold({n: v[start : start + size] for n, v in whole.items()})
+        summary = session.close()
+        assert summary["finite"] is False
+        np.testing.assert_equal(summary["last"], {n: float(v[-1]) for n, v in whole.items()})
+        np.testing.assert_equal(summary["largest"], {"a": float(np.max(np.abs(whole["a"]))), "b": np.nan})
+    session = Session(Output(str(tmp_path / "many"), log=False), "", None, 1.0, 0, 0, {})
+    tracemalloc.start()
+    for _ in range(200):
+        session.fold({f"s{i}": rng.standard_normal(50) for i in range(20)})
+    held, _ = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert held < 64 * 1024 < 200 * 50 * 20 * 8 / 10, held
+
+
+def test_the_command_reports_a_rejection_on_stderr_and_keeps_stdout_the_summary(tmp_path, capsys):
+    path = _write(tmp_path, (ROOT / "examples/heated_duct.toml").read_text() + "\n[output]\nevery = 10\n")
+    assert cli.main([str(path), "solver.advective_cfl_limit=4e-5"]) == 2
+    captured = capsys.readouterr()
+    summary = json.loads(captured.out)
+    assert not summary["accepted"] and f"rejected at step {summary['rejected']['step']}:" in captured.err
+
+
+def test_a_traced_run_refuses_a_start_record_and_an_import_is_never_hashed_under_trace(tmp_path):
+    plane, solver = q2d(shape=(16, 16)), Solver(dt=0.01, steps=5)
+    lmhdx.solve(plane, solver, Output(str(tmp_path)))
+    for mode in ("resume", "import"):
+        start = Start(path=str(tmp_path / "run_000005.npz"), mode=mode)
+        with pytest.raises(ValueError, match="concrete"):
+            jax.jit(
+                lambda w: (
+                    lmhdx.solve(
+                        dataclasses.replace(plane, initial_vorticity=w), solver, start=start
+                    ).vorticity
+                )
+            )(plane.initial_vorticity)
+
+
+def test_the_hash_of_a_run_tells_two_lambdas_and_two_tables_of_one_path_apart(tmp_path):
+    first, second = (lambda x: x + 1), (lambda x: x + 2)
+    assert digest(first) != digest(second) and digest(first) == digest(lambda x: x + 1)
+    scale = 3.0
+    assert digest(lambda x: x * scale) != digest(lambda x: x * 4.0)
+    table = tmp_path / "field.npz"
+    np.savez(
+        table, y=np.zeros(2), z=np.zeros(2), bx=np.zeros((2, 2)), by=np.zeros((2, 2)), bz=np.zeros((2, 2))
+    )
+    before = digest(Table(str(table)))
+    np.savez(
+        table, y=np.zeros(2), z=np.zeros(2), bx=np.ones((2, 2)), by=np.zeros((2, 2)), bz=np.zeros((2, 2))
+    )
+    assert digest(Table(str(table))) != before
+
+
+def test_a_failed_steady_write_closes_the_log_and_a_late_thermal_start_numbers_its_files_from_its_time(
+    tmp_path, monkeypatch
+):
+    from lmhdx import solver as solver_module
+
+    monkeypatch.setattr(solver_module.Session, "close", lambda self, **info: 1 / 0)
+    closed = []
+    abort = solver_module.Session.abort
+    monkeypatch.setattr(solver_module.Session, "abort", lambda self: (closed.append(self), abort(self)))
+    with pytest.raises(ZeroDivisionError):
+        lmhdx.solve(duct(20, 24), output=Output(str(tmp_path / "a")))
+    assert len(closed) == 1
+    monkeypatch.undo()
+    problem = _heated_duct()[0]
+    early = lmhdx.solve(problem, Solver(dt=2.0e-3, steps=10))
+    state = early.fields  # the end state of ten steps: time 0.02
+    from lmhdx.thermal import ThermalState
+
+    late = ThermalState(state["velocity"], state["temperature"], jnp.asarray(10 * 2.0e-3))
+    lmhdx.solve(problem, Solver(dt=2.0e-3, steps=10), Output(str(tmp_path / "b")), start=late)
+    assert (tmp_path / "b/run_000020.npz").exists() and not (tmp_path / "b/run_000010.npz").exists()

@@ -40,6 +40,25 @@ Core references used by the implemented models and validation contracts include:
   [doi:10.1016/j.nme.2025.101965](https://doi.org/10.1016/j.nme.2025.101965) —
   the fixed-area optimum aspect ratio of an insulated duct, before the duct
   design law stated it.
+- R. K. Shah and A. L. London, *Laminar Flow Forced Convection in Ducts*,
+  Advances in Heat Transfer, Supplement 1, Academic Press, 1978 — the H2 and
+  uniform-wall-temperature values of the square duct gated in the tests, and the
+  rectangular-duct H1 fit and the Graetz problem of the heat-transfer figures.
+- S. Chandrasekhar, *Hydrodynamic and Hydromagnetic Stability*, Clarendon
+  Press, 1961 — the onset of convection between rigid plates, with and without
+  a vertical field (Ch. II and IV); his rigid-plate values are quoted from
+  A. Basak and K. Kumar, “A model for Rayleigh–Bénard magnetoconvection,”
+  [arXiv:1508.02493](https://arxiv.org/abs/1508.02493), 2015, Table I.
+- U. Burr and U. Müller, “Rayleigh–Bénard convection in liquid metal layers
+  under the influence of a horizontal magnetic field,” *Journal of Fluid
+  Mechanics*, 2002 — the field's alignment of convection rolls shown in the
+  convection movie.
+- M. J. Bluck, M. J. Wolfendale and A. J. Marquis, “An analytical solution to
+  the heat transfer problem in Shercliff flow,” *International Journal of Heat
+  and Mass Transfer* 86, 2015, 542–549 (accepted manuscript in Imperial
+  College's Spiral repository) — the published H1 and H2 Nusselt numbers of
+  the square insulating duct in the MHD Nusselt campaign of
+  `docs/physics/thermal.md`.
 - I. Celik et al., “Procedure for estimation and reporting of uncertainty due
   to discretization in CFD applications,” *Journal of Fluids Engineering* 130,
   2008, [doi:10.1115/1.2960953](https://doi.org/10.1115/1.2960953) — the
