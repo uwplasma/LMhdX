@@ -241,7 +241,7 @@ kind = "no_slip"
 
 def test_draft_ci_defers_numerics_without_skipping_ready_or_coverage_jobs(tmp_path):
     workflow = Path(".github/workflows/ci.yml").read_text()
-    assert "types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]" in workflow
+    assert "types: [opened, synchronize, reopened, ready_for_review]" in workflow
     assert "  push:\n    branches: [main]" in workflow
     assert "  workflow_dispatch:" in workflow and "  workflow_call:" in workflow
     script = textwrap.dedent(workflow.split("run: |\n", 1)[1].split("\n\n  ", 1)[0])

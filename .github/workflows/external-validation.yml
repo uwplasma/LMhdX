@@ -2,6 +2,7 @@ name: external-validation
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     - cron: "17 5 * * 1"
   workflow_dispatch:
@@ -26,6 +27,7 @@ env:
 
 jobs:
   impact:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     outputs:
       b2: ${{ steps.scope.outputs.b2 }}
