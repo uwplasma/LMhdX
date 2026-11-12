@@ -277,7 +277,11 @@ jobs:
     name: PR ${{ matrix.tier }}${{ (matrix.label || matrix.shard) && format(' ({0})', matrix.label || matrix.shard) || '' }}
     needs: scope
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.scope.outputs.full == 'true'
-    runs-on: ubuntu-latest
+    # The heaviest regression job runs on the uwplasma Macs for same-repository pull
+    # requests; fork pull requests and every other job stay on hosted runners.
+    runs-on: ${{ matrix.mac && github.event.pull_request.head.repo.full_name == github.repository && fromJSON('["self-hosted","uwplasma-cpu"]') || 'ubuntu-latest' }}
+    env:
+      UV_SYSTEM_PYTHON: "0"
     timeout-minutes: 28
     strategy:
       fail-fast: false
@@ -298,6 +302,7 @@ jobs:
             shard: "channel plane gradients anchors"
             label: regression-b
             budget: 1500
+            mac: true
           - tier: regression
             shard: "support fully_developed api api_gradients walls"
             label: regression-c
