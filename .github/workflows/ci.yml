@@ -103,7 +103,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [support, design, operators, physics, channel, plane, steady, programs, fully_developed, gradients, api, anchors]
+        shard: [support, design, operators, timeloop, physics, channel, walls, plane, steady, steady_thermal, programs, fully_developed, gradients, api, api_gradients, anchors]
         include:
           # Coverage on the steady shard peaks near 12 GB of resident memory with four
           # workers, against 16 GB on a hosted runner; two workers keep it well inside.
@@ -115,6 +115,8 @@ jobs:
           # A split shard starts from its parent's compilation cache.
           - shard: operators
             cache: support
+          - shard: timeloop
+            cache: support
           - shard: design
             cache: support
           - shard: plane
@@ -124,6 +126,13 @@ jobs:
           - shard: programs
             workers: 2
             cache: steady
+          - shard: steady_thermal
+            workers: 2
+            cache: steady
+          - shard: walls
+            cache: channel
+          - shard: api_gradients
+            cache: api
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-lmhdx
@@ -186,11 +195,23 @@ jobs:
           path: artifacts/test-evidence/channel
           key: lmx-test-evidence-${{ github.run_id }}-channel
           fail-on-cache-miss: true
+      - name: Restore walls evidence
+        uses: actions/cache/restore@v6
+        with:
+          path: artifacts/test-evidence/walls
+          key: lmx-test-evidence-${{ github.run_id }}-walls
+          fail-on-cache-miss: true
       - name: Restore steady evidence
         uses: actions/cache/restore@v6
         with:
           path: artifacts/test-evidence/steady
           key: lmx-test-evidence-${{ github.run_id }}-steady
+          fail-on-cache-miss: true
+      - name: Restore steady_thermal evidence
+        uses: actions/cache/restore@v6
+        with:
+          path: artifacts/test-evidence/steady_thermal
+          key: lmx-test-evidence-${{ github.run_id }}-steady_thermal
           fail-on-cache-miss: true
       - name: Restore fully_developed evidence
         uses: actions/cache/restore@v6
@@ -210,6 +231,12 @@ jobs:
           path: artifacts/test-evidence/operators
           key: lmx-test-evidence-${{ github.run_id }}-operators
           fail-on-cache-miss: true
+      - name: Restore timeloop evidence
+        uses: actions/cache/restore@v6
+        with:
+          path: artifacts/test-evidence/timeloop
+          key: lmx-test-evidence-${{ github.run_id }}-timeloop
+          fail-on-cache-miss: true
       - name: Restore plane evidence
         uses: actions/cache/restore@v6
         with:
@@ -227,6 +254,12 @@ jobs:
         with:
           path: artifacts/test-evidence/api
           key: lmx-test-evidence-${{ github.run_id }}-api
+          fail-on-cache-miss: true
+      - name: Restore api_gradients evidence
+        uses: actions/cache/restore@v6
+        with:
+          path: artifacts/test-evidence/api_gradients
+          key: lmx-test-evidence-${{ github.run_id }}-api_gradients
           fail-on-cache-miss: true
       - name: Restore anchors evidence
         uses: actions/cache/restore@v6
@@ -262,17 +295,25 @@ jobs:
             budget: 300
             cache: pr-unit
           - tier: unit
-            shard: "operators physics channel plane steady programs fully_developed gradients"
+            shard: timeloop
+            budget: 300
+            cache: pr-unit
+          - tier: unit
+            shard: "operators physics channel walls plane steady steady_thermal programs fully_developed gradients"
             label: numerics
             budget: 300
             cache: pr-unit
           - tier: regression
-            shard: "physics operators"
+            shard: "physics operators timeloop"
             label: physics
             budget: 420
           - tier: regression
             shard: channel
             budget: 420
+          - tier: regression
+            shard: walls
+            budget: 420
+            cache: pr-regressionchannel
           - tier: regression
             shard: plane
             budget: 420
@@ -280,6 +321,10 @@ jobs:
           - tier: regression
             shard: steady
             budget: 420
+          - tier: regression
+            shard: steady_thermal
+            budget: 420
+            cache: pr-regressionsteady
           - tier: regression
             shard: fully_developed
             budget: 420
@@ -295,6 +340,10 @@ jobs:
           - tier: regression
             shard: api
             budget: 420
+          - tier: regression
+            shard: api_gradients
+            budget: 420
+            cache: pr-regressionapi
           - tier: regression
             shard: anchors
             budget: 420
