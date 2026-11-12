@@ -93,7 +93,7 @@ class Solver:
             raise ValueError(f"method must be one of {list(_METHODS)}, got {self.method!r}")
         q2d, method = isinstance(problem, Q2D), self.method
         steady = None if q2d else "stokes" if problem.advection == "off" else "newton"
-        opened = steady == "newton" and isinstance(problem.ends(0), Open)
+        opened = steady == "newton" and hasattr(problem, "ends") and isinstance(problem.ends(0), Open)
         if method == "auto":
             method = "ifrk4" if q2d else "euler" if self.steps is not None else steady
             if method == "newton" and opened:
