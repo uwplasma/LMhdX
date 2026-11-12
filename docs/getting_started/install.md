@@ -1,6 +1,10 @@
 # Install LMhdX
 
-LMhdX supports Python 3.10–3.13.
+LMhdX supports Python 3.11–3.13 with JAX 0.7.2 or later. JAX 0.6.2, the last
+release for Python 3.10, is not supported: its CUDA build crashes when a
+thermal step's compiled loop runs a second time at production sizes, a fault
+that later releases do not have. SOLVAX's dependency equinox excludes JAX
+0.7.0 and 0.7.1.
 
 ```console
 python -m venv .venv

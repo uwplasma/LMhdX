@@ -266,9 +266,10 @@ def test_the_reused_primal_is_the_general_adjoint(monkeypatch, conductance):
         return np.array([flow[0], *flow[1], *cubic])
 
     reused = gradients()
-    # Differentiating an enclosing jit re-enters the derivative rule outside the first trace.
+    # Differentiating an enclosing jit re-enters the derivative rule outside the first trace. JAX 0.6.2
+    # compiled both to the same numbers; 0.7.2 compiles the nested one apart, 1e-12 to 5e-12 off.
     nested = jax.jit(jax.grad(jax.jit(lambda s: objectives(1.0, s)[0])))(1.0)
-    np.testing.assert_allclose(nested, reused[2], rtol=1e-12, atol=0.0)
+    np.testing.assert_allclose(nested, reused[2], rtol=1e-11, atol=0.0)
     monkeypatch.setattr(steady, "_REUSE_PRIMAL", False)
     general = gradients()
     np.testing.assert_allclose(reused, general, rtol=1e-9, atol=0.0)

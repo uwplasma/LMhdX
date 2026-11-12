@@ -7,15 +7,11 @@ import subprocess
 import sys
 import tarfile
 import textwrap
+import tomllib
 import zipfile
 from pathlib import Path
 
 import pytest
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10
-    import tomli as tomllib
 
 import lmhdx
 from lmhdx.cases import _parse_boundary_value, _wall_conductivity_from_conductance_ratio, load_run_config
