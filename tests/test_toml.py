@@ -110,6 +110,15 @@ def test_every_preset_and_field_kind_round_trips(tmp_path, name):
     assert dumps(loaded) == text
 
 
+@pytest.mark.parametrize("method", ["auto", "newton", "march"])
+def test_every_open_duct_method_loads_and_resolves(tmp_path, method):
+    """The steady methods of an inertial open duct are TOML strings: file, override and round trip."""
+    problem = fringe_duct(10.0, advection="central", spacing=1.0, cells=8, cells_in_layer=2)
+    case = load(_write(tmp_path, dumps(problem, Solver("auto"))), f"solver.method={method}")
+    assert case.solver == Solver(method) and load(_write(tmp_path, dumps(case))).solver == case.solver
+    assert case.solver.resolve(case.problem) in ("newton", "march")
+
+
 def test_solver_start_output_and_name_round_trip(tmp_path):
     solver = Solver("euler", 1e-3, 5, 1e-8, "mixed", "float32", False, 3, 0.5, 2.0, 1e-8)
     output = Output(str(tmp_path / "out"), "demo", 5, ("velocity",), False, True, False, True)
