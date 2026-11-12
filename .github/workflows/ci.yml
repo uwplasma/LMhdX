@@ -254,7 +254,7 @@ jobs:
           key: lmx-test-evidence-${{ github.run_id }}-plane
           fail-on-cache-miss: true
       - name: Restore axial evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/axial
           key: lmx-test-evidence-${{ github.run_id }}-axial
