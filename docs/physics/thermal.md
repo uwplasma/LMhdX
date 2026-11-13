@@ -358,9 +358,12 @@ scale with the cells, and the ratio is what carries over.
 **Not included**
 - Thermal cells under a thin electrical wall (ADR 0009 D36).
 - Solid walls read from TOML, and in the developed duct below.
-- On an evolving open duct: the advective outlet of ADR 0009 D37, recirculation
-  through the outlet, a coupled manufactured solution, and the outlet-length and
-  time-step studies (plan step 5.4d).
+- On an evolving open duct: the advective outlet of ADR 0009 D37 and a coupled
+  manufactured solution (plan step 5.4d). The step is first order in time; the
+  outlet's reach upstream, buoyant onset and flow returning through the outlet
+  are measured in `tests/test_steady.py`. Where the flow returns, the default
+  `outlet_backflow="error"` marks the step invalid, and `"reservoir_flux"`
+  brings in the reservoir's temperature.
 - Transport above second order. The open-duct results below use first-order
   upwinding and quote $Pe_h/2$, its numerical diffusivity over the physical one;
   `advection="van_leer"` removes most of it.
