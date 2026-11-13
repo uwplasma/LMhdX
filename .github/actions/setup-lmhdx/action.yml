@@ -31,6 +31,11 @@ outputs:
 runs:
   using: composite
   steps:
+    # setup-python installs into /Users/runner on macOS unless told otherwise; self-hosted Macs need the runner's own tool cache.
+    - name: Point setup-python at the runner tool cache
+      shell: bash
+      run: echo "AGENT_TOOLSDIRECTORY=${RUNNER_TOOL_CACHE}" >> "$GITHUB_ENV"
+
     - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
       with:
         python-version: ${{ inputs.python-version }}
