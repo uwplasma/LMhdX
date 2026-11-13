@@ -1606,13 +1606,12 @@ def test_solid_walls_are_refused_where_they_cannot_be_and_kept_in_records(tmp_pa
     import dataclasses
 
     from lmhdx.core3d import SolidWall
+    from lmhdx.output import digest, read_record, write_record
     from lmhdx.thermal import (
         ThermalProblem,
         developed_heat,
         initial_thermal_state,
-        load_thermal_record,
         thermal_boundary,
-        write_thermal_record,
     )
 
     thermal, plug = _walled_duct()
@@ -1639,8 +1638,10 @@ def test_solid_walls_are_refused_where_they_cannot_be_and_kept_in_records(tmp_pa
             ThermalProblem(flow, conditions, 1.0, 0.2, 0.0, walls=walls)
     state = initial_thermal_state(thermal, 1.0, plug)
     assert state.temperature.grid == thermal.thermal_grid != thermal.flow.grid
-    path = write_thermal_record(tmp_path / "walled", thermal, state, units="SI")
-    loaded = load_thermal_record(path, thermal, units="SI")
+    # The generic record keeps the extended temperature exactly, and resumes only the problem with these walls.
+    path = write_record(tmp_path / "walled", state, digest(thermal), 3)
+    loaded, step = read_record(path, state, digest(thermal))
+    assert step == 3 and loaded.temperature.grid == thermal.thermal_grid
     assert np.array_equal(loaded.temperature.data, state.temperature.data)
     thicker = SolidWall(0.2, 2, 0.18, 2.3)
     bare = dataclasses.replace(
@@ -1648,8 +1649,8 @@ def test_solid_walls_are_refused_where_they_cannot_be_and_kept_in_records(tmp_pa
     )
     assert bare.walls == ((None, None),) * 3
     for other in (dataclasses.replace(thermal, walls=((None, None), (thicker, thicker), (wall, wall))), bare):
-        with pytest.raises(ValueError, match="solid_walls"):
-            load_thermal_record(path, other, units="SI")
+        with pytest.raises(ValueError, match="another problem"):
+            read_record(path, state, digest(other))
     flow = ChannelProblem(_uniform_duct(4).grid, (periodic, WALL, WALL), forcing=(1.0, 0.0, 0.0))
     walls = ((None, None), (wall, wall), (None, None))
     developed = ThermalProblem(flow, (periodic, insulated, insulated), 1.0, 0.2, 0.0, walls=walls)

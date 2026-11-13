@@ -172,7 +172,8 @@ def test_only_an_insulated_or_periodic_axis_has_a_null_eigenvalue(kind):
         np.testing.assert_allclose(solved, 1.0, rtol=1e-12)
     else:
         dense = np.linalg.solve(np.eye(len(widths)) - 1.0e5 * operator, np.ones(len(widths)))
-        np.testing.assert_allclose(solved, dense, rtol=1e-9)
+        # The dense solve's rounding is eps times the operator's size times the solution (macOS LAPACK misses 1e-9 by 4x).
+        np.testing.assert_allclose(solved, dense, rtol=1e-9, atol=rounding * np.max(dense))
         assert np.max(solved) < 1e-4
     poisson = fast_diagonal_poisson(line, ends)
     assert bool(np.max(poisson.values[1]) == 0.0) == null

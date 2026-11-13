@@ -23,29 +23,20 @@ from pathlib import Path
 
 import numpy as np
 
-from .cases import WallLayer, _load_toml, tomllib
+from .cases import NumericalFailure, WallLayer, _load_toml, tomllib
 from .fields import Fringe, Func, Table, Uniform
 from .grid import Grid, axis
+from .output import Output, Start
 from .problem import Q2D, Open, Problem, Sides, Thermal, Wall, channel, duct, fringe_duct, pipe, q2d
 from .solver import Case, Solver, solve
 
 __all__ = ["dumps", "load", "upgrade"]
 
 
-@dataclasses.dataclass(frozen=True)
-class Start:
-    """``[start]``: the initial state of an unsteady run, ``"rest"`` or the ``"steady"`` flow."""
-
-    state: str = "rest"
-
-    def __post_init__(self):
-        if self.state not in ("rest", "steady"):
-            raise ValueError(f'state is "rest" or "steady", got {self.state!r}')
-
-
 _KINDS = {c.__name__.lower(): c for c in (Problem, Q2D, Wall, Sides, Open, Thermal, Uniform)}
-_KINDS |= {c.__name__.lower(): c for c in (Fringe, Table, Func, WallLayer, Grid, Solver, Start)}
-_PLAIN = (Problem, Solver, Thermal, Grid, WallLayer, Wall)  # written without a kind: nothing else fits
+_KINDS |= {c.__name__.lower(): c for c in (Fringe, Table, Func, WallLayer, Grid, Solver, Start, Output)}
+# Written without a kind: nothing else fits.
+_PLAIN = (Problem, Solver, Thermal, Grid, WallLayer, Wall, Output, Start)
 _PRESETS = {f.__name__: f for f in (duct, channel, fringe_duct, pipe, q2d)}
 _NAMES = {float: "a number", int: "an integer", bool: "a boolean", str: "a string"}
 _NAMES |= {tuple: "an array", np.ndarray: "an array"}
@@ -107,7 +98,7 @@ def _build(call, table, where, base):
     args, kwargs = (), {}
     for key, value in table.items():
         value = _convert(allowed[key], value, _at(where, key), base)
-        value = str(Path(base) / value) if key == "path" else value
+        value = str(Path(base) / value) if key in ("path", "dir") else value
         if key in parameters and parameters[key].kind is P.VAR_POSITIONAL:
             args = value
         else:
@@ -199,13 +190,13 @@ def _file(
     notes: str = "",
     solver: Solver | None = None,
     start: Start | None = None,
-    output: dict | None = None,
+    output: Output | None = None,
 ):
     if schema_version != 3:
         raise ValueError(f"schema_version {schema_version} is not 3: `lmhdx upgrade FILE` converts the file")
-    if output:
-        raise ValueError("[output] takes no keys yet: Output arrives with plan step H4.4")
-    return solver, None if start is None or start.state == "rest" else start.state, name
+    if start is not None and not start.path:  # a start without a record is the plain "steady", or the default
+        start = None if start.state == "rest" else start.state
+    return solver, start, name, output
 
 
 def load(path: str | Path, *overrides: str) -> Case:
@@ -286,18 +277,20 @@ def _toml(tree, prefix=""):
     )
 
 
-def dumps(problem, solver: Solver | None = None, start: str | None = None, name: str = "") -> str:
-    """The TOML text of a problem, its solver and its start, or of a :class:`Case`; :func:`load` reads it back.
+def dumps(problem, solver=None, start=None, name: str = "", output=None) -> str:
+    """The TOML text of a problem with its solver, start and output, or of a :class:`Case`; :func:`load` reads it back.
 
-    A lambda, a function defined in a script, a traced value or a ``ThermalState`` start cannot be written.
+    ``start`` is ``"steady"`` or a :class:`~lmhdx.output.Start`. A lambda, a function defined in a script, a
+    traced value or a ``ThermalState`` start cannot be written.
     """
     if isinstance(problem, Case):
-        problem, solver, start, name = problem
-    if start not in (None, "steady"):
-        raise ValueError(f"only the start 'steady' is written, not {start!r}")
+        problem, solver, start, name, output = problem
+    if not (start is None or start == "steady" or isinstance(start, Start)):
+        raise ValueError(f"only the start 'steady' or a Start is written, not {start!r}")
     tree = {"schema_version": 3, **({"name": name} if name else {}), "problem": _tree(problem)}
     tree |= {"solver": _tree(solver)} if solver is not None else {}
-    tree |= {"start": {"state": start}} if start else {}
+    tree |= {"start": _tree(Start(start) if isinstance(start, str) else start)} if start else {}
+    tree |= {"output": _tree(output)} if output is not None else {}
     return _toml(tree) + "\n"
 
 
@@ -342,13 +335,18 @@ def _from_thermal(root):
         {"B": {"kind": "uniform", "value": list(flow["magnetic_field"])}} if "magnetic_field" in flow else {}
     )
     tree = {"schema_version": 3, "name": case["name"], "units": case["units"], "problem": problem}
-    tree["solver"] = {"method": "euler", "dt": flow["dt"], "steps": run["steps"]}
-    tree |= {"start": {"state": "steady"}} if flow.get("initial_velocity") == "steady" else {}
-    notes = {
-        "run": {k: v for k, v in run.items() if k != "steps"},
-        "thermal": {k: heat[k] for k in ["hold_flow"] if heat.get(k)},
+    limits = {
+        k: run[k]
+        for k in ("advective_cfl_limit", "buoyancy_courant_limit", "divergence_tolerance")
+        if k in run
     }
-    return tree, notes | {k: root.get(k) for k in ("output", "restart")}
+    tree["solver"] = {"method": "euler", "dt": flow["dt"], "steps": run["steps"]} | limits
+    out = {"dir": root["output"]["directory"], "every": run.get("chunk")}
+    out |= {"paraview": root["output"].get("write_paraview"), "restart": root["output"].get("write_restart")}
+    tree["output"] = {k: v for k, v in out.items() if v is not None}
+    start = {"state": "steady"} if flow.get("initial_velocity") == "steady" else {}
+    tree |= {"start": start | root.get("restart", {})} if start or "restart" in root else {}
+    return tree, {"thermal": {k: heat[k] for k in ["hold_flow"] if heat.get(k)}}
 
 
 def _from_case(root):
@@ -388,8 +386,9 @@ def _from_case(root):
 def upgrade(path: str | Path) -> str:
     """The schema 3 text of a schema 1 (thermal) or schema 2 (case) file.
 
-    Settings schema 3 cannot hold yet (output, logging, restart, run limits: plan step H4.4) head the text as
-    comments. A layered duct, a conducting wall and a tabulated or analytic field are refused.
+    Schema 1's ``[output]``, ``[run]`` limits and chunk, and ``[restart]`` become ``[output]``, ``[solver]`` and
+    ``[start]``. What schema 3 cannot hold (a held flow, a schema 2 file's output, logging and restart) heads
+    the text as comments. A layered duct, a conducting wall and a tabulated or analytic field are refused.
     """
     root = _load_toml(path)
     try:
@@ -411,9 +410,19 @@ def upgrade(path: str | Path) -> str:
 
 
 def run(path: str | Path, *overrides: str) -> dict[str, object]:
-    """Solve a schema 3 file and return its scalars, and the last of each history series."""
+    """Solve a schema 3 file and return its summary: the ``summary.json`` of its ``[output]``, else its scalars.
+
+    A rejected run returns its summary too (``accepted`` false); a run without an ``[output]`` raises.
+    """
     case = load(path, *overrides)
-    solution = solve(case)
+    try:
+        solution = solve(case)
+    except NumericalFailure as error:
+        if error.summary is None:
+            raise
+        return error.summary
+    if solution.summary is not None:
+        return solution.summary
     history = getattr(solution.history, "_asdict", lambda: solution.history)()
     summary = {"case": case.name}
     for n in ("pressure_gradient", "flow_rate", "residual", "iterations"):

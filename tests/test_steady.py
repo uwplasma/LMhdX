@@ -1650,8 +1650,8 @@ def test_the_pipe_snippet_runs_as_written():
     assert namespace["held"] == pytest.approx(3.65679, rel=1e-3)
 
 
-def test_a_pipe_steps_no_time_and_forms_no_current_of_its_own(tmp_path):
-    """A polar grid serves the developed solves only: the time step, its validation, its state and its records
+def test_a_pipe_steps_no_time_and_forms_no_current_of_its_own():
+    """A polar grid serves the developed solves only: the time step, its validation and its state
     refuse it, and Joule heat is refused there, since a pipe's currents come from lmhdx.pipe. Compiled whole, the
     pipe equals the eager result."""
     from lmhdx.thermal import (
@@ -1659,9 +1659,7 @@ def test_a_pipe_steps_no_time_and_forms_no_current_of_its_own(tmp_path):
         build_thermal_step,
         developed_heat,
         initial_thermal_state,
-        load_thermal_record,
         validate_thermal_inputs,
-        write_thermal_record,
     )
 
     thermal, velocity, zero = _pipe(8)
@@ -1670,8 +1668,6 @@ def test_a_pipe_steps_no_time_and_forms_no_current_of_its_own(tmp_path):
         lambda: build_thermal_step(thermal, dtype=jnp.float64),
         lambda: validate_thermal_inputs(thermal, state, zero, divergence_tolerance=1e-9),
         lambda: initial_thermal_state(thermal, 0.0),
-        lambda: write_thermal_record(tmp_path / "pipe", thermal, state, units="SI"),
-        lambda: load_thermal_record(tmp_path / "pipe", thermal, units="SI"),
     ):
         with pytest.raises(ValueError, match="polar grid is not qualified"):
             refused()

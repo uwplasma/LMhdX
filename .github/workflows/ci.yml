@@ -31,8 +31,9 @@ jobs:
       full: ${{ steps.scope.outputs.full }}
       targeted: ${{ steps.scope.outputs.targeted }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 0
       - id: scope
         name: Select test depth
@@ -61,7 +62,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-lmhdx
         with:
           python-version: "3.13"
@@ -79,14 +82,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: ./.github/actions/setup-lmhdx
         with:
           python-version: "3.11"
           jax-version: "0.7.2"
-          solvax-version: "0.34.0"
+          solvax-version: "0.36.2"
           cache-suffix: pr-impact
       - name: Run conservatively affected tests
         run: |
@@ -103,7 +107,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [support, design, operators, timeloop, physics, channel, walls, plane, steady, steady_thermal, programs, fully_developed, gradients, api, api_gradients, anchors]
+        shard: [support, design, operators, timeloop, physics, channel, walls, plane, axial, steady, steady_thermal, programs, fully_developed, gradients, api, api_gradients, anchors]
         include:
           # Coverage on the steady shard peaks near 12 GB of resident memory with four
           # workers, against 16 GB on a hosted runner; two workers keep it well inside.
@@ -121,6 +125,8 @@ jobs:
             cache: support
           - shard: plane
             cache: channel
+          - shard: axial
+            cache: channel
           - shard: fully_developed
             cache: steady
           - shard: programs
@@ -134,12 +140,14 @@ jobs:
           - shard: api_gradients
             cache: api
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-lmhdx
         with:
           python-version: "3.11"
           jax-version: "0.7.2"
-          solvax-version: "0.34.0"
+          solvax-version: "0.36.2"
           cache-suffix: ${{ matrix.cache || matrix.shard }}
       - name: Run covered test shard
         env:
@@ -154,7 +162,7 @@ jobs:
             --coverage-xml artifacts/test-evidence/${{ matrix.shard }}/coverage.xml \
             --junit-xml artifacts/test-evidence/${{ matrix.shard }}/junit.xml
       - name: Save covered test evidence
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/${{ matrix.shard }}
           key: lmx-test-evidence-${{ github.run_id }}-${{ matrix.shard }}
@@ -166,103 +174,111 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-lmhdx
         with:
           python-version: "3.13"
           cache-suffix: coverage-report
       - name: Restore support evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/support
           key: lmx-test-evidence-${{ github.run_id }}-support
           fail-on-cache-miss: true
       - name: Restore design evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/design
           key: lmx-test-evidence-${{ github.run_id }}-design
           fail-on-cache-miss: true
       - name: Restore physics evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/physics
           key: lmx-test-evidence-${{ github.run_id }}-physics
           fail-on-cache-miss: true
       - name: Restore channel evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/channel
           key: lmx-test-evidence-${{ github.run_id }}-channel
           fail-on-cache-miss: true
       - name: Restore walls evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/walls
           key: lmx-test-evidence-${{ github.run_id }}-walls
           fail-on-cache-miss: true
       - name: Restore steady evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/steady
           key: lmx-test-evidence-${{ github.run_id }}-steady
           fail-on-cache-miss: true
       - name: Restore steady_thermal evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/steady_thermal
           key: lmx-test-evidence-${{ github.run_id }}-steady_thermal
           fail-on-cache-miss: true
       - name: Restore fully_developed evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/fully_developed
           key: lmx-test-evidence-${{ github.run_id }}-fully_developed
           fail-on-cache-miss: true
       - name: Restore programs evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/programs
           key: lmx-test-evidence-${{ github.run_id }}-programs
           fail-on-cache-miss: true
       - name: Restore operators evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/operators
           key: lmx-test-evidence-${{ github.run_id }}-operators
           fail-on-cache-miss: true
       - name: Restore timeloop evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/timeloop
           key: lmx-test-evidence-${{ github.run_id }}-timeloop
           fail-on-cache-miss: true
       - name: Restore plane evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/plane
           key: lmx-test-evidence-${{ github.run_id }}-plane
           fail-on-cache-miss: true
+      - name: Restore axial evidence
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: artifacts/test-evidence/axial
+          key: lmx-test-evidence-${{ github.run_id }}-axial
+          fail-on-cache-miss: true
       - name: Restore gradients evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/gradients
           key: lmx-test-evidence-${{ github.run_id }}-gradients
           fail-on-cache-miss: true
       - name: Restore api evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/api
           key: lmx-test-evidence-${{ github.run_id }}-api
           fail-on-cache-miss: true
       - name: Restore api_gradients evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/api_gradients
           key: lmx-test-evidence-${{ github.run_id }}-api_gradients
           fail-on-cache-miss: true
       - name: Restore anchors evidence
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: artifacts/test-evidence/anchors
           key: lmx-test-evidence-${{ github.run_id }}-anchors
@@ -277,106 +293,64 @@ jobs:
     name: PR ${{ matrix.tier }}${{ (matrix.label || matrix.shard) && format(' ({0})', matrix.label || matrix.shard) || '' }}
     needs: scope
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.scope.outputs.full == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # The three regression jobs run on the uwplasma Macs (mac-1, mac-2, mac-3) for same-repository pull
+    # requests; fork pull requests and every other job stay on hosted runners.
+    runs-on: ${{ matrix.mac && github.event.pull_request.head.repo.full_name == github.repository && fromJSON('["self-hosted","macOS"]') || 'ubuntu-latest' }}
+    env:
+      UV_SYSTEM_PYTHON: "0"
+    timeout-minutes: 28
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Each job is sized to about two thirds of its budget on a hosted runner; split
-          # jobs start from their parent's compilation cache.
+          # The unit tier, then the regression tier in three jobs packed on recorded per-shard
+          # time (about 12 to 14 minutes each); a longer job has been killed for memory.
           - tier: unit
-            shard: support
-            workers: 4
-            budget: 300
-            cache: pr-unit
-          - tier: unit
-            shard: design
-            budget: 300
-            cache: pr-unit
-          - tier: unit
-            shard: timeloop
-            budget: 300
-            cache: pr-unit
-          - tier: unit
-            shard: "operators physics channel walls plane steady steady_thermal programs fully_developed gradients"
-            label: numerics
-            budget: 300
+            shard: "support design operators timeloop physics channel walls plane axial steady steady_thermal programs fully_developed gradients"
+            label: unit
+            budget: 900
             cache: pr-unit
           - tier: regression
-            shard: "physics operators timeloop"
-            label: physics
-            budget: 420
+            shard: "physics operators timeloop steady steady_thermal programs"
+            label: regression-a
+            budget: 1500
+            mac: true
           - tier: regression
-            shard: channel
-            budget: 420
+            shard: "channel plane axial gradients anchors"
+            label: regression-b
+            budget: 1500
+            mac: true
           - tier: regression
-            shard: walls
-            budget: 420
-            cache: pr-regressionchannel
-          - tier: regression
-            shard: plane
-            budget: 420
-            cache: pr-regressionchannel
-          - tier: regression
-            shard: steady
-            budget: 420
-          - tier: regression
-            shard: steady_thermal
-            budget: 420
-            cache: pr-regressionsteady
-          - tier: regression
-            shard: fully_developed
-            budget: 420
-            cache: pr-regressionsteady
-          - tier: regression
-            shard: programs
-            budget: 420
-            cache: pr-regressionsteady
-          - tier: regression
-            shard: gradients
-            budget: 420
-            cache: pr-regressionsteady
-          - tier: regression
-            shard: api
-            budget: 420
-          - tier: regression
-            shard: api_gradients
-            budget: 420
-            cache: pr-regressionapi
-          - tier: regression
-            shard: anchors
-            budget: 420
-          - tier: regression
-            shard: support
-            budget: 300
+            shard: "support fully_developed api api_gradients walls"
+            label: regression-c
+            budget: 1500
+            mac: true
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-lmhdx
         id: setup
         with:
           python-version: "3.11"
           jax-version: "0.7.2"
-          solvax-version: "0.34.0"
+          solvax-version: "0.36.2"
           cache-suffix: ${{ matrix.cache || format('pr-{0}{1}', matrix.tier, matrix.label || matrix.shard) }}
       - name: Run uncovered evidence tier
         env:
           TIER: ${{ matrix.tier }}
           SHARD: ${{ matrix.shard }}
           BUDGET: ${{ matrix.budget }}
-          WORKERS: ${{ matrix.workers }}
         run: |
           shard=()
           for name in $SHARD; do shard+=(--shard "$name"); done
-          workers=()
-          if [[ -n "$WORKERS" ]]; then workers=(--workers "$WORKERS"); fi
-          python scripts/run_full_test_suite.py --tier "$TIER" "${shard[@]}" "${workers[@]}" --no-coverage \
+          python scripts/run_full_test_suite.py --tier "$TIER" "${shard[@]}" --workers 3 --no-coverage \
             --budget-seconds "$BUDGET" --test-timeout-seconds 300
       # A run stopped by its budget skips the cache's own save, so a lane whose key prefix is new (a new
       # Python) would start cold every time; keep what it compiled.
       - name: Keep the compilation cache of a failed run
         if: failure()
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ runner.temp }}/lmx-jax-cache
           key: ${{ steps.setup.outputs.cache-key }}
