@@ -2307,6 +2307,131 @@ def test_flow_returning_through_an_evolving_outlet_is_flagged_or_brought_in_from
             assert valid.all() and float(history.outlet_backflow_enthalpy_in.max()) > 0.0
 
 
+def _manufactured_open_duct_errors(cells: int, momentum: str, heat: str) -> tuple[float, float, float]:
+    """The largest errors in T, u and w of the steady coupled manufactured solution on ``cells`` across.
+
+    An open duct along x over [0, 2], walls at z = +-1, periodic along y, no field, gravity down, buoyant (beta g 1),
+    nu = kappa = 0.5. The stream function U0 (z - z^3 / 3) + 5 s^2 (1 - s)^3 (1 - z^2)^2, s = x / 2, gives the
+    Poiseuille profile at the inlet, no slip at the walls and no axial gradient at the outlet; the temperature
+    excess (1 - s)^2 cos(pi z / 2) vanishes at the walls and at the outlet, where the hydrostatic outlet pressure is
+    then zero, as p = (2 - x)(1 + 0.3 z) is. The momentum force (through ``force``) and the heat source are the
+    residuals of the steady equations, from automatic differentiation; the run marches to its steady state.
+    """
+    from lmhdx.core3d import zero_velocity
+    from lmhdx.thermal import (
+        ThermalProblem,
+        advance_thermal,
+        build_thermal_step,
+        initial_thermal_state,
+        thermal_boundary,
+    )
+
+    length, nu, kappa, inertia = 2.0, 0.5, 0.5, float(momentum != "off")
+
+    def psi(x, z):
+        s = x / length
+        return z - z**3 / 3 + 5.0 * s**2 * (1 - s) ** 3 * (1 - z**2) ** 2
+
+    def u(x, z):
+        return jax.grad(psi, 1)(x, z)
+
+    def w(x, z):
+        return -jax.grad(psi, 0)(x, z)
+
+    def theta(x, z):
+        return (1 - x / length) ** 2 * jnp.cos(jnp.pi * z / 2)
+
+    def p(x, z):
+        return (length - x) * (1 + 0.3 * z)
+
+    def laplacian(f):
+        return lambda x, z: jax.grad(jax.grad(f, 0), 0)(x, z) + jax.grad(jax.grad(f, 1), 1)(x, z)
+
+    def carried(f):
+        return lambda x, z: u(x, z) * jax.grad(f, 0)(x, z) + w(x, z) * jax.grad(f, 1)(x, z)
+
+    def force_x(x, z):
+        return jax.grad(p, 0)(x, z) - nu * laplacian(u)(x, z) + inertia * carried(u)(x, z)
+
+    def force_z(x, z):
+        return jax.grad(p, 1)(x, z) - nu * laplacian(w)(x, z) - theta(x, z) + inertia * carried(w)(x, z)
+
+    def source(x, z):
+        return carried(theta)(x, z) - kappa * laplacian(theta)(x, z)
+
+    def on(f, x, z):
+        return np.asarray(jax.vmap(jax.vmap(f, (None, 0)), (0, None))(jnp.asarray(x), jnp.asarray(z)))
+
+    spans = 1 if momentum == "off" else 2  # transport along a periodic axis needs two cells
+    grid = Grid(
+        uniform_faces(cells, 0.0, length), uniform_faces(spans, 0.0, 1.0), uniform_faces(cells, -1.0, 1.0)
+    )
+    (xf, _, zf), (xc, _, zc) = (np.asarray(f) for f in grid.faces), (np.asarray(c) for c in grid.centers)
+    inlet = np.broadcast_to(on(u, [0.0], zc), (spans, cells))
+    opening = BoundaryCondition(DIRICHLET, lower=inlet, upper_kind=NEUMANN)
+    flow = ChannelProblem(
+        grid, (opening, _WRAP, _WALL), viscosity=nu, conductivity=0.0, dt=0.5 / cells, advection=momentum
+    )
+    ends = thermal_boundary(
+        "temperature",
+        np.broadcast_to(on(theta, [0.0], zc), (spans, cells)),
+        upper_kind="heat_flux",
+        conductivity=kappa,
+    )
+    thermal = ThermalProblem(
+        flow,
+        (ends, _WRAP, thermal_boundary("temperature", 0.0, 0.0)),
+        1.0,
+        kappa,
+        0.0,
+        joule_heating=False,
+        expansion_coefficient=1.0,
+        gravity=(0.0, 0.0, -1.0),
+        advection=heat,
+    )
+    rest = zero_velocity(flow)
+    force = (
+        rest[0].replace_data(jnp.broadcast_to(jnp.asarray(on(force_x, xf, zc))[:, None, :], rest[0].shape)),
+        rest[1],
+        rest[2].replace_data(jnp.broadcast_to(jnp.asarray(on(force_z, xc, zf))[:, None, :], rest[2].shape)),
+    )
+    heating = Field(
+        jnp.broadcast_to(jnp.asarray(on(source, xc, zc))[:, None, :], grid.shape), (CENTER,) * 3, grid
+    )
+    lift = rest[0].replace_data(jnp.broadcast_to(jnp.asarray(inlet)[None], rest[0].shape))
+    state = initial_thermal_state(thermal, 0.0, (lift, rest[1], rest[2]))
+    step = build_thermal_step(thermal, dtype=jnp.float64, force=lambda t: force)
+    run = jax.jit(lambda s: advance_thermal(step, s, heating, round(5.0 / flow.dt))[0])  # t = 5 a call
+    before = np.asarray(state.temperature.data)
+    for _ in range(12):
+        state = run(state)
+        after = np.asarray(state.temperature.data)
+        if np.max(np.abs(after - before)) < 1e-13:
+            break
+        before = after
+    else:
+        raise AssertionError("the manufactured duct did not reach its steady state by t = 60")
+    return (
+        float(np.max(np.abs(after[:, 0, :] - on(theta, xc, zc)))),
+        float(np.max(np.abs(np.asarray(state.velocity[0].data)[:, 0, :] - on(u, xf, zc)))),
+        float(np.max(np.abs(np.asarray(state.velocity[2].data)[:, 0, :] - on(w, xc, zf)))),
+    )
+
+
+@pytest.mark.parametrize(
+    ("momentum", "heat", "order"), [("central", "van_leer", 2.0), ("off", "upwind", 1.0)]
+)
+def test_a_coupled_manufactured_open_duct_converges_at_its_order(momentum, heat, order):
+    """5.4d: the coupled manufactured solution of an evolving buoyant open duct, marched to its steady state on 8, 16
+    and 32 cells across. With inertia (central transport) and van Leer heat transport every field is second order
+    (on the finest pair T 1.89, u 1.90, w 1.83); in the Stokes limit with upwind heat transport the temperature is
+    first order (0.92) and the velocity still second (1.92, 1.82): the heat's error barely reaches the flow."""
+    errors = np.array([_manufactured_open_duct_errors(cells, momentum, heat) for cells in (8, 16, 32)])
+    orders = np.log2(errors[1] / errors[2])
+    assert 0.8 * order < orders[0] < 1.2 * order, orders
+    assert np.all((orders[1:] > 1.7) & (orders[1:] < 2.3)), orders
+
+
 # Mistrangelo et al. 2025, the heated conducting duct (plan step 5.4a, ADR 0009).
 
 
