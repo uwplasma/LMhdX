@@ -35,7 +35,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from . import configure
-from .axial import method_for, solve_open_duct
+from .axial import _lift, method_for, solve_open_duct
 from .axial import pressure_drop as _pressure_drop
 from .cases import NumericalFailure
 from .cases import solve as _solve_model
@@ -48,7 +48,7 @@ from .pipe import PipeProblem, solve_pipe
 from .pipe import flow_rate as _pipe_flow_rate
 from .problem import Q2D, Open, Problem, channel_kernel, hold_walls, thermal_kernel
 from .q2d import Q2DProblem, _setup, evolve_q2d, solve_q2d
-from .steady import _MAX_STEPS, solve_compiled, solve_steady_state
+from .steady import _MAX_STEPS, solve_compiled, solve_steady_state, with_inflow
 from .thermal import ThermalProblem
 
 __all__ = ["Case", "Solution", "Solver", "solve"]
@@ -491,7 +491,10 @@ def _heated(heat_problem, subject, solver: Solver, start, temperature, source, o
     if isinstance(start, ThermalState):
         state = start
     else:
-        velocity = solve_steady_state(flow).velocity if start == "steady" else None
+        if flow.open_axis is None:
+            velocity = solve_steady_state(flow).velocity if start == "steady" else None
+        else:  # an open duct's flow evolves from its steady state, or from the inlet profile carried along it
+            velocity = solve_open_duct(flow).velocity if start == "steady" else with_inflow(_lift(flow), flow)
         state = initial_thermal_state(heat_problem, temperature, velocity)
     heat = Field(jnp.full(grid.shape, source, dtype=jnp.result_type(float)), _CELL, grid)
     scheme = _SCHEMES[heat_problem.advection]
@@ -561,7 +564,8 @@ def solve(
     A :class:`lmhdx.thermal.ThermalProblem`, which may have solid walls the :class:`Problem` has not, is an
     unsteady run at its flow's ``dt`` with Joule heating alone, from rest at zero temperature, the ``"steady"``
     flow or a given :class:`~lmhdx.thermal.ThermalState`; its temperature is on ``thermal_grid`` and so are the
-    ParaView cells, the velocity zero in a wall.
+    ParaView cells, the velocity zero in a wall. An open duct's flow evolves with it, its rest being the inlet
+    profile carried along the duct and its steady flow :func:`lmhdx.axial.solve_open_duct`'s.
 
     ``start`` is the initial state of an unsteady run: for a thermal run ``None`` (rest, at the
     problem's initial temperature), ``"steady"`` (the steady flow, temperature at rest) or a

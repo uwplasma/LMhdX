@@ -484,11 +484,12 @@ def _watch(chunk, residual, x):
 
 
 def _lift(problem: ChannelProblem) -> tuple[Field, Field, Field]:
-    """The inlet profile on every axial face but the inlet: divergence free with the inlet added."""
-    velocity = zero_velocity(problem)
-    profile = jnp.asarray(problem.conditions[0].lower, dtype=velocity[0].dtype)
-    axial = velocity[0].replace_data(jnp.broadcast_to(profile, velocity[0].shape).at[0].set(0.0))
-    return (axial, *velocity[1:])
+    """The inlet profile on every face of the open axis but the inlet: divergence free with the inlet added."""
+    axis, velocity = problem.open_axis, zero_velocity(problem)
+    profile = jnp.expand_dims(jnp.asarray(problem.conditions[axis].lower, dtype=velocity[axis].dtype), axis)
+    inlet = (slice(None),) * axis + (0,)
+    carried = velocity[axis].replace_data(jnp.broadcast_to(profile, velocity[axis].shape).at[inlet].set(0.0))
+    return tuple(carried if index == axis else field for index, field in enumerate(velocity))
 
 
 def station_flow_rates(velocity: tuple[Field, Field, Field]) -> jnp.ndarray:
