@@ -665,7 +665,7 @@ def test_architecture_inventory_is_deterministic_without_timing() -> None:
 
 
 def test_change_gate_selects_affected_tests_and_fails_closed() -> None:
-    assert _tests_for_changes(("docs/index.md", "plan.md")) == ()
+    assert _tests_for_changes(("docs/index.md", "plan.md", "plan-log.md")) == ()
     assert _tests_for_changes(("src/lmhdx/axial.py",)) == (
         "tests/test_axial.py",
         "tests/test_example_runner.py",

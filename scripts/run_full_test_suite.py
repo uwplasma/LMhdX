@@ -175,6 +175,7 @@ _NO_PYTHON_TEST_FILES = {
     "README.md",
     "ROADMAP.md",
     "plan.md",
+    "plan-log.md",
 }
 
 
