@@ -886,6 +886,26 @@ conducting walls become cells of an extended grid for the temperature and the
 potential (D36); an inflow-outflow duct may evolve, with an advective outlet
 (D37); the campaign's layout and budget (D38).
 
+**DB1–DB9** (2026-11-12, proposed) are recorded in
+[`docs/adr/0011-blanket-multiphysics-optimization.md`](docs/adr/0011-blanket-multiphysics-optimization.md):
+the breeder blanket as the design target, with every coupling declared in one
+`Coupling` object (DB1); thermoelectric terms in their consistent form on the
+extended grid (DB2); shape derivatives through the linearised solve with a
+static grid, for the steady duct and the developed section (DB3); one wall
+stack with stagnant and heat-only layers and contact resistances (DB4); wall
+Joule heat behind a switch, contact Joule heat included (DB5); a fidelity
+ladder with developed mixed convection and a march along the duct (DB6); the
+coupling audit (DB7); a film condition for the coolant and heating arrays
+(DB8); species through `w = c/K` (DB9). **DC1–DC8** (2026-11-12, proposed)
+are recorded in
+[`docs/adr/0012-one-implementation-per-concept.md`](docs/adr/0012-one-implementation-per-concept.md):
+the concept register, evidence code outside the package, one Joule density,
+one wall type and one resolved-wall discretization (the per-axis wall nodes
+retire at a gate), SOLVAX's variable-coefficient operator with LMhdX's
+interface physics (ported before the wall stacks are built), the loan
+ledger, what is not consolidated (Newton beside the march among it), and the
+house style.
+
 ---
 
 ## 5. Target architecture
@@ -2668,3 +2688,4 @@ Process: pyOpenSci README guide · JOSS review criteria · Google small CLs · D
 | 2026-10-29 | JAX 0.7.2 floor (Tyler Brandes): Python 3.11 and `jax>=0.7.2`. jaxlib 0.6.2's CUDA build segfaults when a thermal step's compiled 200-step loop runs a second time at 160 × 48 × 48 (step 5.4c's heated zone, float64, on an RTX 3060), since #299 forms the singular Poisson's null-mode weights and eigenvalue denominator in the trace; building either on the host avoids it. Every JAX release from 0.7.0 to 0.12.0.1 runs the same program to the same numbers; SOLVAX's equinox excludes 0.7.0 and 0.7.1, so the floor is 0.7.2. The CI floor lanes move to Python 3.11, JAX 0.7.2 and SOLVAX 0.34.0, and the `tomli` fallback for Python 3.10 is gone. JAX 0.7.2 is 15–20 % slower on a CPU than 0.6.2 (three of channel's slowest tests, one per process, cold or warm, idle or on four busy cores), which put api, channel, steady and the numerics unit job over their gates, so each is split in two: `api_gradients` from api, `walls` (the pipe and 5.4b's solid walls) from channel, `steady_thermal` from steady and `timeloop` from operators; a failed PR job keeps its compilation cache. | 5.4c |
 | 2026-11-12 | Step 5.4c (Tyler Brandes): Case 1's heated zone of Mistrangelo et al. 2025, −0.4 ≤ x ≤ 0.4 m, on its developed flow held, with steel walls that conduct and store heat (5.4b, 6 cells each) and no buoyancy or fringe. `validation.mistrangelo` gains `heated_zone`, `run_heated_zone`, `heated_zone_observables` and `heated_zone_comparison`; `python -m validation.mistrangelo heated DIR` writes the record. 48 fluid cells across and 160 along (576,000 with the walls), van Leer at Courant 0.5, 2,400 steps to a storage of 1e-4 of the 1200 W input: 3.5 min on an RTX 3060 Laptop in float64 (JAX 0.12), 16 PCG iterations a step at the end. Against the digitized bands, Figures 10, 17 and 18 have 93 %, 86 % and 98 % of points inside; the outlet bulk rise is 10.12 K (band 10.04–10.15 K) and Nu 2.33 at x = 0.29 m (band 2.23–2.41). The largest differences sit at the heater's leading edge, within a cell of the 5 mm axial mesh; elsewhere T_w is within 0.41 K of OF_KIT's and T_b within 0.12 K. So buoyancy and the fringe move the heated zone's temperatures by a few tenths of a kelvin, a few percent of the rise. The record is an asset of LMhdX Research Assets v2; `tests/test_steady.py` runs the problem on 16 cells across. The README and the thermal page drop the research-stage label | 5.4d, after uwplasma/SOLVAX#172 |
 | 2026-11-13 | Release 1.12.0. The Python API and its steady open-duct solver: `Problem`, `Solver`, `Output` and `solve` (#296), TOML schema 3 with an upgrade (#300), the RK3 march to the steady duct with Newton and `Solver(method="auto")` (#302), `Solver` rk3 (#312), `Output` with restart, ParaView files and log (#303), differentiable wall conductance and thickness (#301). Time stepping: the exact constrained momentum stage (#290, #297), the IMEX Runge-Kutta stepper (#298), the stretched-grid and kinetic-energy fix (#288), open-duct wall cells (#291). Performance: compiled open-duct programs and a kept trajectory (#292-#295). Heat transfer, by Tyler Brandes: developed ducts, pipe and Nusselt campaign (#272-#274), the Mistrangelo et al. 2025 references (#278-#281) and solid walls in the thermal and electric steps (#284-#286). Floor: Python 3.11, JAX 0.7.2, `solvax>=0.36.2` (#305, #312). CI in four jobs, hardened permissions, `SECURITY.md` (#307, #308). Notes in the GitHub release | Program H continues |
+| 2026-11-13 | ADR 0011 (proposed): blanket multiphysics for shape optimization, DB1–DB9. ADR 0012 (proposed): one implementation per concept, DC1–DC8, steps HC1–HC6. Docs only, no source line; the checkout stays below its byte target (H.10.8) | The plan cleanup, then HC1–HC4 and H8.8 |
