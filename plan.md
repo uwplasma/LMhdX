@@ -2425,7 +2425,7 @@ iterates marked, fixed colour scales and physical time in movies.
   (≤ 8 min); no coverage threshold on PRs; coverage reported at release.
   Reference data via pytest-regressions with provenance sidecars. Docs-only PRs
   run docs checks only. The PR regression lanes run the floor stack (Python
-  3.11, JAX 0.7.2, SOLVAX 0.34.0), the only JAX version CI tests; a PR that
+  3.11, JAX 0.7.2, SOLVAX 0.36.2), the only JAX version CI tests; a PR that
   changes numerics merges after its regression shards report, or after the
   floor stack ran locally (#151).
 - **Nightly (office box, cron, never a PR runner).** `git pull main`; `slow`,

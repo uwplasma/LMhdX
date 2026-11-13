@@ -1043,10 +1043,9 @@ def _step(velocity, problem, factorization, viscous, scheme, force, time, pressu
 def _stage(grid, conditions, scalar, shifts, coefficient, viscous):
     """``H^-1`` per component, ``G``, the face constraints and a jitted pressure solve, built for one stage.
 
-    SOLVAX's :func:`~solvax.fast_diagonal_schur` has no inflow-outflow axis yet (issue 172). Its
-    preconditioner there is the multiplier of the mirror duct, the mesh reflected about the outlet face with
-    Neumann at both ends, applied to the odd extension of the residual: the same operator on the half
-    where the pressure vanishes at the outlet. The conjugate gradients on the exact Schur operator stand.
+    On an inflow-outflow axis the pressure is Neumann at the inlet and Dirichlet at the outlet, and SOLVAX's
+    :func:`~solvax.fast_diagonal_schur` (``("neumann", "dirichlet")``) preconditions the conjugate gradients
+    on the exact Schur operator.
     """
     inverse = tuple(
         (lambda f, axis=axis: f / shifts[axis])
@@ -1069,12 +1068,9 @@ def _stage(grid, conditions, scalar, shifts, coefficient, viscous):
         raise NotImplementedError(
             "an inflow-outflow pressure is Neumann at the inlet and Dirichlet at the outlet"
         )
-    mirrored = [
-        np.concatenate([w, w[::-1]]) if axis in open_axes else w for axis, w in enumerate(grid.widths)
-    ]
-    kinds = [NEUMANN if axis in open_axes else c.kind for axis, c in enumerate(scalar)]
     with jax.ensure_compile_time_eval():
-        schur = solvax.fast_diagonal_schur(mirrored, kinds, shifts, coefficient)
+        kinds = [c.kinds if c.is_mixed else c.kind for c in scalar]
+        schur = solvax.fast_diagonal_schur(grid.widths, kinds, shifts, coefficient)
     widths = grid.volume_factors()
 
     def solve(rhs, rtol=None, x0=None):
@@ -1091,22 +1087,18 @@ def _stage(grid, conditions, scalar, shifts, coefficient, viscous):
                 x0=x0,
                 rtol=rtol,
             )
-        axis, preconditioner = open_axes[0], jax.lax.stop_gradient(schur)
+        preconditioner = jax.lax.stop_gradient(schur)
 
         def operator(q):
             pull = [h(g) for h, g in zip(inverse, gradient(q), strict=True)]
             return -volumes * divergence(constrained(pull)).data
-
-        def mirror(r):
-            odd = jnp.concatenate([r, -jnp.flip(r, axis)], axis=axis)
-            return jax.lax.slice_in_dim(preconditioner.solve(odd), 0, r.shape[axis], axis=axis)
 
         tolerance = (1.0e-11 if rhs.dtype == jnp.float64 else 1.0e-5) if rtol is None else rtol
         found = solvax.pcg_linear_solve(
             operator,
             volumes * rhs,
             x0=x0,
-            precond=lambda r: mirror(r / volumes),
+            precond=lambda r: preconditioner.solve(r / volumes),
             rtol=tolerance,
             max_steps=200,
         )

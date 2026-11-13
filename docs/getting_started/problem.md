@@ -48,7 +48,7 @@ one compiled scan, or with `thermal` the heat step) or `ifrk4` (the Q2D integrat
 `steps` is given and `stokes` or `newton` otherwise; on an open duct with advection it picks `march` while the
 Courant step of the inlet flow is at most four damping steps, and `newton` when the field binds harder
 (`lmhdx.axial.method_for`; `Solver().resolve(problem)` tells which). Both reach the same root and derivative to
-1e-6. `rk3` and `implicit` are named for plan step H2.2 and raise until it exists.
+1e-6. `rk3` is the unsteady step of the three-stage IMEX scheme (a mechanical run; a heated run takes `euler`), and `implicit` is named for plan step H2.2 and raises until it exists.
 
 ## Derivatives
 

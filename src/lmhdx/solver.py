@@ -7,10 +7,10 @@ the kernel it describes, so a concrete problem gives the older entry point's res
 :func:`lmhdx.pipe.solve_pipe` on a polar grid), ``newton`` the same with advection on, ``march`` the
 open duct with advection on solved by the RK3 march instead of Newton (:func:`lmhdx.axial.solve_open_duct`), ``euler`` the
 projection step (:func:`lmhdx.core3d.advance`, or :func:`lmhdx.thermal.advance_thermal` with
-``Problem.thermal``) and ``ifrk4`` :func:`lmhdx.q2d.solve_q2d`. ``auto`` takes ``euler`` if ``steps``
+``Problem.thermal``), ``rk3`` the same step with the three-stage IMEX scheme (:data:`lmhdx.core3d.RK3`, a
+mechanical run) and ``ifrk4`` :func:`lmhdx.q2d.solve_q2d`. ``auto`` takes ``euler`` if ``steps``
 is given, else ``stokes`` or ``newton``, which on an open duct is ``march`` where :func:`lmhdx.axial.method_for`
-says it is faster; ``rk3`` and
-``implicit`` are reserved for plan step H2.2 and raise.
+says it is faster; ``implicit`` is reserved for plan step H2.2 and raises.
 
 An unsteady run is a loop of compiled chunks (``Output.every`` steps each; one chunk without an
 :class:`~lmhdx.output.Output`), so a run in chunks, or restarted from a record, is the run in one, bit for bit.
@@ -39,7 +39,7 @@ from .axial import method_for, solve_open_duct
 from .axial import pressure_drop as _pressure_drop
 from .cases import NumericalFailure
 from .cases import solve as _solve_model
-from .core3d import advance, zero_velocity
+from .core3d import EULER, RK3, advance, zero_velocity
 from .fields import Uniform, host, is_traced, primal
 from .grid import CENTER, Field
 from .ops import cell_average
@@ -53,8 +53,8 @@ from .thermal import ThermalProblem
 
 __all__ = ["Case", "Solution", "Solver", "solve"]
 
-_RESERVED = {"rk3": "H2.2", "implicit": "H2.2"}
-_METHODS = ("auto", "stokes", "newton", "march", "euler", "ifrk4")
+_RESERVED = {"implicit": "H2.2"}
+_METHODS = ("auto", "stokes", "newton", "march", "euler", "rk3", "ifrk4")
 
 
 @dataclass(frozen=True)
@@ -98,10 +98,10 @@ class Solver:
             method = "ifrk4" if q2d else "euler" if self.steps is not None else steady
             if method == "newton" and opened:
                 method = method_for(channel_kernel(problem, self.dt or 1.0, self.precision)[0])
-        allowed = ("ifrk4",) if q2d else ("euler", steady, *(("march",) if opened else ()))
+        allowed = ("ifrk4",) if q2d else ("euler", "rk3", steady, *(("march",) if opened else ()))
         if method not in allowed:
             raise ValueError(f"method {method!r} does not fit this problem; use one of {allowed}")
-        if method in ("euler", "ifrk4") and (self.dt is None or self.steps is None):
+        if method in ("euler", "rk3", "ifrk4") and (self.dt is None or self.steps is None):
             raise ValueError(f"method {method!r} needs dt and steps")
         return method
 
@@ -427,11 +427,11 @@ def _q2d(problem: Q2D, solver: Solver, output, record) -> Solution:
     )
 
 
-def _transient(problem: Problem, solver: Solver, start, output, record) -> Solution:
+def _transient(problem: Problem, solver: Solver, start, output, record, scheme=EULER) -> Solution:
     kernel, forcing, scale, _, walls = channel_kernel(problem, solver.dt, solver.precision)
     if forcing is not None or is_traced(scale) or kernel.open_axis is not None or float(scale) != 1.0:
         raise NotImplementedError("an unsteady run takes a concrete drive and field, and no open axis")
-    viscous = kernel.viscous_factorizations()
+    viscous = kernel.viscous_factorizations(scheme)
     velocity = zero_velocity(kernel) if start in (None, "rest") else start
     cell = Field(jnp.zeros(kernel.grid.shape, velocity[0].dtype), (CENTER,) * 3, kernel.grid)
 
@@ -441,6 +441,7 @@ def _transient(problem: Problem, solver: Solver, start, output, record) -> Solut
             steps,
             state.velocity,
             viscous=viscous,
+            scheme=scheme,
             checkpoint=solver.checkpoint,
             pressure=state.pressure,
         )
@@ -448,7 +449,11 @@ def _transient(problem: Problem, solver: Solver, start, output, record) -> Solut
         return _Flow(run.velocity, run.pressure, run.potential), history
 
     run = _Run(
-        _Flow(velocity, cell, cell), step, lambda s: s._asdict(), kernel.grid, _header(problem, "euler")
+        _Flow(velocity, cell, cell),
+        step,
+        lambda s: s._asdict(),
+        kernel.grid,
+        _header(problem, "euler" if scheme is EULER else "rk3"),
     )
     state, history, summary = _drive(run, problem, solver, output, record)
     return hold_walls(Solution(state._asdict(), history=history, summary=summary), walls)
@@ -601,10 +606,12 @@ def solve(
         if method != "stokes":
             raise NotImplementedError("a pipe is solved in the Stokes limit")
         found = _pipe(problem, solver)
-    elif method == "euler":
-        return (_thermal if problem.thermal is not None else _transient)(
-            problem, solver, start, output, record
-        )
+    elif method in ("euler", "rk3"):
+        if problem.thermal is not None:
+            if method == "rk3":
+                raise ValueError("a heated run takes method 'euler'")
+            return _thermal(problem, solver, start, output, record)
+        return _transient(problem, solver, start, output, record, RK3 if method == "rk3" else EULER)
     else:
         if record is not None or start is not None or problem.thermal is not None:
             raise ValueError("a steady solve takes no start and no heat transport (give Solver(dt=, steps=))")

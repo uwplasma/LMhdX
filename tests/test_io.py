@@ -880,6 +880,7 @@ def _vtk(path):
 
 _RUNS = {
     "euler": (lambda: duct(5, 12, cells_in_layer=3), Solver(dt=0.01, steps=8), 4),
+    "rk3": (lambda: duct(5, 12, cells_in_layer=3), Solver(method="rk3", dt=0.01, steps=8), 4),
     "thermal": (lambda: _heated_duct()[0], Solver(dt=2.0e-3, steps=40), 10),
     "q2d": (lambda: q2d(shape=(16, 16)), Solver(dt=0.01, steps=20, history=5), 5),
 }

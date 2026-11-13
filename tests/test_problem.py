@@ -343,6 +343,12 @@ def test_the_unsteady_duct_is_the_older_projection_run_bit_for_bit():
     expected = advance(kernel, 8, viscous=kernel.viscous_factorizations())
     assert _same(run.velocity, expected.velocity) and _same(run.pressure, expected.pressure)
     assert np.array_equal(run.history["kinetic_energy"], expected.kinetic_energy)
+    scheme = lmhdx.core3d.RK3  # the same step under the three-stage scheme, which is rk3
+    stages = advance(kernel, 8, viscous=kernel.viscous_factorizations(scheme), scheme=scheme)
+    three = lmhdx.solve(problem, Solver(method="rk3", dt=0.01, steps=8))
+    assert _same(three.velocity, stages.velocity) and not _same(three.velocity, run.velocity)
+    with pytest.raises(ValueError, match="heated run"):
+        lmhdx.solve(_heated_duct()[0], Solver(method="rk3", dt=2.0e-3, steps=2))
 
 
 def test_the_four_fields_are_pytrees_and_agree_on_a_uniform_field(tmp_path):
@@ -469,9 +475,8 @@ def test_the_solver_resolves_its_method_and_refuses_what_the_kernels_cannot_do()
     assert Solver(dt=0.01, steps=2).resolve(q2d(shape=(8, 8))) == "ifrk4"
     with pytest.raises(ValueError, match="dt and steps"):
         Solver().resolve(q2d(shape=(8, 8)))
-    for method in ("rk3", "implicit"):
-        with pytest.raises(NotImplementedError, match="H2.2"):
-            Solver(method=method).resolve(stokes)
+    with pytest.raises(NotImplementedError, match="H2.2"):
+        Solver(method="implicit").resolve(stokes)
     inflow = fringe_duct(10.0, advection="central", **_SMALL_FRINGE)
     assert {Solver(method=m).resolve(inflow) for m in ("newton", "march")} == {"newton", "march"}
     for method, problem in (("march", inertial), ("march", stokes)):
