@@ -40,6 +40,8 @@ class Q2DProblem:
     working dtype through JAX promotion, with at least float32 precision.
     ``energy_budget_tolerance`` bounds the normalized trapezoidal energy
     defect for host acceptance; it does not change the numerical trajectory.
+    ``spectrum``, a result's, continues that run exactly (the physical field would lose a round-off
+    to the transform); ``initial_vorticity`` then only gives the shape.
     """
 
     initial_vorticity: jax.Array
@@ -52,6 +54,7 @@ class Q2DProblem:
     history_stride: int = 0
     adjoint_checkpoint_size: int | None = None
     energy_budget_tolerance: float = 1.0e-3
+    spectrum: jax.Array | None = None
 
     def __post_init__(self) -> None:
         vorticity, forcing = _state_arrays(
@@ -102,6 +105,7 @@ class Q2DResult:
     x: jax.Array
     y: jax.Array
     vorticity: jax.Array
+    spectrum: jax.Array
     velocity_x: jax.Array
     velocity_y: jax.Array
     frame_times: jax.Array
@@ -324,6 +328,7 @@ def solve_q2d(problem: Q2DProblem) -> Q2DResult:
         problem.hartmann_friction,
         problem.dt,
     )
+    omega_hat = omega_hat if problem.spectrum is None else problem.spectrum
     initial = _measures(
         omega_hat,
         problem.forcing,
@@ -401,6 +406,7 @@ def solve_q2d(problem: Q2DProblem) -> Q2DResult:
         x=jnp.arange(shape[0]) * spacing[0],
         y=jnp.arange(shape[1]) * spacing[1],
         vorticity=vorticity,
+        spectrum=omega_hat,
         velocity_x=ux,
         velocity_y=uy,
         frame_times=jnp.asarray(frame_steps) * problem.dt,

@@ -79,7 +79,6 @@ from .cases import (
     Diagnostics,
     MHDState,
     Solution,
-    SolverStepRecord,
     StructuredMesh,
     generate_rect_duct_mesh_from_faces,
     require_finite,
@@ -88,6 +87,7 @@ from .cases import (
 from .core3d import ChannelProblem, ImposedField, face_currents, zero_velocity
 from .grid import NEUMANN, PERIODIC, BoundaryCondition, Grid, uniform_faces, wall_resolving_faces
 from .ops import divergence, lorentz_force, wall_insulated
+from .output import SolverStepRecord
 from .steady import shared_or_embedded, solve_steady_state
 
 __all__ = [
@@ -213,6 +213,25 @@ def solve_fully_developed_fields(
     return fields
 
 
+def _header(case: CaseSpec, mesh: StructuredMesh, mode: str, potential: str) -> dict:
+    """The log's description of a case."""
+    geometry, stepper = case.geometry, case.time_stepper
+    return dict(
+        name=case.name,
+        mode=mode,
+        solver=getattr(case.solver, "kind", "fully_developed_inductionless"),
+        geometry=geometry.kind,
+        cells=(mesh.nx, mesh.ny, mesh.nz),
+        domain=(geometry.length, geometry.width, geometry.height),
+        dt=stepper.dt,
+        end=stepper.t_final,
+        max_steps=stepper.max_steps,
+        potential=potential,
+        field=(case.magnetic_field.kind, case.magnetic_field.value),
+        forcing=case.forcing,
+    )
+
+
 def solve_fully_developed(case: CaseSpec, *, logger=None, start_time: float = 0.0) -> Solution:
     """Solve a fully developed case to its steady state on the core and report it as a :class:`Solution`.
 
@@ -227,13 +246,9 @@ def solve_fully_developed(case: CaseSpec, *, logger=None, start_time: float = 0.
     if logger is not None:
         mean = None if target is None else target / (case.geometry.width * case.geometry.height)
         logger.emit_header(
-            case=case,
-            mesh=mesh,
-            mode="steady",
-            potential_solver="staggered core / fast diagonalization / pcg",
+            **_header(case, mesh, "steady", "staggered core / fast diagonalization / pcg"),
             target_mean_velocity=mean,
             reference_mean_velocity=mean,
-            restart=None,
         )
     fields, drive, evidence = _driven(
         problem, target is not None, case.forcing if target is None else target, 1.0
@@ -251,7 +266,7 @@ def solve_fully_developed(case: CaseSpec, *, logger=None, start_time: float = 0.
     state = MHDState(u, phi, jy, jz, lorentz, float(start_time), values["residual_history"])
     solution = Solution(mesh, state, diagnostics, case.name, converged=True, status="converged", steps=0)
     if logger is not None:
-        logger.emit_footer(solution)
+        logger.emit_footer(solution.case_name, float(solution.state.time), float(solution.state.residual))
     return solution
 
 
@@ -303,10 +318,7 @@ def solve_fully_developed_transient(
     if logger is not None:
         mean = None if target is None else target / (case.geometry.width * case.geometry.height)
         logger.emit_header(
-            case=case,
-            mesh=mesh,
-            mode="transient",
-            potential_solver="staggered core / fast diagonalization",
+            **_header(case, mesh, "transient", "staggered core / fast diagonalization"),
             target_mean_velocity=mean,
             reference_mean_velocity=mean,
             restart=restart_info,
@@ -345,7 +357,7 @@ def solve_fully_developed_transient(
     state = MHDState(u, phi, jy, jz, lorentz, float(start + steps * controls.dt), residual)
     solution = Solution(mesh, state, diagnostics, case.name, converged=None, status="completed", steps=steps)
     if logger is not None:
-        logger.emit_footer(solution)
+        logger.emit_footer(solution.case_name, float(solution.state.time), float(solution.state.residual))
     return solution
 
 

@@ -652,6 +652,7 @@ EXPECTED_ROOT_API = {
     "Thermal",
     "Uniform",
     "Solver",
+    "Output",
     "channel",
     "duct",
     "fringe_duct",
