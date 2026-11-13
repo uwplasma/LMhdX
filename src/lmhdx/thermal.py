@@ -737,7 +737,11 @@ def _check_fields(problem: ThermalProblem, velocity, cells: list[tuple[Field, st
 
 
 def build_thermal_step(
-    problem: ThermalProblem, *, dtype: jnp.dtype | type | str, hold_flow: bool = False
+    problem: ThermalProblem,
+    *,
+    dtype: jnp.dtype | type | str,
+    hold_flow: bool = False,
+    force: Callable[[jnp.ndarray], tuple[Field, Field, Field]] | None = None,
 ) -> Callable[[ThermalState, Field], tuple[ThermalState, ThermalDiagnostics]]:
     """Factorize on the host and return the pure step ``(state, heat_source) -> (state, diagnostics)``.
 
@@ -760,7 +764,9 @@ def build_thermal_step(
     stage :func:`lmhdx.axial.solve_open_duct` marches, its inlet profile carried as a
     lift. With buoyancy its outlet holds the hydrostatic pressure of its own last
     layer of cells (:func:`_outlet_hydrostatic`), not ``p = 0``, so a stratified
-    outlet at rest stays at rest; gravity along the open axis is refused. The step is marked for
+    outlet at rest stays at rest; gravity along the open axis is refused. ``force(t)`` is a further force
+    density on the velocity faces of the flow's grid, evaluated at the state's time, as :func:`lmhdx.core3d.step`
+    takes it: a manufactured solution's source, say; a held flow refuses it. The step is marked for
     :func:`load_attribution`: ``hold_flow``, and ``affine``, true for a held flow
     and ``"upwind"`` or ``"off"`` transport, where the temperature is affine in the heat source.
 
@@ -785,6 +791,8 @@ def build_thermal_step(
     buoyant = bool(float(problem.expansion_coefficient) and any(problem.gravity))
     if hold_flow and buoyant:
         raise ValueError("a held flow takes no buoyancy")
+    if hold_flow and force is not None:
+        raise ValueError("a held flow takes no force")
     if flow.open_axis is not None and buoyant and problem.gravity[flow.open_axis]:
         raise ValueError("an inflow-outflow duct takes no gravity along its open axis")
     inflow = None if hold_flow or flow.open_axis is None else with_inflow(_lift(flow), flow)
@@ -847,12 +855,20 @@ def build_thermal_step(
             fluid = Field(temperature.data[block], _CELL, flow.grid) if walled else temperature
             buoyancy = _buoyancy(fluid, problem)
             outlet = None if buoyancy is None or inflow is None else _outlet_hydrostatic(buoyancy, problem)
+            extra = buoyancy
+            if force is not None:
+                pushed = force(state.time)
+                extra = (
+                    pushed
+                    if extra is None
+                    else tuple(b.replace_data(b.data + f.data) for b, f in zip(extra, pushed, strict=True))
+                )
             moved = _advance_momentum(
                 velocity,
                 body,
                 flow,
                 viscous,
-                extra_force=buoyancy,
+                extra_force=extra,
                 dynamic=None if inflow is None else (dt, 1.0, inflow),
                 outlet_pressure=outlet,
             )[0]

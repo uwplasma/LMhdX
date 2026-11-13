@@ -106,6 +106,11 @@ _TEST_SHARDS = {
             "test_a_buoyant_heated_hunt_duct_evolves_and_balances_its_heat",
             "test_a_buoyant_disturbance_in_an_open_duct_decays_to_rest",
             "test_far_from_its_ends_an_open_duct_decays_a_buoyant_disturbance_as_a_periodic_one",
+            "test_an_evolving_buoyant_open_duct_converges_at_first_order_in_the_time_step",
+            "test_the_outlet_length_hardly_moves_an_evolving_buoyant_duct_s_heated_region",
+            "test_buoyant_onset_in_an_open_duct_is_where_the_periodic_duct_has_it",
+            "test_flow_returning_through_an_evolving_outlet_is_flagged_or_brought_in_from_the_reservoir",
+            "test_a_coupled_manufactured_open_duct_converges_at_its_order",
             "test_the_t_condition_snippet_runs_as_written",
             "test_the_heated_zone_takes_the_specified_heat_and_flow_and_is_compared_with_its_figures",
         )
