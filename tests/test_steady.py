@@ -12,6 +12,7 @@ import pytest
 from lmhdx.core3d import ChannelProblem, duct_problem, step, zero_velocity
 from lmhdx.grid import (
     CENTER,
+    DIRICHLET,
     NEUMANN,
     PERIODIC,
     BoundaryCondition,
@@ -1859,22 +1860,10 @@ def test_the_developed_temperature_scales_with_its_source_and_with_the_flow():
         )
 
 
-def test_a_heated_hunt_duct_balances_its_enthalpy():
-    """Plan step 5.3: a Hunt duct carries heat from its inlet to its outlet, balanced to 1e-6 every step.
-
-    Thin conducting Hartmann walls (c 0.05, Ha 20), a fully developed inlet at 0, one side wall taking in a
-    unit heat flux, and the Joule heat of the current. The outlet takes out what the flow carries; by the
-    end the duct is steady and the enthalpy leaving is the Joule heat plus the net wall heat.
-    """
+def _heated_hunt_duct():
+    """Plan step 5.3's heated Hunt duct, its start on the steady open-duct flow and no heat source."""
     from lmhdx.axial import open_duct, solve_open_duct
-    from lmhdx.thermal import (
-        ThermalProblem,
-        advance_thermal,
-        build_thermal_step,
-        initial_thermal_state,
-        thermal_boundary,
-        validate_thermal_inputs,
-    )
+    from lmhdx.thermal import ThermalProblem, initial_thermal_state, thermal_boundary
 
     grid = Grid(uniform_faces(16, 0.0, 8.0), uniform_faces(12, -1.0, 1.0), uniform_faces(12, -1.0, 1.0))
     base = ChannelProblem(
@@ -1888,10 +1877,20 @@ def test_a_heated_hunt_duct_balances_its_enthalpy():
         thermal_boundary("heat_flux", -1.0, 0.0, conductivity=0.05),
     )
     thermal = ThermalProblem(dataclasses.replace(flow, dt=0.1), walls, 1.0, 0.05, 0.0)
-    state, heat = (
-        initial_thermal_state(thermal, 0.0, velocity),
-        Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid),
-    )
+    heat = Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid)
+    return thermal, initial_thermal_state(thermal, 0.0, velocity), heat
+
+
+def test_a_heated_hunt_duct_balances_its_enthalpy():
+    """Plan step 5.3: a Hunt duct carries heat from its inlet to its outlet, balanced to 1e-6 every step.
+
+    Thin conducting Hartmann walls (c 0.05, Ha 20), a fully developed inlet at 0, one side wall taking in a
+    unit heat flux, and the Joule heat of the current. The outlet takes out what the flow carries; by the
+    end the duct is steady and the enthalpy leaving is the Joule heat plus the net wall heat.
+    """
+    from lmhdx.thermal import advance_thermal, build_thermal_step, validate_thermal_inputs
+
+    thermal, state, heat = _heated_hunt_duct()
     validate_thermal_inputs(thermal, state, heat, divergence_tolerance=1e-6)
     _, history = advance_thermal(
         build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True), state, heat, 400
@@ -1912,6 +1911,218 @@ def test_a_heated_hunt_duct_balances_its_enthalpy():
         float(history.joule_power[-1] - history.conductive_heat_out[-1]),
     )
     assert abs(float(history.storage_rate[-1])) <= 1e-6 * leaving and leaving == pytest.approx(made, rel=1e-6)
+
+
+def test_an_evolving_heated_hunt_duct_carries_the_held_flows_heat_without_buoyancy():
+    """5.4d: the same heated duct with its flow evolving rather than held, from the steady state and with no
+    buoyancy. The flow keeps the steady solve's state, so the heat is the held flow's to 1e-9, with the inlet
+    profile held, mass conserved and the ledger closed every step."""
+    from lmhdx.thermal import advance_thermal, build_thermal_step
+
+    thermal, state, heat = _heated_hunt_duct()
+    held, held_history = advance_thermal(
+        build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True), state, heat, 100
+    )
+    moved, history = advance_thermal(build_thermal_step(thermal, dtype=jnp.float64), state, heat, 100)
+    scale = float(jnp.max(jnp.abs(held.temperature.data)))
+    np.testing.assert_allclose(moved.temperature.data, held.temperature.data, rtol=0, atol=1e-9 * scale)
+    flow = float(jnp.max(jnp.abs(state.velocity[0].data)))
+    for marched, steady in zip(moved.velocity, state.velocity, strict=True):
+        np.testing.assert_allclose(marched.data, steady.data, rtol=0, atol=1e-9 * flow)
+    assert float(jnp.max(history.mass_residual)) <= 1e-10 * flow
+    terms = (
+        history.storage_rate,
+        history.conductive_heat_out,
+        history.advective_heat_out,
+        history.joule_power,
+    )
+    budget = jnp.max(jnp.stack([jnp.abs(term) for term in terms]), axis=0)
+    assert float(jnp.max(jnp.abs(history.heat_balance_residual) / budget)) <= 1e-6 and bool(
+        history.finite.all()
+    )
+    np.testing.assert_allclose(history.advective_heat_out, held_history.advective_heat_out, rtol=1e-9)
+
+
+def test_solve_runs_a_heated_open_duct_with_its_flow_evolving():
+    """5.4d through lmhdx.solve: a ThermalProblem on an open duct starts on solve_open_duct's flow ("steady") and
+    evolves it as the thermal step does; from rest it starts on the inlet profile carried along the duct, which
+    is divergence free, so the run is accepted."""
+    from lmhdx import Solver, solve
+    from lmhdx.axial import station_flow_rates
+    from lmhdx.thermal import advance_thermal, build_thermal_step
+
+    thermal, state, heat = _heated_hunt_duct()
+    direct, _ = advance_thermal(build_thermal_step(thermal, dtype=jnp.float64), state, heat, 20)
+    solved = solve(thermal, Solver(dt=0.1, steps=20), start="steady")
+    temperature = np.asarray(direct.temperature.data)
+    np.testing.assert_allclose(
+        np.asarray(getattr(solved.temperature, "data", solved.temperature)),
+        temperature,
+        rtol=0,
+        atol=1e-10 * np.max(np.abs(temperature)),
+    )
+    rest = solve(thermal, Solver(dt=0.1, steps=5))
+    assert float(jnp.max(jnp.abs(station_flow_rates(rest.velocity) - 4.0))) < 1e-11 * 4.0
+
+
+def test_a_stratified_open_duct_at_rest_stays_at_rest_under_its_hydrostatic_outlet():
+    """5.4d (ADR 0009 D37): an open duct with no inflow, its temperature rising linearly with height between two
+    walls held at 0.5 and 1.5 and gravity down. Its outlet holds the hydrostatic pressure of its last layer, so the
+    fluid stays at rest to round-off and the temperature with it; held at p = 0 instead, the same outlet starts a
+    flow in one step."""
+    from lmhdx.core3d import _advance_momentum
+    from lmhdx.thermal import (
+        ThermalProblem,
+        _buoyancy,
+        _outlet_hydrostatic,
+        advance_thermal,
+        build_thermal_step,
+        initial_thermal_state,
+        thermal_boundary,
+    )
+
+    ny, nz, k = 4, 8, 0.05
+    grid = Grid(uniform_faces(8, 0.0, 4.0), uniform_faces(ny, -1.0, 1.0), uniform_faces(nz, -1.0, 1.0))
+    still = BoundaryCondition(DIRICHLET, lower=np.zeros((ny, nz)), upper_kind=NEUMANN)
+    flow = ChannelProblem(grid, (still, _WALL, _WALL), magnetic_field=(0.0, 20.0, 0.0), dt=0.05)
+    column = 1.0 + 0.5 * np.asarray(grid.centers[2])
+    conditions = (
+        thermal_boundary(
+            "temperature", np.broadcast_to(column, (ny, nz)), upper_kind="heat_flux", conductivity=k
+        ),
+        thermal_boundary("heat_flux", conductivity=k),
+        thermal_boundary("temperature", 0.5, 1.5),
+    )
+    thermal = ThermalProblem(
+        flow, conditions, 1.0, k, 1.0, expansion_coefficient=0.1, gravity=(0.0, 0.0, -1.0)
+    )
+    start = initial_thermal_state(thermal, np.broadcast_to(column, grid.shape), zero_velocity(flow))
+    heat = Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid)
+    final, history = advance_thermal(build_thermal_step(thermal, dtype=jnp.float64), start, heat, 50)
+    buoyant = np.sqrt(0.1 * 1.0 * 2.0)  # sqrt(beta dT g h), the free-fall velocity of the layer
+    assert max(float(jnp.max(jnp.abs(v.data))) for v in final.velocity) <= 1e-14 * buoyant
+    np.testing.assert_allclose(final.temperature.data, start.temperature.data, rtol=0, atol=1e-12)
+    assert bool(history.finite.all())
+    force, rest = _buoyancy(start.temperature, thermal), zero_velocity(flow)
+    nothing = tuple(v.replace_data(jnp.zeros_like(v.data)) for v in rest)
+    viscous = flow.viscous_factorizations()
+    flat = _advance_momentum(rest, nothing, flow, viscous, extra_force=force)[0]
+    assert max(float(jnp.max(jnp.abs(v.data))) for v in flat) > 1e-5 * buoyant
+    held = _advance_momentum(
+        rest, nothing, flow, viscous, extra_force=force, outlet_pressure=_outlet_hydrostatic(force, thermal)
+    )[0]
+    assert max(float(jnp.max(jnp.abs(v.data))) for v in held) <= 1e-15 * buoyant
+
+
+def _disturbed_stratification(length: float, axis: str, dt: float = 0.02):
+    """A stably stratified layer at rest, 0.5 to 1.5 across walls at z = +-1, gravity down, a field of Ha 5 along
+    the periodic y (one cell), and a warm Gaussian blob at mid-length; along x either open, with no inflow and the
+    background at the inlet, or periodic. Returns the thermal problem, its start, the heat source and the
+    background temperature."""
+    from lmhdx.thermal import ThermalProblem, initial_thermal_state, thermal_boundary
+
+    nu = kappa = 0.02
+    grid = Grid(
+        uniform_faces(int(4 * length), 0.0, length), uniform_faces(1, 0.0, 1.0), uniform_faces(16, -1.0, 1.0)
+    )
+    x, z = (np.asarray(c) for c in (grid.centers[0], grid.centers[2]))
+    background = 1.0 + 0.5 * z
+    wrap = BoundaryCondition(PERIODIC)
+    if axis == "open":
+        axial = BoundaryCondition(DIRICHLET, lower=np.zeros((1, 16)), upper_kind=NEUMANN)
+        ends = thermal_boundary(
+            "temperature", np.broadcast_to(background, (1, 16)), upper_kind="heat_flux", conductivity=kappa
+        )
+    else:
+        axial = ends = wrap
+    flow = ChannelProblem(
+        grid, (axial, wrap, _WALL), magnetic_field=(0.0, 5.0 * np.sqrt(nu), 0.0), viscosity=nu, dt=dt
+    )
+    walls = thermal_boundary("temperature", 0.5, 1.5)
+    thermal = ThermalProblem(
+        flow,
+        (ends, wrap, walls),
+        1.0,
+        kappa,
+        1.0,
+        joule_heating=False,
+        expansion_coefficient=1.0,
+        gravity=(0.0, 0.0, -1.0),
+    )
+    blob = 0.05 * np.exp(-((x[:, None] - length / 2) ** 2 + z[None, :] ** 2) / 0.1)
+    start = initial_thermal_state(thermal, background[None, None, :] + blob[:, None, :], zero_velocity(flow))
+    return thermal, start, Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid), background
+
+
+def test_a_buoyant_disturbance_in_an_open_duct_decays_to_rest():
+    """5.4d decay: a warm blob in a stably stratified open duct with no inflow raises internal waves that viscosity,
+    the field and conduction damp. The disturbance's energy, kinetic plus available potential
+    (beta g / 2 dT/dz) int (T - T_b)^2, falls at every one of 1000 steps, 100-fold by t = 20."""
+    from lmhdx.core3d import kinetic_energy
+    from lmhdx.thermal import advance_thermal, build_thermal_step
+
+    thermal, state, heat, background = _disturbed_stratification(4.0, "open")
+    volumes = np.prod(
+        np.meshgrid(*(np.diff(np.asarray(f)) for f in thermal.flow.grid.faces), indexing="ij"), axis=0
+    )
+    step = jax.jit(lambda s: advance_thermal(build_thermal_step(thermal, dtype=jnp.float64), s, heat, 1)[0])
+    energy = []
+    for _ in range(1000):
+        state = step(state)
+        disturbance = np.asarray(state.temperature.data) - background  # beta g / (2 dT/dz) is 1 here
+        energy.append(
+            float(kinetic_energy(state.velocity, thermal.flow)) + float(np.sum(volumes * disturbance**2))
+        )
+    assert np.all(np.diff(energy) < 0.0) and energy[-1] < 1e-2 * energy[0]
+
+
+def test_far_from_its_ends_an_open_duct_decays_a_buoyant_disturbance_as_a_periodic_one():
+    """5.4d decay: the same blob in the middle of a duct open along x and of the same duct periodic along x. At
+    t = 4 their temperatures within 2 of the middle differ by the ends' effect alone, which falls from 1.6e-3 of
+    the disturbance at a length of 8 to 8e-9 at 16: the inlet and the hydrostatic outlet act only near the ends."""
+    from lmhdx.thermal import advance_thermal, build_thermal_step
+
+    gaps = []
+    for length in (8.0, 16.0):
+        temperatures = []
+        for axis in ("open", "periodic"):
+            thermal, start, heat, background = _disturbed_stratification(length, axis)
+            final, _ = advance_thermal(build_thermal_step(thermal, dtype=jnp.float64), start, heat, 200)
+            temperatures.append(np.asarray(final.temperature.data))
+        middle = np.abs(np.asarray(thermal.flow.grid.centers[0]) - length / 2) <= 2.0
+        disturbance = np.max(np.abs(temperatures[1][middle] - background))
+        gaps.append(np.max(np.abs(temperatures[0][middle] - temperatures[1][middle])) / disturbance)
+    assert gaps[1] < 1e-7 and gaps[0] > 1e3 * gaps[1]
+
+
+def test_a_buoyant_heated_hunt_duct_evolves_and_balances_its_heat():
+    """5.4d: the heated duct of 5.3, heated from below with gravity down, its flow free to move: buoyancy moves
+    it off the steady solve's state while the inlet profile, the throughflow at every station, mass and the
+    heat ledger hold every step."""
+    from lmhdx.axial import station_flow_rates
+    from lmhdx.thermal import advance_thermal, build_thermal_step
+
+    thermal, state, heat = _heated_hunt_duct()
+    buoyant = dataclasses.replace(thermal, expansion_coefficient=0.05, gravity=(0.0, 0.0, -1.0))
+    final, history = advance_thermal(build_thermal_step(buoyant, dtype=jnp.float64), state, heat, 100)
+    flow = float(jnp.max(jnp.abs(state.velocity[0].data)))
+    moved = max(
+        float(jnp.max(jnp.abs(a.data - b.data))) for a, b in zip(final.velocity, state.velocity, strict=True)
+    )
+    assert 1e-4 * flow < moved < flow
+    np.testing.assert_array_equal(final.velocity[0].data[0], state.velocity[0].data[0])
+    assert float(jnp.max(jnp.abs(station_flow_rates(final.velocity) - 4.0))) < 1e-11 * 4.0
+    assert float(jnp.max(history.mass_residual)) <= 1e-10 * flow
+    terms = (
+        history.storage_rate,
+        history.conductive_heat_out,
+        history.advective_heat_out,
+        history.joule_power,
+    )
+    budget = jnp.max(jnp.stack([jnp.abs(term) for term in terms]), axis=0)
+    assert float(jnp.max(jnp.abs(history.heat_balance_residual) / budget)) <= 1e-6 and bool(
+        history.finite.all()
+    )
 
 
 # Mistrangelo et al. 2025, the heated conducting duct (plan step 5.4a, ADR 0009).
