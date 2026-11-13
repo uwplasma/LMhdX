@@ -90,7 +90,7 @@ def test_open_duct_inertia_example_reports_a_small_positive_share(tmp_path: Path
 
     shares = [row["inertial_share_percent"] for row in summary["rows"]]
     assert all(0.0 < share < 10.0 for share in shares) and shares == sorted(shares)
-    assert all(row["relative_residual"] <= 1e-9 for row in summary["rows"])
+    assert all(row["relative_residual"] <= 1e-9 and row["status"] == 0 for row in summary["rows"])
 
 
 def test_duct_design_law_example_finds_the_studys_optima(tmp_path: Path):
