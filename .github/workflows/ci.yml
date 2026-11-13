@@ -90,7 +90,7 @@ jobs:
         with:
           python-version: "3.11"
           jax-version: "0.7.2"
-          solvax-version: "0.34.0"
+          solvax-version: "0.36.2"
           cache-suffix: pr-impact
       - name: Run conservatively affected tests
         run: |
@@ -147,7 +147,7 @@ jobs:
         with:
           python-version: "3.11"
           jax-version: "0.7.2"
-          solvax-version: "0.34.0"
+          solvax-version: "0.36.2"
           cache-suffix: ${{ matrix.cache || matrix.shard }}
       - name: Run covered test shard
         env:
@@ -293,9 +293,9 @@ jobs:
     name: PR ${{ matrix.tier }}${{ (matrix.label || matrix.shard) && format(' ({0})', matrix.label || matrix.shard) || '' }}
     needs: scope
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.scope.outputs.full == 'true'
-    # The heaviest regression job runs on the uwplasma Macs for same-repository pull
+    # The three regression jobs run on the uwplasma Macs (mac-1, mac-2, mac-3) for same-repository pull
     # requests; fork pull requests and every other job stay on hosted runners.
-    runs-on: ${{ matrix.mac && github.event.pull_request.head.repo.full_name == github.repository && fromJSON('["self-hosted","uwplasma-cpu"]') || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.mac && github.event.pull_request.head.repo.full_name == github.repository && fromJSON('["self-hosted","macOS"]') || 'ubuntu-latest' }}
     env:
       UV_SYSTEM_PYTHON: "0"
     timeout-minutes: 28
@@ -314,6 +314,7 @@ jobs:
             shard: "physics operators timeloop steady steady_thermal programs"
             label: regression-a
             budget: 1500
+            mac: true
           - tier: regression
             shard: "channel plane axial gradients anchors"
             label: regression-b
@@ -323,6 +324,7 @@ jobs:
             shard: "support fully_developed api api_gradients walls"
             label: regression-c
             budget: 1500
+            mac: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -332,7 +334,7 @@ jobs:
         with:
           python-version: "3.11"
           jax-version: "0.7.2"
-          solvax-version: "0.34.0"
+          solvax-version: "0.36.2"
           cache-suffix: ${{ matrix.cache || format('pr-{0}{1}', matrix.tier, matrix.label || matrix.shard) }}
       - name: Run uncovered evidence tier
         env:

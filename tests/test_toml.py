@@ -191,6 +191,8 @@ def test_overrides_replace_values_before_anything_is_built(tmp_path):
         'problem.thermal.advection="off"',
     )
     assert (case.solver.steps, case.solver.method, case.problem.thermal.advection) == (7, "euler", "off")
+    three = load(path, "solver.method=rk3")  # the stepper is a TOML string, and survives a round trip
+    assert three.solver.method == "rk3" and load(_write(tmp_path, dumps(three))).solver == three.solver
     assert case.problem.B.strength == 30.0 and case.problem.B.direction == (0.0, 1.0, 0.0)
     with pytest.raises(ValueError, match="not table.key=value"):
         load(path, "solver")
