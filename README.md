@@ -57,8 +57,9 @@ same objects as Python does.
 
 ![Hunt duct side-layer jets from Ha 20 to 1000](docs/_static/hunt_side_layers.webp)
 
-Research stage, not validated against a reference flow: three-dimensional convective transport, the fringe in
-the inertialess limit only, the ALEX B1/B2 benchmarks, and multi-device execution. The
+Research stage, not validated against a reference flow: three-dimensional convective transport, heat
+transfer (though its Nusselt numbers and Chandrasekhar's critical Rayleigh number are matched within 0.35 % and
+0.8 %), the fringe in the inertialess limit only, the ALEX B1/B2 benchmarks, and multi-device execution. The
 [validation matrix](https://lmhdx.readthedocs.io/en/latest/validation/index.html) states each gate.
 
 ## Performance
