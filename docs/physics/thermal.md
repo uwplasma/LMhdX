@@ -2,10 +2,10 @@
 
 `lmhdx.thermal` carries a temperature through the duct fluid on the staggered
 core: conduction, transport by the flow, Joule heating, a volumetric heat
-source, and optional Boussinesq buoyancy (ADR 0008). The fluid is the only
-medium. Walls enter through a prescribed temperature or heat flux, not through
-their own conduction. The capability is research-stage, and its supported
-envelope is below.
+source, and optional Boussinesq buoyancy (ADR 0008). Walls enter through a
+prescribed temperature or heat flux, or as solid walls that conduct and store
+heat (*Conduction through solid walls*, below). The supported envelope is
+below.
 
 ## Equations and assumptions
 

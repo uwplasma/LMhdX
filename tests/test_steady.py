@@ -1997,6 +1997,38 @@ def test_the_magnetoconvection_section_meets_figure_13s_core():
     assert -0.01 < np.mean(offset) / (np.mean(u[np.abs(z) <= 0.7]) * u0) < 0.0
 
 
+def test_the_heated_zone_takes_the_specified_heat_and_flow_and_is_compared_with_its_figures():
+    """Step 5.4c on 16 cells across, 2 per wall and 16 along: the heated patch is 0.6 m by the outer width, 1200 W
+    in; the held flow is u0 through the section; the ledger closes over fluid and steel; T_w is the interface value
+    between the cells either side; Nu is defined over the heated stations only; and every figure is compared."""
+    from validation import mistrangelo
+
+    record = mistrangelo.spec()
+    a, t_w = record["geometry"]["half_width_m"], record["geometry"]["wall_thickness_m"]
+    u0, q = record["cases"]["case1"]["mean_velocity_m_per_s"], record["cases"]["case1"]["heat_flux_W_per_m2"]
+    thermal, velocity = mistrangelo.heated_zone(cells=16, cells_in_layer=3, wall_cells=2, axial=16)
+    assert thermal.thermal_grid.shape == (16, 20, 20) and thermal.walls[2][0].thickness == t_w
+    state, history = mistrangelo.run_heated_zone(thermal, velocity, chunk=10, max_chunks=2)
+    for last in history:
+        scale = max(abs(last[name]) for name in ("storage_rate", "conductive_heat_out", "advective_heat_out"))
+        assert abs(last["heat_balance_residual"]) <= 1e-9 * scale and last["finite"] and not last["converged"]
+    assert history[-1]["conductive_heat_out"] == pytest.approx(-q * 0.6 * (2 * a + 2 * t_w), rel=1e-6)
+    assert history[-1]["outlet_outflow_rate"] == pytest.approx(u0 * (2 * a) ** 2, rel=1e-12)
+    observables = mistrangelo.heated_zone_observables(thermal, state)
+    heated = np.abs(observables["x"]) < 0.3
+    assert np.all(np.isfinite(observables["Nu"][heated])) and np.all(np.isnan(observables["Nu"][~heated]))
+    midplane = mistrangelo._midplane(
+        np.asarray(state.temperature.data), np.asarray(thermal.thermal_grid.centers[1]), axis=1
+    )
+    wall, fluid = midplane[:, 1], midplane[:, 2]  # the cells either side of the interface z = -a
+    assert np.all(
+        (np.minimum(wall, fluid) <= observables["T_w"]) & (observables["T_w"] <= np.maximum(wall, fluid))
+    )
+    comparison = mistrangelo.heated_zone_comparison(observables)
+    assert set(comparison) == {"9", "10", "17", "18", "38 T_w", "38 T_b"}
+    assert all(np.isfinite(entry["mean_offset"]) and entry["points"] > 5 for entry in comparison.values())
+
+
 def _check_reference_record(record):
     """One digitized figure as shipped: its image hashed; both axes on their label lattice, three ticks at least and
     within 0.6 px (the worst measured is 0.54), the misfit and the digitizing uncertainty also in the axis's units;

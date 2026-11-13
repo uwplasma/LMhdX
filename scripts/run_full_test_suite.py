@@ -101,6 +101,7 @@ _TEST_SHARDS = {
             "test_the_magnetoconvection_section_converges_to_its_pinned_gradient",
             "test_a_heated_hunt_duct_balances_its_enthalpy",
             "test_the_t_condition_snippet_runs_as_written",
+            "test_the_heated_zone_takes_the_specified_heat_and_flow_and_is_compared_with_its_figures",
         )
     ),
     "fully_developed": ("tests/test_fully_developed.py",),

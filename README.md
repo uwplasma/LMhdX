@@ -50,6 +50,10 @@ same objects as Python does.
 - **Blanket scale:** Ha 1000 insulating duct 0.5 % from the reference; all eight rows of Smolentsev et al.
   (2015) Table I (Ha 500 to 15,000) at second order with the analytic value inside the GCI band.
 - **Gradients:** implicit adjoints agree with central differences to 7e-12 in the drive and 1.2e-10 in the field.
+- **Heat transfer:** Nusselt numbers of rectangular ducts and Hartmann plates within 0.35 %, Chandrasekhar's
+  critical Rayleigh number within 0.8 %, and Mistrangelo et al.'s heated conducting duct (Case 1's heated
+  zone, code to code) within its digitized bands. The
+  [heat transport page](https://lmhdx.readthedocs.io/en/latest/physics/thermal.html) gives each comparison.
 
 ![Hunt duct side-layer jets from Ha 20 to 1000](docs/_static/hunt_side_layers.webp)
 
