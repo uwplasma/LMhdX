@@ -195,12 +195,12 @@ Uniform wall temperature and the pipe are pending.
 
 **Cleanup done in #267**, not to be reopened:
 
-- one rectilinear writer, `io.write_vtr`;
-- the thermal TOML reader, `io.thermal_run_from_toml`, with `schema_version`;
+- one rectilinear writer, now `output.write_vtk` (it was `io.write_vtr`);
+- the thermal TOML reader with `schema_version`, now schema 3 of `lmhdx.config` (it was `io.thermal_run_from_toml`; H4.4, ADR 0010);
 - the shared `ops` helpers;
 - one boundary-padded array for the limited reconstruction;
 - `advance_thermal(..., diagnostics=n)` and the checkpointing recipe.
 
-Handoffs that name `thermal.thermal_run_from_toml` or `write_thermal_vtr` mean
-these interfaces. The thermal TOML schema and the isothermal case schema remain
-distinct: `run_from_toml` dispatches between them.
+Handoffs that name `thermal.thermal_run_from_toml` or `write_thermal_vtr` mean the readers and writers above.
+A schema 1 thermal TOML converts with `lmhdx upgrade`; the isothermal case schema stays distinct, and `run_from_toml`
+dispatches between it and schema 3.

@@ -1008,12 +1008,19 @@ def step(
     return _step(velocity, problem, factorization, viscous, scheme, force, time, pressure)[:3]
 
 
-def _step(velocity, problem, factorization, viscous, scheme, force, time, pressure=None):
+def _step(velocity, problem, factorization, viscous, scheme, force, time, pressure=None, dynamic=None):
+    """:func:`step` with ``dynamic = (dt, field_scale, lift)``, any of which may be traced, for a marched duct."""
+    if dynamic is None and problem.open_axis is not None:
+        raise NotImplementedError(
+            "an inflow-outflow axis is marched by lmhdx.axial: it needs the lifted inlet"
+        )
     factorization = problem.factorization() if factorization is None else factorization
     stages = (viscous,) if len(scheme.explicit) == 1 else viscous
     carried, solves = None, []
     for k, weights in enumerate(zip(scheme.explicit, scheme.carried, scheme.implicit, strict=True)):
-        potential, current = electric_state(velocity, problem, factorization)
+        potential, current = electric_state(
+            velocity, problem, factorization, 1.0 if dynamic is None else dynamic[1]
+        )
         velocity, pressure, info, carried = _advance_momentum(
             velocity,
             face_lorentz_force(current, problem),
@@ -1023,18 +1030,24 @@ def _step(velocity, problem, factorization, viscous, scheme, force, time, pressu
             weights=weights,
             carried=carried,
             pressure=pressure,
+            dynamic=dynamic,
         )
         solves.append(info)
-        time = time + (weights[0] + weights[1]) * problem.dt
+        time = time + (weights[0] + weights[1]) * (problem.dt if dynamic is None else dynamic[0])
     iterations, residual = (
         jnp.stack([getattr(i, name) for i in solves]) for name in ("iterations", "residual")
     )
     return velocity, pressure, potential, (jnp.sum(iterations), jnp.max(residual))
 
 
-@functools.lru_cache(maxsize=16)
 def _stage(grid, conditions, scalar, shifts, coefficient, viscous):
-    """``H^-1`` per component, ``G``, the face constraints and a jitted pressure solve, built once per stage."""
+    """``H^-1`` per component, ``G``, the face constraints and a jitted pressure solve, built for one stage.
+
+    SOLVAX's :func:`~solvax.fast_diagonal_schur` has no inflow-outflow axis yet (issue 172). Its
+    preconditioner there is the multiplier of the mirror duct, the mesh reflected about the outlet face with
+    Neumann at both ends, applied to the odd extension of the residual: the same operator on the half
+    where the pressure vanishes at the outlet. The conjugate gradients on the exact Schur operator stand.
+    """
     inverse = tuple(
         (lambda f, axis=axis: f / shifts[axis])
         if viscous is None
@@ -1051,24 +1064,62 @@ def _stage(grid, conditions, scalar, shifts, coefficient, viscous):
         faces = (Field(a, velocity_offset(axis), grid) for axis, a in enumerate(arrays))
         return enforce_face_constraints(tuple(faces), SimpleNamespace(conditions=conditions))
 
+    open_axes = [axis for axis, condition in enumerate(scalar) if condition.is_mixed]
+    if any(scalar[axis].kinds != (NEUMANN, DIRICHLET) for axis in open_axes):
+        raise NotImplementedError(
+            "an inflow-outflow pressure is Neumann at the inlet and Dirichlet at the outlet"
+        )
+    mirrored = [
+        np.concatenate([w, w[::-1]]) if axis in open_axes else w for axis, w in enumerate(grid.widths)
+    ]
+    kinds = [NEUMANN if axis in open_axes else c.kind for axis, c in enumerate(scalar)]
     with jax.ensure_compile_time_eval():
-        schur = solvax.fast_diagonal_schur(grid.widths, [c.kind for c in scalar], shifts, coefficient)
+        schur = solvax.fast_diagonal_schur(mirrored, kinds, shifts, coefficient)
     widths = grid.volume_factors()
 
-    def solve(rhs, **options):
+    def solve(rhs, rtol=None, x0=None):
         # The cell volumes are formed in the trace from the three width vectors, not captured as a cell-sized constant.
         volumes = functools.reduce(jnp.multiply, (jnp.asarray(w, schur.volumes.dtype) for w in widths))
-        # The right-hand side's mean is the wall flux, zero by construction: no relative compatibility test.
-        return dataclasses.replace(schur, volumes=volumes).solve_exact(
-            rhs,
-            gradient=gradient,
-            divergence=lambda fields: divergence(constrained(fields)).data,
-            helmholtz=inverse,
-            defect_rtol=1.0,
-            **options,
+        if not open_axes:
+            # The right-hand side's mean is the wall flux, zero by construction: no relative compatibility test.
+            return dataclasses.replace(schur, volumes=volumes).solve_exact(
+                rhs,
+                gradient=gradient,
+                divergence=lambda fields: divergence(constrained(fields)).data,
+                helmholtz=inverse,
+                defect_rtol=1.0,
+                x0=x0,
+                rtol=rtol,
+            )
+        axis, preconditioner = open_axes[0], jax.lax.stop_gradient(schur)
+
+        def operator(q):
+            pull = [h(g) for h, g in zip(inverse, gradient(q), strict=True)]
+            return -volumes * divergence(constrained(pull)).data
+
+        def mirror(r):
+            odd = jnp.concatenate([r, -jnp.flip(r, axis)], axis=axis)
+            return jax.lax.slice_in_dim(preconditioner.solve(odd), 0, r.shape[axis], axis=axis)
+
+        tolerance = (1.0e-11 if rhs.dtype == jnp.float64 else 1.0e-5) if rtol is None else rtol
+        found = solvax.pcg_linear_solve(
+            operator,
+            volumes * rhs,
+            x0=x0,
+            precond=lambda r: mirror(r / volumes),
+            rtol=tolerance,
+            max_steps=200,
         )
+        ok = found.converged & jnp.isfinite(found.residual_norm)
+        info = solvax.SpdSolveInfo(
+            ok, found.iterations, found.relative_residual_norm, found.status, jnp.zeros((), rhs.dtype)
+        )
+        return found.x * jnp.where(ok, 1.0, jnp.nan), info
 
     return inverse, gradient, constrained, jax.jit(solve, static_argnames="rtol")
+
+
+_kept = functools.lru_cache(maxsize=16)(_stage)
 
 
 def _advance_momentum(
@@ -1081,6 +1132,7 @@ def _advance_momentum(
     weights: tuple[float, float, float] = (1.0, 0.0, 1.0),
     carried: tuple[jnp.ndarray, ...] | None = None,
     pressure: Field | None = None,
+    dynamic: tuple | None = None,
 ) -> tuple[tuple[Field, Field, Field], Field, solvax.SpdSolveInfo, tuple[jnp.ndarray, ...]]:
     """Solve one stage ``H u + c (dt/rho) G p = b``, ``D u = 0``; return velocity, pressure, status, ``R``.
 
@@ -1099,15 +1151,25 @@ def _advance_momentum(
     ``extra_force`` is a further force density on the velocity faces (buoyancy, say), added to the
     forcing before the division by density. ``pressure``, the last stage's or step's, starts the solve:
     0-1 iterations in a steady flow against 13-15 from zero.
+
+    ``dynamic = (dt, field_scale, lift)`` replaces the problem's step and scales its field, either traced (the
+    stage is then built in the trace, not kept). The ``lift`` is a divergence-free velocity that carries the
+    inlet of an inflow-outflow axis: the stage advances ``velocity - lift``, whose inlet face is zero, and
+    the lift's own damping and viscous terms enter the right-hand side.
     """
-    if any(condition.is_mixed for condition in problem.pressure_conditions):
-        raise NotImplementedError("an inflow-outflow axis needs mixed end kinds in SOLVAX (issue 172)")
     explicit, previous, implicit = weights
-    dt, grid, rates = float(problem.dt), problem.grid, problem.damping_rates
+    grid, scalar = problem.grid, problem.pressure_conditions
+    dt, scale, lift = (float(problem.dt), 1.0, None) if dynamic is None else dynamic
+    rates = tuple(rate * scale**2 for rate in problem.damping_rates)
     shifts = tuple(1.0 + implicit * dt * rate for rate in rates)
     coefficient = implicit * dt * float(problem.viscosity) * (viscous is not None)
-    inverse, gradient, constrained, solve = _stage(
-        grid, problem.conditions, problem.pressure_conditions, shifts, coefficient, viscous
+    if dynamic is not None and viscous is not None:
+        viscous = tuple(
+            dataclasses.replace(v, shift=shift, coefficient=coefficient) for v, shift in zip(viscous, shifts)
+        )
+    build = _kept if dynamic is None else _stage
+    inverse, gradient, constrained, solve = build(
+        grid, problem.conditions, scalar, shifts, coefficient, viscous
     )
     velocity_conditions = tuple(velocity_condition(problem.conditions, axis) for axis in range(3))
     transport = (
@@ -1128,7 +1190,14 @@ def _advance_momentum(
         before = 0.0 if carried is None else previous * carried[axis]
         rate.append(now)
         change = explicit * now + before + (explicit + previous - implicit) * old
-        predicted.append(inverse[axis](field.data + dt * change))
+        if lift is None:
+            predicted.append(inverse[axis](field.data + dt * change))
+            continue
+        carry = lift[axis]
+        lifted = -rates[axis] * carry.data
+        if viscous is not None:
+            lifted = lifted + problem.viscosity * staggered_laplacian(carry, velocity_conditions).data
+        predicted.append(inverse[axis](field.data - carry.data + dt * (change + implicit * lifted)))
     predicted = constrained(predicted)
     source = -divergence(predicted).data
     # A divergence under the field's round-off is noise, and CG started on noise can break down.
@@ -1144,6 +1213,10 @@ def _advance_momentum(
     flux, info = solve(source, x0=guess, rtol=1e-13 if velocity[0].dtype == jnp.float64 else None)
     pull = [inverse[axis](g) for axis, g in enumerate(gradient(flux))]
     corrected = constrained([w.data - g for w, g in zip(predicted, pull, strict=True)])
+    if lift is not None:
+        corrected = tuple(
+            c.replace_data(c.data + carry.data) for c, carry in zip(corrected, lift, strict=True)
+        )
     pressure = Field(problem.density * flux / stage, (CENTER,) * 3, grid)
     return corrected, pressure, info, tuple(rate)
 
@@ -1453,6 +1526,7 @@ def advance(
     force: Callable[[jnp.ndarray], tuple[Field, Field, Field]] | None = None,
     time: float = 0.0,
     checkpoint: bool = True,
+    pressure: Field | None = None,
 ) -> Trajectory:
     """Run ``steps`` steps of ``scheme`` as one compiled scan, from ``time``.
 
@@ -1460,7 +1534,8 @@ def advance(
     factorizations are built once on the host, outside the trace, because their
     assembly reads concrete arrays; passing ``viscous`` takes diffusion
     implicitly, which is what lets a long run choose its step for accuracy.
-    ``viscous`` and ``force(t)`` are those of :func:`step`.
+    ``viscous`` and ``force(t)`` are those of :func:`step`. ``pressure``, a run's last (zero if omitted),
+    starts the first solve: with it a run in chunks is the run in one, bit for bit.
 
     The compiled run is kept per problem, ``steps``, factorizations, ``scheme`` and
     ``checkpoint``: a restart in chunks compiles once, and only the state and the time are
@@ -1473,10 +1548,16 @@ def advance(
     try:
         hash(problem)
     except TypeError:
-        return _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint)(velocity, time)
+        return _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint)(
+            velocity, time, pressure
+        )
     if force is not None:
-        return _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint)(velocity, time)
-    return _compiled_trajectory(problem, steps, factorization, viscous, scheme, checkpoint)(velocity, time)
+        return _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint)(
+            velocity, time, pressure
+        )
+    return _compiled_trajectory(problem, steps, factorization, viscous, scheme, checkpoint)(
+        velocity, time, pressure
+    )
 
 
 def _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint):
@@ -1491,11 +1572,11 @@ def _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoin
         history = (*trajectory_diagnostics(updated, problem), *solves)
         return (updated, pressure, potential, now + problem.dt), history
 
-    def run(velocity, time):
+    def run(velocity, time, pressure=None):
         # The last pressure and potential ride in the carry: stacked as scan outputs they cost two
         # cell fields per step (3.1 GiB over 100 steps at 128^3 in float64) to return the last one.
         cell = Field(jnp.zeros(problem.grid.shape, velocity[0].dtype), (CENTER,) * 3, problem.grid)
-        start = (velocity, cell, cell, jnp.asarray(time, velocity[0].dtype))
+        start = (velocity, cell if pressure is None else pressure, cell, jnp.asarray(time, velocity[0].dtype))
         body = jax.checkpoint(single) if checkpoint else single
         (final, pressure, potential, _), history = jax.lax.scan(body, start, xs=None, length=steps)
         return Trajectory(final, pressure, potential, *history)

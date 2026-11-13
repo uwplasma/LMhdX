@@ -107,7 +107,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [support, design, operators, timeloop, physics, channel, walls, plane, steady, steady_thermal, programs, fully_developed, gradients, api, api_gradients, anchors]
+        shard: [support, design, operators, timeloop, physics, channel, walls, plane, axial, steady, steady_thermal, programs, fully_developed, gradients, api, api_gradients, anchors]
         include:
           # Coverage on the steady shard peaks near 12 GB of resident memory with four
           # workers, against 16 GB on a hosted runner; two workers keep it well inside.
@@ -124,6 +124,8 @@ jobs:
           - shard: design
             cache: support
           - shard: plane
+            cache: channel
+          - shard: axial
             cache: channel
           - shard: fully_developed
             cache: steady
@@ -251,6 +253,12 @@ jobs:
           path: artifacts/test-evidence/plane
           key: lmx-test-evidence-${{ github.run_id }}-plane
           fail-on-cache-miss: true
+      - name: Restore axial evidence
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: artifacts/test-evidence/axial
+          key: lmx-test-evidence-${{ github.run_id }}-axial
+          fail-on-cache-miss: true
       - name: Restore gradients evidence
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -298,7 +306,7 @@ jobs:
           # The unit tier, then the regression tier in three jobs packed on recorded per-shard
           # time (about 12 to 14 minutes each); a longer job has been killed for memory.
           - tier: unit
-            shard: "support design operators timeloop physics channel walls plane steady steady_thermal programs fully_developed gradients"
+            shard: "support design operators timeloop physics channel walls plane axial steady steady_thermal programs fully_developed gradients"
             label: unit
             budget: 900
             cache: pr-unit
@@ -307,7 +315,7 @@ jobs:
             label: regression-a
             budget: 1500
           - tier: regression
-            shard: "channel plane gradients anchors"
+            shard: "channel plane axial gradients anchors"
             label: regression-b
             budget: 1500
             mac: true
