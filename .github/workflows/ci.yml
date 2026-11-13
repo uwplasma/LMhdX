@@ -293,83 +293,36 @@ jobs:
     name: PR ${{ matrix.tier }}${{ (matrix.label || matrix.shard) && format(' ({0})', matrix.label || matrix.shard) || '' }}
     needs: scope
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.scope.outputs.full == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # The heaviest regression job runs on the uwplasma Macs for same-repository pull
+    # requests; fork pull requests and every other job stay on hosted runners.
+    runs-on: ${{ matrix.mac && github.event.pull_request.head.repo.full_name == github.repository && fromJSON('["self-hosted","uwplasma-cpu"]') || 'ubuntu-latest' }}
+    env:
+      UV_SYSTEM_PYTHON: "0"
+    timeout-minutes: 28
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Each job is sized to about two thirds of its budget on a hosted runner; split
-          # jobs start from their parent's compilation cache.
+          # The unit tier, then the regression tier in three jobs packed on recorded per-shard
+          # time (about 12 to 14 minutes each); a longer job has been killed for memory.
           - tier: unit
-            shard: support
-            workers: 4
-            budget: 300
-            cache: pr-unit
-          - tier: unit
-            shard: design
-            budget: 300
-            cache: pr-unit
-          - tier: unit
-            shard: timeloop
-            budget: 300
-            cache: pr-unit
-          - tier: unit
-            shard: "operators physics channel walls plane axial steady steady_thermal programs fully_developed gradients"
-            label: numerics
-            budget: 300
+            shard: "support design operators timeloop physics channel walls plane axial steady steady_thermal programs fully_developed gradients"
+            label: unit
+            budget: 900
             cache: pr-unit
           - tier: regression
-            shard: "physics operators timeloop"
-            label: physics
-            budget: 420
+            shard: "physics operators timeloop steady steady_thermal programs"
+            label: regression-a
+            budget: 1500
           - tier: regression
-            shard: channel
-            budget: 420
+            shard: "channel plane axial gradients anchors"
+            label: regression-b
+            budget: 1500
+            mac: true
           - tier: regression
-            shard: walls
-            budget: 420
-            cache: pr-regressionchannel
-          - tier: regression
-            shard: plane
-            budget: 420
-            cache: pr-regressionchannel
-          - tier: regression
-            shard: axial
-            budget: 420
-            cache: pr-regressionchannel
-          - tier: regression
-            shard: steady
-            budget: 420
-          - tier: regression
-            shard: steady_thermal
-            budget: 420
-            cache: pr-regressionsteady
-          - tier: regression
-            shard: fully_developed
-            budget: 420
-            cache: pr-regressionsteady
-          - tier: regression
-            shard: programs
-            budget: 420
-            cache: pr-regressionsteady
-          - tier: regression
-            shard: gradients
-            budget: 420
-            cache: pr-regressionsteady
-          - tier: regression
-            shard: api
-            budget: 420
-          - tier: regression
-            shard: api_gradients
-            budget: 420
-            cache: pr-regressionapi
-          - tier: regression
-            shard: anchors
-            budget: 420
-          - tier: regression
-            shard: support
-            budget: 300
+            shard: "support fully_developed api api_gradients walls"
+            label: regression-c
+            budget: 1500
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -386,13 +339,10 @@ jobs:
           TIER: ${{ matrix.tier }}
           SHARD: ${{ matrix.shard }}
           BUDGET: ${{ matrix.budget }}
-          WORKERS: ${{ matrix.workers }}
         run: |
           shard=()
           for name in $SHARD; do shard+=(--shard "$name"); done
-          workers=()
-          if [[ -n "$WORKERS" ]]; then workers=(--workers "$WORKERS"); fi
-          python scripts/run_full_test_suite.py --tier "$TIER" "${shard[@]}" "${workers[@]}" --no-coverage \
+          python scripts/run_full_test_suite.py --tier "$TIER" "${shard[@]}" --workers 3 --no-coverage \
             --budget-seconds "$BUDGET" --test-timeout-seconds 300
       # A run stopped by its budget skips the cache's own save, so a lane whose key prefix is new (a new
       # Python) would start cold every time; keep what it compiled.
