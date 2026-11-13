@@ -176,6 +176,16 @@ needs new corner algebra and gives nothing for the heat.
   Both are run in the outlet-length study. The steady open duct keeps D26's.
 - **Buoyancy** is allowed once the evolving duct passes its own gates. The
   refusal in `build_thermal_step` stays for a held flow.
+- **The outlet pressure under buoyancy** (amended 2026-11-12). A heated outlet is
+  stratified, and `p = 0` across it would push the fluid there. With buoyancy the
+  outlet holds the hydrostatic pressure of its own last layer of cells instead:
+  the layer's face buoyancy integrated across the section, its area mean zero.
+  It is `p = 0` when the outlet is at the reference temperature. A stratified
+  open duct at rest stays at rest to round-off, where `p = 0` starts a flow in
+  one step. Gravity along the open axis is refused.
+
+  Rejected: OpenFOAM's `p_rgh = 0`, which holds a stratified column at rest
+  only where the density does not vary along it.
 - **When the moving thermal flow is done:** an open manufactured solution
   converges at its order; the inlet, outlet and global energy budgets close; the
   backflow treatment is declared; the sensitivity to domain length and the

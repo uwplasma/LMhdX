@@ -100,6 +100,12 @@ _TEST_SHARDS = {
             "test_the_magnetoconvection_section_meets_figure_13s_core",
             "test_the_magnetoconvection_section_converges_to_its_pinned_gradient",
             "test_a_heated_hunt_duct_balances_its_enthalpy",
+            "test_an_evolving_heated_hunt_duct_carries_the_held_flows_heat_without_buoyancy",
+            "test_solve_runs_a_heated_open_duct_with_its_flow_evolving",
+            "test_a_stratified_open_duct_at_rest_stays_at_rest_under_its_hydrostatic_outlet",
+            "test_a_buoyant_heated_hunt_duct_evolves_and_balances_its_heat",
+            "test_a_buoyant_disturbance_in_an_open_duct_decays_to_rest",
+            "test_far_from_its_ends_an_open_duct_decays_a_buoyant_disturbance_as_a_periodic_one",
             "test_the_t_condition_snippet_runs_as_written",
             "test_the_heated_zone_takes_the_specified_heat_and_flow_and_is_compared_with_its_figures",
         )

@@ -268,10 +268,15 @@ failing value is not repaired by clipping.
 **Geometry**
 - Cartesian grids, with periodic axes and closed no-slip walls. A polar grid
   serves the developed pipe only (below); a time step refuses it.
-- An inflow-outflow duct carries its heat on a held flow:
-  - pass the steady velocity of `axial.solve_open_duct` in the state;
-  - build the step with `hold_flow=True`;
-  - a held flow takes no buoyancy.
+- An inflow-outflow duct carries its heat on a held flow or an evolving one:
+  - held: pass the steady velocity of `axial.solve_open_duct` in the state and
+    build the step with `hold_flow=True`; a held flow takes no buoyancy;
+  - evolving (plan step 5.4d, ADR 0009 D37): build the step without it. The flow
+    advances through the stage `axial.solve_open_duct` marches, its inlet profile
+    carried as a lift. With buoyancy the outlet holds the hydrostatic pressure of
+    its last layer of cells, so a stratified outlet at rest stays at rest; gravity
+    along the open axis is refused. `lmhdx.solve` starts such a run on the steady
+    flow (`start="steady"`) or on the inlet profile carried along the duct.
 - With momentum transport on (`ChannelProblem.advection` other than `"off"`), a
   periodic axis needs at least two cells.
 - Insulating, thin conducting, resolved and solid electrical walls all work,
@@ -353,7 +358,9 @@ scale with the cells, and the ratio is what carries over.
 **Not included**
 - Thermal cells under a thin electrical wall (ADR 0009 D36).
 - Solid walls read from TOML, and in the developed duct below.
-- A flow that evolves in an open duct with the heat. There the flow is held.
+- On an evolving open duct: the advective outlet of ADR 0009 D37, recirculation
+  through the outlet, a coupled manufactured solution, and the outlet-length and
+  time-step studies (plan step 5.4d).
 - Transport above second order. The open-duct results below use first-order
   upwinding and quote $Pe_h/2$, its numerical diffusivity over the physical one;
   `advection="van_leer"` removes most of it.
