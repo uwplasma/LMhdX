@@ -27,7 +27,7 @@ import numpy as np
 
 from lmhdx import enable_x64
 from lmhdx.axial import axial_faces, open_duct
-from lmhdx.core3d import ChannelProblem, SolidWall, zero_velocity
+from lmhdx.core3d import ChannelProblem, SolidWall, face_currents, velocity_offset, zero_velocity
 from lmhdx.fully_developed import channel_flow_rate
 from lmhdx.grid import (
     CENTER,
@@ -56,7 +56,10 @@ __all__ = [
     "REFERENCES_CASE2",
     "SPEC",
     "band_misfit",
+    "CASE1_GATED",
     "case1",
+    "case1_gate",
+    "case1_observables",
     "developed_gradient",
     "developed_section",
     "field",
@@ -584,6 +587,156 @@ def case1(
     inlet = jnp.asarray(flow.conditions[0].lower)
     velocity = (rest[0].replace_data(jnp.broadcast_to(inlet, rest[0].shape)), *rest[1:])
     return thermal, initial_thermal_state(thermal, t_in, velocity)
+
+
+CASE1_GATED = (6, 7, 9, 10, 12, 13, 15, 16, 17, 18, 19)  # the campaign record's gated figures (ADR 0009 D35)
+
+
+def case1_observables(thermal, fields: dict, record: dict | None = None) -> dict:
+    """Case 1's observables of time-averaged fields, as the paper defines them, by figure: ``{figure: (x, y)}``.
+
+    ``fields`` holds the averaged velocity components ``u``, ``v`` and ``w`` on the flow's faces and ``T`` on
+    ``thermal.thermal_grid``. Values at ``y = 0`` are ``a + b y^2`` through the two rows either side
+    (:func:`_midplane`).
+    - Figs. 6 and 7: ``T`` and ``u`` on the axis, against ``x``.
+    - Figs. 9, 10, 12 and 13: ``T`` (walls included) and ``u`` against ``z``, at ``x = -0.3`` and ``0``.
+    - Fig. 15: the potential, in microvolts, on the interface ``z = -a``, against ``x``. It is the potential of the
+      averaged velocity, which it is linear in, gauged to zero mean over fluid and walls. The interface value is
+      the first fluid cell's plus the current through the interface times its half cell's resistance.
+    - Fig. 16: the potential against ``z`` at ``x = 0``, in the fluid and on its two interfaces.
+    - Figs. 17, 18 and 38: the bulk temperature (eq. 6), Nu (eq. 7, over the heated stations only) and ``T_w``.
+    - Fig. 19: ``E_t`` (eq. 8), ``int(v^2 + w^2 dA) / (A u0^2)``.
+    """
+    record = record or spec()
+    a, q = record["geometry"]["half_width_m"], record["cases"]["case1"]["heat_flux_W_per_m2"]
+    u0, heating = record["cases"]["case1"]["mean_velocity_m_per_s"], record["heating"]
+    flow, tgrid, block = thermal.flow, thermal.thermal_grid, thermal.fluid_block
+    grid = flow.grid
+    xf, (xc, y, z) = np.asarray(grid.faces[0]), (np.asarray(c) for c in grid.centers)
+    ty, tz = (np.asarray(c) for c in tgrid.centers[1:])
+    u, v, w, temperature = (np.asarray(fields[k]) for k in ("u", "v", "w", "T"))
+    fluid = temperature[block]
+    out = {6: (xc, _midplane(_midplane(fluid, y, axis=1), z, axis=1))}
+    out[7] = (xf, _midplane(_midplane(u, y, axis=1), z, axis=1))
+    middle = _midplane(temperature, ty, axis=1)
+    for number, at in ((9, -0.3), (10, 0.0)):
+        out[number] = (tz, np.array([np.interp(at, xc, middle[:, j]) for j in range(tz.size)]))
+    stream = _midplane(u, y, axis=1)
+    for number, at in ((12, -0.3), (13, 0.0)):
+        out[number] = (z, np.array([np.interp(at, xf, stream[:, j]) for j in range(z.size)]))
+    centred = 0.5 * (u[1:] + u[:-1])
+    areas = np.outer(np.diff(np.asarray(grid.faces[1])), np.diff(np.asarray(grid.faces[2])))
+    bulk = np.sum(centred * fluid * areas, axis=(1, 2)) / np.sum(centred * areas, axis=(1, 2))
+    k, k_w = float(thermal.thermal_conductivity), thermal.walls[2][0].thermal_conductivity
+    first, widths = block[2].start, np.diff(np.asarray(tgrid.faces[2]))
+    g_w, g_f = k_w / (0.5 * widths[first - 1]), k / (0.5 * widths[first])
+    wall = (g_w * middle[:, first - 1] + g_f * middle[:, first]) / (g_w + g_f)
+    heated = (xc > heating["x_min_m"]) & (xc < heating["x_max_m"])
+    out[17] = (xc, bulk)
+    out[18] = (xc, np.where(heated, q * a / (k * np.where(heated, wall - bulk, 1.0)), np.nan))
+    out["38 T_w"], out["38 T_b"] = (xc, wall), (xc, bulk)
+    across = (0.5 * (v[:, 1:] + v[:, :-1])) ** 2 + (0.5 * (w[:, :, 1:] + w[:, :, :-1])) ** 2
+    out[19] = (xc, np.sum(across * areas, axis=(1, 2)) / (np.sum(areas) * u0**2))
+    velocity = tuple(
+        Field(jnp.asarray(data), velocity_offset(axis), grid) for axis, data in enumerate((u, v, w))
+    )
+    potential, currents, _ = face_currents(velocity, flow)
+    phi = _midplane(np.asarray(potential.data), y, axis=1)
+    current = _midplane(np.asarray(currents[2].data), y, axis=1)
+    half, sigma = 0.5 * np.diff(np.asarray(grid.faces[2])), float(flow.conductivity)
+    lower = phi[:, 0] + current[:, 0] * half[0] / sigma  # the interface z = -a
+    upper = phi[:, -1] - current[:, -1] * half[-1] / sigma  # and z = +a
+    out[15] = (xc, 1e6 * lower)
+    section = np.concatenate([[lower], phi.T, [upper]]).T
+    out[16] = (
+        np.concatenate([[-a], z, [a]]),
+        1e6 * np.array([np.interp(0.0, xc, section[:, j]) for j in range(section.shape[1])]),
+    )
+    return out
+
+
+def _on_band(curve, figure: dict) -> tuple[np.ndarray, np.ndarray]:
+    """A curve at the band's points that it covers, finite only, in the figure's plotted coordinate."""
+    at, values = (np.asarray(c, float) for c in curve)
+    finite = np.isfinite(values)
+    at, values = at[finite], values[finite]
+    x = np.asarray(figure["band"]["x"], float)
+    x = x[(x >= at.min()) & (x <= at.max())]
+    return x, np.interp(x, at, values)
+
+
+def case1_gate(runs: dict, references: Path = REFERENCES) -> dict:
+    """The campaign record's rule for Case 1, figure by figure (ADR 0009 D35; ``docs/validation/mistrangelo.md``).
+
+    ``runs`` maps a run's name to ``{"mean": observables, "subs": [observables of the four sub-windows]}``, from
+    :func:`case1_observables`, for M1L1, M2L1, M3L1, M1L2, M2L2, ``M1L1-dt2`` and ``M1L1-tol``. At each of a gated
+    figure's band points that every run covers, in the plotted coordinate (decades on a log axis):
+    - the excess is :func:`band_misfit`, outside the codes' spread widened by the digitizing uncertainty;
+    - LMhdX's uncertainty ``U`` is the largest of the mesh changes (M1 to M2, M2 to M3), the outlet-length changes
+      (on M1 and on M2), the time-step and tolerance changes, and twice the spread of a main run's four
+      sub-window means;
+    - the point passes on a run if its excess is at most ``U`` and ``U`` is at most half the band's width there,
+      widened by the y uncertainty; a larger ``U`` is not resolved enough to gate.
+    A figure holds if every point passes on every main run. Failures are listed, not dropped.
+    """
+    figures = {entry["figure"]: entry for entry in json.loads(Path(references).read_text())["figures"]}
+    main = ("M1L1", "M2L1", "M3L1", "M1L2", "M2L2")
+    pairs = {
+        "mesh M1-M2": ("M1L1", "M2L1"),
+        "mesh M2-M3": ("M2L1", "M3L1"),
+        "outlet M1": ("M1L1", "M1L2"),
+        "outlet M2": ("M2L1", "M2L2"),
+        "time step": ("M1L1", "M1L1-dt2"),
+        "tolerance": ("M1L1", "M1L1-tol"),
+    }
+    result = {}
+    for number in CASE1_GATED:
+        figure = figures[number]
+        log = figure["y_scale"] == "log10"
+
+        def plotted(values, log=log):
+            return np.log10(np.maximum(values, 1e-300)) if log else values
+
+        covered = [_on_band(runs[name]["mean"][number], figure)[0] for name in runs]
+        x = np.asarray(figure["band"]["x"], float)
+        x = x[np.all([np.isin(x, c) for c in covered], axis=0)]
+
+        def at(observables, x=x, number=number):
+            curve_x, curve_y = (np.asarray(c, float) for c in observables[number])
+            finite = np.isfinite(curve_y)
+            return np.interp(x, curve_x[finite], curve_y[finite])
+
+        means = {name: at(runs[name]["mean"]) for name in runs}
+        changes = {key: np.abs(plotted(means[b]) - plotted(means[a])) for key, (a, b) in pairs.items()}
+        changes["statistics"] = np.max(
+            [2.0 * np.ptp([plotted(at(sub)) for sub in runs[name]["subs"]], axis=0) for name in main], axis=0
+        )
+        uncertainty = np.max(list(changes.values()), axis=0)
+        band = {key: np.asarray(value, float) for key, value in figure["band"].items()}
+        edges = [plotted(np.interp(x, band["x"], band[side])) for side in ("lower", "upper")]
+        width = 0.5 * (edges[1] - edges[0]) + figure["uncertainty"]["y"]
+        resolved = uncertainty <= width
+        verdict = {}
+        for name in main:
+            excess = np.array([band_misfit(xi, yi, figure) for xi, yi in zip(x, means[name])])
+            passed = (excess <= uncertainty) & resolved
+            worst = int(np.argmax(excess - uncertainty))
+            verdict[name] = {
+                "passed": int(passed.sum()),
+                "failed": int((~passed & resolved).sum()),
+                "worst_excess": float(excess[worst]),
+                "worst_at": float(x[worst]),
+                "worst_uncertainty": float(uncertainty[worst]),
+            }
+        result[number] = {
+            "points": int(x.size),
+            "unresolved": int((~resolved).sum()),
+            "uncertainty_max": float(uncertainty.max()),
+            "dominant": max(changes, key=lambda key: float(np.max(changes[key]))),
+            "runs": verdict,
+            "holds": bool(x.size and resolved.all() and all(v["passed"] == x.size for v in verdict.values())),
+        }
+    return result
 
 
 def main() -> None:
