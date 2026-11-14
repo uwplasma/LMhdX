@@ -276,7 +276,13 @@ failing value is not repaired by clipping.
     carried as a lift. With buoyancy the outlet holds the hydrostatic pressure of
     its last layer of cells, so a stratified outlet at rest stays at rest; gravity
     along the open axis is refused. `lmhdx.solve` starts such a run on the steady
-    flow (`start="steady"`) or on the inlet profile carried along the duct.
+    flow (`start="steady"`) or on the inlet profile carried along the duct. The
+    outlet is D26's zero axial gradient. The step is first order in time; the
+    outlet's reach upstream, buoyant onset, flow returning through the outlet and
+    a coupled manufactured solution (second order with van Leer heat transport)
+    are measured in `tests/test_steady.py`. Where the flow returns, the default
+    `outlet_backflow="error"` marks the step invalid, and `"reservoir_flux"`
+    brings in the reservoir's temperature.
 - With momentum transport on (`ChannelProblem.advection` other than `"off"`), a
   periodic axis needs at least two cells.
 - Insulating, thin conducting, resolved and solid electrical walls all work,
@@ -358,13 +364,6 @@ scale with the cells, and the ratio is what carries over.
 **Not included**
 - Thermal cells under a thin electrical wall (ADR 0009 D36).
 - Solid walls read from TOML, and in the developed duct below.
-- On an evolving open duct: the advective outlet of ADR 0009 D37 (plan step
-  5.4d). The step is first order in time; the outlet's reach upstream, buoyant
-  onset, flow returning through the outlet and a coupled manufactured solution
-  (second order with van Leer heat transport) are measured in
-  `tests/test_steady.py`. Where the flow returns, the default
-  `outlet_backflow="error"` marks the step invalid, and `"reservoir_flux"`
-  brings in the reservoir's temperature.
 - Transport above second order. The open-duct results below use first-order
   upwinding and quote $Pe_h/2$, its numerical diffusivity over the physical one;
   `advection="van_leer"` removes most of it.

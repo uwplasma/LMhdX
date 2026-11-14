@@ -4,7 +4,7 @@ Status: proposed 2026-10-19. It restates plan step 5.4 and amends:
 
 - ADR 0008 D31: conjugate walls become a step;
 - ADR 0008 D31.1: an inflow-outflow duct may evolve;
-- plan D26: an evolving duct may take an advective outlet instead of D26's (D37);
+- plan D26: an evolving buoyant duct's outlet holds its hydrostatic pressure, not `p = 0` (D37);
 - plan D27 and validation row 6: this benchmark moves to row 19 (D35).
 
 Its step 5.4b solves walls that make the solve non-separable by D5's PCG
@@ -168,12 +168,19 @@ needs new corner algebra and gives nothing for the heat.
 - **The inlet:** each step prescribes the inlet face's profile, as a lift, so
   the lift is consistent with the step.
 - **The outlet:**
-  - by default D26's: a zero axial gradient, with `p = 0`;
-  - as an option, an advective condition `∂_t u + U ∂_x u = 0`, with `p = 0`;
-  - the outflow corrected to the inflow in either;
+  - D26's: a zero axial gradient, with `p = 0` (with buoyancy, the hydrostatic
+    pressure below), the same as the steady open duct's;
   - the thermal outlet's existing policies, with `"error"` the default.
 
-  Both are run in the outlet-length study. The steady open duct keeps D26's.
+  It is run in the outlet-length study.
+
+  Dropped (amended 2026-11-14): an advective option, `∂_t u + U ∂_x u = 0` with
+  `p = 0`. In the exact Schur stage the outlet face's normal velocity is an
+  unknown of the pressure solve, and `fast_diagonal_schur` needs a separable
+  `H`. So the condition could only set the predicted velocity, which the
+  pressure solve then corrects. The zero-gradient outlet's reach upstream falls
+  about seventyfold with each doubling of the outlet buffer (plan step 5.4d),
+  and the fallback below lengthens the outlet instead.
 - **Buoyancy** is allowed once the evolving duct passes its own gates. The
   refusal in `build_thermal_step` stays for a held flow.
 - **The outlet pressure under buoyancy** (amended 2026-11-12). A heated outlet is
@@ -197,9 +204,8 @@ needs new corner algebra and gives nothing for the heat.
 - **The fallback (D12).** Suppose Case 1's observables move between the two
   outlet lengths by more than the gate.
   - *Hypothesis:* the outlet reflects, so the change shrinks as the outlet
-    lengthens, and differs between the two conditions.
-  - *Budget:* one more doubling of the outlet region, with both conditions,
-    within 5.4e's budget.
+    lengthens.
+  - *Budget:* one more doubling of the outlet region, within 5.4e's budget.
   - *Exit:* if the change between the two longer outlets falls inside the gate,
     the gate is taken there. If it does not, Case 1 is reported, not gated,
     with the outlet-length change as a stated uncertainty. The gate is not
