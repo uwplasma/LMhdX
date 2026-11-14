@@ -1170,7 +1170,7 @@ def test_a_run_with_solid_walls_is_recorded_on_the_extended_grid_and_resumes_exa
         lmhdx.solve(other, dataclasses.replace(solver, steps=3), start=tmp_path / "half/run_000003.npz")
 
 
-def test_a_history_stride_is_refused_only_with_an_output_and_a_rejection_reports_the_right_step(tmp_path):
+def test_a_history_stride_is_refused_only_with_an_output_and_every_step_is_checked(tmp_path):
     plane = q2d(shape=(16, 16))
     assert (
         lmhdx.solve(plane, Solver(dt=0.01, steps=20, history=3)).history is not None
@@ -1179,20 +1179,22 @@ def test_a_history_stride_is_refused_only_with_an_output_and_a_rejection_reports
         lmhdx.solve(plane, Solver(dt=0.01, steps=20, history=3), Output(str(tmp_path / "q"), every=10))
     problem = _heated_duct()[0]
     steps = {}
-    for stride in (None, 5):
+    for every, stride in ((10, None), (5, None), (10, 5), (20, 10)):
         solver = Solver(dt=2.0e-3, steps=40, history=stride, advective_cfl_limit=4.0e-5)
         with pytest.raises(NumericalFailure) as caught:
-            lmhdx.solve(problem, solver, Output(str(tmp_path / f"s{stride}"), every=10))
-        steps[stride] = caught.value.summary["rejected"]["step"]
-    # Sample i of a stride-5 history is step 5 (i + 1): a multiple of 5, and not before the stride-1 step.
-    assert steps[5] % 5 == 0 and steps[5] >= steps[None] and steps[5] - steps[None] < 5
+            lmhdx.solve(problem, solver, Output(str(tmp_path / f"s{every}_{stride}"), every=every))
+        steps[every, stride] = caught.value.summary["rejected"]["step"]
+    # The steps between kept samples are checked too: any chunk and stride name the same first step.
+    assert len(set(steps.values())) == 1, steps
+    whole = lmhdx.solve(problem, Solver(dt=2.0e-3, steps=40)).history
+    kept = lmhdx.solve(problem, Solver(dt=2.0e-3, steps=40, history=5)).history
+    assert _same(kept, jax.tree.map(lambda a: a[4::5], whole))
 
 
-def test_a_rejection_names_the_step_of_the_kept_sample():
+def test_a_rejection_names_the_first_step_past_a_limit():
     series = {"finite": np.ones(4, bool), "advective_cfl": np.array([0.1, 0.9, 0.2, 0.1])}
     limits = {"advective_cfl": 0.8, "buoyancy_courant": None}
     assert rejection(series, limits, 40)["step"] == 42
-    assert rejection(series, limits, 40, 5)["step"] == 50
     assert rejection(series, {"advective_cfl": None, "buoyancy_courant": None}, 0) is None
     nan = {"finite": np.array([1, 0, 1, 1], bool), "buoyancy_courant": np.array([0, np.nan, 0, 0])}
     found = rejection(nan, {**limits, "buoyancy_courant": 1.0}, 0)

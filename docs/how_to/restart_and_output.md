@@ -62,8 +62,8 @@ fields, for another experiment. A rejected chunk's state is written as `run_0000
 
 With an `Output` the `Solution.history` is the last chunk's, so that a long run's memory does not grow; the
 whole series is in the `.jsonl` file. A history stride must divide `every` and `steps` there; without an `Output`
-the kernel's own rule applies. The limits of a heated run are checked at the kept samples, so at the history
-stride, and a rejection reports `done + (i + 1) * history`.
+the kernel's own rule applies. Every step of a heated run is checked against its limits, whatever the
+history stride, which only thins the history returned; a rejection reports the first step past a limit.
 
 A `lmhdx.thermal.ThermalProblem`, with solid walls if it has them, goes to `solve` too (Joule heating alone, at
 its flow's `dt`, from rest, the `"steady"` flow or a `ThermalState`): its records and ParaView cells are on

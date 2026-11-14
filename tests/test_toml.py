@@ -521,9 +521,10 @@ def test_schema_1_variants_upgrade_to_the_same_kernels(tmp_path, changes, holds)
     assert holds(case, tmp_path)
 
 
-def test_a_held_flow_is_not_carried_over(tmp_path):
+def test_a_held_flow_is_carried_over(tmp_path):
     text = _SCHEMA1.replace("[thermal]\n", "[thermal]\nhold_flow = true\n")
-    assert "# not carried over: [thermal] hold_flow = True" in upgrade(_write(tmp_path, text, "old.toml"))
+    new = upgrade(_write(tmp_path, text, "old.toml"))
+    assert "not carried over" not in new and load(_write(tmp_path, new, "new.toml")).problem.thermal.hold_flow
 
 
 def test_files_that_are_not_run_configurations_are_refused_by_upgrade():

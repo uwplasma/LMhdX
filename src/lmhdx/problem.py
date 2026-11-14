@@ -149,11 +149,13 @@ Bc = Wall | Sides | Open | str  # one entry of ``Problem.bc``: what each axis is
         "joule_heating",
         "advection",
         "outlet_backflow",
+        "hold_flow",
     ),
 )
 @dataclass(frozen=True, eq=False)
 class Thermal:
-    """Heat capacity, conductivity, Boussinesq buoyancy and heating, as :class:`lmhdx.thermal.ThermalProblem`."""
+    """Heat capacity, conductivity, Boussinesq buoyancy and heating, as :class:`lmhdx.thermal.ThermalProblem`;
+    ``hold_flow`` carries the heat by the start's velocity, held (see :func:`lmhdx.thermal.build_thermal_step`)."""
 
     specific_heat: float
     thermal_conductivity: float
@@ -165,6 +167,7 @@ class Thermal:
     outlet_backflow: str = "error"
     heat_source: float = 0.0
     initial_temperature: float = 0.0
+    hold_flow: bool = False
 
 
 @dataclass(frozen=True, eq=False)

@@ -1055,7 +1055,7 @@ path = "out/heated_duct_000020.npz"
 With `steps = 20`, that run ends on the same record, bit for bit, as the run of 40 steps.
 `mode = "resume"`, the default, refuses a record written for another problem or solver (the run's length
 excluded); `mode = "import"` starts another experiment from the record's state. Files of schema 1,
-which this page described before, convert with `lmhdx upgrade` (a held flow, `hold_flow`, is not carried over).
+which this page described before, convert with `lmhdx upgrade`.
 
 ## Measured cost
 
