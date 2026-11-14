@@ -404,12 +404,10 @@ _STEP = {  # a history series to the log's field
 }
 
 
-def rejection(series: dict, limits: dict, done: int, stride: int = 1) -> dict | None:
+def rejection(series: dict, limits: dict, done: int) -> dict | None:
     """Return the first sample of a chunk's ``series`` outside the run's ``limits``, its step and reasons, or None.
 
     Every sample is checked, so a violation inside a chunk is not hidden by a valid last one; a NaN fails.
-    Sample ``i`` is step ``done + (i + 1) * stride``, ``stride`` being the history stride: only the kept samples
-    are checked.
     """
     if not series:
         return None
@@ -429,7 +427,7 @@ def rejection(series: dict, limits: dict, done: int, stride: int = 1) -> dict | 
         n: float(np.asarray(series[n])[sample]) for n in ("advective_cfl", "buoyancy_courant") if n in series
     }
     return {
-        "step": done + (sample + 1) * stride,
+        "step": done + sample + 1,
         "reasons": [r for r, found in failing.items() if sample in found],
         **values,
     }

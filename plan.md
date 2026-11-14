@@ -1442,10 +1442,9 @@ blocked on the corrected momentum step.
 - `lmhdx.solve(problem, Solver(...), Output(...))` is the one entry. A schema 3 TOML file (`lmhdx.config`,
   `docs/reference/cli.md`) is a constructor call of `Problem`, `Solver`, `Output` and `Start`; `lmhdx upgrade`
   converts a schema 1 thermal file (its `hold_flow` is kept as a comment only).
-- The run is a loop of compiled chunks (`Output.every`). Every sample kept by the history stride must be
+- The run is a loop of compiled chunks (`Output.every`). Every step, whatever the history stride, must be
   finite, a valid outlet, within the scheme's Courant limit and any configured buoyancy limit. A rejected run
-  stops after the chunk holding its first failing sample, reports that sample's step (`done + (i + 1) *
-  history`), and writes the chunk's end state as `{name}_{step}_rejected.npz`, which imports but does not resume.
+  stops after the chunk holding its first failing step, reports that step, and writes the chunk's end state as `{name}_{step}_rejected.npz`, which imports but does not resume.
 - `output.write_vtk` is the one rectilinear (and polar) writer; `output.write_record` and `read_record` write and
   read the record of any state (the leaves of a dataclass, exactly), with the hash of the problem and solver
   (`docs/how_to/restart_and_output.md`). A `ThermalProblem` with solid walls goes to `solve` itself; its record

@@ -64,7 +64,7 @@ class Solver:
     ``dt`` and ``steps`` are the time step and count of an unsteady run (a steady solve takes ``dt``
     only as the pseudo-step of its preconditioner). ``tol`` is the relative residual of the steady
     solve (kernel default 1e-9; the pipe's 1e-11). ``history`` is the stride of the thermal
-    diagnostics (default every step) or of the Q2D frames (default none). ``precision`` is
+    diagnostics returned (default every step; every step is checked against the limits) or of the Q2D frames (default none). ``precision`` is
     ``"state"`` or ``"mixed"``, ``dtype`` ``"float64"`` or ``"float32"``. A heated run is rejected, at its
     start or at the first step past them, when its advective Courant number exceeds ``advective_cfl_limit``
     (default the transport scheme's own) or its buoyancy Courant number ``buoyancy_courant_limit`` (default
@@ -248,6 +248,7 @@ class _Run(NamedTuple):
     limits: dict | None = None
     check: Callable | None = None
     first: int = 0
+    stride: int = 1  # of the history returned; every step of a chunk is checked
 
 
 def _header(problem, method: str) -> dict:  # noqa: C901
@@ -317,15 +318,16 @@ def _drive(run: _Run, problem, solver: Solver, output: Output | None, record: St
     if output is not None:
         info = None if record is None else {"path": record.path, "mode": record.mode, "step": first}
         session = Session(output, identity, run.grid, solver.dt, first, steps, run.header, run.limits, info)
-    histories, rejected, stride = [], None, solver.history or 1
+    histories, rejected = [], None
     try:
         for done in range(first, first + steps, every):
             new, history = run.advance(state, every)
             concrete = not is_traced(new)
             series = _series(history) if concrete else {}
-            if run.limits and (rejected := rejection(series, run.limits, done, stride)):
+            if run.limits and (rejected := rejection(series, run.limits, done)):
                 break
             state, done = new, done + every
+            history = jax.tree.map(lambda a: a[run.stride - 1 :: run.stride], history)
             histories[:] = [history] if output is not None else [*histories, history]
             if session:
                 session.accept(state, run.fields(state), series, done)
@@ -510,11 +512,9 @@ def _heated(heat_problem, subject, solver: Solver, start, temperature, source, o
                 heat_problem, state, heat, divergence_tolerance=solver.divergence_tolerance, **bounds
             )
 
-    thermal_step, stride = build_thermal_step(heat_problem, dtype=jnp.result_type(float)), solver.history or 1
-    chunk = jax.jit(
-        lambda s, steps: advance_thermal(
-            thermal_step, s, heat, steps, checkpoint=solver.checkpoint, diagnostics=stride
-        ),
+    thermal_step = build_thermal_step(heat_problem, dtype=jnp.result_type(float))
+    chunk = jax.jit(  # every step's diagnostics, so that each is checked; _drive keeps every history-th
+        lambda s, steps: advance_thermal(thermal_step, s, heat, steps, checkpoint=solver.checkpoint),
         static_argnums=1,
     )
 
@@ -530,7 +530,9 @@ def _heated(heat_problem, subject, solver: Solver, start, temperature, source, o
         return {"velocity": velocity, "temperature": s.temperature}
 
     first = round(float(state.time) / flow.dt) if not is_traced(state) else 0
-    run = _Run(state, chunk, fields, grid, _header(subject, "euler"), limits, check, first)
+    run = _Run(
+        state, chunk, fields, grid, _header(subject, "euler"), limits, check, first, solver.history or 1
+    )
     state, history, summary = _drive(run, subject, solver, output, record)
     return Solution(
         {"velocity": state.velocity, "temperature": state.temperature}, history=history, summary=summary
