@@ -211,24 +211,31 @@ LMhdX's own uncertainty, on every run below. In the heated zone, buoyancy and th
 - Reported: Figure 8, the pressure, whose uniform-field slope is calibrated; Figures 11 and 38, one code's curves
   only.
 
-**Runs.**
-- M1L1: 48 cells across (6 in each layer, 6 per wall), 5 mm along the core, outlet at 1.5 m.
-- M2L1: every direction refined by about 4/3, outlet at 1.5 m.
-- M1L2: the outlet at 2.25 m.
+**Runs.** The time step keeps `dt/Δx` at 3 s/m on every mesh.
+- M1L1: 48 cells across (6 in each layer, 6 per wall), 5 mm along the core, outlet at 1.5 m, `dt` 0.015 s.
+- M2L1: 64 across (8, 8), 4 mm along, outlet at 1.5 m, `dt` 0.012 s.
+- M3L1: 84 across (10, 10), 3.33 mm along, outlet at 1.5 m, `dt` 0.01 s. This third mesh checks that the mesh
+  change from M1 to M2 does not understate the discretization error.
+- M1L2 and M2L2: the outlet at 2.25 m.
 - M1L1 at half the time step.
-- M1L1 with every solver tolerance 100 times looser.
+- M1L1 with every solver's stop 100 times looser: the conduction PCG (1e-11), the charge PCG through the walls
+  (1e-13) and the momentum stage's Schur PCG (1e-13).
 
-**Averaging.** After two flow-through times (2 L/u₀), average over one more. The statistical uncertainty is twice the
-spread of four sub-window means.
+**Averaging.** After two flow-through times (2 L/u₀, L the duct's length), average over one more, at every step. The
+statistical uncertainty is twice the spread of four sub-window means.
 
 **The rule, at each gated point.**
 - The excess is `band_misfit`: how far LMhdX lies outside the codes' spread, widened by the digitizing uncertainty in
   both axes.
-- LMhdX's uncertainty U is the largest of the mesh, outlet-length, time-step and tolerance changes at that point, and
-  of the statistical uncertainty.
+- LMhdX's uncertainty U is the largest of these at that point:
+  - the mesh changes, M1 to M2 and M2 to M3;
+  - the outlet-length change, on M1 and on M2;
+  - the time-step and tolerance changes;
+  - the statistical uncertainty.
 - A point passes if its excess is at most U, and U is at most half the band's local width. A larger U means the run
   is not resolved enough to gate there.
-- The gate holds if every gated point passes on M1L1, M2L1 and M1L2. A failure is recorded, not dropped.
+- The gate holds if every gated point passes on M1L1, M2L1, M3L1, M1L2 and M2L2. A failure is recorded, not
+  dropped.
 
 **Diagnostics expected every step.**
 - The heat ledger within 1e-9 of its largest term.
@@ -244,7 +251,8 @@ spread of four sub-window means.
   - M2 (64 across, 4 mm along; 3.56 million cells): 0.093 s a step, peak 1.0 GiB.
 - For comparison, an RTX 3060 Laptop took 0.53 s a step at 850,000 cells.
 - Three flow-through times (300 s) take 20,000 steps on M1 at 0.015 s (about 13 minutes) and 25,000 on M2 at
-  0.012 s (about 40 minutes). The five runs take about 2 GPU hours, half a charged node-hour in the shared QOS.
+  0.012 s (about 40 minutes). M3 (about 7 million cells) runs 30,000 steps at 0.01 s. The seven runs take about
+  5 GPU hours, a little over a charged node-hour in the shared QOS.
 - The time step keeps the advective Courant number under 0.5. In the first 8 s at 0.02 s it rose from 0.25 to
   0.32 as the jets formed.
 
