@@ -26,6 +26,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from lmhdx import enable_x64
+from lmhdx.axial import axial_faces, open_duct
 from lmhdx.core3d import ChannelProblem, SolidWall, zero_velocity
 from lmhdx.grid import (
     CENTER,
@@ -54,6 +55,7 @@ __all__ = [
     "REFERENCES_CASE2",
     "SPEC",
     "band_misfit",
+    "case1",
     "developed_gradient",
     "developed_section",
     "field",
@@ -484,6 +486,103 @@ def write_heated_zone(
     path = directory / "heated_zone.json"
     path.write_text(json.dumps(record, indent=1, allow_nan=False) + "\n")
     return path
+
+
+# Step 5.4e: Case 1 itself, gated (ADR 0009 D35): the fringe, steel walls that carry current and heat, inertia and
+# buoyancy, the flow evolving through the open duct of step 5.4d.
+
+
+def case1(
+    *,
+    cells: int = 48,
+    cells_in_layer: int = 6,
+    wall_cells: int = 6,
+    spacing: float = 0.005,
+    span: tuple[float, float] = (-1.5, 1.5),
+    core: tuple[float, float] = (-1.0, 1.0),
+    dt: float = 0.01,
+    record: dict | None = None,
+) -> tuple:
+    """Step 5.4e's coupled problem and its start: Case 1's full duct in SI units, temperatures in deg C.
+
+    The field is eq. 1's, along ``y``. Each steel wall is ``wall_cells`` equal cells that carry current at the
+    pinned conductivity ratio and conduct and store heat, insulated outside. The flow evolves (plan step 5.4d) with
+    limited momentum transport and buoyancy, from the inlet's developed profile at ``u0`` carried along the duct.
+    The heat is carried by van Leer transport; the PbLi enters at 300 C and leaves with no conductive flux, and the
+    outer bottom surface takes ``q''`` over ``|x| <= 0.3`` m and its full outer width. The axial mesh has
+    ``spacing`` over ``core`` and grows into the buffers out to ``span``. No Joule heat. Returns the thermal problem
+    and its start.
+    """
+    enable_x64()
+    record = record or spec()
+    geometry, case, heating = record["geometry"], record["cases"]["case1"], record["heating"]
+    pbli, steel = pinned_pbli(record), record["properties"]["steel"]
+    a, t_w = geometry["half_width_m"], geometry["wall_thickness_m"]
+    u0, q, ha = case["mean_velocity_m_per_s"], case["heat_flux_W_per_m2"], case["hartmann"]
+    layers = {"cells_in_layer": cells_in_layer, "max_ratio": None}
+    across = a * wall_resolving_faces(cells, -1.0, 1.0, layer_thickness=1.0 / ha, **layers)
+    along = a * wall_resolving_faces(cells, -1.0, 1.0, layer_thickness=1.0 / np.sqrt(ha), **layers)
+    edges = axial_faces(*span, core, spacing)
+    if not all(np.any(np.isclose(edges, end)) for end in (heating["x_min_m"], heating["x_max_m"])):
+        raise ValueError("the heated zone's ends must fall on faces of the axial mesh")
+    grid = Grid(edges, across, along)
+    rho, k, sigma = (
+        pbli["density_kg_per_m3"],
+        pbli["thermal_conductivity_W_per_m_K"],
+        pbli["electrical_conductivity_S_per_m"],
+    )
+    k_w = steel["thermal_conductivity_W_per_m_K"]
+    wall = SolidWall(
+        t_w,
+        wall_cells,
+        k_w,
+        steel["density_kg_per_m3"] * steel["heat_capacity_J_per_kg_K"],
+        steel["conductivity_ratio_pinned"] * sigma,
+    )
+    walls = ((None, None), (wall, wall), (wall, wall))
+    base = ChannelProblem(
+        grid,
+        (BoundaryCondition(PERIODIC), _WALL, _WALL),
+        density=rho,
+        viscosity=pbli["dynamic_viscosity_Pa_s"] / rho,
+        conductivity=sigma,
+        magnetic_field=(
+            0.0,
+            field(np.asarray(grid.centers[0]), record)[:, None, None] * np.ones(grid.shape),
+            0.0,
+        ),
+        dt=dt,
+        advection="limited",
+        solid_walls=walls,
+    )
+    flow = open_duct(base, u0 * (2.0 * a) ** 2)
+    x = np.asarray(grid.centers[0])
+    heated = (x > heating["x_min_m"]) & (x < heating["x_max_m"])
+    outer = np.where(heated, -q, 0.0)[:, None] * np.ones(
+        grid.shape[1] + 2 * wall_cells
+    )  # into the bottom wall
+    t_in = heating["inlet_temperature_C"]
+    conditions = (
+        thermal_boundary("temperature", t_in, upper_kind="heat_flux", conductivity=k),
+        thermal_boundary("heat_flux", conductivity=k_w),
+        thermal_boundary("heat_flux", outer, 0.0, conductivity=k_w),
+    )
+    thermal = ThermalProblem(
+        flow,
+        conditions,
+        pbli["heat_capacity_J_per_kg_K"],
+        k,
+        heating["reference_temperature_C"],
+        joule_heating=False,
+        expansion_coefficient=pbli["expansion_coefficient_per_K"],
+        gravity=(0.0, 0.0, -record["gravity"]["acceleration_m_per_s2"]),
+        advection="van_leer",
+        walls=walls,
+    )
+    rest = zero_velocity(flow)
+    inlet = jnp.asarray(flow.conditions[0].lower)
+    velocity = (rest[0].replace_data(jnp.broadcast_to(inlet, rest[0].shape)), *rest[1:])
+    return thermal, initial_thermal_state(thermal, t_in, velocity)
 
 
 def main() -> None:
