@@ -468,12 +468,14 @@ def _thermal(problem: Problem, solver: Solver, start, output, record) -> Solutio
     thermal = problem.thermal
     found = _heated(
         thermal_kernel(problem, kernel), problem, solver, start, thermal.initial_temperature,
-        thermal.heat_source, output, record,
+        thermal.heat_source, output, record, hold_flow=thermal.hold_flow,
     )  # fmt: skip
     return hold_walls(found, walls)
 
 
-def _heated(heat_problem, subject, solver: Solver, start, temperature, source, output, record) -> Solution:
+def _heated(
+    heat_problem, subject, solver: Solver, start, temperature, source, output, record, hold_flow=False
+) -> Solution:
     """Run a :class:`~lmhdx.thermal.ThermalProblem`, with solid walls or without, in chunks.
 
     ``subject`` is what a record is the record of (the :class:`Problem`, or the ``ThermalProblem`` itself), and the
@@ -512,7 +514,7 @@ def _heated(heat_problem, subject, solver: Solver, start, temperature, source, o
                 heat_problem, state, heat, divergence_tolerance=solver.divergence_tolerance, **bounds
             )
 
-    thermal_step = build_thermal_step(heat_problem, dtype=jnp.result_type(float))
+    thermal_step = build_thermal_step(heat_problem, dtype=jnp.result_type(float), hold_flow=hold_flow)
     chunk = jax.jit(  # every step's diagnostics, so that each is checked; _drive keeps every history-th
         lambda s, steps: advance_thermal(thermal_step, s, heat, steps, checkpoint=solver.checkpoint),
         static_argnums=1,

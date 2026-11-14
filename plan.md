@@ -1441,7 +1441,7 @@ blocked on the corrected momentum step.
 
 - `lmhdx.solve(problem, Solver(...), Output(...))` is the one entry. A schema 3 TOML file (`lmhdx.config`,
   `docs/reference/cli.md`) is a constructor call of `Problem`, `Solver`, `Output` and `Start`; `lmhdx upgrade`
-  converts a schema 1 thermal file (its `hold_flow` is kept as a comment only).
+  converts a schema 1 thermal file, `hold_flow` included (`Thermal(hold_flow=)`).
 - The run is a loop of compiled chunks (`Output.every`). Every step, whatever the history stride, must be
   finite, a valid outlet, within the scheme's Courant limit and any configured buoyancy limit. A rejected run
   stops after the chunk holding its first failing step, reports that step, and writes the chunk's end state as `{name}_{step}_rejected.npz`, which imports but does not resume.
