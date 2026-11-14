@@ -239,10 +239,14 @@ spread of four sub-window means.
   magnet's ends.
 
 **Budget.**
-- Measured: 0.53 s a step at 850,000 cells (48 across, 1 cm along) on an RTX 3060 Laptop in float64.
-- M1L1 is about 1.6 million cells, about 1 s a step; at a time step of 0.02 s, 15,000 steps take about 4 hours.
-- The five runs take about a day of that GPU.
-- M2 may not fit its 6 GB in float64. It needs a larger card or mixed precision.
+- Measured on one NERSC Perlmutter A100 (40 GB), in float64 with NVIDIA's JAX 26.10 container:
+  - M1 (48 across, 5 mm along; 1.62 million cells): 0.038 s a step, peak 0.5 GiB.
+  - M2 (64 across, 4 mm along; 3.56 million cells): 0.093 s a step, peak 1.0 GiB.
+- For comparison, an RTX 3060 Laptop took 0.53 s a step at 850,000 cells.
+- Three flow-through times (300 s) take 20,000 steps on M1 at 0.015 s (about 13 minutes) and 25,000 on M2 at
+  0.012 s (about 40 minutes). The five runs take about 2 GPU hours, half a charged node-hour in the shared QOS.
+- The time step keeps the advective Courant number under 0.5. In the first 8 s at 0.02 s it rose from 0.25 to
+  0.32 as the jets formed.
 
 **Exit (D12).**
 - A run whose heated zone is not statistically steady after four flow-through times is reported, not gated.
