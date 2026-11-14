@@ -185,6 +185,71 @@ The coarse run:
 - defines Nu over the heated stations only;
 - is compared with every figure listed here.
 
+## Step 5.4e: Case 1, gated — the campaign (draft, declared before the run)
+
+Plan step 5.4e gates Case 1 (ADR 0009 D35). This record states the hypothesis, the runs, the rule for each check,
+the budget and the exit before any production run (D12). It is a draft until agreed.
+
+**The problem.** `validation.mistrangelo.case1` builds the whole duct: eq. 1's fringe along `y`; steel walls that
+carry current at the pinned ratio and conduct and store heat (5.4b); the flow evolving through the open duct of 5.4d,
+with limited momentum transport and buoyancy; van Leer heat transport; the PbLi entering at 300 °C on the developed
+profile of the inlet section; the heated patch. The axial mesh is fine over |x| ≤ 1 m and grows into buffers out to
+±1.5 m, the long end of the codes' 2–3 m domains.
+
+**Checked so far** (coarse mesh, 12 cells across, 5 cm along): the ledger closes to 1e-12 and the throughflow holds at
+every station. In the Stokes limit the uniform field's flow at x = 0 tends to the developed section on its transverse
+mesh (jets 3.026 against 3.040 u₀, still closing). With inertia, the jets there are 8 % higher: the fringe's
+development, with the paper's "almost developed" jets at 0.935 a beyond the section's 0.917.
+
+**Hypothesis.** The time-averaged observables lie within the codes' band, widened by the digitizing uncertainty and by
+LMhdX's own uncertainty, on every run below. In the heated zone, buoyancy and the fringe move the temperatures from
+5.4c's held flow by a few tenths of a kelvin.
+
+**Gated and reported.**
+- Gated: Figures 6 and 7 (T and u on the axis), 9 and 10 (T(z)), 12 and 13 (u(z)), 15 and 16 (the potential),
+  17 (the bulk temperature), 18 (Nu) and 19 (the transverse energy).
+- Reported: Figure 8, the pressure, whose uniform-field slope is calibrated; Figures 11 and 38, one code's curves
+  only.
+
+**Runs.**
+- M1L1: 48 cells across (6 in each layer, 6 per wall), 5 mm along the core, outlet at 1.5 m.
+- M2L1: every direction refined by about 4/3, outlet at 1.5 m.
+- M1L2: the outlet at 2.25 m.
+- M1L1 at half the time step.
+- M1L1 with every solver tolerance 100 times looser.
+
+**Averaging.** After two flow-through times (2 L/u₀), average over one more. The statistical uncertainty is twice the
+spread of four sub-window means.
+
+**The rule, at each gated point.**
+- The excess is `band_misfit`: how far LMhdX lies outside the codes' spread, widened by the digitizing uncertainty in
+  both axes.
+- LMhdX's uncertainty U is the largest of the mesh, outlet-length, time-step and tolerance changes at that point, and
+  of the statistical uncertainty.
+- A point passes if its excess is at most U, and U is at most half the band's local width. A larger U means the run
+  is not resolved enough to gate there.
+- The gate holds if every gated point passes on M1L1, M2L1 and M1L2. A failure is recorded, not dropped.
+
+**Diagnostics expected every step.**
+- The heat ledger within 1e-9 of its largest term.
+- Mass and charge at their solve floors.
+- The throughflow held at every station.
+- The advective Courant number at most 0.5.
+- No flow returning through the outlet. Case 1 is steady and laminar in the heated zone, and unsteady only at the
+  magnet's ends.
+
+**Budget.**
+- Measured: 0.53 s a step at 850,000 cells (48 across, 1 cm along) on an RTX 3060 Laptop in float64.
+- M1L1 is about 1.6 million cells, about 1 s a step; at a time step of 0.02 s, 15,000 steps take about 4 hours.
+- The five runs take about a day of that GPU.
+- M2 may not fit its 6 GB in float64. It needs a larger card or mixed precision.
+
+**Exit (D12).**
+- A run whose heated zone is not statistically steady after four flow-through times is reported, not gated.
+- A point that fails because of the outlet takes D37's fallback: one more doubling of the outlet region, within this
+  budget.
+- Otherwise Case 1 is reported as code-to-code agreement, with every failure shown. The band is not relaxed.
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
