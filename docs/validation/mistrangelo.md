@@ -386,10 +386,39 @@ uncertain to gate stays so, however M3 converges.
 - 5.4c's held flow had 0.41 K and 0.12 K, with offsets of −0.08 K and −0.05 K. So against OF_KIT, the wall's mean
   offset grows from −0.08 to −0.27 K: it runs cooler than in 5.4c.
 
-**Figures 8 and 11, reported, are not yet compared.** The runs averaged velocity and temperature only, not the
-pressure.
-- Figure 11 needs only the averaged temperature.
-- Figure 8 can come from each run's last state, which is steady to 3e-7 of the heat input.
+**Figure 8, reported: the pressure on the axis.** The runs averaged velocity and temperature, not the pressure.
+- *How it was recovered.* The momentum stage returns the pressure and the thermal step drops it. So the pressure is
+  the stage's for one more step from each run's last state (`case1_reported.py`, beside the record).
+  - That step moved the velocity by at most 5e-14 m/s, against a peak of 0.086 m/s.
+  - At a steady state the stage's pressure is the steady pressure, `G p / ρ = R − λ u`, whatever the step.
+- *How it is compared.* The paper removes some codes' pressure offsets (p. 14). So `case1_reported` adds the one
+  offset that best fits the band.
+- *The offset.* It is small against the 790 Pa drop: +2.3, +1.4 and +0.9 Pa on M1, M2 and M3, and −0.2 and
+  −1.2 Pa with the outlet at 2.25 m.
+- *Against the band.* After the offset, every point on every run lies within the band widened by the digitizing
+  uncertainty, and 52–54 % lie inside the band as drawn.
+- *The drop.* Over the band's span (x = −1.49 to 1.40 m) the drop is 789.3, 791.0 and 791.8 Pa on M1, M2 and M3,
+  against the band's 789.9 Pa: within 0.25 %. The outlet's length and the time step leave it unchanged.
+- The core's slope is calibrated, since the wall's ratio is fitted to the printed gradient. So the figure is
+  reported, not gated.
+
+**Figure 11, reported: OF_KIT's temperatures across the duct at five stations.**
+
+| Station | Largest difference, M1 / M2 / M3 | Where (M3) | Mean offset, M3 | Within the digitizing 0.156 K, M3 |
+|:--|--:|:--|--:|--:|
+| x = 0 | 0.25 / 0.21 / 0.19 K | the heated interface, z = −23.0 mm | −0.04 K | 99 % |
+| x = 0.15 m | 0.24 / 0.19 / 0.17 K | z = −22.3 mm | −0.04 K | 99 % |
+| x = 0.3 m | 0.34 / 0.25 / 0.20 K | the heated interface | −0.03 K | 98 % |
+| x = 0.6 m | 0.07 / 0.06 / 0.06 K | z = +6.9 mm | 0.00 K | 100 % |
+| x = 1 m | 0.28 / 0.29 / 0.30 K | z = −10.2 mm | +0.05 K | 25 % |
+
+- The largest differences sit at the heated interface and shrink with the mesh.
+- At x = 1 m, the magnet's exit, LMhdX stays within 0.30 K but lies mostly just outside the digitizing uncertainty.
+- *Excluded at x = 0.15 m:* two adjacent digitized points at z = −13.4 mm.
+  - OF_KIT's trace there jumps 2–4 K onto the x = 0.3 and 0.6 m curves, which cross it at 315.8 K, and comes back
+    within 0.4 mm.
+  - LMhdX's profile is smooth through them, the same on all three meshes. With them, the largest difference is
+    4.0 K and the mean −0.10 K.
 
 **The hypothesis.**
 - *The observables lie in the widened band on every run:* not met. Five figures miss, as above.
@@ -406,10 +435,12 @@ pressure.
 - each run's arguments and metadata;
 - its diagnostics every simulated second;
 - its observables, with the four sub-windows;
+- its reported figures (8, 11 and 38), with the pressure step's velocity change;
 - the gate.
 
-Its SHA-256 is `95b28fcfff9ef98736b906b04c5226151a27f5bd0cf2a0973fb1b5931b152a02`. It goes to the research-assets
-release with this step's pull request (D38). The averaged fields, 2.5 GB, are kept outside the repository.
+Its SHA-256 is `a5964eef19a404c3f08ed39e274766199f3a720543155c11e71e6c961c1618d5`. It goes to the research-assets
+release with this step's pull request (D38), with `case1_reported.py`. The averaged fields (2.5 GB) and the
+recovered pressures are kept outside the repository.
 
 ## Sources
 
