@@ -589,6 +589,7 @@ def case1(
 
 
 CASE1_GATED = (6, 7, 9, 10, 12, 13, 15, 16, 17, 18, 19)  # the campaign record's gated figures (ADR 0009 D35)
+CASE1_STATIONS = ("0", "0.15", "0.3", "0.6", "1")  # Fig. 11's stations, x in metres, as its curves are keyed
 
 
 def case1_observables(thermal, fields: dict, record: dict | None = None) -> dict:
@@ -605,6 +606,8 @@ def case1_observables(thermal, fields: dict, record: dict | None = None) -> dict
     - Fig. 16: the potential against ``z`` at ``x = 0``, in the fluid and on its two interfaces.
     - Figs. 17, 18 and 38: the bulk temperature (eq. 6), Nu (eq. 7, over the heated stations only) and ``T_w``.
     - Fig. 19: ``E_t`` (eq. 8), ``int(v^2 + w^2 dA) / (A u0^2)``.
+    - Fig. 11: ``T`` against ``z`` at OF_KIT's five stations, keyed ``"11 x=0"`` to ``"11 x=1"``.
+    - Fig. 8: the pressure on the axis against ``x``, in pascals, when ``fields`` holds ``p`` on the flow's cells.
     """
     record = record or spec()
     a, q = record["geometry"]["half_width_m"], record["cases"]["case1"]["heat_flux_W_per_m2"]
@@ -618,8 +621,11 @@ def case1_observables(thermal, fields: dict, record: dict | None = None) -> dict
     out = {6: (xc, _midplane(_midplane(fluid, y, axis=1), z, axis=1))}
     out[7] = (xf, _midplane(_midplane(u, y, axis=1), z, axis=1))
     middle = _midplane(temperature, ty, axis=1)
-    for number, at in ((9, -0.3), (10, 0.0)):
+    stations = ((9, -0.3), (10, 0.0)) + tuple((f"11 x={s}", float(s)) for s in CASE1_STATIONS)
+    for number, at in stations:
         out[number] = (tz, np.array([np.interp(at, xc, middle[:, j]) for j in range(tz.size)]))
+    if "p" in fields:
+        out[8] = (xc, _midplane(_midplane(np.asarray(fields["p"]), y, axis=1), z, axis=1))
     stream = _midplane(u, y, axis=1)
     for number, at in ((12, -0.3), (13, 0.0)):
         out[number] = (z, np.array([np.interp(at, xf, stream[:, j]) for j in range(z.size)]))
@@ -662,6 +668,55 @@ def _on_band(curve, figure: dict) -> tuple[np.ndarray, np.ndarray]:
     x = np.asarray(figure["band"]["x"], float)
     x = x[(x >= at.min()) & (x <= at.max())]
     return x, np.interp(x, at, values)
+
+
+def case1_reported(observables: dict, references: Path = REFERENCES) -> dict:
+    """Case 1's reported figures, from :func:`case1_observables`, against their references; nothing is gated.
+
+    - Fig. 8: the paper removes some codes' pressure offsets (p. 14), so the pressure meets the band after the one
+      offset that best fits the band's middle. Reported: the offset, the shares inside the band as drawn and passing
+      :func:`band_misfit`, the largest excess and where, and the drop over the band's span against the band's.
+    - Figs. 11 and 38, OF_KIT's curves: the largest difference, where, and the mean offset. Fig. 38's are over the
+      heated stations, with the largest also for ``|x| < 0.28`` m, away from the patch's edges.
+    """
+    figures = {entry["figure"]: entry for entry in json.loads(Path(references).read_text())["figures"]}
+    result = {}
+    if 8 in observables:
+        x, ours = _on_band(observables[8], figures[8])
+        band = {key: np.asarray(value, float) for key, value in figures[8]["band"].items()}
+        lower, upper = (np.interp(x, band["x"], band[side]) for side in ("lower", "upper"))
+        shifted = ours + np.mean(0.5 * (lower + upper) - ours)
+        excess = np.array([band_misfit(xi, yi, figures[8]) for xi, yi in zip(x, shifted)])
+        result["8"] = {
+            "points": int(x.size),
+            "offset": float(shifted[0] - ours[0]),
+            "inside": float(np.mean((shifted >= lower) & (shifted <= upper))),
+            "passing": float(np.mean(excess == 0.0)),
+            "largest_excess": float(excess.max()),
+            "where_largest": float(x[np.argmax(excess)]),
+            "drop": float(ours[0] - ours[-1]),
+            "band_drop": float(0.5 * (lower[0] + upper[0] - lower[-1] - upper[-1])),
+        }
+    curves = [(f"11 x={s}", 11, f"x={s}", None) for s in CASE1_STATIONS]
+    curves += [(f"38 {name}", 38, f"{name} case1", 0.3) for name in ("T_w", "T_b")]
+    for key, number, name, half in curves:
+        cx, cy = (np.asarray(figures[number]["curves"][name][k], float) for k in ("x", "y"))
+        at, values = (np.asarray(c, float) for c in observables[key])
+        finite = np.isfinite(values)
+        keep = (cx >= at[finite].min()) & (cx <= at[finite].max())
+        if half is not None:
+            keep &= np.abs(cx) <= half
+        where = cx[keep]
+        difference = np.interp(where, at[finite], values[finite]) - cy[keep]
+        result[key] = {
+            "points": int(keep.sum()),
+            "largest_difference": float(np.max(np.abs(difference))),
+            "where_largest": float(where[np.argmax(np.abs(difference))]),
+            "mean_offset": float(np.mean(difference)),
+        }
+        if half is not None:
+            result[key]["largest_away_from_edges"] = float(np.max(np.abs(difference[np.abs(where) < 0.28])))
+    return result
 
 
 def case1_gate(runs: dict, references: Path = REFERENCES) -> dict:
