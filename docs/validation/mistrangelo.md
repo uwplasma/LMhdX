@@ -442,6 +442,20 @@ Its SHA-256 is `a5964eef19a404c3f08ed39e274766199f3a720543155c11e71e6c961c1618d5
 release with this step's pull request (D38), with `case1_reported.py`. The averaged fields (2.5 GB) and the
 recovered pressures are kept outside the repository.
 
+`tests/test_steady.py` checks the functions that made these results in about 20 s. On 16 cells across, 2 per
+wall and 0.05 m along the core:
+- a mesh without faces at the heated ends is refused;
+- three steps take 1200 W in and pass u0 out, with the ledger closed and no return flow;
+- every observable of a known flow, the inlet's profile all along with T and p linear, is as defined.
+
+Without a solve, on curves made from the references:
+- the rule holds every figure at the band's middle;
+- it leaves unresolved a point the M1 runs move, however M2 and M3 agree;
+- it fails a converged miss on every run, and takes U from the statistics when they set it;
+- it gates only the points every run covers, and measures U in decades on a log axis;
+- Figure 8's offset takes out a constant;
+- Figures 11 and 38 report a constant difference as it is.
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
