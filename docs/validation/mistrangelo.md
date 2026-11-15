@@ -345,11 +345,14 @@ figure can hold with fewer points inside the band as drawn.
   - The −z side passes.
   - One flank point (z = 22.9 mm) is too uncertain to gate: the M1-to-M2 change is 0.85 mm/s, above the 0.61 mm/s
     half-width. The M2-to-M3 change is 0.28 mm/s.
-- **Figure 18.** At the first heated point, x = −0.2965 m, Nu converges to 23.1 on M2 and M3. The band narrows to a
-  single value there, 19.4, so the miss is 3.5.
+- **Figure 18.** No point fails. The first two heated points, at the heater's leading edge, are too uncertain to
+  gate.
+  - At x = −0.2965 m, Nu is 22.7, 23.1 and 23.1 from M1 to M3. The band narrows to a single value there, 19.4, so its
+    widened half-width is the digitizing 0.09. The M1-to-M2 change, 0.39, exceeds it.
+  - M2 and M3 agree there to 0.01, so the difference from the band, 3.5 beyond it, is converged.
   - 5.4c's held flow missed there by 3.3, so neither buoyancy nor the fringe makes it.
-  - At the next point, x = −0.2956 m, M3 moves toward the band (21.2, 21.0 and 20.5 from M1 to M3). That M2-to-M3
-    change, 0.57, exceeds the 0.47 half-width, so the point is too uncertain to gate.
+  - At the next point, x = −0.2956 m, M3 moves toward the band (21.2, 21.1 and 20.5 from M1 to M3). That M2-to-M3
+    change, 0.57, exceeds the 0.47 half-width.
 - **Figure 19.** Upstream of x = −0.964 m, E_t is converged but far below the band.
   - M2 and M3 agree to within 0.03 decades there.
   - LMhdX's E_t runs from 5e-17 at x = −1.25 m to 1e-7 at −0.964 m.
@@ -361,12 +364,13 @@ figure can hold with fewer points inside the band as drawn.
     single-valued band's digitizing half-width, 0.02 decades.
 
 **What the misses are.**
-- *Converged:*
+- *Converged, and failing:*
   - Figure 13's jet peak at x = 0;
-  - Figure 18's first heated point;
   - Figure 19 upstream of x = −0.964 m.
 
   These are differences from the codes, not resolution.
+- *Converged on M2 and M3, but too uncertain to gate:* Figure 18's first heated point. Its band is a single value,
+  so the M1-to-M2 change alone exceeds its digitizing half-width. The difference from the band, 3.5, is 5.4c's.
 - *Too uncertain to gate, though converging:*
   - Figure 9's three points;
   - the jets' flanks in Figures 12 and 13;
