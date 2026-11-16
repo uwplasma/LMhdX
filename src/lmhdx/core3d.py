@@ -1197,9 +1197,8 @@ def _advance_momentum(
         if problem.advection == "off"
         else momentum_advection(velocity, velocity_conditions, limited=problem.advection == "limited")
     )
-    if (
-        problem.open_circuit_axes
-    ):  # the zero-mean-current field leaves the mean of u_x undamped: implicitly too
+    # The zero-mean-current field leaves the mean of u_x undamped: implicitly too.
+    if problem.open_circuit_axes:
         undamped = _undamped_mean(inverse[0], implicit * dt * rates[0], velocity[0], velocity_conditions[0])
         inverse = (undamped, *inverse[1:])
     predicted, rate = [], []
