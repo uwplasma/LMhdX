@@ -1197,12 +1197,19 @@ def _advance_momentum(
         if problem.advection == "off"
         else momentum_advection(velocity, velocity_conditions, limited=problem.advection == "limited")
     )
+    if (
+        problem.open_circuit_axes
+    ):  # the zero-mean-current field leaves the mean of u_x undamped: implicitly too
+        undamped = _undamped_mean(inverse[0], implicit * dt * rates[0], velocity[0], velocity_conditions[0])
+        inverse = (undamped, *inverse[1:])
     predicted, rate = [], []
     for axis, field in enumerate(velocity):
         force = body[axis].data + problem.forcing[axis]
         if extra_force is not None:
             force = force + extra_force[axis].data
         damping = rates[axis] * field.data
+        if axis == 0 and problem.open_circuit_axes:
+            damping = damping - rates[0] * _face_mean(field.data, field, velocity_conditions[0])
         viscous_term = problem.viscosity * staggered_laplacian(field, velocity_conditions).data
         now = force / problem.density - (0.0 if transport is None else transport[axis].data) + damping
         now = now + (viscous_term if viscous is None else 0.0)
@@ -1254,6 +1261,31 @@ def _outlet_weight(problem: ChannelProblem, axis: int) -> np.ndarray:
     with jax.ensure_compile_time_eval():
         zero = Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid)
         return np.asarray(face_gradient(zero, axis, unit).data)[(slice(None),) * axis + (-1,)]
+
+
+def _face_mean(data, like: Field, condition: BoundaryCondition):
+    """The mean of ``data`` on ``like``'s faces normal to x, under the measure of :func:`face_inner_product`.
+
+    A solve leaves the wrap face of a periodic x at zero, as a prescribed entry: it is the first face's copy.
+    """
+    data = data.at[-1].set(data[0]) if condition.is_periodic else data
+    ones = like.replace_data(jnp.ones_like(like.data))
+    return face_inner_product(like.replace_data(data), ones, 0, condition) / face_inner_product(
+        ones, ones, 0, condition
+    )
+
+
+def _undamped_mean(inverse, rate, like: Field, condition: BoundaryCondition):
+    """``H^-1`` of ``H = H_0 - rate P`` by Sherman-Morrison, ``P`` the x-face mean: a Hartmann channel's u_x stage.
+
+    The mean is not damped (the uniform field of the zero-mean-current condition returns it), so it is taken
+    out of the implicit damping as it is out of the explicit one; RK3 at ``dt sigma B^2`` of 40 grows without it.
+    ``D H^-1 G`` is unchanged: ``H_0^-1 1`` is uniform along x, where a gradient has zero mean.
+    """
+    unit = inverse(jnp.ones_like(like.data))
+    unit = unit.at[-1].set(unit[0]) if condition.is_periodic else unit
+    gain = rate / (1.0 - rate * _face_mean(unit, like, condition))
+    return lambda f: (w := inverse(f)) + gain * _face_mean(w, like, condition) * unit
 
 
 @functools.lru_cache(maxsize=16)
