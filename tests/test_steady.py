@@ -2547,6 +2547,164 @@ def test_the_heated_zone_takes_the_specified_heat_and_flow_and_is_compared_with_
     assert all(np.isfinite(entry["mean_offset"]) and entry["points"] > 5 for entry in comparison.values())
 
 
+def test_case_1_takes_the_specified_heat_and_flow_and_gives_every_figure():
+    """Step 5.4e's Case 1 on 16 cells across, 2 per wall and 0.05 m along the core. A mesh without faces at the
+    heated ends is refused; the steel carries current at the pinned ratio; the start carries u0 through every section
+    at 300 C. Three steps take 1200 W in through the patch and pass u0 out with no return, the ledger closing. The
+    observables of a known flow, the inlet's profile all along with T = 305 + 2 x - 100 z (C, m) and p = 1000 - 400 x
+    (Pa), are as defined: T on the axis, at the stations and as the bulk (u is even in z); u the same everywhere along;
+    T_w between the cells either side and Nu finite only where heated; E_t zero; the potential odd in z, as the
+    flow's source is, interfaces included; and p on the axis. The reported comparisons take them."""
+    import json
+
+    from lmhdx.thermal import build_thermal_step
+    from validation import mistrangelo
+
+    record = mistrangelo.spec()
+    a, t_w = record["geometry"]["half_width_m"], record["geometry"]["wall_thickness_m"]
+    u0, q = record["cases"]["case1"]["mean_velocity_m_per_s"], record["cases"]["case1"]["heat_flux_W_per_m2"]
+    mesh = {"cells": 16, "cells_in_layer": 4, "wall_cells": 2}
+    with pytest.raises(ValueError, match="faces of the axial mesh"):
+        mistrangelo.case1(**mesh, spacing=0.08)  # x = 0.3 m is 16.25 cells from x = -1 m
+    thermal, start = mistrangelo.case1(**mesh, spacing=0.05, dt=0.05)
+    flow, wall = thermal.flow, thermal.walls[2][0]
+    assert thermal.thermal_grid.shape == (54, 20, 20) and (wall.thickness, wall.cells) == (t_w, 2)
+    ratio = record["properties"]["steel"]["conductivity_ratio_pinned"]
+    assert wall.electrical_conductivity == pytest.approx(ratio * float(flow.conductivity), rel=1e-15)
+    areas = np.outer(np.diff(np.asarray(flow.grid.faces[1])), np.diff(np.asarray(flow.grid.faces[2])))
+    profile = np.asarray(start.velocity[0].data)
+    assert np.sum(profile * areas, axis=(1, 2)) == pytest.approx(u0 * (2 * a) ** 2, rel=1e-12)
+    assert np.all(np.asarray(start.temperature.data) == 300.0)
+    step = jax.jit(build_thermal_step(thermal, dtype=jnp.float64))
+    heat, state = Field(jnp.zeros(thermal.thermal_grid.shape), (CENTER,) * 3, thermal.thermal_grid), start
+    ledger = ("storage_rate", "conductive_heat_out", "advective_heat_out")
+    for _ in range(3):
+        state, last = step(state, heat)
+        scale = max(abs(float(getattr(last, k))) for k in ledger)
+        assert bool(last.finite) and abs(float(last.heat_balance_residual)) <= 1e-9 * scale
+    assert float(last.conductive_heat_out) == pytest.approx(-q * 0.6 * (2 * a + 2 * t_w), rel=1e-9)
+    assert float(last.outlet_outflow_rate) == pytest.approx(u0 * (2 * a) ** 2, rel=1e-9)
+    assert float(last.outlet_backflow_rate) == 0.0
+    xc = np.asarray(flow.grid.centers[0])
+    tx, ty, tz = np.meshgrid(*(np.asarray(c) for c in thermal.thermal_grid.centers), indexing="ij")
+    known = {"u": profile, "v": np.asarray(start.velocity[1].data), "w": np.asarray(start.velocity[2].data)}
+    p = np.broadcast_to(1000.0 - 400.0 * xc[:, None, None], flow.grid.shape)
+    known |= {"T": 305.0 + 2.0 * tx - 100.0 * tz, "p": p}
+    assert not np.any(known["v"]) and not np.any(known["w"])
+    observables = mistrangelo.case1_observables(thermal, known, record)
+    stations = {f"11 x={s}": float(s) for s in mistrangelo.CASE1_STATIONS}
+    assert set(observables) == {*mistrangelo.CASE1_GATED, 8, "38 T_w", "38 T_b", *stations}
+    assert observables[6][1] == pytest.approx(305.0 + 2.0 * xc, abs=1e-10)
+    assert observables[17][1] == pytest.approx(305.0 + 2.0 * xc, abs=1e-8)
+    for key, at in {9: -0.3, 10: 0.0, **stations}.items():
+        assert observables[key][1] == pytest.approx(305.0 + 2.0 * at - 100.0 * tz[0, 0], abs=1e-10), key
+    assert np.ptp(observables[7][1]) <= 1e-15 * u0 and observables[12][1] == pytest.approx(observables[13][1])
+    middle = mistrangelo._midplane(known["T"], ty[0, :, 0], axis=1)
+    first = thermal.fluid_block[2].start  # the interface z = -a: the wall's last cell and the fluid's first
+    beside = np.sort(middle[:, first - 1 : first + 1], axis=1)
+    assert np.all((beside[:, 0] < observables["38 T_w"][1]) & (observables["38 T_w"][1] < beside[:, 1]))
+    nu, heated = observables[18][1], np.abs(xc) < 0.3
+    assert np.all(nu[heated] > 0.0) and np.all(np.isnan(nu[~heated])) and np.all(observables[19][1] == 0.0)
+    across, phi = observables[16]
+    assert across == pytest.approx(-across[::-1], abs=1e-15) and across[0] == -a
+    assert phi == pytest.approx(-phi[::-1], abs=1e-9 * np.max(np.abs(phi)))
+    assert phi[0] == pytest.approx(np.interp(0.0, xc, observables[15][1]), rel=1e-12)
+    assert observables[8][1] == pytest.approx(1000.0 - 400.0 * xc, rel=1e-14)
+    reported = mistrangelo.case1_reported(observables)
+    assert set(reported) == {"8", "38 T_w", "38 T_b", *stations}
+    assert all(np.isfinite(value) for entry in reported.values() for value in entry.values())
+    band = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES.read_text())["figures"]}[8]["band"]["x"]
+    covered = np.asarray(band)[(np.asarray(band) >= xc[0]) & (np.asarray(band) <= xc[-1])]
+    assert reported["8"]["drop"] == pytest.approx(400.0 * (covered[-1] - covered[0]), rel=1e-12)
+
+
+def test_case_1_s_gate_and_reported_figures_follow_their_declared_rules():
+    """``case1_gate`` and ``case1_reported`` on curves made from the references, without a solve. Every run at the
+    band's middle (geometric on a log axis) holds every gated figure at all its points, U zero. On Fig. 6, at its
+    widest point: the M1 runs two widened half-widths off leave it unresolved, the mesh change setting U, however M2
+    and M3 agree; all seven runs that far off are a converged miss, failing on every main run; one of M3's
+    sub-windows a quarter off sets U at half, from the statistics, and the figure holds. A run covering half the band
+    gates only that half. On Fig. 19's log axis U is in decades. Fig. 8 meets its band after the best offset, which
+    takes out a constant, and one point off is its largest excess and its only failure. Figs. 11 and 38 report a
+    constant difference as it is, Fig. 38 over |x| <= 0.3 m with the patch's edges apart."""
+    import json
+
+    from validation import mistrangelo
+
+    figures = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES.read_text())["figures"]}
+
+    def middle(number):
+        x, lower, upper = (np.asarray(figures[number]["band"][k], float) for k in ("x", "lower", "upper"))
+        log = figures[number]["y_scale"] == "log10"
+        return x, np.sqrt(lower * upper) if log else 0.5 * (lower + upper), 0.5 * (upper - lower)
+
+    names = ("M1L1", "M2L1", "M3L1", "M1L2", "M2L2", "M1L1-dt2", "M1L1-tol")
+    centred = {number: middle(number)[:2] for number in mistrangelo.CASE1_GATED}
+
+    def runs(changed):
+        return {name: {"mean": centred | changed.get(name, {}), "subs": [centred | changed.get(name, {})] * 4}
+                for name in names}  # fmt: skip
+
+    held = mistrangelo.case1_gate(runs({}))
+    assert all(v["holds"] and v["unresolved"] == 0 and v["uncertainty_max"] == 0.0 for v in held.values())
+    assert all(held[n]["points"] == len(figures[n]["band"]["x"]) for n in mistrangelo.CASE1_GATED)
+    x, y, half = middle(6)
+    widened = half + figures[6]["uncertainty"]["y"]
+    k = int(np.argmax(widened))
+
+    def off(d):
+        return {6: (x, y + d * (np.arange(x.size) == k))}
+
+    m1 = [n for n in names if n.startswith("M1")]  # the M1 mesh's runs: outlet, time step and tolerance too
+    coarse = mistrangelo.case1_gate(runs({n: off(2 * widened[k]) for n in m1}))[6]
+    assert not coarse["holds"] and coarse["unresolved"] == 1 and coarse["dominant"] == "mesh M1-M2"
+    assert coarse["uncertainty_max"] == pytest.approx(2 * widened[k], rel=1e-12)
+    assert all(v["failed"] == 0 and v["passed"] == x.size - 1 for v in coarse["runs"].values())
+    missed = mistrangelo.case1_gate(runs({n: off(2 * widened[k]) for n in names}))[6]
+    assert not missed["holds"] and missed["unresolved"] == 0 and missed["uncertainty_max"] == 0.0
+    for v in missed["runs"].values():
+        assert v["failed"] == 1 and v["worst_at"] == x[k] and 0.0 < v["worst_excess"] <= widened[k]
+    noisy = runs({})
+    noisy["M3L1"]["subs"][3] = centred | off(0.25 * widened[k])
+    noisy = mistrangelo.case1_gate(noisy)[6]
+    assert noisy["holds"] and noisy["dominant"] == "statistics"
+    assert noisy["uncertainty_max"] == pytest.approx(0.5 * widened[k], rel=1e-12)
+    partial = mistrangelo.case1_gate(runs({"M1L1-tol": {6: (x[x >= 0.0], y[x >= 0.0])}}))[6]
+    assert partial["holds"] and partial["points"] == np.count_nonzero(x >= 0.0)
+    x19, y19 = centred[19]
+    decades = mistrangelo.case1_gate(runs({n: {19: (x19, y19 * 10**1e-3)} for n in m1}))
+    assert decades[19]["holds"] and decades[19]["uncertainty_max"] == pytest.approx(1e-3, rel=1e-9)
+
+    def curve(number, name):
+        return tuple(np.asarray(figures[number]["curves"][name][k], float) for k in ("x", "y"))
+
+    x8, y8, half8 = middle(8)
+    others = {key: curve(11, key[3:]) for key in (f"11 x={s}" for s in mistrangelo.CASE1_STATIONS)}
+    others |= {f"38 {name}": curve(38, f"{name} case1") for name in ("T_w", "T_b")}
+    exact = mistrangelo.case1_reported({8: (x8, y8)} | others)
+    assert (exact["8"]["offset"], exact["8"]["inside"], exact["8"]["passing"]) == (0.0, 1.0, 1.0)
+    assert exact["8"]["points"] == x8.size and exact["8"]["drop"] == pytest.approx(exact["8"]["band_drop"])
+    assert all(exact[key]["largest_difference"] == 0.0 for key in others)
+    bump = 4.0 * (half8.max() + figures[8]["uncertainty"]["y"])
+    raised = y8 + 50.0 + bump * (np.arange(x8.size) == x8.size // 2)
+    shifted = {key: (cx, cy + 0.1) for key, (cx, cy) in others.items()}
+    cx, cy = others["38 T_w"]
+    edge, beyond = np.flatnonzero((np.abs(cx) >= 0.28) & (np.abs(cx) <= 0.3))[0], np.argmax(np.abs(cx))
+    spikes = 1.0 * (np.arange(cx.size) == edge) + 5.0 * (np.arange(cx.size) == beyond)
+    shifted["38 T_w"] = (cx, cy + 0.1 + spikes)
+    report = mistrangelo.case1_reported({8: (x8, raised)} | shifted)
+    assert report["8"]["offset"] == pytest.approx(-50.0 - bump / x8.size, rel=1e-12)
+    assert report["8"]["passing"] == pytest.approx(1.0 - 1.0 / x8.size)
+    assert report["8"]["largest_excess"] > 0.0 and report["8"]["where_largest"] == x8[x8.size // 2]
+    for key, (at, _) in others.items():
+        assert report[key]["points"] == (np.count_nonzero(np.abs(at) <= 0.3) if key[:2] == "38" else at.size)
+        if key != "38 T_w":
+            assert report[key]["largest_difference"] == pytest.approx(0.1) == report[key]["mean_offset"]
+    entry = report["38 T_w"]
+    assert entry["largest_difference"] == pytest.approx(1.1) and entry["where_largest"] == cx[edge]
+    assert entry["largest_away_from_edges"] == pytest.approx(0.1)
+
+
 def _check_reference_record(record):
     """One digitized figure as shipped: its image hashed; both axes on their label lattice, three ticks at least and
     within 0.6 px (the worst measured is 0.54), the misfit and the digitizing uncertainty also in the axis's units;

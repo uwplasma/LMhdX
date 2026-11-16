@@ -113,6 +113,8 @@ _TEST_SHARDS = {
             "test_a_coupled_manufactured_open_duct_converges_at_its_order",
             "test_the_t_condition_snippet_runs_as_written",
             "test_the_heated_zone_takes_the_specified_heat_and_flow_and_is_compared_with_its_figures",
+            "test_case_1_takes_the_specified_heat_and_flow_and_gives_every_figure",
+            "test_case_1_s_gate_and_reported_figures_follow_their_declared_rules",
         )
     ),
     "fully_developed": ("tests/test_fully_developed.py",),
