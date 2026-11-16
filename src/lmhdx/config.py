@@ -329,7 +329,7 @@ def _from_thermal(root):
     problem |= {
         "grid": grid,
         "bc": bc,
-        "thermal": {k: v for k, v in heat.items() if k not in ("x", "y", "z", "hold_flow")},
+        "thermal": {k: v for k, v in heat.items() if k not in "xyz"},
     }
     problem |= (
         {"B": {"kind": "uniform", "value": list(flow["magnetic_field"])}} if "magnetic_field" in flow else {}
@@ -346,7 +346,7 @@ def _from_thermal(root):
     tree["output"] = {k: v for k, v in out.items() if v is not None}
     start = {"state": "steady"} if flow.get("initial_velocity") == "steady" else {}
     tree |= {"start": start | root.get("restart", {})} if start or "restart" in root else {}
-    return tree, {"thermal": {k: heat[k] for k in ["hold_flow"] if heat.get(k)}}
+    return tree, {}
 
 
 def _from_case(root):
@@ -387,7 +387,7 @@ def upgrade(path: str | Path) -> str:
     """The schema 3 text of a schema 1 (thermal) or schema 2 (case) file.
 
     Schema 1's ``[output]``, ``[run]`` limits and chunk, and ``[restart]`` become ``[output]``, ``[solver]`` and
-    ``[start]``. What schema 3 cannot hold (a held flow, a schema 2 file's output, logging and restart) heads
+    ``[start]``. What schema 3 cannot hold (a schema 2 file's output, logging and restart) heads
     the text as comments. A layered duct, a conducting wall and a tabulated or analytic field are refused.
     """
     root = _load_toml(path)

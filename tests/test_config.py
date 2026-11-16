@@ -15,6 +15,7 @@ import pytest
 
 import lmhdx
 from lmhdx.cases import _parse_boundary_value, _wall_conductivity_from_conductance_ratio, load_run_config
+from lmhdx.config import load
 from scripts.audit_architecture import (
     _checkout_size,
     architecture_budget_errors,
@@ -25,7 +26,10 @@ from scripts.audit_architecture import (
 )
 from scripts.run_full_test_suite import _ALL_TESTS, _test_environment, _tests_for_changes
 
-pytestmark = pytest.mark.unit
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.filterwarnings("ignore:.*retired in lmhdx 2.0:DeprecationWarning"),
+]
 
 
 def test_ci_tiers_cover_collection_without_overlapping_pr_work():
@@ -117,6 +121,7 @@ import jax.numpy as jnp
 import lmhdx
 from dataclasses import replace
 from lmhdx import axial, cases, q2d
+warnings.filterwarnings("ignore", message=".*retired in lmhdx 2.0")
 initial = jax.config.x64_enabled
 assert initial == EXPECTED
 assert jax.config.jax_default_matmul_precision is None
@@ -127,6 +132,7 @@ values = []
 for dtype in ("float32", "float64"):
     with warnings.catch_warnings(record=True) as recorded:
         warnings.simplefilter("always")
+        warnings.filterwarnings("ignore", message=".*retired in lmhdx 2.0")
         case = lmhdx.make_hartmann_case(ha=2, ny=8, nz=8, dtype=dtype)
     assert len(recorded) == int(dtype == "float64" and not initial)
     if recorded:
@@ -522,10 +528,8 @@ def test_load_run_config_rejects_invalid_inputs(tmp_path: Path, kwargs: dict[str
 def test_shipped_example_toml_files_parse():
     root = Path(__file__).resolve().parents[1]
 
-    for relative in ("examples/hartmann_case.toml",):
-        config = load_run_config(root / relative)
-        assert config.case.name
-        assert config.case.regions
+    for relative in ("examples/hartmann_case.toml", "examples/heated_duct.toml"):
+        assert load(root / relative).name
 
 
 def test_tutorials_map_to_executable_examples_or_numerical_tests():

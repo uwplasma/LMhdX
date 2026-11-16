@@ -1328,7 +1328,7 @@ def _constant(problem: ChannelProblem, build, *static) -> Field:
     return Field(jnp.broadcast_to(scalar, problem.grid.shape), (CENTER,) * 3, problem.grid)
 
 
-# Run the projection step as one compiled trajectory (formerly ``lmhdx.core3d``).
+# Run the projection step as one compiled trajectory.
 
 
 @jax.tree_util.register_dataclass

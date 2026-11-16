@@ -107,7 +107,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 import numpy as np
 
-from ._programs import host_array, host_scalar, is_traced
+from ._programs import host_array, host_scalar
 from .grid import CENTER, FACE, NEUMANN, BoundaryCondition, Field, Grid, pad
 
 __all__ = [
@@ -119,7 +119,6 @@ __all__ = [
     "axis_divergence",
     "cell_average",
     "cell_inner_product",
-    "charge_residual",
     "divergence",
     "face_average",
     "face_average_adjoint",
@@ -135,7 +134,6 @@ __all__ = [
     "momentum_advection",
     "staggered_laplacian",
     "thin_wall_current",
-    "thin_wall_flux",
     "wall_insulated",
 ]
 
@@ -586,7 +584,7 @@ def _roll(data: jnp.ndarray, axis: int, shift: int) -> jnp.ndarray:
     return jnp.roll(data, shift, axis=axis)
 
 
-# Conservative momentum transport on the staggered grid (formerly ``lmhdx.ops``).
+# Conservative momentum transport on the staggered grid.
 
 
 def momentum_advection(
@@ -770,7 +768,7 @@ def _lower_weight(widths: np.ndarray, condition: BoundaryCondition) -> np.ndarra
     return ghosted[1:] / (ghosted[:-1] + ghosted[1:])
 
 
-# Charge-conservative electric coupling on the staggered grid (formerly ``lmhdx.ops``).
+# Charge-conservative electric coupling on the staggered grid.
 
 # (normal axis, first transverse axis, second transverse axis) in cyclic order.
 _CYCLIC = ((0, 1, 2), (1, 2, 0), (2, 0, 1))
@@ -910,59 +908,6 @@ def _wall_half_width(grid: Grid, axis: int, cell: int) -> np.ndarray:
     return 0.5 * widths[cell : cell + 1 if cell >= 0 else None][:1]
 
 
-def thin_wall_flux(
-    wall_potential: Field,
-    axis: int | str,
-    condition: BoundaryCondition,
-    conductance: float | tuple[float, float],
-    tangential: tuple[BoundaryCondition, BoundaryCondition, BoundaryCondition],
-) -> Field:
-    """Return the current a thin conducting wall carries away along itself, on its two wall faces.
-
-    A wall of conductance :math:`\\sigma_w t_w` conducts along itself, with a
-    surface current :math:`\\mathbf K = -c\\nabla_\\tau\\varphi_w` for
-    :math:`c = \\sigma_w t_w/(\\sigma a)`. Charge conservation in the sheet,
-    :math:`\\nabla_\\tau\\cdot\\mathbf K = \\mathbf J\\cdot\\mathbf n`, makes
-    the wall-normal current :math:`-c\\nabla_\\tau^2\\varphi_w` -- Walker's thin-wall
-    condition, and the reason a Hunt duct carries a fraction of its current
-    through the wall instead of through the Hartmann layer. The sheet balance
-    holds where this equals :func:`thin_wall_current`.
-
-    ``wall_potential`` is read as in :func:`thin_wall_current`, and the five-point
-    surface Laplacian is taken on the sheet with the wall's own metric: on a polar
-    grid the azimuthal term of a radial wall divides by the wall radius, not by the
-    radius of the cells beside it. ``tangential`` closes the sheet's edges.
-    ``conductance`` is one value or a ``(lower, upper)`` pair, traced if it is under a derivative;
-    a literal zero conducts nothing.
-    """
-    grid = wall_potential.grid
-    index = grid.axis_index(axis)
-    offset = tuple(FACE if position == index else CENTER for position in range(3))
-    if wall_potential.offset != offset or wall_potential.shape != grid.face_shape(index):
-        raise ValueError(f"the wall potential must live on the faces normal to axis {index}")
-    pair = (conductance, conductance) if np.ndim(conductance) == 0 else conductance
-    flux = jnp.zeros(grid.face_shape(index), dtype=wall_potential.dtype)
-    for position, value, sign in ((0, pair[0], 1.0), (-1, pair[1], -1.0)):
-        if condition.is_periodic or (not is_traced(value) and not value):
-            continue
-        at = (slice(None),) * index + (slice(position, position + 1) if position == 0 else slice(-1, None),)
-        sheet, total = wall_potential.data[at], 0.0
-        for other in (other for other in range(3) if other != index):
-            # The azimuth of a polar grid is an angle: lengths along it scale with the sheet's radius.
-            scale = float(grid.faces[index][position]) if grid.is_polar and (index, other) == (0, 1) else 1.0
-            gradient = jnp.diff(pad(sheet, other, tangential[other]), axis=other) / _broadcast(
-                scale * np.asarray(face_distances(Grid(*grid.faces), other, tangential[other])),
-                other,
-                sheet.dtype,
-            )
-            total = total + jnp.diff(gradient, axis=other) / _broadcast(
-                scale * grid.widths[other], other, sheet.dtype
-            )
-        # The stored value points along the axis: outward on the upper wall, inward on the lower.
-        flux = flux.at[at].set(sign * value * total)
-    return Field(flux, offset, grid)
-
-
 def face_current(
     potential: Field,
     conductivity: Field,
@@ -982,11 +927,6 @@ def face_current(
     if electromotive_force.offset != gradient.offset or electromotive_force.shape != gradient.shape:
         raise ValueError("electromotive force must live on the same faces as the potential gradient")
     return gradient.replace_data(conductivity.data * (electromotive_force.data - gradient.data))
-
-
-def charge_residual(currents: tuple[Field, Field, Field]) -> Field:
-    """Return the net current leaving each cell per unit volume."""
-    return divergence(currents)
 
 
 def lorentz_force(

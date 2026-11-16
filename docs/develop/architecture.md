@@ -8,7 +8,7 @@ ChannelProblem ──> staggered core (grid, ops, poisson) ──> steady / axia
 PipeProblem ──> the developed pipe on its polar grid
 Q2DProblem ──> vorticity dynamics ──> SOLVAX periodic Poisson
 ThermalProblem ──> the core's stages + conduction ──> advance_thermal, developed_heat
-CaseSpec ── fully developed ──> the core (the older entry, removed in 2.0.0)
+CaseSpec ── fully developed ──> the core (the 1.x entry: it warns since H4.5, removed in 2.0.0)
 ```
 
 `lmhdx.problem`, `lmhdx.solver`, `lmhdx.fields`, `lmhdx.config` and

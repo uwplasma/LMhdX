@@ -492,7 +492,8 @@ def test_mixed_precision_helmholtz_reaches_the_float64_solve(true_float32_matmul
 @pytest.mark.parametrize("radial_condition", [WALL, FIXED], ids=["neumann", "dirichlet"])
 def test_mixed_precision_polar_poisson_reaches_the_float64_solve(true_float32_matmuls, radial_condition):
     """A pipe section resolving the Ha 1000 layer, singular under the insulating wall."""
-    from lmhdx.poisson import fast_diagonal_polar_poisson, pipe_grid
+    from lmhdx.pipe import pipe_grid
+    from lmhdx.poisson import fast_diagonal_polar_poisson
 
     grid, conditions = pipe_grid(48, 32, 1000.0), (radial_condition, WRAPPED, WRAPPED)
     rhs = _random_cells(grid, seed=41)
@@ -520,7 +521,8 @@ def test_mixed_precision_differentiates_like_float64(true_float32_matmuls):
 
 def test_mixed_precision_leaves_float32_states_alone():
     """A float32 right-hand side takes the plain float32 solve, bit for bit."""
-    from lmhdx.poisson import fast_diagonal_helmholtz, fast_diagonal_polar_poisson, pipe_grid
+    from lmhdx.pipe import pipe_grid
+    from lmhdx.poisson import fast_diagonal_helmholtz, fast_diagonal_polar_poisson
 
     grid, polar = _layer_grid(24, 0.05), pipe_grid(12, 8, 20.0)
     builders = [
