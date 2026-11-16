@@ -266,7 +266,7 @@ statistical uncertainty is twice the spread of four sub-window means.
 
 The seven runs above ran as drafted, before the record's review, on NERSC Perlmutter: one A100 each, float64,
 NVIDIA's JAX 26.10 container (image `20cf0aa0e1`), commit `1fc5507`. The observables and the gate are commit
-`a83d942`'s. The rule was applied as written.
+`a83d942`'s; the tag `mistrangelo2025-case1-runs` keeps both. The rule was applied as written.
 
 **The gate holds on six of the eleven gated figures: 6, 7, 10, 15, 16 and 17. It does not hold on 9, 12, 13, 18
 and 19.** By the exit, Case 1 is reported as code-to-code agreement, with every failure shown below. The band is not
