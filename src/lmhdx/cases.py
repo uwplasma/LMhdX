@@ -11,6 +11,7 @@ mesh a solution reports, tabulated imposed fields and TOML run configurations.
 
 from __future__ import annotations
 
+import functools
 import math
 import tomllib
 import warnings
@@ -30,6 +31,24 @@ if TYPE_CHECKING:
     from .steady import SteadySolution
 
 MU0 = 4.0e-7 * math.pi
+
+
+def retired(use: str):
+    """Mark an entry point of the 1.x API: calling it warns, and it is removed in lmhdx 2.0 (use ``use``)."""
+
+    def mark(function):
+        @functools.wraps(function)
+        def call(*args, **kwargs):
+            warnings.warn(
+                f"{function.__name__} is retired in lmhdx 2.0; use {use}",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return function(*args, **kwargs)
+
+        return call
+
+    return mark
 
 
 def _require_positive(name: str, value: float) -> None:
@@ -305,7 +324,7 @@ def nested_wall_layer_resolution_summary(
     }
 
 
-# The structured mesh a solution reports, and tabulated imposed fields (formerly ``lmhdx.cases``).
+# The structured mesh a solution reports, and tabulated imposed fields.
 
 
 @dataclass(frozen=True)
@@ -496,7 +515,7 @@ def _interpolate_tabulated_field(data: dict[str, np.ndarray], **coordinates: np.
     return np.asarray(sampled).reshape((*values[0].shape, 3))
 
 
-# The case schema, solution containers, run configuration and solver log (formerly ``lmhdx.cases``).
+# The case schema, solution containers, run configuration and solver log.
 
 RegionKind = Literal["fluid", "solid"]
 GeometryKind = Literal["rect_duct", "layered_duct"]
@@ -801,6 +820,7 @@ def _parse_boundaries(entries: list[dict[str, Any]]) -> tuple[BoundaryCondition,
     )
 
 
+@retired("lmhdx.config.load")
 def load_run_config(path: str | Path) -> RunConfig:
     input_path = Path(path).resolve()
     root = _load_toml(input_path)
@@ -960,6 +980,7 @@ def _fully_developed_solver(mode: str = "steady") -> SolverConfig:
     )
 
 
+@retired("lmhdx.duct(ha, cells)")
 def make_hartmann_case(
     ha: float = 20.0,
     width: float = 2.0,
@@ -993,6 +1014,7 @@ def make_hartmann_case(
     )
 
 
+@retired("lmhdx.duct(ha, cells)")
 def make_shercliff_case(
     ha: float = 20.0,
     width: float = 2.0,
@@ -1026,6 +1048,7 @@ def make_shercliff_case(
     )
 
 
+@retired("lmhdx.duct(ha, cells, wall_conductance=c)")
 def make_hunt_case(
     ha: float = 20.0,
     width: float = 2.0,
@@ -1126,6 +1149,11 @@ def solve(
 
         return solve_compiled(model)
     if isinstance(model, CaseSpec):
+        warnings.warn(
+            "solving a CaseSpec is retired in lmhdx 2.0; use lmhdx.solve(lmhdx.duct(...))",
+            DeprecationWarning,
+            stacklevel=3,
+        )
         from .fully_developed import solve_fully_developed, solve_fully_developed_transient
 
         if model.solver.mode == "transient":

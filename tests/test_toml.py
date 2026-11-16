@@ -24,7 +24,10 @@ from lmhdx.io import main
 from lmhdx.output import Output, Start
 from lmhdx.problem import channel, channel_kernel, fringe_duct, pipe, q2d
 
-pytestmark = pytest.mark.numerical  # the api shard runs in the regression tier
+pytestmark = [
+    pytest.mark.numerical,
+    pytest.mark.filterwarnings("ignore:.*retired in lmhdx 2.0:DeprecationWarning"),
+]  # the api shard runs in the regression tier
 
 ROOT = Path(__file__).resolve().parents[1]
 _SMALL = dict(
@@ -358,7 +361,6 @@ directory = "out"
 @pytest.mark.parametrize(
     ("text", "method"),
     (
-        ((ROOT / "examples/hartmann_case.toml").read_text(), "auto"),
         (_case(), "auto"),
         (_case("density = 2.0\nviscosity = 0.25", "[0.0, 3.0, 0.5]", 3.0, 1.0, 20, 36), "auto"),
         (_case(field="[0.0, 0.0, 0.0]"), "auto"),
@@ -385,7 +387,7 @@ def test_a_schema_2_file_upgrades_to_the_kernel_the_old_loader_built(tmp_path, t
 def test_the_upgraded_hartmann_example_solves_as_the_older_case_does(tmp_path):
     from lmhdx.fully_developed import solve_fully_developed_fields
 
-    old = ROOT / "examples/hartmann_case.toml"
+    old = _write(tmp_path, _case(), "old.toml")
     case = load(_write(tmp_path, upgrade(old)))
     velocity = lmhdx.solve(case).velocity[0].data
     expected = solve_fully_developed_fields(load_run_config(old).case)[0]
@@ -539,8 +541,6 @@ def test_files_that_are_not_run_configurations_are_refused_by_upgrade():
         "heated_duct.toml",
     } <= names
     for path in files:
-        if path.name == "hartmann_case.toml":
-            continue
         with pytest.raises(ValueError, match="not a run configuration"):
             upgrade(path)
     with pytest.raises(ValueError, match=r"schema 3 already"):
@@ -553,7 +553,7 @@ def test_upgrade_reports_a_malformed_old_file(tmp_path):
 
 
 def test_the_command_line_upgrades_and_runs_a_file(tmp_path, capsys):
-    old = ROOT / "examples/hartmann_case.toml"
+    old = _write(tmp_path, _case(), "old.toml")
     assert main(["upgrade", str(old)]) == 0
     assert capsys.readouterr().out == upgrade(old)
     path = _write(tmp_path, _BASE + "[solver]\ntol = 1e-7\n")

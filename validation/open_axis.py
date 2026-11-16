@@ -26,8 +26,8 @@ import numpy as np
 
 from lmhdx.axial import axial_faces, charge_balance, mass_balance, open_duct, pressure_drop, solve_open_duct
 from lmhdx.core3d import ChannelProblem, ImposedField, fringe_field
-from lmhdx.fully_developed import channel_flow_response
 from lmhdx.grid import PERIODIC, BoundaryCondition, Grid, uniform_faces, wall_resolving_faces
+from lmhdx.steady import channel_flow_response
 
 __all__ = ["ramp_excess"]
 

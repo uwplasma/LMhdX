@@ -104,6 +104,7 @@ validation/channel_turbulence
 
 reference/api
 reference/cli
+reference/migration
 reference/bibliography
 ```
 
@@ -123,4 +124,6 @@ adr/0007-rename-lmhdx
 adr/0008-thermal-first-stage
 adr/0009-magnetoconvection-benchmark
 adr/0010-high-re-and-api-2
+adr/0011-blanket-multiphysics-optimization
+adr/0012-one-implementation-per-concept
 ```

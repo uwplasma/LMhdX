@@ -179,7 +179,7 @@ import numpy as np
 
 import lmhdx
 from lmhdx.core3d import ChannelProblem, zero_velocity
-from lmhdx.fully_developed import channel_flow_rate
+from lmhdx.steady import channel_flow_rate
 from lmhdx.grid import CENTER, DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid
 from lmhdx.grid import uniform_faces, wall_resolving_faces
 from lmhdx.steady import solve_compiled

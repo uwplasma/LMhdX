@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from lmhdx._programs import is_traced
 from lmhdx.grid import (
     CENTER,
     DIRICHLET,
@@ -15,23 +16,25 @@ from lmhdx.grid import (
     Field,
     Grid,
     geometric_faces,
+    pad,
     tanh_faces,
     uniform_faces,
     wall_resolving_faces,
 )
 from lmhdx.ops import (
+    _broadcast,
     cell_average,
     cell_inner_product,
-    charge_residual,
+    divergence,
     face_average,
     face_average_adjoint,
     face_conductivity,
     face_current,
+    face_distances,
     face_electromotive_force,
     face_inner_product,
     lorentz_force,
     thin_wall_current,
-    thin_wall_flux,
     wall_insulated,
 )
 from lmhdx.pipe import pipe_grid
@@ -331,14 +334,14 @@ def test_the_anl_fringe_is_divergence_free_on_the_grid():
         fringe_field(pipe_grid(16, 24, 100.0))
 
 
-def test_a_divergence_free_current_leaves_no_charge_residual():
+def test_a_divergence_free_current_leaves_no_divergence():
     grid = STRETCHED
     currents = (
         _faces(grid, 0, lambda x, y, z: 2.0 * x),
         _faces(grid, 1, lambda x, y, z: -3.0 * y),
         _faces(grid, 2, lambda x, y, z: 1.0 * z),
     )
-    residual = np.asarray(charge_residual(currents).data)
+    residual = np.asarray(divergence(currents).data)
     assert np.max(np.abs(residual)) < 1e-12
 
 
@@ -357,7 +360,7 @@ def test_insulated_conduction_current_conserves_charge_when_the_potential_solves
     emfs = [face_electromotive_force(velocity, magnetic_field, axis, conditions) for axis in range(3)]
 
     # With uniform conductivity the potential equation is the plain Laplacian.
-    source = charge_residual(
+    source = divergence(
         tuple(
             conductivities[axis].replace_data(conductivities[axis].data * emfs[axis].data)
             for axis in range(3)
@@ -369,7 +372,7 @@ def test_insulated_conduction_current_conserves_charge_when_the_potential_solves
     currents = tuple(
         face_current(potential, conductivities[axis], emfs[axis], axis, conditions[axis]) for axis in range(3)
     )
-    residual = np.asarray(charge_residual(currents).data)
+    residual = np.asarray(divergence(currents).data)
     scale = float(np.max(np.abs(np.asarray(source.data)))) or 1.0
     assert np.max(np.abs(residual)) < 1e-12 * scale
 
@@ -442,6 +445,47 @@ def test_only_an_insulating_wall_is_closed_off():
     insulated = wall_insulated(flux, 1, WALL)
     assert float(jnp.max(jnp.abs(insulated.data[:, 0]))) == 0.0
     assert float(jnp.max(jnp.abs(insulated.data[:, 1:-1]))) == 1.0
+
+
+def thin_wall_flux(
+    wall_potential: Field,
+    axis: int | str,
+    condition: BoundaryCondition,
+    conductance: float | tuple[float, float],
+    tangential: tuple[BoundaryCondition, BoundaryCondition, BoundaryCondition],
+) -> Field:
+    """The current a thin wall carries along itself, ``-c`` times the surface Laplacian of the sheet's potential.
+
+    Walker's thin-wall condition on the two wall faces normal to ``axis``; the sheet balance holds where this
+    equals :func:`lmhdx.ops.thin_wall_current`. On a polar grid the azimuthal term of a radial wall divides
+    by the wall radius. ``conductance`` is one value or a ``(lower, upper)`` pair; a literal zero conducts nothing.
+    """
+    grid = wall_potential.grid
+    index = grid.axis_index(axis)
+    offset = tuple(FACE if position == index else CENTER for position in range(3))
+    if wall_potential.offset != offset or wall_potential.shape != grid.face_shape(index):
+        raise ValueError(f"the wall potential must live on the faces normal to axis {index}")
+    pair = (conductance, conductance) if np.ndim(conductance) == 0 else conductance
+    flux = jnp.zeros(grid.face_shape(index), dtype=wall_potential.dtype)
+    for position, value, sign in ((0, pair[0], 1.0), (-1, pair[1], -1.0)):
+        if condition.is_periodic or (not is_traced(value) and not value):
+            continue
+        at = (slice(None),) * index + (slice(position, position + 1) if position == 0 else slice(-1, None),)
+        sheet, total = wall_potential.data[at], 0.0
+        for other in (other for other in range(3) if other != index):
+            # The azimuth of a polar grid is an angle: lengths along it scale with the sheet's radius.
+            scale = float(grid.faces[index][position]) if grid.is_polar and (index, other) == (0, 1) else 1.0
+            gradient = jnp.diff(pad(sheet, other, tangential[other]), axis=other) / _broadcast(
+                scale * np.asarray(face_distances(Grid(*grid.faces), other, tangential[other])),
+                other,
+                sheet.dtype,
+            )
+            total = total + jnp.diff(gradient, axis=other) / _broadcast(
+                scale * grid.widths[other], other, sheet.dtype
+            )
+        # The stored value points along the axis: outward on the upper wall, inward on the lower.
+        flux = flux.at[at].set(sign * value * total)
+    return Field(flux, offset, grid)
 
 
 def _sheets(grid: Grid, axis: int, function) -> Field:

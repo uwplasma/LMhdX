@@ -383,7 +383,7 @@ def channel_kernel(problem: Problem, dt: float = 1.0, precision: str = "state", 
     if any(conditions[axis].is_periodic and peak[1 + (axis == 1)] for axis in (1, 2)):
         raise NotImplementedError(
             "a field across a periodic axis (a Hartmann channel) drives a net current along it; "
-            "the zero-mean-current condition arrives with plan step H2.5"
+            "the zero-mean-current condition arrives with plan step H2.3"
         )
     drive, traced = tuple(problem.forcing), is_traced(problem.forcing)
     if problem.flow_rate is not None and not traced and any(drive):

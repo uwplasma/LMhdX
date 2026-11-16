@@ -43,7 +43,6 @@ from lmhdx.grid import (  # noqa: E402
     uniform_faces,
     wall_resolving_faces,
 )
-from lmhdx.io import extract_midplane_profile  # noqa: E402
 from lmhdx.steady import solve_steady_state  # noqa: E402
 from lmhdx.thermal import (  # noqa: E402
     ThermalProblem,
@@ -141,20 +140,17 @@ def hunt_sweep(hartmann_numbers: tuple[float, ...] = (20.0, 100.0, 500.0, 1000.0
     """Hunt duct profiles versus Ha: side-layer jets and their Ha^-1/2 thickness."""
     profiles, maps, peaks = {}, {}, []
     for ha in hartmann_numbers:
-        solution = lmhdx.solve(lmhdx.make_hunt_case(ha=ha, ny=cells, nz=cells))
-        if not solution.converged:
-            raise RuntimeError(f"Hunt Ha={ha:g} ended with {solution.status}")
-        profile = extract_midplane_profile(solution, axis="z")
-        z, u = np.asarray(profile["z"]), np.asarray(profile["u"])
+        problem = lmhdx.duct(ha, cells, wall_conductance=0.05)
+        solution = lmhdx.solve(problem)
+        faces_y, faces_z = (np.asarray(f) for f in problem.grid.faces[1:])
+        y, z = 0.5 * (faces_y[1:] + faces_y[:-1]), 0.5 * (faces_z[1:] + faces_z[:-1])
+        field = np.asarray(solution.velocity[0].data[0])
+        u = field[cells // 2 - 1 : cells // 2 + 1].mean(axis=0)
         profiles[ha] = (z, u / (np.trapezoid(u, z) / (z[-1] - z[0])))
-        maps[ha] = (
-            np.asarray(solution.mesh.y_centers),
-            np.asarray(solution.mesh.z_centers),
-            np.asarray(solution.state.u),
-        )
+        maps[ha] = (y, z, field)
         half = len(u) // 2
         peaks.append((ha, 1.0 + z[np.argmax(u[:half])]))
-        print(f"hunt Ha={ha:g}: {solution.steps} steps, jet at wall distance {peaks[-1][1]:.4f}")
+        print(f"hunt Ha={ha:g}: jet at wall distance {peaks[-1][1]:.4f}")
 
     fig = plt.figure(figsize=(13, 4.2), constrained_layout=True)
     grid = fig.add_gridspec(1, 3, width_ratios=[1.35, 1.0, 0.9])

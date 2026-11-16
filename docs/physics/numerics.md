@@ -3,7 +3,7 @@
 LMhdX has one discretization for ducts. The staggered core (`lmhdx.grid`,
 `lmhdx.ops`, `lmhdx.core3d`, `lmhdx.steady`, `lmhdx.axial`) places velocity on
 faces and pressure and potential at cell centres; it solves periodic and open
-ducts, the pipe, and every fully developed `CaseSpec` (`lmhdx.fully_developed`):
+ducts, the pipe, and every fully developed `Problem`:
 thin or resolved conducting walls, wall stacks, varying and axial fields, odd
 meshes, and transient runs by implicit Euler. The cell-centred fully developed
 solver that served those cases until 1.7 was removed in step 4.6.
@@ -12,7 +12,7 @@ solver that served those cases until 1.7 was removed in step 4.6.
 
 At fixed field, materials and geometry the fully developed inductionless problem
 is linear in the drive, so the volumetric flow rate is $Q=Gf$ for a single
-response $G$ that one solve measures. `lmhdx.fully_developed` uses that directly: the drive
+response $G$ that one solve measures. `lmhdx.steady.channel_flow_response` uses that directly: the drive
 delivering a requested throughput is $f=Q_{\rm target}/G$ exactly, and its
 derivative is $df/dQ=1/G$.
 
@@ -196,8 +196,7 @@ cells, 2.6e-16 on a tanh mesh), and the cells take the average of their two
 faces.
 
 These modules supply geometry, operators, the scalar solve and the electric
-coupling. The fully developed cases of `lmhdx.cases` run on the same core,
-through `lmhdx.fully_developed`.
+coupling. A fully developed `Problem` runs on the same core.
 
 ## The projection step and its two stiffnesses
 
@@ -856,7 +855,7 @@ open pipe below solves them in the Stokes limit, which is where the
 interaction parameter is large ($N=10700$ under the magnet; the duct's
 inertial share at $N=1000$ is 0.4 %, see above). So row 6 is run on the ALEX pipe.
 
-`lmhdx.axial.fringe_pipe` and `solve_open_pipe` give the polar grid an inlet
+`validation/open_pipe.py` (`fringe_pipe` and `solve_open_pipe`) gives the polar grid an inlet
 and an outlet, the axial direction being the polar grid's third axis. The
 velocity is staggered, $u_r$ on radial faces, $u_\theta$ on azimuthal faces,
 $u_x$ on axial faces. The viscous operator is the Hessian of the discrete
@@ -917,7 +916,7 @@ therefore not met at its frozen station-wise tolerance**; it is met on the
 integrated excess and on the upstream gradient. Those numbers score the **area-mean** pressure of each section. A pressure tap
 reads the wall, and behind a fringe the pressure is not uniform across the
 section (the transverse differences of plan rows 24 and 27). Reading the same
-solutions at the wall (`lmhdx.pipe.wall_pressure_gradient`, the outermost cell,
+solutions at the wall (`validation/open_pipe.py`, `wall_pressure_gradient`, the outermost cell,
 all Ha 6600, $48\times64\times76$) gives weighted RMS / $L_\infty$ of
 2.43 / 5.08 for the section mean, 1.79 / 3.82 for the wall ring average,
 3.11 / 6.60 at the walls normal to the field ($\theta=0,\pi$) and

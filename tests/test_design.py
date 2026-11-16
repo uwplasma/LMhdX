@@ -11,25 +11,30 @@ import pytest
 import lmhdx
 from lmhdx.core3d import ChannelProblem, duct_problem, zero_velocity
 from lmhdx.fully_developed import (
+    drive_for_flow_rate,
+    fixed_flow_hydraulic_power,
+    fluid_cell_areas,
+    linear_flow_response,
+    volumetric_flow_rate,
+)
+from lmhdx.grid import CENTER, DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid, uniform_faces
+from lmhdx.steady import (
     DuctResponse,
     channel_cross_section_weights,
     channel_drive_for_flow_rate,
     channel_fixed_flow_hydraulic_power,
     channel_flow_rate,
     channel_flow_response,
-    drive_for_flow_rate,
-    fixed_flow_hydraulic_power,
-    fluid_cell_areas,
     hydraulic_power,
-    linear_flow_response,
     pressure_drop,
-    volumetric_flow_rate,
+    solve_steady_state,
 )
-from lmhdx.grid import CENTER, DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid, uniform_faces
-from lmhdx.steady import solve_steady_state
 from validation.shercliff import flow_rate
 
-pytestmark = pytest.mark.unit
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.filterwarnings("ignore:.*retired in lmhdx 2.0:DeprecationWarning"),
+]
 
 LENGTH = 2.5
 

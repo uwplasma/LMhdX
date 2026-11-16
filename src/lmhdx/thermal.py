@@ -67,6 +67,7 @@ import jax.numpy as jnp
 import numpy as np
 import solvax
 
+from .axial import _lift
 from .core3d import (
     ChannelProblem,
     _advance_momentum,
@@ -505,6 +506,29 @@ def _buoyancy(temperature: Field, problem: ThermalProblem) -> tuple[Field, Field
     return cell_force_to_faces(force, problem.flow.scalar_conditions, zero_walls=True)
 
 
+def _outlet_hydrostatic(buoyancy: tuple[Field, Field, Field], problem: ThermalProblem) -> jnp.ndarray:
+    """The outlet face's pressure at rest under the buoyancy of the last layer of cells (ADR 0009 D37).
+
+    ``grad p = f`` on that layer's transverse faces, integrated from its first cell along the first transverse
+    axis and then along each line of the second, with its area mean over the outlet zero: ``p = 0`` when the
+    outlet is at the reference temperature. Exact where the layer's face force is a discrete gradient, as a
+    temperature varying along gravity alone makes it.
+    """
+    flow = problem.flow
+    axis, grid = flow.open_axis, flow.grid
+    first, second = (other for other in range(3) if other != axis)
+    across = jnp.take(buoyancy[first].data, -1, axis=axis)  # faces of the first axis, cells of the second
+    up = jnp.take(buoyancy[second].data, -1, axis=axis)
+    gaps = [jnp.asarray(np.diff(np.asarray(grid.centers[a])), across.dtype) for a in (first, second)]
+    start = jnp.concatenate([jnp.zeros(1, across.dtype), jnp.cumsum(across[1:-1, 0] * gaps[0])])
+    lines = jnp.concatenate(
+        [jnp.zeros((up.shape[0], 1), up.dtype), jnp.cumsum(up[:, 1:-1] * gaps[1][None, :], axis=1)], axis=1
+    )
+    pressure = start[:, None] + lines
+    areas = jnp.asarray(grid.face_areas(axis)[-1], pressure.dtype)
+    return pressure - jnp.sum(areas * pressure) / jnp.sum(areas)
+
+
 class ThermalState(NamedTuple):
     """What a thermal step advances: the staggered velocity, the cell temperature and the time.
 
@@ -713,7 +737,11 @@ def _check_fields(problem: ThermalProblem, velocity, cells: list[tuple[Field, st
 
 
 def build_thermal_step(
-    problem: ThermalProblem, *, dtype: jnp.dtype | type | str, hold_flow: bool = False
+    problem: ThermalProblem,
+    *,
+    dtype: jnp.dtype | type | str,
+    hold_flow: bool = False,
+    force: Callable[[jnp.ndarray], tuple[Field, Field, Field]] | None = None,
 ) -> Callable[[ThermalState, Field], tuple[ThermalState, ThermalDiagnostics]]:
     """Factorize on the host and return the pure step ``(state, heat_source) -> (state, diagnostics)``.
 
@@ -730,9 +758,15 @@ def build_thermal_step(
     temperature takes its transport by the old velocity, then implicit conduction.
 
     ``hold_flow`` keeps the state's velocity, a steady flow the heat is carried by,
-    without buoyancy, and prepares no viscous inverses. An inflow-outflow duct
-    needs it, since the step does not advance such a flow: give it the physical
-    velocity of :func:`lmhdx.axial.solve_open_duct`. The step is marked for
+    without buoyancy, and prepares no viscous inverses: for an inflow-outflow duct,
+    the physical velocity of :func:`lmhdx.axial.solve_open_duct`. Without it such a
+    duct's flow evolves with the heat (plan step 5.4d, ADR 0009 D37) through the
+    stage :func:`lmhdx.axial.solve_open_duct` marches, its inlet profile carried as a
+    lift. With buoyancy its outlet holds the hydrostatic pressure of its own last
+    layer of cells (:func:`_outlet_hydrostatic`), not ``p = 0``, so a stratified
+    outlet at rest stays at rest; gravity along the open axis is refused. ``force(t)`` is a further force
+    density on the velocity faces of the flow's grid, evaluated at the state's time, as :func:`lmhdx.core3d.step`
+    takes it: a manufactured solution's source, say; a held flow refuses it. The step is marked for
     :func:`load_attribution`: ``hold_flow``, and ``affine``, true for a held flow
     and ``"upwind"`` or ``"off"`` transport, where the temperature is affine in the heat source.
 
@@ -754,12 +788,14 @@ def build_thermal_step(
         )
     flow = problem.flow
     _cartesian(problem)
-    if flow.open_axis is not None and not hold_flow:
-        raise ValueError(
-            "the flow of an inflow-outflow duct is held: pass hold_flow=True and its steady velocity"
-        )
-    if hold_flow and float(problem.expansion_coefficient) and any(problem.gravity):
+    buoyant = bool(float(problem.expansion_coefficient) and any(problem.gravity))
+    if hold_flow and buoyant:
         raise ValueError("a held flow takes no buoyancy")
+    if hold_flow and force is not None:
+        raise ValueError("a held flow takes no force")
+    if flow.open_axis is not None and buoyant and problem.gravity[flow.open_axis]:
+        raise ValueError("an inflow-outflow duct takes no gravity along its open axis")
+    inflow = None if hold_flow or flow.open_axis is None else with_inflow(_lift(flow), flow)
     pressure = flow.factorization()
     viscous = None if hold_flow else flow.viscous_factorizations()
     if flow.conducting_walls:
@@ -818,7 +854,24 @@ def build_thermal_step(
             body = face_lorentz_force(_lorentz_from_currents(currents, field, flow), flow)
             fluid = Field(temperature.data[block], _CELL, flow.grid) if walled else temperature
             buoyancy = _buoyancy(fluid, problem)
-            moved = _advance_momentum(velocity, body, flow, viscous, extra_force=buoyancy)[0]
+            outlet = None if buoyancy is None or inflow is None else _outlet_hydrostatic(buoyancy, problem)
+            extra = buoyancy
+            if force is not None:
+                pushed = force(state.time)
+                extra = (
+                    pushed
+                    if extra is None
+                    else tuple(b.replace_data(b.data + f.data) for b, f in zip(extra, pushed, strict=True))
+                )
+            moved = _advance_momentum(
+                velocity,
+                body,
+                flow,
+                viscous,
+                extra_force=extra,
+                dynamic=None if inflow is None else (dt, 1.0, inflow),
+                outlet_pressure=outlet,
+            )[0]
         carrier, entering = velocity, reservoir
         if walled:  # the walls carry nothing: the velocity is zero there, and so on their outlet faces
             carrier = tuple(Field(problem.on_thermal_grid(v.data), v.offset, grid) for v in velocity)
