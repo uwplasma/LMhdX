@@ -1125,6 +1125,7 @@ def _advance_momentum(
     carried: tuple[jnp.ndarray, ...] | None = None,
     pressure: Field | None = None,
     dynamic: tuple | None = None,
+    outlet_pressure: jnp.ndarray | None = None,
 ) -> tuple[tuple[Field, Field, Field], Field, solvax.SpdSolveInfo, tuple[jnp.ndarray, ...]]:
     """Solve one stage ``H u + c (dt/rho) G p = b``, ``D u = 0``; return velocity, pressure, status, ``R``.
 
@@ -1148,9 +1149,15 @@ def _advance_momentum(
     stage is then built in the trace, not kept). The ``lift`` is a divergence-free velocity that carries the
     inlet of an inflow-outflow axis: the stage advances ``velocity - lift``, whose inlet face is zero, and
     the lift's own damping and viscous terms enter the right-hand side.
+
+    ``outlet_pressure``, an array over the outlet face of the inflow-outflow axis, holds the pressure there
+    instead of zero (ADR 0009 D37: a buoyant outlet's hydrostatic pressure). Its share of ``G p`` on the
+    outlet face joins ``b``; the pressure returned is the part that vanishes at the outlet.
     """
     explicit, previous, implicit = weights
     grid, scalar = problem.grid, problem.pressure_conditions
+    if outlet_pressure is not None and problem.open_axis is None:
+        raise ValueError("an outlet pressure needs an inflow-outflow axis")
     dt, scale, lift = (float(problem.dt), 1.0, None) if dynamic is None else dynamic
     rates = tuple(rate * scale**2 for rate in problem.damping_rates)
     shifts = tuple(1.0 + implicit * dt * rate for rate in rates)
@@ -1183,13 +1190,20 @@ def _advance_momentum(
         rate.append(now)
         change = explicit * now + before + (explicit + previous - implicit) * old
         if lift is None:
-            predicted.append(inverse[axis](field.data + dt * change))
-            continue
-        carry = lift[axis]
-        lifted = -rates[axis] * carry.data
-        if viscous is not None:
-            lifted = lifted + problem.viscosity * staggered_laplacian(carry, velocity_conditions).data
-        predicted.append(inverse[axis](field.data - carry.data + dt * (change + implicit * lifted)))
+            right = field.data + dt * change
+        else:
+            carry = lift[axis]
+            lifted = -rates[axis] * carry.data
+            if viscous is not None:
+                lifted = lifted + problem.viscosity * staggered_laplacian(carry, velocity_conditions).data
+            right = field.data - carry.data + dt * (change + implicit * lifted)
+        if outlet_pressure is not None and axis == problem.open_axis:
+            outlet = (slice(None),) * axis + (-1,)
+            weight = host_array(problem, _outlet_weight, axis, dtype=right.dtype)
+            right = right.at[outlet].add(
+                -(explicit + previous) * dt * weight * outlet_pressure / problem.density
+            )
+        predicted.append(inverse[axis](right))
     predicted = constrained(predicted)
     source = -divergence(predicted).data
     # A divergence under the field's round-off is noise, and CG started on noise can break down.
@@ -1211,6 +1225,14 @@ def _advance_momentum(
         )
     pressure = Field(problem.density * flux / stage, (CENTER,) * 3, grid)
     return corrected, pressure, info, tuple(rate)
+
+
+def _outlet_weight(problem: ChannelProblem, axis: int) -> np.ndarray:
+    """What a unit pressure on the outlet face adds to the face gradient there, read from :func:`face_gradient`."""
+    grid, unit = problem.grid, BoundaryCondition(NEUMANN, upper=1.0, upper_kind=DIRICHLET)
+    with jax.ensure_compile_time_eval():
+        zero = Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid)
+        return np.asarray(face_gradient(zero, axis, unit).data)[(slice(None),) * axis + (-1,)]
 
 
 @functools.lru_cache(maxsize=16)
