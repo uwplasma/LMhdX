@@ -80,7 +80,8 @@ agree on currents and powers to 1e-9 with walls on both axes
 gates hold:
 
 1. Every test that pins the per-axis nodes passes on the extended grid at its
-   present tolerance, `validation/mistrangelo.py` included.
+   present tolerance, `validation/mistrangelo.py` and
+   `validation/mistrangelo_duct.py` included.
 2. A wall layer's conductivity and thickness stay leaves of `Problem`,
    differentiated by `jax.grad` through `lmhdx.solve` on the extended grid.
    They must meet the tolerances of the tests that pin them on the per-axis

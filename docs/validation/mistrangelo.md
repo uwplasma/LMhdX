@@ -190,7 +190,7 @@ The coarse run:
 Plan step 5.4e gates Case 1 (ADR 0009 D35). This record states the hypothesis, the runs, the rule for each check,
 the budget and the exit before any production run (D12). It is a draft until agreed.
 
-**The problem.** `validation.mistrangelo.case1` builds the whole duct: eq. 1's fringe along `y`; steel walls that
+**The problem.** `validation.mistrangelo_duct.case1` builds the whole duct: eq. 1's fringe along `y`; steel walls that
 carry current at the pinned ratio and conduct and store heat (5.4b); the flow evolving through the open duct of 5.4d,
 with limited momentum transport and buoyancy; van Leer heat transport; the PbLi entering at 300 °C on the developed
 profile of the inlet section; the heated patch. The axial mesh is fine over |x| ≤ 1 m and grows into buffers out to
@@ -490,7 +490,7 @@ Plan step 5.4f reports Case 2 against the codes' spread (ADR 0009 D35). It has n
 in kind, CFX predicting a steady flow (p. 12). This record fixes the runs, the burn-in, the averaging window and the
 statistical uncertainty before any production run (D12). It is a draft until agreed.
 
-**The problem.** `validation.mistrangelo.case2` is `case1`'s duct with Case 2's inferred u₀ = 0.01 m/s and
+**The problem.** `validation.mistrangelo_duct.case2` is `case1`'s duct with Case 2's inferred u₀ = 0.01 m/s and
 q'' = 10 W/cm² (Ha 235, Re 1073, Gr 3.55e7, Ri/N 0.60). The energy balance gives a bulk rise of 75.9 K. The paper
 finds rolls about the field's axis in and behind the heated zone, and temperature fluctuations of up to 30 K behind
 the heater's end (pp. 12–15).
