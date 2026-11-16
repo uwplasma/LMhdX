@@ -444,7 +444,7 @@ def _geometric_sum(terms: int, ratio: float) -> float:
     return float((ratio**terms - 1.0) / (ratio - 1.0))
 
 
-# Boundary conditions applied by padding ghost cells before differencing (formerly ``lmhdx.grid``).
+# Boundary conditions applied by padding ghost cells before differencing.
 
 PERIODIC = "periodic"
 DIRICHLET = "dirichlet"

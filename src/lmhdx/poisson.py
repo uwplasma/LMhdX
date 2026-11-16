@@ -1701,16 +1701,3 @@ def variable_helmholtz(
         precision=precision,
     )
     return VariableHelmholtz(grid, homogeneous, s.copy(), preconditioner=preconditioner, **settings)
-
-
-_PIPE_NAMES = ("PipeProblem", "flow_rate", "pipe_grid", "pipe_problem", "pipe_residual", "solve_pipe")
-__all__ += ["PipeProblem", "pipe_grid", "pipe_problem", "solve_pipe"]  # noqa: F822 -- lazy re-export below
-
-
-def __getattr__(name: str):
-    """Re-export the pipe problem lazily: :mod:`lmhdx.pipe` imports this module."""
-    if name in _PIPE_NAMES:
-        from . import pipe
-
-        return getattr(pipe, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
