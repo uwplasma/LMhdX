@@ -850,6 +850,8 @@ def test_an_open_duct_holds_its_flow_and_takes_an_inlet_temperature():
     for hold_flow, refusal in ((True, "buoyancy"), (False, "gravity along its open axis")):
         with pytest.raises(ValueError, match=refusal):
             build_thermal_step(buoyant, dtype=jnp.float64, hold_flow=hold_flow)
+    with pytest.raises(ValueError, match="a held flow takes no force"):
+        build_thermal_step(thermal, dtype=jnp.float64, hold_flow=True, force=lambda t: plug)
     for ends in (
         thermal_boundary("heat_flux", conductivity=0.2),
         thermal_boundary("temperature", 0.0, 1.0, upper_kind="heat_flux", conductivity=0.2),

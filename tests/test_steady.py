@@ -2125,6 +2125,313 @@ def test_a_buoyant_heated_hunt_duct_evolves_and_balances_its_heat():
     )
 
 
+# Step 5.4d, part 2: the evolving open duct's time step, outlet length, onset and returning flow (ADR 0009 D37).
+
+
+@functools.cache
+def _heated_with_buffer(buffer: float):
+    """Step 5.3's Hunt duct (Ha 20, c 0.05), heated from below over x < 8 with gravity down (beta 0.05), then an
+    unheated outlet buffer of ``buffer``; its start on the steady open-duct flow, no heat source."""
+    from lmhdx.axial import open_duct, solve_open_duct
+    from lmhdx.thermal import ThermalProblem, initial_thermal_state, thermal_boundary
+
+    length = 8.0 + buffer
+    grid = Grid(
+        uniform_faces(int(2 * length), 0.0, length),
+        uniform_faces(12, -1.0, 1.0),
+        uniform_faces(12, -1.0, 1.0),
+    )
+    base = ChannelProblem(
+        grid, (_WRAP, _WALL, _WALL), magnetic_field=(0.0, 20.0, 0.0), wall_conductance=(0.0, 0.05, 0.0)
+    )
+    flow = open_duct(base, 4.0)
+    flux = np.where(np.asarray(grid.centers[0]) < 8.0, -1.0, 0.0)[:, None] * np.ones((1, 12))
+    walls = (
+        thermal_boundary("temperature", 0.0, upper_kind="heat_flux", conductivity=0.05),
+        thermal_boundary("heat_flux", conductivity=0.05),
+        thermal_boundary("heat_flux", flux, 0.0, conductivity=0.05),
+    )
+    thermal = ThermalProblem(
+        flow, walls, 1.0, 0.05, 0.0, expansion_coefficient=0.05, gravity=(0.0, 0.0, -1.0)
+    )
+    start = initial_thermal_state(thermal, 0.0, solve_open_duct(flow).velocity)
+    return thermal, start, Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid)
+
+
+def _marched_with_buffer(buffer: float, dt: float, time: float):
+    from lmhdx.thermal import advance_thermal, build_thermal_step
+
+    thermal, start, heat = _heated_with_buffer(buffer)
+    thermal = dataclasses.replace(thermal, flow=dataclasses.replace(thermal.flow, dt=dt))
+    final, history = advance_thermal(
+        build_thermal_step(thermal, dtype=jnp.float64), start, heat, round(time / dt)
+    )
+    assert bool(history.finite.all())
+    return np.asarray(final.temperature.data), np.asarray(final.velocity[2].data)
+
+
+def test_an_evolving_buoyant_open_duct_converges_at_first_order_in_the_time_step():
+    """5.4d: the partitioned step is first order in time. The buoyant heated duct at t = 2, at dt 0.05, 0.025 and
+    0.0125: successive differences of the temperature and of the vertical velocity halve with the step (orders
+    1.00 and 1.03; at dt 0.1 the velocity is not yet in the asymptotic range)."""
+    runs = [_marched_with_buffer(2.0, dt, 2.0) for dt in (0.05, 0.025, 0.0125)]
+    for k in (0, 1):
+        first, second = (np.max(np.abs(runs[i][k] - runs[i + 1][k])) for i in (0, 1))
+        assert 0.8 < np.log2(first / second) < 1.2, (k, first, second)
+
+
+def test_the_outlet_length_hardly_moves_an_evolving_buoyant_duct_s_heated_region():
+    """5.4d outlet length: the buoyant heated duct at t = 10 with an unheated outlet buffer of 2, 4 and 8. Over the
+    heated region the temperature moves by 7e-6 and then 1e-7 of its peak, the vertical velocity by 5e-3 and then
+    7e-5 of its own: each doubling of the outlet cuts its effect about seventyfold."""
+    heated = 16  # the cells over x < 8
+    runs = {buffer: _marched_with_buffer(buffer, 0.05, 10.0) for buffer in (2.0, 4.0, 8.0)}
+    changes = [
+        [
+            np.max(np.abs(runs[a][k][:heated] - runs[b][k][:heated])) / np.max(np.abs(runs[b][k][:heated]))
+            for k in (0, 1)
+        ]
+        for a, b in ((2.0, 4.0), (4.0, 8.0))
+    ]
+    assert changes[0][0] < 1e-5 and changes[1][0] < 1e-6
+    assert changes[1][1] < 1e-3 and changes[0][1] > 30.0 * changes[1][1]
+
+
+def _convecting_layer(ratio: float, axis: str, length: float, outlet_backflow: str = "error", amplitude=1e-6):
+    """A layer between rigid plates z = +-1 held at 1 below and 0 above, gravity down, no field, nu = kappa = 0.1,
+    at ``ratio`` times Chandrasekhar's critical Rayleigh number 1707.76 (gap 2), along x open with no inflow and the
+    conduction profile at the inlet, or periodic; started on the conduction profile and a roll of the critical
+    wavenumber of ``amplitude``."""
+    from lmhdx.thermal import ThermalProblem, initial_thermal_state, thermal_boundary
+
+    nu = kappa = 0.1
+    grid = Grid(
+        uniform_faces(round(4 * length), 0.0, length),
+        uniform_faces(1, 0.0, 1.0),
+        uniform_faces(16, -1.0, 1.0),
+    )
+    x, z = (np.asarray(c) for c in (grid.centers[0], grid.centers[2]))
+    conduction = 0.5 - 0.5 * z
+    if axis == "open":
+        axial = BoundaryCondition(DIRICHLET, lower=np.zeros((1, 16)), upper_kind=NEUMANN)
+        ends = thermal_boundary(
+            "temperature", np.broadcast_to(conduction, (1, 16)), upper_kind="heat_flux", conductivity=kappa
+        )
+    else:
+        axial = ends = _WRAP
+    flow = ChannelProblem(grid, (axial, _WRAP, _WALL), viscosity=nu, conductivity=0.0, dt=0.05)
+    thermal = ThermalProblem(
+        flow,
+        (ends, _WRAP, thermal_boundary("temperature", 1.0, 0.0)),
+        1.0,
+        kappa,
+        0.5,
+        joule_heating=False,
+        expansion_coefficient=ratio * 1707.76 * nu * kappa / 8.0,
+        gravity=(0.0, 0.0, -1.0),
+        outlet_backflow=outlet_backflow if axis == "open" else "error",
+    )
+    roll = amplitude * np.cos(np.pi * z / 2)[None, :] * np.cos(1.5585 * (x[:, None] - length / 2))
+    start = initial_thermal_state(thermal, (conduction[None, :] + roll)[:, None, :], zero_velocity(flow))
+    return thermal, start, Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid), conduction
+
+
+def _growth_rate(ratio: float, axis: str, length: float) -> float:
+    """The disturbance's amplitude growth rate from its kinetic energy over 30 <= t <= 200, still linear."""
+    from lmhdx.core3d import kinetic_energy
+    from lmhdx.thermal import advance_thermal, build_thermal_step
+
+    thermal, state, heat, _ = _convecting_layer(ratio, axis, length)
+    step = build_thermal_step(thermal, dtype=jnp.float64)
+    run = jax.jit(lambda s: advance_thermal(step, s, heat, 200)[0])  # t = 10 a call
+    energy = []
+    for _ in range(20):
+        state = run(state)
+        energy.append(float(kinetic_energy(state.velocity, thermal.flow)))
+    times = 10.0 * np.arange(1, 21)
+    assert max(energy) < 1e-8  # linear throughout
+    late = times >= 30.0
+    return float(np.polyfit(times[late], np.log(np.asarray(energy)[late]), 1)[0] / 2.0)
+
+
+def test_buoyant_onset_in_an_open_duct_is_where_the_periodic_duct_has_it():
+    """5.4d onset: a layer heated from below, open along x over a length of 16 with no inflow, decays at 0.95 and
+    grows at 1.05 times Chandrasekhar's critical Rayleigh number, as the same layer periodic over one critical
+    wavelength does. Interpolated to zero growth, the open duct's threshold (1.002 Ra_c) is within 3 % of the
+    periodic one's (0.981 Ra_c, 1.9 % under 1707.76 on its 16 cells across, as in the Bénard test); the finite
+    length with its two ends raises it."""
+    rates = {
+        (axis, ratio): _growth_rate(ratio, axis, length)
+        for axis, length in (("open", 16.0), ("periodic", 2.0 * np.pi / 1.5585))
+        for ratio in (0.95, 1.05)
+    }
+    thresholds = {}
+    for axis in ("open", "periodic"):
+        below, above = rates[(axis, 0.95)], rates[(axis, 1.05)]
+        assert below < 0.0 < above, (axis, below, above)
+        thresholds[axis] = 0.95 + 0.1 * -below / (above - below)
+    assert abs(thresholds["open"] / thresholds["periodic"] - 1.0) < 0.03, thresholds
+
+
+def test_flow_returning_through_an_evolving_outlet_is_flagged_or_brought_in_from_the_reservoir():
+    """5.4d recirculation: convection rolls at 1.5 Ra_c in an open duct with no inflow cross its outlet, half of
+    its area returning. Under outlet_backflow="error" the step marks the boundary invalid exactly where the flow
+    returns (lmhdx.solve's Output rejects such a chunk); under "reservoir_flux" the returning faces bring in the
+    reservoir, here the conduction profile, the boundary stays valid, and the ledger closes every step."""
+    from lmhdx.thermal import advance_thermal, build_thermal_step
+
+    for policy in ("error", "reservoir_flux"):
+        thermal, start, heat, conduction = _convecting_layer(1.5, "open", 8.0, policy, amplitude=1e-2)
+        reservoir = np.broadcast_to(conduction, (1, 16)) if policy == "reservoir_flux" else None
+        _, history = advance_thermal(
+            build_thermal_step(thermal, dtype=jnp.float64), start, heat, 2000, backflow_temperature=reservoir
+        )
+        returning = np.asarray(history.outlet_backflow_rate) > 0.0
+        assert returning.any() and bool(history.finite.all())
+        # No inflow: what leaves through the outlet returns through it.
+        np.testing.assert_allclose(
+            history.outlet_outflow_rate, history.outlet_backflow_rate, rtol=1e-10, atol=1e-14
+        )
+        terms = jnp.stack(
+            [
+                jnp.abs(history.storage_rate),
+                jnp.abs(history.conductive_heat_out),
+                jnp.abs(history.advective_heat_out),
+            ]
+        )
+        assert float(jnp.max(jnp.abs(history.heat_balance_residual) / jnp.max(terms, axis=0))) <= 1e-9
+        valid = np.asarray(history.backflow_boundary_valid)
+        if policy == "error":
+            np.testing.assert_array_equal(valid, ~returning)
+        else:
+            assert valid.all() and float(history.outlet_backflow_enthalpy_in.max()) > 0.0
+
+
+def _manufactured_open_duct_errors(cells: int, momentum: str, heat: str) -> tuple[float, float, float]:
+    """The largest errors in T, u and w of the steady coupled manufactured solution on ``cells`` across.
+
+    An open duct along x over [0, 2], walls at z = +-1, periodic along y, no field, gravity down, buoyant (beta g 1),
+    nu = kappa = 0.5. The stream function U0 (z - z^3 / 3) + 5 s^2 (1 - s)^3 (1 - z^2)^2, s = x / 2, gives the
+    Poiseuille profile at the inlet, no slip at the walls and no axial gradient at the outlet; the temperature
+    excess (1 - s)^2 cos(pi z / 2) vanishes at the walls and at the outlet, where the hydrostatic outlet pressure is
+    then zero, as p = (2 - x)(1 + 0.3 z) is. The momentum force (through ``force``) and the heat source are the
+    residuals of the steady equations, from automatic differentiation; the run marches to its steady state.
+    """
+    from lmhdx.core3d import zero_velocity
+    from lmhdx.thermal import (
+        ThermalProblem,
+        advance_thermal,
+        build_thermal_step,
+        initial_thermal_state,
+        thermal_boundary,
+    )
+
+    length, nu, kappa, inertia = 2.0, 0.5, 0.5, float(momentum != "off")
+
+    def psi(x, z):
+        s = x / length
+        return z - z**3 / 3 + 5.0 * s**2 * (1 - s) ** 3 * (1 - z**2) ** 2
+
+    def u(x, z):
+        return jax.grad(psi, 1)(x, z)
+
+    def w(x, z):
+        return -jax.grad(psi, 0)(x, z)
+
+    def theta(x, z):
+        return (1 - x / length) ** 2 * jnp.cos(jnp.pi * z / 2)
+
+    def p(x, z):
+        return (length - x) * (1 + 0.3 * z)
+
+    def laplacian(f):
+        return lambda x, z: jax.grad(jax.grad(f, 0), 0)(x, z) + jax.grad(jax.grad(f, 1), 1)(x, z)
+
+    def carried(f):
+        return lambda x, z: u(x, z) * jax.grad(f, 0)(x, z) + w(x, z) * jax.grad(f, 1)(x, z)
+
+    def force_x(x, z):
+        return jax.grad(p, 0)(x, z) - nu * laplacian(u)(x, z) + inertia * carried(u)(x, z)
+
+    def force_z(x, z):
+        return jax.grad(p, 1)(x, z) - nu * laplacian(w)(x, z) - theta(x, z) + inertia * carried(w)(x, z)
+
+    def source(x, z):
+        return carried(theta)(x, z) - kappa * laplacian(theta)(x, z)
+
+    def on(f, x, z):
+        return np.asarray(jax.vmap(jax.vmap(f, (None, 0)), (0, None))(jnp.asarray(x), jnp.asarray(z)))
+
+    spans = 1 if momentum == "off" else 2  # transport along a periodic axis needs two cells
+    grid = Grid(
+        uniform_faces(cells, 0.0, length), uniform_faces(spans, 0.0, 1.0), uniform_faces(cells, -1.0, 1.0)
+    )
+    (xf, _, zf), (xc, _, zc) = (np.asarray(f) for f in grid.faces), (np.asarray(c) for c in grid.centers)
+    inlet = np.broadcast_to(on(u, [0.0], zc), (spans, cells))
+    opening = BoundaryCondition(DIRICHLET, lower=inlet, upper_kind=NEUMANN)
+    flow = ChannelProblem(
+        grid, (opening, _WRAP, _WALL), viscosity=nu, conductivity=0.0, dt=0.5 / cells, advection=momentum
+    )
+    ends = thermal_boundary(
+        "temperature",
+        np.broadcast_to(on(theta, [0.0], zc), (spans, cells)),
+        upper_kind="heat_flux",
+        conductivity=kappa,
+    )
+    thermal = ThermalProblem(
+        flow,
+        (ends, _WRAP, thermal_boundary("temperature", 0.0, 0.0)),
+        1.0,
+        kappa,
+        0.0,
+        joule_heating=False,
+        expansion_coefficient=1.0,
+        gravity=(0.0, 0.0, -1.0),
+        advection=heat,
+    )
+    rest = zero_velocity(flow)
+    force = (
+        rest[0].replace_data(jnp.broadcast_to(jnp.asarray(on(force_x, xf, zc))[:, None, :], rest[0].shape)),
+        rest[1],
+        rest[2].replace_data(jnp.broadcast_to(jnp.asarray(on(force_z, xc, zf))[:, None, :], rest[2].shape)),
+    )
+    heating = Field(
+        jnp.broadcast_to(jnp.asarray(on(source, xc, zc))[:, None, :], grid.shape), (CENTER,) * 3, grid
+    )
+    lift = rest[0].replace_data(jnp.broadcast_to(jnp.asarray(inlet)[None], rest[0].shape))
+    state = initial_thermal_state(thermal, 0.0, (lift, rest[1], rest[2]))
+    step = build_thermal_step(thermal, dtype=jnp.float64, force=lambda t: force)
+    run = jax.jit(lambda s: advance_thermal(step, s, heating, round(5.0 / flow.dt))[0])  # t = 5 a call
+    before = np.asarray(state.temperature.data)
+    for _ in range(12):
+        state = run(state)
+        after = np.asarray(state.temperature.data)
+        if np.max(np.abs(after - before)) < 1e-13:
+            break
+        before = after
+    else:
+        raise AssertionError("the manufactured duct did not reach its steady state by t = 60")
+    return (
+        float(np.max(np.abs(after[:, 0, :] - on(theta, xc, zc)))),
+        float(np.max(np.abs(np.asarray(state.velocity[0].data)[:, 0, :] - on(u, xf, zc)))),
+        float(np.max(np.abs(np.asarray(state.velocity[2].data)[:, 0, :] - on(w, xc, zf)))),
+    )
+
+
+@pytest.mark.parametrize(
+    ("momentum", "heat", "order"), [("central", "van_leer", 2.0), ("off", "upwind", 1.0)]
+)
+def test_a_coupled_manufactured_open_duct_converges_at_its_order(momentum, heat, order):
+    """5.4d: the coupled manufactured solution of an evolving buoyant open duct, marched to its steady state on 8, 16
+    and 32 cells across. With inertia (central transport) and van Leer heat transport every field is second order
+    (on the finest pair T 1.89, u 1.90, w 1.83); in the Stokes limit with upwind heat transport the temperature is
+    first order (0.92) and the velocity still second (1.92, 1.82): the heat's error barely reaches the flow."""
+    errors = np.array([_manufactured_open_duct_errors(cells, momentum, heat) for cells in (8, 16, 32)])
+    orders = np.log2(errors[1] / errors[2])
+    assert 0.8 * order < orders[0] < 1.2 * order, orders
+    assert np.all((orders[1:] > 1.7) & (orders[1:] < 2.3)), orders
+
+
 # Mistrangelo et al. 2025, the heated conducting duct (plan step 5.4a, ADR 0009).
 
 
