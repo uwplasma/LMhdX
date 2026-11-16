@@ -117,11 +117,21 @@ given to `SolidWall` is refused.
 
 ## Add an analytic field
 
-`MagneticFieldSpec(kind="analytic", fn=...)` accepts a callable that returns a
-three-component field. `make_divergence_free_cross_section_field` provides a
-compact analytic example. Sample the function with
-`sample_cross_section_field` before a production run and verify its divergence
-and intended extrema.
+`lmhdx.fields.Func(fn, params)` takes a callable `fn(x, y, z, params)` that returns the three components
+of the field at the cell centres, `params` being any pytree of numbers. Sample it on the duct's grid before a
+production run and verify its divergence and intended extrema.
+
+```python
+import lmhdx
+from lmhdx.fields import Func
+
+
+def sheared(x, y, z, strength):
+    return 0 * y, strength * (1.0 + 0.3 * z) + 0 * y, 0 * y
+
+
+problem = lmhdx.duct(20, 32).replace(B=Func(sheared, 20.0))
+```
 
 ## Use measured field data
 
@@ -135,8 +145,7 @@ from pathlib import Path
 import numpy as np
 
 import lmhdx
-from lmhdx.cases import write_tabulated_field_npz, sample_tabulated_cross_section_field
-from lmhdx.fields import Table
+from lmhdx.fields import Table, load_tabulated_field, write_tabulated_field_npz
 
 y = z = np.linspace(-1.2, 1.2, 17)
 yy, zz = np.meshgrid(y, z, indexing="ij")
@@ -144,15 +153,13 @@ path = write_tabulated_field_npz(
     Path("artifacts/imposed_field.npz"), y=y, z=z,
     bx=np.zeros_like(yy), by=0.1 * yy, bz=5.0 - 0.1 * zz,
 )
-sampled = sample_tabulated_cross_section_field(path, y=yy, z=zz)
-assert np.allclose(sampled[..., 2], 5.0 - 0.1 * zz)
+table = load_tabulated_field(path)
+assert np.allclose(table["bz"], 5.0 - 0.1 * zz)
 problem = lmhdx.duct(20, 24).replace(B=Table(str(path)))
 ```
 
-A file with an `x` axis and components shaped `(nx, ny, nz)` is refused by the
-cross-section sampler; a field that varies along the duct is an
-`lmhdx.core3d.ImposedField` on the 3-D grid (see the
-[fringe tutorial](fringing.md)). Axes must be finite, strictly increasing vectors with at
+A file with an `x` axis and components shaped `(nx, ny, nz)` is a field that varies along the duct, sampled
+on the 3-D grid (see the [fringe tutorial](fringing.md)). Axes must be finite, strictly increasing vectors with at
 least two points; component shapes must match. Out-of-domain/nonfinite queries
 raise `ValueError`, never silently extrapolate. The file-loading interface is
 host-side setup, not a differentiable live coil/geometry interface. Keep source

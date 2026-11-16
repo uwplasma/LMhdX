@@ -38,8 +38,8 @@ def pytest_collection_modifyitems(items):
             item.add_marker(pytest.mark.slow)
         if marks & {"numerical", "physics", "regression", "validation"} or item.path.name in {
             "test_solver.py",
-            "test_benchmarks.py",
-            "test_physics.py",
+            "test_run_benchmarks.py",
+            "test_q2d.py",
         }:
             item.add_marker(pytest.mark.regression)
         elif not marks & {"unit", "slow", "gpu", "external"}:

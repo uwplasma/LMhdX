@@ -20,13 +20,13 @@ import lmhdx
 from lmhdx import Open, Problem, Sides, Solver, Thermal, Uniform, Wall, duct
 from lmhdx.axial import fringe_duct as old_fringe_duct
 from lmhdx.axial import pressure_drop, solve_open_duct
-from lmhdx.cases import WallLayer
 from lmhdx.core3d import ChannelProblem, advance, duct_problem
 from lmhdx.fields import Fringe, Func, Table
 from lmhdx.grid import CENTER, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid, axis, uniform_faces
 from lmhdx.pipe import pipe_problem, solve_pipe
 from lmhdx.problem import _BKZ_DOMAINS, bulk_ratio, channel, fringe_duct, pipe, q2d
 from lmhdx.q2d import evolve_q2d, make_q2d_case, solve_q2d
+from lmhdx.steady import solve_compiled
 from lmhdx.thermal import (
     ThermalProblem,
     advance_thermal,
@@ -34,6 +34,7 @@ from lmhdx.thermal import (
     initial_thermal_state,
     thermal_boundary,
 )
+from lmhdx.units import WallLayer
 
 pytestmark = pytest.mark.numerical
 
@@ -502,9 +503,9 @@ def test_the_solver_resolves_its_method_and_refuses_what_the_kernels_cannot_do()
         Wall(temperature=1.0, heat_flux=1.0)
 
 
-def test_the_root_solve_still_takes_the_older_models():
+def test_the_root_solve_takes_the_kernel_problems():
     legacy = duct_problem(hartmann=10.0, cells=16)
-    assert np.array_equal(lmhdx.solve(legacy).velocity[0].data, lmhdx.cases.solve(legacy).velocity[0].data)
+    assert np.array_equal(lmhdx.solve(legacy).velocity[0].data, solve_compiled(legacy).velocity[0].data)
     with pytest.raises(TypeError, match="no solver"):
         lmhdx.solve(legacy, Solver())
 

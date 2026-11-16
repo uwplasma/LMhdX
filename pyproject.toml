@@ -55,8 +55,7 @@ visualization = [
 ]
 
 [project.scripts]
-lmhdx = "lmhdx.io:main"
-lmx = "lmhdx.io:main"
+lmhdx = "lmhdx.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

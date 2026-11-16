@@ -4,7 +4,7 @@
 input, checks the FreeMHD source snapshot against
 ``[free_mhd_discretization_reference]`` of ``alex-b2-square.toml``, runs FreeMHD
 in Docker, observes its native output, solves the same geometry with
-:class:`lmhdx.coreflow.CoreFlow` and writes ``record.json``. ``--preflight``
+:class:`validation.coreflow.CoreFlow` and writes ``record.json``. ``--preflight``
 stops after materializing and hashing the inputs, without Docker.
 
 The two sides are not the same state. FreeMHD runs the frozen two-update
@@ -481,7 +481,7 @@ def freemhd_failures(observed: dict[str, object], limits: dict[str, float]) -> l
 def solve_core_flow(nx: int = 400, nz: int = 32, ny: int = 32) -> dict[str, object]:
     """Steady inertialess core flow in the B2 duct (aspect 1, ``c_t = c_s`` from ``[wall]``, unit mean velocity)."""
 
-    from lmhdx.coreflow import CoreFlow
+    from validation.coreflow import CoreFlow
 
     spec, reference = load_spec(), load_reference()
     geometry, c_w = spec["geometry"], spec["wall"]["wall_conductance_ratio"]
@@ -529,7 +529,7 @@ def run(args: argparse.Namespace) -> int:
     root.mkdir(parents=True, exist_ok=False)
     limits = load_spec()["harness_smoke_execution"]
     artifacts = {"spec": artifact_sha256(SPEC), "reference": artifact_sha256(REFERENCE)}
-    artifacts["lmhdx_coreflow"] = artifact_sha256(_DATA.parents[1] / "coreflow.py")
+    artifacts["lmhdx_coreflow"] = artifact_sha256(Path(__file__).with_name("coreflow.py"))
     artifacts["freemhd_input"] = materialize_freemhd_input(root / "freemhd_input")
     skeleton = args.freemhd_install_dir / "cases" / "hunt_demo"
     if skeleton.is_dir():

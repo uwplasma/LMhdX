@@ -24,13 +24,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from .axial import axial_faces, open_duct
-from .cases import WallLayer
 from .core3d import ChannelProblem
 from .fields import Fringe, Func, Table, Uniform, host, is_traced, primal, pytree
 from .grid import DIRICHLET, NEUMANN, PERIODIC, BoundaryCondition, Grid, axis
 from .pipe import pipe_grid
 from .q2d import make_q2d_case
 from .thermal import ThermalProblem, thermal_boundary
+from .units import WallLayer
 
 __all__ = [
     "Open",
@@ -62,7 +62,7 @@ class Wall:
 
     ``conductance`` is the thin-wall ``c = sigma_w t_w / (sigma L)``; or give ``conductivity`` and
     ``thickness`` (``L`` the grid's unit), and ``c`` is formed from them. ``layers``
-    resolve the wall in cells instead, a tuple of :class:`lmhdx.cases.WallLayer`
+    resolve the wall in cells instead, a tuple of :class:`lmhdx.units.WallLayer`
     from the fluid outward (absolute conductivity, divided by the fluid's here).
     ``temperature`` or ``heat_flux`` (outward conductive flux, positive cools; a
     number or an array over the two other axes) set the thermal condition; neither

@@ -1,14 +1,14 @@
 # CLI and TOML reference
 
 LMhdX runs a TOML file, converts an old one, and nothing else. The command is installed as `lmhdx`
-(and `lmx`, until 2.0):
+(the `lmx` alias is gone):
 
 ```console
 lmhdx CASE.toml [table.key=value ...]
 lmhdx upgrade OLD.toml > CASE.toml
 ```
 
-The `run`, `validate` and `benchmark` commands of 1.x are retired in 2.0 (a warning until then): write the
+The `run`, `validate` and `benchmark` commands of 1.x are gone: write the
 duct as a schema 3 file (`preset = "duct"`) and run it. A duct with an inlet and an outlet is a
 `fringe_duct` preset in the same file.
 
@@ -63,6 +63,6 @@ print(dumps(case.problem, case.solver))       # the same text back: any problem 
 ## Schema 1 and 2 files
 
 A file with `[solver] kind = "thermal"` is schema 1, and one with `[case]`, `[geometry]` and `[time_stepper]`
-is schema 2. Neither runs under 2.0 (a deprecation warning until then): `lmhdx upgrade FILE` writes the schema 3
+is schema 2. Neither runs under 2.0: `lmhdx upgrade FILE` writes the schema 3
 text, and the migration guide maps every other 1.x name to its replacement (see [Heat transport](../physics/thermal.md)
 for the heated runs).

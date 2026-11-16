@@ -14,9 +14,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import jax
 import numpy as np
+from jax.scipy.interpolate import RegularGridInterpolator
 
 try:
     from jax.extend.core import concrete_or_error
@@ -24,7 +26,6 @@ except ImportError:  # pragma: no cover - older JAX keeps it in jax.core
     from jax.core import concrete_or_error
 
 from ._programs import is_traced
-from .cases import _interpolate_tabulated_field, load_tabulated_field
 from .core3d import ImposedField, fringe_field
 
 __all__ = ["Func", "Fringe", "Table", "Uniform"]
@@ -122,6 +123,68 @@ class Fringe:
             solenoidal=self.solenoidal,
         )
         return field, scale
+
+
+def write_tabulated_field_npz(
+    path: str | Path,
+    *,
+    x: np.ndarray | None = None,
+    y: np.ndarray,
+    z: np.ndarray,
+    bx: np.ndarray,
+    by: np.ndarray,
+    bz: np.ndarray,
+) -> Path:
+    """Write the arrays of a field table (``y, z`` or ``x, y, z`` axes; components shaped like the axes)."""
+    payload: dict[str, np.ndarray] = {
+        "y": np.asarray(y, dtype=float),
+        "z": np.asarray(z, dtype=float),
+        "bx": np.asarray(bx, dtype=float),
+        "by": np.asarray(by, dtype=float),
+        "bz": np.asarray(bz, dtype=float),
+    }
+    if x is not None:
+        payload["x"] = np.asarray(x, dtype=float)
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(out, **payload)
+    return out
+
+
+def load_tabulated_field(path: str | Path) -> dict[str, np.ndarray]:
+    """Read and validate a field table; its axes are finite, strictly increasing, with matching components."""
+    source = Path(path)
+    if source.suffix.lower() != ".npz":
+        raise ValueError("Tabulated magnetic fields currently use NPZ files with x/y/z and bx/by/bz arrays")
+    with np.load(source) as payload:
+        data = {key: np.asarray(payload[key], dtype=float) for key in payload.files}
+    required_2d = {"y", "z", "bx", "by", "bz"}
+    if not required_2d.issubset(data):
+        raise ValueError(
+            "Tabulated magnetic-field NPZ must contain either y/z/bx/by/bz or x/y/z/bx/by/bz arrays"
+        )
+    axes = tuple(data[name] for name in (("x", "y", "z") if "x" in data else ("y", "z")))
+    if any(a.ndim != 1 or a.size < 2 or not np.isfinite(a).all() or not (np.diff(a) > 0).all() for a in axes):
+        raise ValueError(
+            "Field-table axes must be finite, strictly increasing vectors with at least two points"
+        )
+    if any(
+        data[key].shape != tuple(a.size for a in axes) or not np.isfinite(data[key]).all()
+        for key in ("bx", "by", "bz")
+    ):
+        raise ValueError("Field-table components must be finite and match the coordinate-grid shape")
+    return data
+
+
+def _interpolate_tabulated_field(data: dict[str, np.ndarray], **coordinates: np.ndarray) -> np.ndarray:
+    axes = tuple(np.asarray(data[name], dtype=float) for name in coordinates)
+    values = tuple(np.asarray(value, dtype=float) for value in coordinates.values())
+    points = np.stack([value.reshape(-1) for value in values], axis=-1)
+    if any(not np.isfinite(q).all() or np.any(q < a[0]) or np.any(q > a[-1]) for a, q in zip(axes, values)):
+        raise ValueError("Field-table queries must be finite and inside the tabulated domain")
+    field = np.stack([data[key] for key in ("bx", "by", "bz")], axis=-1)
+    sampled = RegularGridInterpolator(axes, field, bounds_error=False, fill_value=np.nan)(points)
+    return np.asarray(sampled).reshape((*values[0].shape, 3))
 
 
 @pytree(("scale",), ("path",))

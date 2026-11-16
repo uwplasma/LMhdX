@@ -41,7 +41,7 @@ jobs:
           if [[ "${{ github.event_name }}" != "pull_request" ]]; then
             echo "b2=true" >> "$GITHUB_OUTPUT"
           elif ! git diff --quiet "$base" -- \
-            validation/freemhd.py src/lmhdx/coreflow.py \
+            validation/freemhd.py validation/coreflow.py \
             src/lmhdx/data/benchmarks/specs/alex-b2-square.toml \
             src/lmhdx/data/benchmarks/references/alex-b2-square.csv \
             .github/workflows/external-validation.yml .github/actions pyproject.toml; then

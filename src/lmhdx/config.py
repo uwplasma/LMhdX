@@ -15,6 +15,7 @@ import inspect
 import json
 import re
 import runpy
+import tomllib
 import types
 import typing
 from collections.abc import Callable
@@ -23,14 +24,19 @@ from pathlib import Path
 
 import numpy as np
 
-from .cases import NumericalFailure, WallLayer, _load_toml, tomllib
 from .fields import Fringe, Func, Table, Uniform
 from .grid import Grid, axis
 from .output import Output, Start
 from .problem import Q2D, Open, Problem, Sides, Thermal, Wall, channel, duct, fringe_duct, pipe, q2d
-from .solver import Case, Solver, solve
+from .solver import Case, NumericalFailure, Solver, solve
+from .units import WallLayer
 
-__all__ = ["dumps", "load", "upgrade"]
+__all__ = ["dumps", "load", "run", "upgrade"]
+
+
+def _load_toml(path: str | Path) -> dict:
+    with Path(path).open("rb") as handle:
+        return tomllib.load(handle)
 
 
 _KINDS = {c.__name__.lower(): c for c in (Problem, Q2D, Wall, Sides, Open, Thermal, Uniform)}

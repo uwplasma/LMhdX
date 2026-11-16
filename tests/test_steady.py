@@ -1010,26 +1010,18 @@ _FAMILIES = {
 }
 
 
-@pytest.mark.parametrize("route", ["steady", "fully developed"])
 @pytest.mark.parametrize("family", sorted(_FAMILIES))
-def test_the_shared_program_holds_no_value_of_the_problem(family, route):
+def test_the_shared_program_holds_no_value_of_the_problem(family):
     """2b.1 stage 5: two problems of a shape lower to the same program, which solves each to round-off.
 
     A number or an array of one problem left in the trace would change the lowered text
     and give every later problem that problem's value; the fingerprint is that text.
-    ``route`` is the program of :func:`lmhdx.steady.solve_compiled` or the unit-drive
-    program of :func:`lmhdx.solve`, whose argument is the field scale.
+    The program is that of :func:`lmhdx.steady.solve_compiled`.
     """
     import lmhdx._programs as _programs
-    import lmhdx.fully_developed as fully_developed
     import lmhdx.steady as steady
 
-    if route == "steady":
-        build, arguments, values = steady._solve_program, (), ()
-    else:
-        dtype = jnp.result_type(float)
-        build, arguments = fully_developed._unit_drive, (jax.ShapeDtypeStruct((), dtype),)
-        values = (np.asarray(1.3, dtype=dtype),)
+    build, arguments, values = steady._solve_program, (), ()
     first, *problems = (_FAMILIES[family](hartmann) for hartmann in (20.0, 30.0, 45.0))
     with _programs.discovering(first) as trace:
         jax.jit(build(first)).lower(*arguments)

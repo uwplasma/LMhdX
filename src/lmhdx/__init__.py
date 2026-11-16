@@ -1,7 +1,7 @@
 """Small, lazy convenience API for LMhdX.
 
 Research and advanced APIs live in their named modules, for example
-``lmhdx.axial`` and ``lmhdx.cases``. Keeping the package root deliberately
+``lmhdx.axial`` and ``lmhdx.units``. Keeping the package root deliberately
 small makes supported concepts discoverable and avoids importing JAX-heavy
 solver modules until a symbol is used.
 """
@@ -12,34 +12,18 @@ import logging
 import os
 from importlib import import_module
 
-# Cold runs first: cuBLAS instead of Triton GEMMs halves the GPU compile of a steady
-# solve (9.4 s to 4.2 s on an RTX A4000) at about 10 % warm cost. XLA reads the flag
-# when the GPU backend starts, so it is set on import; an explicit user flag wins.
-if (
-    "xla_gpu_enable_triton_gemm" not in os.environ.get("XLA_FLAGS", "")
-    and os.environ.get("LMHDX_XLA_DEFAULTS") != "0"
-):
-    os.environ["XLA_FLAGS"] = (
-        os.environ.get("XLA_FLAGS", "") + " --xla_gpu_enable_triton_gemm=false"
-    ).strip()
-
 __all__ = [
     "configure",
     "enable_x64",
     "enable_compilation_cache",
-    "make_hartmann_case",
-    "make_shercliff_case",
-    "make_hunt_case",
     "make_q2d_case",
     "evolve_q2d",
-    "solve_fully_developed_fields",
     "Q2DProblem",
     "solve",
     "ChannelProblem",
     "duct_problem",
     "solve_steady_state",
     "advance",
-    "generate_rect_duct_mesh_from_faces",
     "WallLayer",
     "dynamic_to_kinematic_viscosity",
     "kinematic_to_dynamic_viscosity",
@@ -80,8 +64,7 @@ def enable_x64() -> None:
 
     A value the user already chose is kept, whether set through
     ``jax.config.update`` or the ``JAX_DEFAULT_MATMUL_PRECISION`` environment
-    variable. Constructing a case with a ``dtype``, a ``ChannelProblem`` or a
-    ``Q2DProblem`` applies the same rule.
+    variable. Constructing a ``ChannelProblem`` or a ``Q2DProblem`` applies the same rule.
     """
     from jax import config
 
@@ -89,12 +72,14 @@ def enable_x64() -> None:
     _pin_matmul_precision()
 
 
-def configure(dtype: str | None = None) -> None:
-    """Set the process-wide choice that importing the package leaves alone.
+def configure(dtype: str | None = None, gpu_gemm: bool = False) -> None:
+    """Set the process-wide choices that importing the package leaves alone, each announced once on ``lmhdx``.
 
-    ``dtype="float64"`` enables float64 and pins the matmul precision (:func:`enable_x64`), announced
-    once on the ``lmhdx`` logger; ``"float32"`` keeps JAX as it is. :func:`lmhdx.solve` calls
-    ``configure(dtype=solver.dtype)``.
+    ``dtype="float64"`` enables float64 and pins the matmul precision (:func:`enable_x64`); ``"float32"``
+    keeps JAX as it is. ``gpu_gemm=True`` adds ``--xla_gpu_enable_triton_gemm=false`` to ``XLA_FLAGS`` (cuBLAS
+    instead of Triton GEMMs halves the GPU compile of a steady solve, 9.4 s to 4.2 s on an RTX A4000, at about
+    10 % warm cost); XLA reads the flag when the GPU backend starts, so call it before the first array is
+    made, and a flag the user already set is kept. :func:`lmhdx.solve` calls ``configure(dtype=solver.dtype)``.
     """
     from jax import config
 
@@ -103,6 +88,11 @@ def configure(dtype: str | None = None) -> None:
     if dtype == "float64" and not config.jax_enable_x64:
         enable_x64()
         logging.getLogger("lmhdx").info("float64 enabled")
+    if gpu_gemm and "xla_gpu_enable_triton_gemm" not in os.environ.get("XLA_FLAGS", ""):
+        os.environ["XLA_FLAGS"] = (
+            os.environ.get("XLA_FLAGS", "") + " --xla_gpu_enable_triton_gemm=false"
+        ).strip()
+        logging.getLogger("lmhdx").info("XLA_FLAGS gained --xla_gpu_enable_triton_gemm=false")
 
 
 def _pin_matmul_precision() -> str:
@@ -148,12 +138,8 @@ def _cache_read_unsafe() -> bool:
 
 _EXPORTS = {
     "enable_compilation_cache": ("lmhdx._programs", "enable_compilation_cache"),
-    "make_hartmann_case": ("lmhdx.cases", "make_hartmann_case"),
-    "make_shercliff_case": ("lmhdx.cases", "make_shercliff_case"),
-    "make_hunt_case": ("lmhdx.cases", "make_hunt_case"),
     "make_q2d_case": ("lmhdx.q2d", "make_q2d_case"),
     "evolve_q2d": ("lmhdx.q2d", "evolve_q2d"),
-    "solve_fully_developed_fields": ("lmhdx.fully_developed", "solve_fully_developed_fields"),
     "ChannelProblem": ("lmhdx.core3d", "ChannelProblem"),
     "duct_problem": ("lmhdx.core3d", "duct_problem"),
     "solve_steady_state": ("lmhdx.steady", "solve_steady_state"),
@@ -171,21 +157,20 @@ _EXPORTS = {
     "Uniform": ("lmhdx.fields", "Uniform"),
     "Solver": ("lmhdx.solver", "Solver"),
     "Output": ("lmhdx.output", "Output"),
-    "generate_rect_duct_mesh_from_faces": ("lmhdx.cases", "generate_rect_duct_mesh_from_faces"),
-    "WallLayer": ("lmhdx.cases", "WallLayer"),
-    "dynamic_to_kinematic_viscosity": ("lmhdx.cases", "dynamic_to_kinematic_viscosity"),
-    "kinematic_to_dynamic_viscosity": ("lmhdx.cases", "kinematic_to_dynamic_viscosity"),
-    "hartmann_number": ("lmhdx.cases", "hartmann_number"),
-    "reynolds_number": ("lmhdx.cases", "reynolds_number"),
-    "interaction_parameter": ("lmhdx.cases", "interaction_parameter"),
-    "magnetic_reynolds_number": ("lmhdx.cases", "magnetic_reynolds_number"),
-    "magnetic_field_from_hartmann": ("lmhdx.cases", "magnetic_field_from_hartmann"),
-    "wall_conductance_ratio": ("lmhdx.cases", "wall_conductance_ratio"),
-    "effective_pinhole_conductance_ratio": ("lmhdx.cases", "effective_pinhole_conductance_ratio"),
-    "tangential_stack_conductance_ratio": ("lmhdx.cases", "tangential_stack_conductance_ratio"),
-    "normal_stack_leakage_ratio": ("lmhdx.cases", "normal_stack_leakage_ratio"),
-    "equivalent_single_layer": ("lmhdx.cases", "equivalent_single_layer"),
-    "nested_wall_layer_resolution_summary": ("lmhdx.cases", "nested_wall_layer_resolution_summary"),
+    "WallLayer": ("lmhdx.units", "WallLayer"),
+    "dynamic_to_kinematic_viscosity": ("lmhdx.units", "dynamic_to_kinematic_viscosity"),
+    "kinematic_to_dynamic_viscosity": ("lmhdx.units", "kinematic_to_dynamic_viscosity"),
+    "hartmann_number": ("lmhdx.units", "hartmann_number"),
+    "reynolds_number": ("lmhdx.units", "reynolds_number"),
+    "interaction_parameter": ("lmhdx.units", "interaction_parameter"),
+    "magnetic_reynolds_number": ("lmhdx.units", "magnetic_reynolds_number"),
+    "magnetic_field_from_hartmann": ("lmhdx.units", "magnetic_field_from_hartmann"),
+    "wall_conductance_ratio": ("lmhdx.units", "wall_conductance_ratio"),
+    "effective_pinhole_conductance_ratio": ("lmhdx.units", "effective_pinhole_conductance_ratio"),
+    "tangential_stack_conductance_ratio": ("lmhdx.units", "tangential_stack_conductance_ratio"),
+    "normal_stack_leakage_ratio": ("lmhdx.units", "normal_stack_leakage_ratio"),
+    "equivalent_single_layer": ("lmhdx.units", "equivalent_single_layer"),
+    "nested_wall_layer_resolution_summary": ("lmhdx.units", "nested_wall_layer_resolution_summary"),
 }
 
 

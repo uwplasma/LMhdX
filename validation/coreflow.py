@@ -122,8 +122,8 @@ def side_layer_coefficient(c: float, hartmann: float, *, cells: int = 48) -> flo
     inverted for ``c_s = c + k/sqrt(Ha)``. One steady solve; ``cells`` must
     resolve the layers (48 to 64 cells from Ha 400 to 2e4, #204).
     """
-    from .core3d import ChannelProblem, duct_problem
-    from .steady import solve_steady_state
+    from lmhdx.core3d import ChannelProblem, duct_problem
+    from lmhdx.steady import solve_steady_state
 
     base = duct_problem(hartmann=hartmann, cells=cells, wall_conductance=c)
     section = ChannelProblem(

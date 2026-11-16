@@ -120,8 +120,8 @@ def _campaign():
 
     import numpy as np
 
-    from lmhdx.coreflow import CoreFlow
     from lmhdx.pipe import PipeProblem, flow_rate, pipe_grid, solve_pipe
+    from validation.coreflow import CoreFlow
 
     table = tomllib.loads(
         files("lmhdx").joinpath("data/benchmarks/references/samper-table-i.toml").read_text(encoding="utf-8")
