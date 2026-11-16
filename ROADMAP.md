@@ -1,24 +1,30 @@
 # LMhdX roadmap
 
-[plan.md](plan.md) is authoritative. Issues and PRs record daily evidence; dates
-below are planning targets, not validation or release promises.
+[plan.md](plan.md) is authoritative. Issues and PRs record daily evidence; the
+order below is a planning order, not a validation or release promise.
 
-1. **Integration and hygiene — September 2026.** Complete Phase 0 precision and
-   CI qualification (#74, #75). The B1/B2 reference lane is kept at tag `lmx-b2-lane-v1`.
-2. **Trustworthy 3-D core and useful inverse design — October–November 2026.**
-   Run the 8³ MAC/collocated oracle before choosing the momentum discretization.
-   Verify conservation, convergence and implicit derivatives. Ship the fully
-   developed fixed-flow design examples without waiting for new 3-D numerics.
-3. **Independent validation and research applications — gate-driven, then release.**
-   Qualify B2 against the ALEX experiment through the core-flow model and
-   FreeMHD evidence. Add measured CPU/GPU scaling, Q2D and passive heat in their
-   documented envelopes. Use exterior ESSOS fields and independent blanket
-   geometry for device channels; do not extrapolate VMEX interior fields.
-4. **High Reynolds number and the 2.0 API — from October 2026.** One IMEX
-   Runge–Kutta stepper for steady and unsteady flow, energy-conserving
-   transport on stretched grids, Hartmann-channel validation on the GPU, and a
-   new `Problem`/`Solver`/`Output` interface with TOML and differentiable wall
-   conductance, released as 2.0.0 ([plan.md](plan.md) Program H, ADR 0010).
+1. **Consolidation and the 2.0 API.** Delivered in 1.12.0: the
+   `Problem`/`Solver`/`Output`/`solve` interface with TOML schema 3, restart
+   and ParaView output, the RK3 stepper, and the RK3 march beside Newton for
+   steady open ducts. Next: one implementation per concept (ADR 0012, steps
+   HC1–HC6, with the variable-coefficient operator moved to SOLVAX, H7.2r),
+   then the older case objects, loaders and commands removed in 2.0.0
+   ([plan.md](plan.md) Program H, ADR 0010).
+2. **Conjugate heat transfer for a blanket channel.** The heated conducting
+   duct of Mistrangelo et al. (2025) as the code-to-code gate (ADR 0009, step
+   5.4); wall stacks with inserts and stagnant gaps, wall Joule heat, a film
+   condition on the coolant side, nuclear heating maps and thermoelectric
+   terms (ADR 0011, steps H7.6–H8.4).
+3. **Shape optimization of a blanket cross-section.** The developed
+   cross-section with mixed convection, the march along the duct with a 1-D
+   coolant, shape derivatives on a static grid, and the coupling audit (ADR 0011,
+   steps H8.5–H8.7 and H9.6). Three-dimensional runs correct and verify the
+   reduced models; they are not differentiated.
+4. **Independent validation, high Reynolds number and device channels.** ALEX
+   B2 through the core-flow model and FreeMHD evidence; Hartmann-channel
+   turbulence on the GPU; exterior ESSOS fields for a stellarator channel;
+   blanket modules, tritium and wall interaction as research steps
+   ([plan.md](plan.md) Phases 4 and 6, H5, H9).
 
-No release until the plan's acceptance gates pass. No speed, turbulence or heat
-transfer claim without its corresponding numerical and physical evidence.
+No release until the plan's acceptance gates pass. No speed, turbulence, heat
+transfer or thermoelectric claim without its numerical and physical evidence.
