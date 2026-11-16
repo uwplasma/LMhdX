@@ -855,7 +855,7 @@ open pipe below solves them in the Stokes limit, which is where the
 interaction parameter is large ($N=10700$ under the magnet; the duct's
 inertial share at $N=1000$ is 0.4 %, see above). So row 6 is run on the ALEX pipe.
 
-`lmhdx.axial.fringe_pipe` and `solve_open_pipe` give the polar grid an inlet
+`validation/open_pipe.py` (`fringe_pipe` and `solve_open_pipe`) gives the polar grid an inlet
 and an outlet, the axial direction being the polar grid's third axis. The
 velocity is staggered, $u_r$ on radial faces, $u_\theta$ on azimuthal faces,
 $u_x$ on axial faces. The viscous operator is the Hessian of the discrete
@@ -916,7 +916,7 @@ therefore not met at its frozen station-wise tolerance**; it is met on the
 integrated excess and on the upstream gradient. Those numbers score the **area-mean** pressure of each section. A pressure tap
 reads the wall, and behind a fringe the pressure is not uniform across the
 section (the transverse differences of plan rows 24 and 27). Reading the same
-solutions at the wall (`lmhdx.pipe.wall_pressure_gradient`, the outermost cell,
+solutions at the wall (`validation/open_pipe.py`, `wall_pressure_gradient`, the outermost cell,
 all Ha 6600, $48\times64\times76$) gives weighted RMS / $L_\infty$ of
 2.43 / 5.08 for the section mean, 1.79 / 3.82 for the wall ring average,
 3.11 / 6.60 at the walls normal to the field ($\theta=0,\pi$) and

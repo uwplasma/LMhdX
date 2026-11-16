@@ -159,7 +159,6 @@ the full tape. The analytical decay, JVP/VJP identity, and compiled reverse
 memory tests in `tests/test_physics.py` are the executable acceptance contract.
 
 The explicit field-level optimization surfaces are
-`lmhdx.solve`, `lmhdx.axial.solve_open_duct`,
-`lmhdx.axial.solve_open_pipe`, and `evolve_q2d`.
+`lmhdx.solve`, `lmhdx.axial.solve_open_duct`, and `evolve_q2d`.
 Other result objects are host orchestration unless their API reference
 explicitly identifies a traced field core and derivative evidence.
