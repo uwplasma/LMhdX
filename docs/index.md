@@ -103,6 +103,7 @@ validation/mhd_nusselt
 
 reference/api
 reference/cli
+reference/migration
 reference/bibliography
 ```
 

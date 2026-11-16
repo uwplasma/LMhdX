@@ -19,7 +19,10 @@ from lmhdx.fully_developed import (
 )
 from validation.shercliff import flow_rate, quadrant_flow_rate
 
-pytestmark = pytest.mark.numerical
+pytestmark = [
+    pytest.mark.numerical,
+    pytest.mark.filterwarnings("ignore:.*retired in lmhdx 2.0:DeprecationWarning"),
+]
 
 # The ten matched cases of #141: (Ha, wall conductance ratio, cells on the staggered core).
 MATCHED = [

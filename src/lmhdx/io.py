@@ -16,6 +16,7 @@ import platform
 import shutil
 import sys
 import time
+import warnings
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
 
@@ -34,6 +35,7 @@ from .cases import (
     make_hartmann_case,
     make_hunt_case,
     make_shercliff_case,
+    retired,
 )
 from .fully_developed import case_mesh, solve_fully_developed, solve_fully_developed_transient
 from .output import RestartLogInfo, StreamingSolverLogger, write_pvd, write_vtk
@@ -226,6 +228,7 @@ def duct_profile_metrics(solution: Solution) -> dict[str, float]:
     }
 
 
+@retired("the summary of lmhdx.Output")
 def validation_summary(
     solution: Solution, case_name: str, ha: float | None = None
 ) -> dict[str, float | str | None]:
@@ -245,6 +248,7 @@ def validation_summary(
     return payload
 
 
+@retired("validation/ analytic profiles")
 def hartmann_validation(solution: Solution, ha: float) -> AnalyticComparison:
     profile = extract_centerline(solution)
     half_width = 0.5 * float(solution.mesh.y_faces[-1] - solution.mesh.y_faces[0])
@@ -258,6 +262,7 @@ def hartmann_validation(solution: Solution, ha: float) -> AnalyticComparison:
     return compare_profile_to_reference(coordinate, normalized, reference)
 
 
+@retired("validation/ analytic profiles")
 def hartmann_acceptance(
     solution: Solution,
     ha: float,
@@ -323,6 +328,7 @@ def write_metrics_json(metrics: dict[str, float | str], path: str | Path) -> Pat
     return _write_json(metrics, path)
 
 
+@retired("scripts/run_benchmarks.py")
 def benchmark_solver(
     repeats: int = 3, ha: float = 20.0, ny: int = 48, nz: int = 48
 ) -> dict[str, float | str]:
@@ -438,6 +444,7 @@ def write_solution_npz(solution: Solution, case, path: str | Path) -> Path:
     return path
 
 
+@retired("lmhdx.Output(restart=True)")
 def write_restart_npz(solution: Solution, case, path: str | Path) -> Path:
     return write_solution_npz(solution, case, path)
 
@@ -448,6 +455,7 @@ def _load_optional_array(data: np.lib.npyio.NpzFile, key: str) -> np.ndarray:
     return np.asarray(data[key])
 
 
+@retired("lmhdx.solve(..., start=path)")
 def load_restart_bundle(path: str | Path) -> RestartBundle:
     path = Path(path).resolve()
     with np.load(path, allow_pickle=False) as data:
@@ -483,6 +491,7 @@ def load_restart_bundle(path: str | Path) -> RestartBundle:
         )
 
 
+@retired("lmhdx.solve(..., start=path)")
 def validate_restart_bundle(
     bundle: RestartBundle, *, mesh: StructuredMesh, geometry_kind: str, case_name: str
 ) -> None:
@@ -509,6 +518,7 @@ def validate_restart_bundle(
             raise ValueError(f"Restart case {metadata_name!r} does not match current case name {case_name!r}")
 
 
+@retired("lmhdx.Output")
 def write_solution_outputs(
     solution: Solution,
     case,
@@ -666,6 +676,7 @@ def _plot_profile(
     ax.legend(loc="upper left", bbox_to_anchor=(0.02, 0.98))
 
 
+@retired("ParaView files of lmhdx.Output")
 def write_case_overview_plots(
     solution: Solution,
     out_dir: str | Path,
@@ -963,6 +974,11 @@ def run_from_toml(path: str | Path, *overrides: str) -> dict[str, object]:
 
         print(json.dumps(summary := run(path, *overrides), indent=2))
         return summary
+    warnings.warn(
+        "a schema 1 or 2 file is retired in lmhdx 2.0; convert it with `lmhdx upgrade FILE`",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if overrides:
         raise ValueError("overrides apply to schema 3 files; convert this one with `lmhdx upgrade FILE`")
     if root.get("solver", {}).get("kind") == "thermal":
@@ -1052,6 +1068,11 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
+    warnings.warn(
+        f"`lmhdx {args.command}` is retired in lmhdx 2.0; write a schema 3 file and run `lmhdx FILE`",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
     if args.command == "benchmark":
         payload = benchmark_solver(repeats=args.repeats, ha=args.ha, ny=args.ny, nz=args.nz)

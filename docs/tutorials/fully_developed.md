@@ -1,101 +1,59 @@
 # Fully developed duct flows
 
-Fully developed cases solve the axial velocity $u(y,z)$ and electric potential
-$\phi(y,z)$ on a structured cross-section. Start with the named builders:
+A fully developed duct is a periodic duct of one axial cell: the axial velocity $u(y,z)$ and the electric
+potential $\phi(y,z)$ on a structured cross-section, from one preconditioned conjugate-gradient solve.
+`lmhdx.duct(ha, cells)` is the square duct of unit half-width and unit properties, field along $y$, solved at a
+unit pressure gradient:
 
 ```python
 import lmhdx
 
-hartmann = lmhdx.make_hartmann_case(ha=20, ny=32, nz=32)
-shercliff = lmhdx.make_shercliff_case(ha=20, ny=32, nz=32)
-hunt = lmhdx.make_hunt_case(ha=20, ny=32, nz=32, wall_cells=4)
+insulating = lmhdx.duct(20, 32)
+hunt = lmhdx.duct(20, 32, wall_conductance=0.05)
 
-for case in (hartmann, shercliff, hunt):
-    result = lmhdx.solve(case)
-    print(case.name, result.converged, result.residual)
+for problem in (insulating, hunt):
+    result = lmhdx.solve(problem)
+    print(float(result.flow_rate), float(result.residual))
 ```
 
-Hartmann applies the field normal to insulating Hartmann walls. Shercliff
-orients it so side layers control the profile. Hunt has conducting Hartmann
-walls and insulating side walls.
+The field normal to the insulating $y$ walls gives the Hartmann layers there and the side layers on the
+$z$ walls (Shercliff's duct); `wall_conductance` makes the Hartmann walls thin conducting walls of conductance
+ratio `c = sigma_w t_w / (sigma a)` (Hunt's duct). `walls=dict(y=Wall(layers=...))` resolves a wall in cells
+instead (see [walls and fields](walls_and_fields.md)). The cross-section has `cells` cells along each axis,
+clustered to the Hartmann layer `a/Ha` on the walls normal to the field and to the side layer `a/sqrt(Ha)` on
+the others. A sweep of Hartmann numbers, fields or wall conductances on one mesh size compiles twice: from the
+third case on, the mesh, field and factorizations are built on the host and passed to the program the second
+case compiled. On 32-64 cells the flow rate is within 1 % of the spectral reference from Ha 20 to 1000.
+`result.residual` is the residual norm of the certified solve (relative tolerance 1e-9, `Solver(tol=)`); a solve
+that fails raises. `Problem.replace` changes a visible part of a frozen problem, for example
+`insulating.replace(forcing=(2.0, 0.0, 0.0))`.
 
-`lmhdx.solve` runs a case on the staggered core (`lmhdx.fully_developed`): the
-cross-section becomes a `ChannelProblem` with one periodic axial cell, and the
-steady state is one preconditioned conjugate-gradient solve, compiled once per
-case and reused for any drive. A sweep of Hartmann numbers, fields or wall
-conductances on one mesh size compiles twice: from the third case on, the mesh,
-field and factorizations are built on the host and passed to the program the
-second case compiled, with no trace. `ny` and `nz` are fluid cells, clustered to the
-Hartmann layer `a/Ha` on the walls normal to the field and to the side layer
-`a/sqrt(Ha)` on the others, exactly as `lmhdx.duct_problem` does. Hunt's
-conducting walls are thin walls of conductance ratio `c = sigma_w t_w / (sigma a)`:
-the solution covers the fluid, and `wall_cells` do not enter. With
-`wall_model="resolved"` on the geometry, the walls of one axis get `wall_cells`
-cells of their own instead; that is also the closure for one conducting wall or
-two different ones. On 32-64 cells
-the flow rate is within 1 % of the spectral reference from Ha 20 to 1000.
-`result.residual` is the relative steady residual `||R(u)|| / ||R(0)||`,
-certified to 1e-9; a solve that fails raises. The case's time stepper does not
-enter a steady solve.
-A `"transient"` case runs on the core too
-(`lmhdx.fully_developed.solve_fully_developed_transient`): implicit Euler steps
-of `time_stepper.dt` to `t_final`, each one CG solve with the Lorentz force
-inside, so it is first order in time at any `dt` and settles on the steady
-state; `output.history_stride` sets the recorded steps.
-
-Use `dataclasses.replace` to change a visible part of a frozen case:
-
-```python
-from dataclasses import replace
-
-case = replace(hartmann, forcing=2.0)
-```
-
-After solving, check more than the update norm:
-
-```python
-from lmhdx.io import hartmann_validation, validation_summary
-
-comparison = hartmann_validation(result, ha=20)
-metrics = validation_summary(result, case.name, ha=20)
-print(comparison.l2_error, metrics["div_current_max"])
-```
-
-`result.diagnostics` holds the flow rate, the Lorentz and ohmic power and the
-largest cell divergence of the current.
-Increase wall and fluid resolution together for high Hartmann number cases;
-the mesh-quality helpers report cells across Hartmann and side layers.
+An unsteady run is `lmhdx.solve(problem, lmhdx.Solver(dt=..., steps=...))`: a transient duct settles on the
+steady state, and `lmhdx.Output` writes its records (see [restart and output](../how_to/restart_and_output.md)).
 
 ## Prescribe throughput and measure pumping work
 
-Run `python examples/hunt_example.py` for a conducting-wall duct with a
-requested flow rate. Edit `TARGET_FLOW_RATE` and `DUCT_LENGTH` near the top;
-set the target to `None` to prescribe `FORCING` instead. The example solves at
-unit drive to measure the flow per unit drive `G`, eliminates the required
-drive analytically, and solves again at that drive. Both solves must
-report `converged`, and the second must reproduce `G*drive` to a `1e-8`
-relative flow check. This checks the linear drive-to-flow relation, not an
-independent physical reference. Its JSON summary records flow, drive,
-`d(drive)/dQ = 1/G`, and hydraulic power `drive*L*Q`.
-This is fully developed segment work, excluding entry/exit, manifolds and
-thermal effects. It is not a complete blanket pumping budget.
+Run `python examples/hunt_example.py` for a conducting-wall duct with a requested flow rate. Edit
+`TARGET_FLOW_RATE` and `DUCT_LENGTH` near the top. `duct(..., flow_rate=Q)` sets the drive exactly, because the
+problem is linear in it: one solve gives the flow per unit drive `G`, the required drive is `Q / G`
+(`result.pressure_gradient`), and the flow check tests `Q = G*drive` to `1e-8`. This checks the linear
+drive-to-flow relation, not an independent physical reference. The JSON summary records flow, drive,
+`d(drive)/dQ = 1/G`, and hydraulic power `drive*L*Q`. This is fully developed segment work, excluding
+entry/exit, manifolds and thermal effects. It is not a complete blanket pumping budget.
 
 ## Cross-section weights on the staggered core
 
-`lmhdx.fully_developed.channel_cross_section_weights(problem)` is the `ChannelProblem`
-counterpart of `fluid_cell_areas`: it returns the transverse `(y, z)`
-integration weight of every cell, $\Delta y_j \Delta z_k$, for a
-`lmhdx.core3d.ChannelProblem`. Axis 0 is the flow axis of every channel this
-package builds (`lmhdx.core3d.duct_problem` and every other constructor put the
-periodic axis there), so the weight of a cell does not depend on the axial
-spacing. A channel carries no fluid mask -- every transverse cell counts, so
-the weights sum to the full cross-section area:
+`lmhdx.steady.channel_cross_section_weights(problem)` returns the transverse `(y, z)` integration weight of
+every cell, $\Delta y_j \Delta z_k$, for a `lmhdx.core3d.ChannelProblem`. Axis 0 is the flow axis of every
+channel this package builds (`lmhdx.core3d.duct_problem` and every other constructor put the periodic axis
+there), so the weight of a cell does not depend on the axial spacing. A channel carries no fluid mask -- every
+transverse cell counts, so the weights sum to the full cross-section area:
 
 ```python
 import numpy as np
 
 from lmhdx.core3d import duct_problem
-from lmhdx.fully_developed import channel_cross_section_weights
+from lmhdx.steady import channel_cross_section_weights
 
 problem = duct_problem(hartmann=20.0, cells=32)
 weights = np.asarray(channel_cross_section_weights(problem))
@@ -110,18 +68,15 @@ and pumping-power metrics are measured against.
 
 ## Throughput and pumping power on the staggered core
 
-`lmhdx.fully_developed.channel_flow_rate`, `channel_flow_response`,
-`channel_drive_for_flow_rate` and `channel_fixed_flow_hydraulic_power` are the
-`ChannelProblem` counterparts of `volumetric_flow_rate`, `linear_flow_response`,
-`drive_for_flow_rate` and `fixed_flow_hydraulic_power` above, reusing
-`channel_cross_section_weights`, `DuctResponse`, `pressure_drop` and
-`hydraulic_power`:
+`lmhdx.steady.channel_flow_rate`, `channel_flow_response`, `channel_drive_for_flow_rate` and
+`channel_fixed_flow_hydraulic_power` measure the throughput of a `ChannelProblem` and eliminate its drive,
+reusing `channel_cross_section_weights`, `DuctResponse`, `pressure_drop` and `hydraulic_power`:
 
 ```python
 import numpy as np
 
 from lmhdx.core3d import duct_problem
-from lmhdx.fully_developed import channel_drive_for_flow_rate, channel_flow_rate
+from lmhdx.steady import channel_drive_for_flow_rate, channel_flow_rate
 from lmhdx.steady import solve_steady_state
 
 problem = duct_problem(hartmann=20.0, cells=32)
@@ -135,18 +90,17 @@ assert np.isclose(float(achieved), target, rtol=1e-8)
 `channel_flow_rate(problem, velocity)` takes one axial-velocity slice --
 every axial station carries the same value by periodicity -- and integrates
 it against `channel_cross_section_weights`:
-$Q = \sum_{j,k} \Delta y_j \Delta z_k\, u_{jk}$, the same total-flux convention
-as `volumetric_flow_rate`. `channel_flow_response` solves once at unit axial
+$Q = \sum_{j,k} \Delta y_j \Delta z_k\, u_{jk}$. `channel_flow_response` solves once at unit axial
 drive to measure $G = Q(f{=}1)$ and returns it as a `DuctResponse`;
 `channel_drive_for_flow_rate` and `channel_fixed_flow_hydraulic_power`
-eliminate the drive the same way the `CaseSpec` route above does,
+eliminate the drive the same way,
 $f = Q_\mathrm{target} / G$, with hydraulic power $f L Q_\mathrm{target}$.
 
 Envelope: the Stokes limit only. $Q = Gf$ holds because the steady residual is
 affine in the drive when `problem.advection == "off"`; `channel_flow_response`
 raises `ValueError` for any other value, since the residual then carries
 $-\nabla\cdot(\mathbf u\mathbf u)$ and a single unit-drive solve stops
-determining the whole response. Like the functions above, these are isothermal
+determining the whole response. Like `hydraulic_power`, these are isothermal
 segment quantities, excluding entry/exit losses, manifolds and thermal
 effects.
 
@@ -155,7 +109,7 @@ effects.
 Use this bounded inverse problem to infer a positive pressure-gradient drive
 and magnetic-field multiplier. Replace the synthetic `target` with axial
 velocity samples on the same cell-centered mesh; keep SI units and geometry
-consistent. Solid cells have zero weight. The normalized, area-weighted loss
+consistent. The normalized, area-weighted loss
 uses the production field solve and its implicit SOLVAX derivatives, not an
 iteration-history tape. SciPy controls the two design variables on the host;
 the objective and gradient are compiled together. The bounded optimizer is
@@ -167,17 +121,17 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.optimize import minimize
 
-import lmhdx
-from lmhdx.fully_developed import fluid_cell_areas
+from lmhdx.core3d import duct_problem
+from lmhdx.steady import channel_cross_section_weights, solve_steady_state
 
 jax.config.update("jax_enable_x64", True)
-case = lmhdx.make_shercliff_case(ha=5, ny=12, nz=12)
-areas = fluid_cell_areas(case)
+problem = duct_problem(hartmann=5, cells=12, cells_in_layer=3)
+areas = channel_cross_section_weights(problem)
 
 def velocity(parameters):
-    return lmhdx.solve_fully_developed_fields(
-        case, forcing=parameters[0], magnetic_field_scale=parameters[1]
-    )[0]
+    return solve_steady_state(
+        problem, forcing=(parameters[0], 0.0, 0.0), field_scale=parameters[1]
+    ).velocity[0].data[0]
 
 truth = jnp.array([1.4, 1.25])
 target = velocity(truth)
@@ -214,6 +168,6 @@ certificate. Validate inferred parameters with the reporting solver and a
 held-out finer mesh before using them in a design study.
 
 For a prescribed flow rate rather than a profile, avoid optimizing drive:
-`lmhdx.fully_developed.linear_flow_response(case).drive_for(target_flow_rate)` eliminates
+`lmhdx.steady.channel_drive_for_flow_rate(problem, target_flow_rate)` eliminates
 it exactly using the linear response. Neither fit is a thermal blanket design;
 wall/geometry optimization and heat-transfer validation have separate gates.

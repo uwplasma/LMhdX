@@ -10,7 +10,10 @@ from lmhdx.io import (
     write_benchmark_report,
 )
 
-pytestmark = pytest.mark.unit
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.filterwarnings("ignore:.*retired in lmhdx 2.0:DeprecationWarning"),
+]
 
 
 def test_device_environment_records_cpu_count_without_affinity(monkeypatch):

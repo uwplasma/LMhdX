@@ -33,6 +33,8 @@ from lmhdx.io import (
 )
 from lmhdx.q2d import Q2DProblem, make_q2d_case, solve_q2d
 
+pytestmark = pytest.mark.filterwarnings("ignore:.*retired in lmhdx 2.0:DeprecationWarning")
+
 _EXPECTED_HARTMANN_CENTERLINE = jnp.asarray(
     [
         0.0,
@@ -92,14 +94,15 @@ def _synthetic_solution(case, profile: jnp.ndarray) -> Solution:
 
 @pytest.mark.regression
 @pytest.mark.parametrize(
-    ("case", "expected"),
+    ("make", "expected"),
     [
-        (make_hartmann_case(ha=2.0, ny=12, nz=12), _EXPECTED_HARTMANN_CENTERLINE),
-        (make_shercliff_case(ha=2.0, ny=12, nz=12), _EXPECTED_SHERCLIFF_CENTERLINE),
+        (make_hartmann_case, _EXPECTED_HARTMANN_CENTERLINE),
+        (make_shercliff_case, _EXPECTED_SHERCLIFF_CENTERLINE),
     ],
     ids=("hartmann", "shercliff"),
 )
-def test_closed_channel_centerline_regression(case, expected):
+def test_closed_channel_centerline_regression(make, expected):
+    case = make(ha=2.0, ny=12, nz=12)
     profile = jnp.tile(expected[:, None], (1, case.geometry.nz))
     solution = _synthetic_solution(case, profile)
     centerline = solution.state.u[:, solution.state.u.shape[1] // 2]

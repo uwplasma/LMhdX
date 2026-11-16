@@ -66,31 +66,28 @@ walls on two axes with traced parameters raise `NotImplementedError`.
 ```python
 import jax
 import jax.numpy as jnp
+
 import lmhdx
 
-case = lmhdx.make_shercliff_case(ha=20, ny=48, nz=48)
+problem = lmhdx.duct(20, 48)
 
 
-def objective(forcing, field_scale):
-    velocity, potential, jy, jz, lorentz = lmhdx.solve_fully_developed_fields(
-        case,
-        forcing=forcing,
-        magnetic_field_scale=field_scale,
-    )
-    return jnp.mean(velocity) + 1e-3 * jnp.mean(jy**2 + jz**2)
+def objective(problem):
+    return jnp.mean(lmhdx.solve(problem).velocity[0].data[0])
 
 
-value, gradient = jax.jit(jax.value_and_grad(objective, argnums=(0, 1)))(1.0, 1.0)
+value = objective(problem)
+gradient = jax.grad(objective)(problem)
+print(float(gradient.forcing[0]), float(gradient.B.strength))
 ```
 
-This path is the staggered-core solve `lmhdx.solve` runs on the same case, one
-compiled program shared by both. The steady state is a conjugate-gradient solve
-differentiated by one more (`lmhdx.steady.solve_steady_state`), so iteration
-histories are absent from the reverse tape. The continuous inputs are pressure
-forcing and a scalar multiplier on the imposed magnetic field. Rectangular
-Hartmann/Shercliff and thin-wall Hunt cases pass central-difference gates; a
-prescribed flow rate is met by scaling the unit-drive solution, which keeps it
-differentiable.
+The steady state is one conjugate-gradient solve differentiated by one more
+(`lmhdx.steady.solve_steady_state`), so iteration histories are absent from the reverse tape. The
+continuous inputs are the pressure forcing, the field amplitude and the wall numbers. Rectangular
+insulating and thin-wall Hunt ducts pass central-difference gates; a prescribed flow rate is met by
+scaling the unit-drive solution, which keeps it differentiable. The kernel-level call
+`solve_steady_state(problem, forcing=, field_scale=)` takes the drive and a scalar multiplier of the
+field as arguments, so it can be wrapped in `jax.jit`.
 
 ## Three-dimensional fringe response
 
@@ -162,7 +159,7 @@ the full tape. The analytical decay, JVP/VJP identity, and compiled reverse
 memory tests in `tests/test_physics.py` are the executable acceptance contract.
 
 The explicit field-level optimization surfaces are
-`solve_fully_developed_fields`, `lmhdx.axial.solve_open_duct`,
+`lmhdx.solve`, `lmhdx.axial.solve_open_duct`,
 `lmhdx.axial.solve_open_pipe`, and `evolve_q2d`.
 Other result objects are host orchestration unless their API reference
 explicitly identifies a traced field core and derivative evidence.

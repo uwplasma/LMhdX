@@ -4,7 +4,7 @@ LMhdX is organized by physical ownership:
 
 ```text
 ChannelProblem ──> staggered core (grid, ops, poisson, pipe) ──> steady / axial
-CaseSpec ── fully developed ──> the core, steady or transient ──> Solution
+Problem ── solve ──> the core, steady or transient ──> Solution
 Q2DProblem ──> vorticity dynamics ──> SOLVAX periodic Poisson ──> Q2DResult
 ThermalProblem ──> the core's stages + cell-centred conduction ──> advance_thermal
 ```
@@ -17,8 +17,8 @@ requests them.
 
 `lmhdx.core3d` and `lmhdx.steady` are the 3-D interface; `lmhdx.axial` adds
 an inlet and an outlet, and `lmhdx.coreflow` the inertialess core-flow model.
-`lmhdx.fully_developed` maps a `CaseSpec` onto the core; `lmhdx.cases` holds
-the case builders and `lmhdx.solve`. The cell-centred solver it replaced was
+`lmhdx.problem`, `lmhdx.solver`, `lmhdx.output` and `lmhdx.config` are the public interface
+(`Problem`, `Solver`, `Output`, `solve` and the TOML schema 3 over them). The cell-centred solver it replaced was
 removed in 1.8 (step 4.6). `lmhdx.thermal` (ADR 0008) composes two private stages
 of `lmhdx.core3d`, one electric solve for the Lorentz force and the Joule heat,
 then the predictor and projection with an optional buoyancy force, and adds its
