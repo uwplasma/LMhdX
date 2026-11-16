@@ -77,7 +77,7 @@ What is and is not established:
   TM-228's uncorrected 0.0178 is the inertialess thin-layer Ha → ∞ asymptote,
   which no 3-D solve reaches; LMhdX's Ha → ∞ fits give 0.0183–0.0211, 3–18 %
   above it, a fit band rather than a 1 % check.
-- A circular pipe with an open axis (`fringe_pipe`, `solve_open_pipe`) is solved
+- A circular pipe with an open axis (`fringe_pipe`, `solve_open_pipe` of `validation/open_pipe.py`) is solved
   in the Stokes limit only. There is no thick or layered wall.
 
 Run `python examples/fringe_duct_example.py` for the case above with its

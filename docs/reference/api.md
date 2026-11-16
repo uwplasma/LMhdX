@@ -35,7 +35,7 @@ live in the module that owns their concepts.
 
 `solve(problem)` accepts a `Problem`, a `Q2D`, a `ThermalProblem`, a `ChannelProblem` or a `Q2DProblem`. A duct with
 an inlet and an outlet is solved by `lmhdx.axial.solve_open_duct`. A pipe with an inlet and an outlet on the polar grid
-(`lmhdx.axial.fringe_pipe`) is solved in the Stokes limit by `lmhdx.axial.solve_open_pipe`.
+(`fringe_pipe` of `validation/open_pipe.py`) is solved in the Stokes limit by `solve_open_pipe` there.
 
 `duct_problem(hartmann=..., cells=..., wall_conductance=...)` builds a square
 insulating or Hunt duct with meshes that resolve the layers that exist -- `a/Ha`

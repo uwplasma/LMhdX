@@ -216,7 +216,7 @@ def test_the_spectral_reference_returns_what_is_cached():
 
 
 def _open_pipe(field, wall_conductance=0.05):
-    from lmhdx.axial import fringe_pipe
+    from validation.open_pipe import fringe_pipe
 
     return fringe_pipe(
         hartmann=20.0,
@@ -238,7 +238,7 @@ def _fringe(x):
 
 def test_the_open_pipe_operator_is_symmetric_and_conserves_charge_and_energy():
     """Row 6 machinery: -A symmetric definite in the face volume; the Lorentz work is minus the Joule heat."""
-    from lmhdx import axial
+    from validation import open_pipe as axial
 
     pipe = _open_pipe(_fringe)
     metric, solvers = axial._pipe_metric(pipe), axial._pipe_solvers(pipe)
@@ -267,7 +267,7 @@ def test_the_open_pipe_operator_is_symmetric_and_conserves_charge_and_energy():
 
 def test_the_uniform_open_pipe_is_the_fully_developed_pipe():
     """Under a uniform field the 3-D open pipe keeps the 2-D pipe's profile and gradient to round-off."""
-    from lmhdx.axial import pipe_station_pressure, solve_open_pipe
+    from validation.open_pipe import pipe_station_pressure, solve_open_pipe
 
     pipe = _open_pipe(np.ones_like)
     solution = solve_open_pipe(pipe)
@@ -288,7 +288,7 @@ def test_the_uniform_open_pipe_is_the_fully_developed_pipe():
 def test_the_open_pipe_balances_mass_and_its_drop_adjoint_matches_central_differences():
     import jax
 
-    from lmhdx.axial import _pipe_divergence, _pipe_metric, pipe_station_pressure, solve_open_pipe
+    from validation.open_pipe import _pipe_divergence, _pipe_metric, pipe_station_pressure, solve_open_pipe
 
     pipe = _open_pipe(_fringe)
     metric = _pipe_metric(pipe)
@@ -307,7 +307,7 @@ def test_the_open_pipe_balances_mass_and_its_drop_adjoint_matches_central_differ
 
 
 def test_the_tabulated_field_is_monotone_and_not_extrapolated():
-    from lmhdx.axial import monotone_interpolant
+    from validation.open_pipe import monotone_interpolant
 
     table = np.array([-2.0, 0.0, 1.0, 3.0]), np.array([1.0, 0.8, 0.1, 0.0])
     field = monotone_interpolant(*table)
@@ -321,8 +321,13 @@ def test_the_tabulated_field_is_monotone_and_not_extrapolated():
 
 def test_the_alex_b1_pipe_matches_at_the_wall_parallel_to_the_field_not_in_the_section_mean():
     """Row 6: the same Ha 400 solve scored against the digitized ALEX B1 gradient by two observables."""
-    from lmhdx.axial import fringe_pipe, monotone_interpolant, pipe_station_pressure, solve_open_pipe
-    from lmhdx.pipe import wall_pressure_gradient
+    from validation.open_pipe import (
+        fringe_pipe,
+        monotone_interpolant,
+        pipe_station_pressure,
+        solve_open_pipe,
+        wall_pressure_gradient,
+    )
 
     data = np.loadtxt(
         files("lmhdx") / "data/benchmarks/references/alex-b1-pipe.csv", delimiter=",", skiprows=1
