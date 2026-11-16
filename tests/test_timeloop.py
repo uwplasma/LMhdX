@@ -1692,3 +1692,39 @@ def test_statistics_integrate_inside_the_scan_and_give_friction_and_nusselt():
         np.allclose(whole.statistics[k], second.statistics[k], rtol=1e-13, atol=1e-15)
         for k in whole.statistics
     )
+
+
+def test_the_rk3_heat_step_is_second_order_closes_its_ledger_and_holds_central_transport():
+    """H2.2 for heat: temperature through the IMEX stages, against Euler's first order; Euler refuses central."""
+    import dataclasses
+
+    from lmhdx.core3d import EULER, RK3
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state, thermal_boundary
+
+    insulated = thermal_boundary("heat_flux", conductivity=0.5)
+    walls = (PERIODIC_AXIS, insulated, thermal_boundary("temperature", 301.0, 299.0))
+    flow = _uniform_duct(6, hartmann=4.0, grid=Grid(
+        uniform_faces(6, 0.0, 2.0), uniform_faces(6, -1.0, 1.0), uniform_faces(6, -1.0, 1.0)
+    ))  # fmt: skip
+    thermal = _heated(flow, walls, expansion_coefficient=5e-2, gravity=(0.0, 0.0, -1.0), advection="central")
+    with pytest.raises(ValueError, match="central"):
+        build_thermal_step(thermal, dtype=jnp.float64)
+    start = 300.0 + 0.5 * _pattern(thermal, 3)
+
+    def run(scheme, steps, problem=thermal):
+        problem = dataclasses.replace(problem, flow=dataclasses.replace(problem.flow, dt=0.4 / steps))
+        thermal_step = build_thermal_step(problem, dtype=jnp.float64, scheme=scheme)
+        state = initial_thermal_state(problem, start)
+        return advance_thermal(thermal_step, state, _cells(problem, 2.0), steps)
+
+    final, history = run(RK3, 40)
+    scale = np.max(np.abs(np.asarray(history.joule_power) + np.asarray(history.external_power)))
+    assert np.all(history.finite) and np.max(np.abs(history.heat_balance_residual)) < 1e-11 * scale
+    assert np.max(history.heat_solve_residual) < 1e-9
+    reference = run(RK3, 160)[0].temperature.data
+    errors = [float(jnp.max(jnp.abs(run(RK3, n)[0].temperature.data - reference))) for n in (10, 20, 40)]
+    assert np.all(np.log2(np.divide(errors[:-1], errors[1:])) > 1.8), errors
+    upwind = dataclasses.replace(thermal, advection="upwind")
+    euler = [run(EULER, n, upwind)[0].temperature.data for n in (20, 40, 160)]
+    ratio = float(jnp.max(jnp.abs(euler[0] - euler[2])) / jnp.max(jnp.abs(euler[1] - euler[2])))
+    assert ratio < 3.0
