@@ -330,13 +330,19 @@ figure can hold with fewer points inside the band as drawn.
   (z = −24.6 to −24.8 mm), at the heater's leading edge.
   - The band there is 0.005–0.023 K wide. With the digitizing uncertainty, its half-width is 0.025–0.034 K.
   - The M1-to-M2 change there is 0.037 K. The M2-to-M3 change is 0.024 K, and M3's excess is zero at all three.
+  - *Why:* x = −0.3 m is where the outer heat flux steps from zero to q''. The value there is interpolated between
+    the cells either side of the step, so it converges slowly, toward the band: 303.08, 303.04 and 303.02 C at
+    z = −24.8 mm from M1 to M3. M3 is 0.09 K above the band as drawn, 3 % of the 3 K local rise, in a gradient
+    where 0.1 K is 0.09 mm of z. Numerical.
 - **Figure 12.** At the side-layer jet's peak (z = −21.4 mm), the misfit beyond the band falls with the mesh:
   - 0.21 mm/s on M1, 0.18 on M2 and 0.04 on M3, against a U of 0.14 mm/s. So the M1 and M2 runs fail there and M3
     passes.
   - At z = +21.3 mm, M1 fails, by 0.28 mm/s against a U of 0.23 mm/s.
   - One point on the jet's flank (z = −22.7 mm) is too uncertain to gate: the M1-to-M2 change is 0.93 mm/s, above
     the 0.83 mm/s half-width. The M2-to-M3 change is 0.02 mm/s, and no run lies outside there.
-- **Figure 13.** The jet's peak at x = 0, on the +z side only (z = 21.2 to 21.5 mm), is a converged miss.
+  - *Why:* the jets' resolution. M3 is 0.66 mm/s (0.8 %) above the band as drawn and inside the widened band.
+- **Figure 13.** The jet's peak at x = 0, on the +z side only (z = 21.2 to 21.5 mm), misses, and refinement does
+  not close it.
   - At z = 21.4 and 21.5 mm, M3 lies 0.75 and 0.42 mm/s beyond the widened band, against a U of 0.12 and
     0.14 mm/s.
   - At z = 21.2 mm, M3 lies 0.32 mm/s beyond the band, within its U of 0.38 mm/s. The M1 and M2 runs fail there.
@@ -345,14 +351,31 @@ figure can hold with fewer points inside the band as drawn.
   - The −z side passes.
   - One flank point (z = 22.9 mm) is too uncertain to gate: the M1-to-M2 change is 0.85 mm/s, above the 0.61 mm/s
     half-width. The M2-to-M3 change is 0.28 mm/s.
+  - The largest gap is 1.5 mm/s above the band as drawn, 1.8 % of the peak.
+  - *Why, the mesh, about a third:* the developed section's jet peak (`section_flow`) on 48, 64, 84 and 128 cells
+    across is 84.79, 84.40, 84.18 and 83.98 mm/s. It converges near 83.8 mm/s (order 1.6–1.8), 0.4 mm/s below its
+    value on M3's mesh. More side-layer refinement trims the jets by that much, not into the band.
+  - *Why, the wall's ratio, an input:* it is pinned to the printed gradient. Matolich's measured ratio lowers the
+    developed jet by 0.85 mm/s (1 %) but misses the gradient by 4 %. The jet moves about 2 % per 10 % of the ratio.
+    So matching the printed gradient raises the jets about 1 %. This suggests the codes' walls differ slightly
+    from LMhdX's resolved steel; it is inferred, not checked against the codes.
+  - *Why, buoyancy's asymmetry:* heated from below, the −z jet runs faster than the +z jet: by 2.2 mm/s in LMhdX,
+    against 2.9 mm/s between the band's top edges. The weaker asymmetry leaves the +z peak high. It is not traced
+    to an input.
 - **Figure 18.** No point fails. The first two heated points, at the heater's leading edge, are too uncertain to
   gate.
-  - At x = −0.2965 m, Nu is 22.7, 23.1 and 23.1 from M1 to M3. The band narrows to a single value there, 19.4, so its
-    widened half-width is the digitizing 0.09. The M1-to-M2 change, 0.39, exceeds it.
-  - M2 and M3 agree there to 0.01, so the difference from the band, 3.5 beyond it, is converged.
-  - 5.4c's held flow missed there by 3.3, so neither buoyancy nor the fringe makes it.
+  - At x = −0.2965 m, Nu is 22.7, 23.1 and 23.1 from M1 to M3. The band narrows there to one code's value, 19.4, so
+    its widened half-width is the digitizing 0.09. The M1-to-M2 change, 0.39, exceeds it.
   - At the next point, x = −0.2956 m, M3 moves toward the band (21.2, 21.1 and 20.5 from M1 to M3). That M2-to-M3
     change, 0.57, exceeds the 0.47 half-width.
+  - *Why:* Nu is singular at the heater's edge. Every mesh's cell values lie on one curve, Nu ≈ 34 d^−0.37 with d
+    the distance from the edge in mm, so LMhdX's Nu is converged point by point. The band's first point is 3.5 mm
+    in, between the first two cells, 3.3–5 mm apart. Linear interpolation between them overestimates a curve this
+    sharp, and M2 and M3 agree at 23.1 by coincidence.
+  - On the curve, Nu is about 21.5 at the first point, 11 % above the one code, and 19.7 at the second, 1 % above
+    the band. Past 5 mm from the edge LMhdX lies in the band. 5.4c's 3.3 there is the same interpolation on its
+    5 mm cells.
+  - Numerical: axial cells of about 0.5 mm within a few centimetres of each edge would resolve it.
 - **Figure 19.** Upstream of x = −0.964 m, E_t is converged but far below the band.
   - M2 and M3 agree to within 0.03 decades there.
   - LMhdX's E_t runs from 5e-17 at x = −1.25 m to 1e-7 at −0.964 m.
@@ -360,23 +383,24 @@ figure can hold with fewer points inside the band as drawn.
     and 1e-4.
   - LMhdX's inflow is the inlet section's developed profile, so little transverse motion arrives from upstream. The
     specification leaves the inlet profile and the domain's length to each code (Table 4).
+  - *Why:* the setup, not resolution. Upstream of x = −1.006 m the band is one code's, with transverse motion of
+    about 1 % of u0 where the field is nearly zero, most likely from its inlet.
   - The two most upstream points are also too uncertain to gate. Their mesh change, 0.06–0.07 decades, exceeds the
     single-valued band's digitizing half-width, 0.02 decades.
 
-**What the misses are.**
-- *Converged, and failing:*
-  - Figure 13's jet peak at x = 0;
-  - Figure 19 upstream of x = −0.964 m.
-
-  These are differences from the codes, not resolution.
-- *Converged on M2 and M3, but too uncertain to gate:* Figure 18's first heated point. Its band is a single value,
-  so the M1-to-M2 change alone exceeds its digitizing half-width. The difference from the band, 3.5, is 5.4c's.
+**What the misses are.** Numerical, or from the inputs; only part of Figure 13's is not traced.
+- *Numerical, at the heater's leading edge, where the heat flux steps:* Figures 9 and 18. LMhdX converges toward
+  the band; axial refinement near x = ±0.3 m would resolve them.
+- *Numerical, the jets' resolution:* Figure 12's jet peak fails on M1 and M2 and passes on M3.
+- *Inputs:*
+  - Figure 13's +z jet peak, 0.7 % beyond the widened band after extrapolation: the pinned wall ratio, with a
+    weaker buoyant asymmetry not traced to an input;
+  - Figure 19 upstream of x = −0.964 m: the inlet, which each code chooses.
 - *Too uncertain to gate, though converging:*
   - Figure 9's three points;
   - the jets' flanks in Figures 12 and 13;
-  - Figure 18's second point;
+  - Figure 18's two points;
   - Figure 19's two most upstream points.
-- *Mesh-dependent:* Figure 12's jet peak fails on M1 and M2 and passes on M3.
 
 **A property of the rule.** U takes the larger of the two mesh changes. So a point that the M1-to-M2 change leaves too
 uncertain to gate stays so, however M3 converges.
