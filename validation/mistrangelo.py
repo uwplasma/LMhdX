@@ -505,6 +505,7 @@ def case1(
     core: tuple[float, float] = (-1.0, 1.0),
     dt: float = 0.01,
     record: dict | None = None,
+    case: str = "case1",
 ) -> tuple:
     """Step 5.4e's coupled problem and its start: Case 1's full duct in SI units, temperatures in deg C.
 
@@ -513,12 +514,12 @@ def case1(
     limited momentum transport and buoyancy, from the inlet's developed profile at ``u0`` carried along the duct.
     The heat is carried by van Leer transport; the PbLi enters at 300 C and leaves with no conductive flux, and the
     outer bottom surface takes ``q''`` over ``|x| <= 0.3`` m and its full outer width. The axial mesh has
-    ``spacing`` over ``core`` and grows into the buffers out to ``span``. No Joule heat. Returns the thermal problem
-    and its start.
+    ``spacing`` over ``core`` and grows into the buffers out to ``span``. No Joule heat. ``case`` names the
+    specification's case whose ``u0`` and ``q''`` it takes (:func:`case2`). Returns the problem and its start.
     """
     enable_x64()
     record = record or spec()
-    geometry, case, heating = record["geometry"], record["cases"]["case1"], record["heating"]
+    geometry, case, heating = record["geometry"], record["cases"][case], record["heating"]
     pbli, steel = pinned_pbli(record), record["properties"]["steel"]
     a, t_w = geometry["half_width_m"], geometry["wall_thickness_m"]
     u0, q, ha = case["mean_velocity_m_per_s"], case["heat_flux_W_per_m2"], case["hartmann"]
@@ -588,11 +589,17 @@ def case1(
     return thermal, initial_thermal_state(thermal, t_in, velocity)
 
 
+def case2(**options) -> tuple:
+    """Step 5.4f's problem and its start: :func:`case1`'s duct with Case 2's ``u0`` (0.01 m/s) and ``q''``
+    (10 W/cm^2), both inferred (the specification). Its rolls about the field's axis make it time-dependent."""
+    return case1(**options, case="case2")
+
+
 CASE1_GATED = (6, 7, 9, 10, 12, 13, 15, 16, 17, 18, 19)  # the campaign record's gated figures (ADR 0009 D35)
 CASE1_STATIONS = ("0", "0.15", "0.3", "0.6", "1")  # Fig. 11's stations, x in metres, as its curves are keyed
 
 
-def case1_observables(thermal, fields: dict, record: dict | None = None) -> dict:
+def case1_observables(thermal, fields: dict, record: dict | None = None, case: str = "case1") -> dict:
     """Case 1's observables of time-averaged fields, as the paper defines them, by figure: ``{figure: (x, y)}``.
 
     ``fields`` holds the averaged velocity components ``u``, ``v`` and ``w`` on the flow's faces and ``T`` on
@@ -602,16 +609,18 @@ def case1_observables(thermal, fields: dict, record: dict | None = None) -> dict
     - Figs. 9, 10, 12 and 13: ``T`` (walls included) and ``u`` against ``z``, at ``x = -0.3`` and ``0``.
     - Fig. 15: the potential, in microvolts, on the interface ``z = -a``, against ``x``. It is the potential of the
       averaged velocity, which it is linear in, gauged to zero mean over fluid and walls. The interface value is
-      the first fluid cell's plus the current through the interface times its half cell's resistance.
+      the first fluid cell's plus the current through the interface times its half cell's resistance. ``"15 z=+a"``
+      is the same on ``z = +a``.
     - Fig. 16: the potential against ``z`` at ``x = 0``, in the fluid and on its two interfaces.
     - Figs. 17, 18 and 38: the bulk temperature (eq. 6), Nu (eq. 7, over the heated stations only) and ``T_w``.
     - Fig. 19: ``E_t`` (eq. 8), ``int(v^2 + w^2 dA) / (A u0^2)``.
     - Fig. 11: ``T`` against ``z`` at OF_KIT's five stations, keyed ``"11 x=0"`` to ``"11 x=1"``.
     - Fig. 8: the pressure on the axis against ``x``, in pascals, when ``fields`` holds ``p`` on the flow's cells.
+    ``case`` names the specification's case whose ``q''`` and ``u0`` Nu and ``E_t`` take.
     """
     record = record or spec()
-    a, q = record["geometry"]["half_width_m"], record["cases"]["case1"]["heat_flux_W_per_m2"]
-    u0, heating = record["cases"]["case1"]["mean_velocity_m_per_s"], record["heating"]
+    a, q = record["geometry"]["half_width_m"], record["cases"][case]["heat_flux_W_per_m2"]
+    u0, heating = record["cases"][case]["mean_velocity_m_per_s"], record["heating"]
     flow, tgrid, block = thermal.flow, thermal.thermal_grid, thermal.fluid_block
     grid = flow.grid
     xf, (xc, y, z) = np.asarray(grid.faces[0]), (np.asarray(c) for c in grid.centers)
@@ -651,12 +660,26 @@ def case1_observables(thermal, fields: dict, record: dict | None = None) -> dict
     half, sigma = 0.5 * np.diff(np.asarray(grid.faces[2])), float(flow.conductivity)
     lower = phi[:, 0] + current[:, 0] * half[0] / sigma  # the interface z = -a
     upper = phi[:, -1] - current[:, -1] * half[-1] / sigma  # and z = +a
-    out[15] = (xc, 1e6 * lower)
+    out[15], out["15 z=+a"] = (xc, 1e6 * lower), (xc, 1e6 * upper)
     section = np.concatenate([[lower], phi.T, [upper]]).T
     out[16] = (
         np.concatenate([[-a], z, [a]]),
         1e6 * np.array([np.interp(0.0, xc, section[:, j]) for j in range(section.shape[1])]),
     )
+    return out
+
+
+# Case 2's figures and the same quantities' keys in case1_observables (step 5.4f).
+CASE2_FIGURES = {23: 7, 24: 6, 26: 12, 27: 13, 28: 9, 29: 10, 30: 8, 31: 15, 32: "15 z=+a"}
+CASE2_FIGURES |= {33: 16, 34: 17, 35: 19, 37: 18}
+
+
+def case2_observables(thermal, fields: dict, record: dict | None = None) -> dict:
+    """Case 2's observables by its figures (:data:`CASE2_FIGURES`), as :func:`case1_observables` defines them with
+    Case 2's ``q''`` and ``u0``, and Fig. 38's ``"38 T_w"`` and ``"38 T_b"`` for its Case 2 curves."""
+    same = case1_observables(thermal, fields, record, case="case2")
+    out = {number: same[key] for number, key in CASE2_FIGURES.items() if key in same}
+    out["38 T_w"], out["38 T_b"] = same["38 T_w"], same["38 T_b"]
     return out
 
 

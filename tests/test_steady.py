@@ -2554,7 +2554,9 @@ def test_case_1_takes_the_specified_heat_and_flow_and_gives_every_figure():
     observables of a known flow, the inlet's profile all along with T = 305 + 2 x - 100 z (C, m) and p = 1000 - 400 x
     (Pa), are as defined: T on the axis, at the stations and as the bulk (u is even in z); u the same everywhere along;
     T_w between the cells either side and Nu finite only where heated; E_t zero; the potential odd in z, as the
-    flow's source is, interfaces included; and p on the axis. The reported comparisons take them."""
+    flow's source is, interfaces included; and p on the axis. The reported comparisons take them. Case 2's duct
+    (step 5.4f) carries its 0.01 m/s and takes 3000 W, and its observables are these under its own figures, Nu
+    with its flux."""
     import json
 
     from lmhdx.thermal import build_thermal_step
@@ -2593,7 +2595,7 @@ def test_case_1_takes_the_specified_heat_and_flow_and_gives_every_figure():
     assert not np.any(known["v"]) and not np.any(known["w"])
     observables = mistrangelo.case1_observables(thermal, known, record)
     stations = {f"11 x={s}": float(s) for s in mistrangelo.CASE1_STATIONS}
-    assert set(observables) == {*mistrangelo.CASE1_GATED, 8, "38 T_w", "38 T_b", *stations}
+    assert set(observables) == {*mistrangelo.CASE1_GATED, 8, "15 z=+a", "38 T_w", "38 T_b", *stations}
     assert observables[6][1] == pytest.approx(305.0 + 2.0 * xc, abs=1e-10)
     assert observables[17][1] == pytest.approx(305.0 + 2.0 * xc, abs=1e-8)
     for key, at in {9: -0.3, 10: 0.0, **stations}.items():
@@ -2609,6 +2611,7 @@ def test_case_1_takes_the_specified_heat_and_flow_and_gives_every_figure():
     assert across == pytest.approx(-across[::-1], abs=1e-15) and across[0] == -a
     assert phi == pytest.approx(-phi[::-1], abs=1e-9 * np.max(np.abs(phi)))
     assert phi[0] == pytest.approx(np.interp(0.0, xc, observables[15][1]), rel=1e-12)
+    assert observables["15 z=+a"][1] == pytest.approx(-observables[15][1], abs=1e-9 * np.max(np.abs(phi)))
     assert observables[8][1] == pytest.approx(1000.0 - 400.0 * xc, rel=1e-14)
     reported = mistrangelo.case1_reported(observables)
     assert set(reported) == {"8", "38 T_w", "38 T_b", *stations}
@@ -2616,6 +2619,20 @@ def test_case_1_takes_the_specified_heat_and_flow_and_gives_every_figure():
     band = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES.read_text())["figures"]}[8]["band"]["x"]
     covered = np.asarray(band)[(np.asarray(band) >= xc[0]) & (np.asarray(band) <= xc[-1])]
     assert reported["8"]["drop"] == pytest.approx(400.0 * (covered[-1] - covered[0]), rel=1e-12)
+    second = record["cases"]["case2"]
+    thermal2, start2 = mistrangelo.case2(**mesh, spacing=0.05, dt=0.05)
+    rate = np.sum(np.asarray(start2.velocity[0].data) * areas, axis=(1, 2))
+    assert rate == pytest.approx(second["mean_velocity_m_per_s"] * (2 * a) ** 2, rel=1e-12)
+    faces = thermal2.thermal_grid.faces
+    # q'' into the bottom surface, stored as the gradient it sets in the steel
+    outer = -np.asarray(thermal2.thermal_conditions[2].lower) * wall.thermal_conductivity
+    taken = np.sum(outer * np.outer(np.diff(np.asarray(faces[0])), np.diff(np.asarray(faces[1]))))
+    assert taken == pytest.approx(second["heat_flux_W_per_m2"] * 0.6 * (2 * a + 2 * t_w), rel=1e-12)
+    figures2 = mistrangelo.case2_observables(thermal, known, record)
+    assert set(figures2) == {*mistrangelo.CASE2_FIGURES, "38 T_w", "38 T_b"}
+    for number, same in mistrangelo.CASE2_FIGURES.items():
+        scale = second["heat_flux_W_per_m2"] / q if number == 37 else 1.0  # E_t is zero for this flow
+        np.testing.assert_allclose(figures2[number][1], scale * observables[same][1], rtol=1e-13)
 
 
 def test_case_1_s_gate_and_reported_figures_follow_their_declared_rules():
