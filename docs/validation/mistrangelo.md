@@ -98,7 +98,7 @@ LMhdX's averaging protocol, a proposal fixed before any run as D35 asks:
 averaging starts after one flow-through and once two consecutive 50 s means
 agree within 1 % of the bulk rise, over at least 450 s in five batches whose
 independence is checked before any statistical error is quoted. No Case 2
-result is claimed before the corrected momentum step.
+result is claimed before the corrected momentum step. 5.4f's draft (below) makes it exact.
 
 | Figure | Quantity | Left out of the band | Why (page) | Chosen by |
 |:--|:--|:--|:--|:--|
@@ -483,6 +483,86 @@ Without a solve, on curves made from the references:
 - it gates only the points every run covers, and measures U in decades on a log axis;
 - Figure 8's offset takes out a constant;
 - Figures 11 and 38 report a constant difference as it is.
+
+## Step 5.4f: Case 2, reported — the campaign (draft, declared before the run)
+
+Plan step 5.4f reports Case 2 against the codes' spread (ADR 0009 D35). It has no pass or fail: the references differ
+in kind, CFX predicting a steady flow (p. 12). This record fixes the runs, the burn-in, the averaging window and the
+statistical uncertainty before any production run (D12). It is a draft until agreed.
+
+**The problem.** `validation.mistrangelo.case2` is `case1`'s duct with Case 2's inferred u₀ = 0.01 m/s and
+q'' = 10 W/cm² (Ha 235, Re 1073, Gr 3.55e7, Ri/N 0.60). The energy balance gives a bulk rise of 75.9 K. The paper
+finds rolls about the field's axis in and behind the heated zone, and temperature fluctuations of up to 30 K behind
+the heater's end (pp. 12–15).
+
+**Checked so far** on a coarse mesh: 16 cells across, 5 cm along, `dt` 0.05 s, 900 s in 9 minutes on a laptop CPU.
+- The heat ledger closes to 1.5e-12 of its largest term, and mass to 9e-10.
+- Flow returns through the outlet from 129 s to 511 s, up to 40 % of the throughflow, while the heated fluid first
+  reaches it. None returns after 511 s.
+- The heat stored falls under 1 % of the 3000 W input only at about 560 s, nearly two flow-throughs.
+- The flow then settles to a steady state: the probes' temperatures hold to 0.01 K. A mesh this coarse damps the
+  rolls. CFX, on axial cells of 0.22 a as M1's, also found a steady flow; FLUENT_UK, on 0.217 a, did not. So each
+  run below must show its own time dependence.
+
+**Hypothesis.**
+- LMhdX's flow is time-dependent in and behind the heated zone, as every code but CFX finds: the temperature there
+  fluctuates by kelvins over the averaging window.
+- Its time averages lie within the codes' widened band at most points of the figures on which the codes agree, and
+  the bulk temperature's outlet plateau is the energy balance's 375.9 °C.
+
+**Compared and reported.**
+- Every Case 2 figure against its band widened by the digitizing uncertainty, with `band_misfit` as in 5.4e:
+  Figures 23 and 24 (u and T on the axis), 26–29 (u(z) and T(z) at x = −0.3 and 0 m), 31–33 (the potential on both
+  interfaces and across), 34 (the bulk temperature), 35 (E_t) and 37 (Nu). For each: the share of points inside the
+  band as drawn and within the widened band, the largest excess and where, and the statistical uncertainty there.
+- Figure 30, the pressure on the axis, with one best-fit offset as Figure 8, once the thermal step gives the
+  stage's pressure ([asked on #327](https://github.com/uwplasma/LMhdX/pull/327#issuecomment-6929038011)).
+- Figure 38's Case 2 curves, OF_KIT's T_w and T_b: the largest difference and the mean offset, as in 5.4e.
+- The fluctuations: the RMS of T and u over the averaging window on the plane y = 0 and on the heated interface;
+  time series every 0.1 s at probes on the heated interface and on the axis at x = 0, 0.15, 0.33 and 0.6 m; and the
+  largest temperature swing, against the paper's 30 K.
+
+**Runs.** 5.4e's meshes, with `dt/Δx` at 3 s/m. The codes' axial cells in the heated zone are 0.065 a to 0.71 a
+(Table 3); M1's and M2's are 0.22 a and 0.17 a.
+- M2 (64 across, 4 mm along), outlet at 1.5 m: the main run.
+- M1 (48 across, 5 mm along), outlet at 1.5 m: the mesh's effect, reported beside M2.
+- M1 with the outlet at 2.25 m: Case 2's rolls reach further downstream than anything in Case 1, and COMSOL's
+  outlet let flow back in (p. 12).
+
+**Burn-in and averaging**, the protocol stated under Case 2 above, made exact.
+- Burn-in: at least one flow-through, L/u₀ = 300 s for the 3 m duct. From then on the bulk temperature T_b(x) and
+  the heat stored are averaged over consecutive 50 s windows. Averaging starts at the end of the first window whose
+  T_b agrees with the one before within 1 % of the bulk rise (0.76 K) at every station, and whose stored heat is
+  under 1 % of the input (30 W).
+- The second condition is added because of the coarse run: its probes' 50 s means agreed within 0.76 K by 400 s,
+  while 10 % of the input was still being stored.
+- Averaging: 450 s, the longest of the codes' windows (OF_KIT's, Table 5), at every step, kept as ten 45 s
+  sub-batches.
+- Statistical uncertainty: the standard error of the five 90 s batch means (pairs of sub-batches) at each point.
+  The batches count as independent if the ten sub-batches give a standard error at least 0.8 times the five
+  batches' at the median point of every figure. If not, averaging goes on in 90 s batches up to 900 s; an error
+  that still fails the check is quoted as a lower bound.
+- The corrected momentum step that the Case 2 section asks for is 5.4d's (#314, #315).
+
+**Diagnostics expected every step.** As in 5.4e: the heat ledger within 1e-9 of its largest term, mass and charge at
+their solve floors, the throughflow held, and the advective Courant number at most 0.5. Flow returning through the
+outlet is flagged (`outlet_backflow="error"`), not hidden. It may return during the burn-in, as on the coarse mesh;
+none may return during the averaging window.
+
+**Budget.** From 5.4e's measured cost per step on these meshes, to be measured again for Case 2 before the runs.
+About 1,100 s simulated: up to 650 s of burn-in and settling, as the coarse run needed, then 450 s of averaging.
+- M1 at 0.015 s: 73,000 steps, about 50 minutes.
+- M2 at 0.012 s: 92,000 steps, about 2.4 hours.
+- M1 with the long outlet: about 55 minutes.
+- About 4 GPU hours in all, and 7 if the averaging runs to 900 s.
+
+**Exit (D12).**
+- Case 2 is reported, not gated, with every comparison and its statistical uncertainty shown.
+- A run whose bulk temperature does not settle by the criterion within 1,200 s is reported with its drift.
+- A run with flow returning through its outlet at 1.5 m during the averaging window is reported on the 2.25 m outlet
+  (D37's fallback).
+- If M2 settles to a steady flow, as the coarse mesh did, it is run again with half its axial spacing (2 mm,
+  0.087 a, nearer OF_KIT's 0.065 a), about 10 GPU hours more, before Case 2 is reported steady on LMhdX.
 
 ## Sources
 
