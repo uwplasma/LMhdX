@@ -37,9 +37,8 @@ import numpy as np
 
 from lmhdx import enable_x64
 from lmhdx.core3d import ChannelProblem
-from lmhdx.fully_developed import channel_flow_rate, channel_flow_response
 from lmhdx.grid import PERIODIC, BoundaryCondition, Grid, uniform_faces, wall_resolving_faces
-from lmhdx.steady import solve_compiled
+from lmhdx.steady import channel_flow_rate, channel_flow_response, solve_compiled
 
 # Inputs: the design-law sweep, the duct and its field, and the mesh.
 OUTPUT_DIR = Path("artifacts/examples/duct_design_law")

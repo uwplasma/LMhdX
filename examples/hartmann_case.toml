@@ -1,80 +1,13 @@
-[case]
+# An insulating Hartmann duct, run with `lmhdx examples/hartmann_case.toml`.
+# A table is a constructor call: [problem] with `preset = "duct"` is duct(**table), [output] is Output(**table).
+schema_version = 3
 name = "hartmann_ha20_toml"
-forcing = 1.0
-initial_velocity = 0.0
-notes = "Explicit Hartmann duct example for `lmhdx input.toml`."
+units = "nondimensional"
 
-[geometry]
-kind = "rect_duct"
-width = 2.0
-height = 2.0
-length = 1.0
-nx = 1
-ny = 32
-nz = 32
-wall_thickness = [0.0, 0.0, 0.0, 0.0]
-wall_cells = [0, 0, 0, 0]
-
-[magnetic_field]
-kind = "constant"
-value = [0.0, 0.0, 20.0]
-ramp_start = 0.0
-ramp_duration = 0.0
-
-[solver]
-kind = "fully_developed_inductionless"
-mode = "steady"
-time_scheme = "implicit_euler"
-
-[time_stepper]
-dt = 0.002
-t_final = 0.1
-max_steps = 50
+[problem]
+preset = "duct"
+ha = 20.0
+cells = 32
 
 [output]
-directory = "../artifacts/examples/toml_hartmann"
-write_paraview = true
-write_csv_profiles = true
-write_npz = true
-write_json_summary = true
-write_plots = false
-copy_input_file = true
-history_stride = 0
-
-[logging]
-enabled = true
-banner = true
-print_footer = true
-flush = true
-step_stride = 1
-
-[[regions]]
-name = "fluid"
-kind = "fluid"
-conductivity = 1.0
-density = 1.0
-viscosity = 1.0
-
-[[boundary_conditions]]
-name = "y_min_wall"
-kind = "no_slip"
-axis = "y"
-side = "min"
-
-[[boundary_conditions]]
-name = "y_max_wall"
-kind = "no_slip"
-axis = "y"
-side = "max"
-
-[[boundary_conditions]]
-name = "z_min_wall"
-kind = "insulating"
-axis = "z"
-side = "min"
-
-[[boundary_conditions]]
-name = "z_max_wall"
-kind = "insulating"
-axis = "z"
-side = "max"
+dir = "../artifacts/examples/toml_hartmann"

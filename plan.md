@@ -2258,6 +2258,11 @@ were static, so the pytree of the walls (about 55 lines), the traced-number rule
 differentiated, are here. Repayment: H4.6 (the separable eigen solver to `solvax.separable`, −0.9k) and H4.7. Nothing was
 removed: the assembly functions were rewritten in place, `_pads`, `conductance` and the loop of `_corner_gain` went.
 
+Loan drawn 2026-11-16 (Lane C): H4.5 adds 71 source lines (15,896 to 15,967; the core 14,783 to 14,833): the `retired` marker and its
+decorators on the 1.x entry points of `cases`, `fully_developed` and `io` (the warnings that switch on in this step). It moves the
+throughput and pumping-power functions of `ChannelProblem` (`channel_*`, `DuctResponse`, `pressure_drop`, `hydraulic_power`, 75 lines)
+from `fully_developed` to `steady`, which H4.7 needs. Repayment: H4.7, which deletes every marked name with its module.
+
 ##### H.10.9 Capability status in one table (2026-10-22)
 
 | Area | Supported envelope | Evidence | Open blocker | Next |

@@ -56,7 +56,10 @@ from lmhdx.output import (
 )
 from lmhdx.problem import duct, pipe, q2d
 
-pytestmark = pytest.mark.unit
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.filterwarnings("ignore:.*retired in lmhdx 2.0:DeprecationWarning"),
+]
 
 ROOT = Path(__file__).resolve().parents[1]
 

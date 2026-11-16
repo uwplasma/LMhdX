@@ -2,7 +2,7 @@
 
 The strongest check here is the last one. A periodic duct driven by a constant
 body force reaches the fully developed state, which
-:func:`lmhdx.solve_fully_developed_fields` solves in one CG solve; the time loop
+:func:`lmhdx.solve` solves in one CG solve; the time loop
 reaching it by projection steps checks the step against the steady solve, and
 `validation.shercliff` checks both against code that shares none of them.
 """
@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lmhdx.cases import make_hartmann_case
+import lmhdx
 from lmhdx.core3d import (
     EULER,
     RK3,
@@ -28,7 +28,6 @@ from lmhdx.core3d import (
     velocity_offset,
     zero_velocity,
 )
-from lmhdx.fully_developed import solve_fully_developed_fields
 from lmhdx.grid import (
     CENTER,
     NEUMANN,
@@ -735,12 +734,9 @@ def test_a_manufactured_flow_converges_at_second_order_with_convection_on(advect
 
 # --- Reconciliation with the production solver and an independent reference ---
 #
-# `lmhdx.solve_fully_developed_fields` solves the same duct as one steady CG
-# solve of a `CaseSpec`, whose conventions are these: `GeometrySpec.width` and `height` are
-# the *full* transverse extents, so a `width=height=2` case is the grid
-# `[-1, 1]^2` used here; `CaseSpec.forcing` is the axial pressure gradient
-# `-dp/dx` and enters the momentum equation divided by the density, exactly as
-# `ChannelProblem.forcing` does; and both read `viscosity` as the kinematic one.
+# `lmhdx.solve(lmhdx.duct(...))` solves the same duct as one steady CG solve: the half-width
+# is one, the pressure gradient `-dp/dx` enters the momentum equation divided by the density, exactly as
+# `ChannelProblem.forcing` does, and `viscosity` is the kinematic one.
 #
 # `validation.shercliff` closes the loop from outside the package: a Chebyshev
 # collocation solve of the governing system, converged to eight digits, sharing
@@ -779,8 +775,7 @@ def _duct_mean_velocity(cells: int, hartmann: float, *, resolve_layers: bool = F
 
 def _production_duct(cells: int, hartmann: float) -> np.ndarray:
     """Solve the same duct through the production fully developed route."""
-    case = make_hartmann_case(ha=hartmann, width=2.0, height=2.0, ny=cells, nz=cells)
-    return np.asarray(solve_fully_developed_fields(case)[0])
+    return np.asarray(lmhdx.solve(lmhdx.duct(hartmann, cells)).velocity[0].data[0])
 
 
 def test_the_hydrodynamic_duct_reconciles_with_the_production_solver():
@@ -841,7 +836,6 @@ def test_the_public_solve_reaches_the_new_core():
     which stops at the tolerance rather than overshooting it as Newton does, so
     an absolute bound would test the route instead of the contract.
     """
-    import lmhdx
     from lmhdx.core3d import zero_velocity
     from lmhdx.steady import steady_residual
 
@@ -1093,8 +1087,7 @@ def test_solid_walls_carry_the_currents_of_the_same_walls_resolved_in_cells(ends
 
 
 def test_a_section_in_solid_walls_develops_the_flow_of_its_resolved_walls():
-    from lmhdx.fully_developed import channel_flow_rate
-    from lmhdx.steady import solve_steady_state
+    from lmhdx.steady import channel_flow_rate, solve_steady_state
 
     rates = [
         float(channel_flow_rate(problem, solve_steady_state(problem).velocity[0].data[0]))
@@ -1108,8 +1101,7 @@ def test_thinner_solid_walls_tend_to_the_thin_wall_model_at_their_conductance():
     = 0.05``, thinned from a/10 to a/40 at that ``c``, approach the thin-wall model's flow rate at second order in
     ``t``: 4.3e-3, 1.1e-3 and 2.8e-4."""
     from lmhdx.core3d import SolidWall
-    from lmhdx.fully_developed import channel_flow_rate
-    from lmhdx.steady import solve_steady_state
+    from lmhdx.steady import channel_flow_rate, solve_steady_state
 
     def rate(problem):
         return float(channel_flow_rate(problem, solve_steady_state(problem).velocity[0].data[0]))
@@ -1232,8 +1224,7 @@ def test_solid_walls_meet_ni_2007_table_3_hunts_duct_at_ha_300():
     c, a/10, a/20 and a/40 thick, sit 2.3 %, 0.64 % and 0.16 % below the thin-wall model, approaching it at second
     order in the thickness."""
     from lmhdx.core3d import SolidWall
-    from lmhdx.fully_developed import channel_flow_rate
-    from lmhdx.steady import solve_steady_state
+    from lmhdx.steady import channel_flow_rate, solve_steady_state
 
     table = 5854.302
 

@@ -27,7 +27,6 @@ import numpy as np
 
 from lmhdx import enable_x64
 from lmhdx.core3d import ChannelProblem, SolidWall, zero_velocity
-from lmhdx.fully_developed import channel_flow_rate
 from lmhdx.grid import (
     CENTER,
     DIRICHLET,
@@ -39,7 +38,7 @@ from lmhdx.grid import (
     uniform_faces,
     wall_resolving_faces,
 )
-from lmhdx.steady import solve_steady_state
+from lmhdx.steady import channel_flow_rate, solve_steady_state
 from lmhdx.thermal import (
     ThermalProblem,
     advance_thermal,
