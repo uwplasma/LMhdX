@@ -140,7 +140,7 @@ def test_a_courant_controlled_run_holds_its_step_and_a_fixed_one_stops_at_its_la
     held = advance(problem, 40, start, viscous=viscous, scheme=RK3, dt=10.0 / scale, cfl=0.9)
     rates = jnp.max(ops.outgoing_rate(held.velocity))
     assert np.all(held.finite) and float(held.dt[0]) == pytest.approx(0.9 * RK3.limit / scale)
-    assert float(held.time) == pytest.approx(float(np.sum(held.dt))) and float(rates * held.dt[-1]) < 1.6
+    assert float(held.time) == pytest.approx(float(np.sum(held.dt))) and float(rates * held.dt[-1]) < RK3.limit
     blown = advance(problem, 40, start, viscous=viscous, scheme=RK3, dt=10.0 / scale)
     first = int(np.argmin(blown.finite))
     assert 0 < first and not np.any(blown.finite[first:]) and np.all(blown.finite[:first])
