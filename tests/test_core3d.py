@@ -859,7 +859,9 @@ def _mean_free(problem: ChannelProblem, seed: int) -> Field:
 
 def _charge(problem: ChannelProblem, potential: Field, walls):
     """Charge balance at rest and sheet residuals; ``walls=None`` is the replaced first-order closure."""
-    from lmhdx.ops import face_conductivity, face_current, thin_wall_current, thin_wall_flux, wall_insulated
+    from test_em import thin_wall_flux
+
+    from lmhdx.ops import face_conductivity, face_current, thin_wall_current, wall_insulated
 
     scalar = problem.scalar_conditions
     sigma = Field(jnp.full(problem.grid.shape, float(problem.conductivity)), (CENTER,) * 3, problem.grid)
