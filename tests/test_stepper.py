@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from lmhdx import core3d, ops
 from lmhdx.core3d import (
     EULER,
     RK3,
@@ -119,6 +120,32 @@ def test_the_courant_step_is_the_stage_map_limit_over_the_peak_rate():
     assert courant_step(velocity, RK3, 1.0) == pytest.approx(np.sqrt(3.0) * 2.0 * np.pi / 16)
     with pytest.raises(ValueError, match="unstable"):
         courant_step(velocity, EULER)
+
+
+def test_a_courant_controlled_run_holds_its_step_and_a_fixed_one_stops_at_its_last_finite_state():
+    """A traced ``dt`` reuses one program; ``cfl`` holds the step; a run past the limit stops where it was finite."""
+    problem = _rk_box(viscosity=1e-12)
+    start = _smooth_vortex(problem)
+    scale = float(jnp.max(ops.outgoing_rate(start)))
+    viscous = problem.viscous_factorizations(RK3)
+    once = dataclasses.replace(problem, dt=0.3 / scale)
+    fixed = advance(once, 4, start, viscous=once.viscous_factorizations(RK3), scheme=RK3)
+    traced = advance(problem, 4, start, viscous=viscous, scheme=RK3, dt=0.3 / scale)
+    assert all(
+        np.allclose(a.data, b.data, rtol=0, atol=1e-13) for a, b in zip(fixed.velocity, traced.velocity)
+    )
+    cached = core3d._compiled_trajectory.cache_info().currsize
+    again = advance(problem, 4, start, viscous=viscous, scheme=RK3, dt=0.2 / scale)
+    assert core3d._compiled_trajectory.cache_info().currsize == cached and np.all(again.dt == 0.2 / scale)
+    held = advance(problem, 40, start, viscous=viscous, scheme=RK3, dt=10.0 / scale, cfl=0.9)
+    rates = jnp.max(ops.outgoing_rate(held.velocity))
+    assert np.all(held.finite) and float(held.dt[0]) == pytest.approx(0.9 * RK3.limit / scale)
+    assert float(held.time) == pytest.approx(float(np.sum(held.dt))) and float(rates * held.dt[-1]) < 1.6
+    blown = advance(problem, 40, start, viscous=viscous, scheme=RK3, dt=10.0 / scale)
+    first = int(np.argmin(blown.finite))
+    assert 0 < first and not np.any(blown.finite[first:]) and np.all(blown.finite[:first])
+    assert all(np.all(np.isfinite(v.data)) for v in blown.velocity)
+    assert float(blown.time) == pytest.approx(first * 10.0 / scale)
 
 
 def _shatrov_velocity(point, t):

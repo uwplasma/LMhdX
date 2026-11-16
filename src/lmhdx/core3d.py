@@ -133,6 +133,7 @@ from .ops import (
     face_inner_product,
     lorentz_force,
     momentum_advection,
+    outgoing_rate,
     staggered_laplacian,
     thin_wall_current,
     wall_insulated,
@@ -1356,7 +1357,11 @@ def _constant(problem: ChannelProblem, build, *static) -> Field:
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class Trajectory:
-    """The end state of a run and the per-step history of its diagnostics."""
+    """The end state of a run and the per-step history of its diagnostics.
+
+    ``dt`` is each step's time step and ``finite`` whether it ended finite; a run given ``dt`` or
+    ``cfl`` keeps the last finite state after the first step that is not, so ``time`` is where it stopped.
+    """
 
     velocity: tuple[Field, Field, Field]
     pressure: Field
@@ -1365,6 +1370,9 @@ class Trajectory:
     kinetic_energy: jnp.ndarray
     stage_iterations: jnp.ndarray | None = None
     stage_residual: jnp.ndarray | None = None
+    dt: jnp.ndarray | None = None
+    finite: jnp.ndarray | None = None
+    time: jnp.ndarray | None = None
 
     @property
     def steps(self) -> int:
@@ -1541,6 +1549,8 @@ def advance(
     time: float = 0.0,
     checkpoint: bool = True,
     pressure: Field | None = None,
+    dt: float | jnp.ndarray | None = None,
+    cfl: float | None = None,
 ) -> Trajectory:
     """Run ``steps`` steps of ``scheme`` as one compiled scan, from ``time``.
 
@@ -1551,53 +1561,87 @@ def advance(
     ``viscous`` and ``force(t)`` are those of :func:`step`. ``pressure``, a run's last (zero if omitted),
     starts the first solve: with it a run in chunks is the run in one, bit for bit.
 
-    The compiled run is kept per problem, ``steps``, factorizations, ``scheme`` and
-    ``checkpoint``: a restart in chunks compiles once, and only the state and the time are
+    ``dt`` (default the problem's) is an argument of the compiled run, so a new step does not
+    compile again, and the factorizations are reshifted to it in the trace. With ``cfl`` each step
+    is ``min(dt, cfl * scheme.limit / max(outgoing_rate))``: ``cfl`` is the fraction of the
+    scheme's central-transport limit (:func:`courant_step`) the step is held at, measured cell by
+    cell. Either way a step that ends non-finite is not taken, and the run holds the last finite state.
+
+    The compiled run is kept per problem, ``steps``, factorizations, ``scheme``, ``checkpoint`` and
+    ``cfl``: a restart in chunks compiles once, and only the state, the time and ``dt`` are
     arguments. A problem with a traced parameter, or a ``force``, is traced into the caller's
     program instead (a force may close over the caller's tracers, which a kept program must not).
     """
     if steps < 1:
         raise ValueError("steps must be positive")
+    if cfl is not None and problem.advection != "off" and not scheme.limit:
+        raise ValueError("central transport is unstable under this scheme at every step; use RK3")
     velocity = zero_velocity(problem) if velocity is None else velocity
+    dynamic = dt is not None or cfl is not None
+    dt = problem.dt if dt is None and dynamic else dt
+    kept = force is None
     try:
         hash(problem)
     except TypeError:
-        return _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint)(
-            velocity, time, pressure
-        )
-    if force is not None:
-        return _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint)(
-            velocity, time, pressure
-        )
-    return _compiled_trajectory(problem, steps, factorization, viscous, scheme, checkpoint)(
-        velocity, time, pressure
-    )
+        kept = False
+    if kept:
+        run = _compiled_trajectory(problem, steps, factorization, viscous, scheme, checkpoint, dynamic, cfl)
+    else:
+        run = _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint, dynamic, cfl)
+    return run(velocity, time, pressure, dt)
 
 
-def _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint):
-    """The run of ``steps`` steps as a function of the starting velocity and time."""
+def _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint, dynamic=False, cfl=None):
+    """The run of ``steps`` steps as a function of the starting velocity, time and, if ``dynamic``, step."""
     factorization = problem.factorization() if factorization is None else factorization
+    limit = None if cfl is None or problem.advection == "off" else cfl * scheme.limit
 
     def single(carry, _):
-        *state, now = carry
-        updated, pressure, potential, solves = _step(
-            state[0], problem, factorization, viscous, scheme, force, now, state[1]
-        )
-        history = (*trajectory_diagnostics(updated, problem), *solves)
-        return (updated, pressure, potential, now + problem.dt), history
+        velocity, pressure, potential, now, largest, good = carry
+        if largest is None:
+            updated, pressure, potential, solves = _step(
+                velocity, problem, factorization, viscous, scheme, force, now, pressure
+            )
+            dt, finite = jnp.asarray(problem.dt, now.dtype), jnp.all(jnp.isfinite(updated[0].data))
+            now = now + problem.dt
+        else:  # a step that would end non-finite is not taken, nor is any after it: the run holds there
+            dt = largest
+            if limit is not None:  # the cell-wise Courant number held at ``limit``
+                dt = limit / jnp.maximum(jnp.max(outgoing_rate(velocity)), limit / largest)
 
-    def run(velocity, time, pressure=None):
+            def taken():
+                out = _step(
+                    velocity, problem, factorization, viscous, scheme, force, now, pressure, (dt, 1.0, None)
+                )
+                return (*out[:3], (out[3][0].astype(jnp.int32), out[3][1].astype(now.dtype)))
+
+            held = (velocity, pressure, potential, (jnp.zeros((), jnp.int32), jnp.zeros((), now.dtype)))
+            out = jax.lax.cond(good, taken, lambda: held)
+            finite = good & jnp.all(jnp.stack([jnp.all(jnp.isfinite(x)) for x in jax.tree.leaves(out[:3])]))
+            updated, pressure, potential, solves = jax.tree.map(
+                lambda a, b: jnp.where(finite, a, b), out, held
+            )
+            now, good = now + jnp.where(finite, dt, 0.0), finite
+        history = (*trajectory_diagnostics(updated, problem), *solves, dt, finite)
+        return (updated, pressure, potential, now, largest, good), history
+
+    def run(velocity, time, pressure=None, dt=None):
         # The last pressure and potential ride in the carry: stacked as scan outputs they cost two
         # cell fields per step (3.1 GiB over 100 steps at 128^3 in float64) to return the last one.
-        cell = Field(jnp.zeros(problem.grid.shape, velocity[0].dtype), (CENTER,) * 3, problem.grid)
-        start = (velocity, cell if pressure is None else pressure, cell, jnp.asarray(time, velocity[0].dtype))
+        real = velocity[0].dtype
+        cell = Field(jnp.zeros(problem.grid.shape, real), (CENTER,) * 3, problem.grid)
+        largest = jnp.asarray(dt, real) if dynamic else None
+        start = (velocity, cell if pressure is None else pressure, cell, jnp.asarray(time, real), largest)
+        start = (*start, jnp.asarray(True))
         body = jax.checkpoint(single) if checkpoint else single
-        (final, pressure, potential, _), history = jax.lax.scan(body, start, xs=None, length=steps)
-        return Trajectory(final, pressure, potential, *history)
+        (final, pressure, potential, now, *_), history = jax.lax.scan(body, start, xs=None, length=steps)
+        return Trajectory(final, pressure, potential, *history, now)
 
     return run
 
 
 @functools.lru_cache(maxsize=8)
-def _compiled_trajectory(problem, steps, factorization, viscous, scheme, checkpoint):
-    return jax.jit(_trajectory(problem, steps, factorization, viscous, scheme, None, checkpoint))
+def _compiled_trajectory(problem, steps, factorization, viscous, scheme, checkpoint, dynamic=False, cfl=None):
+    return jax.jit(
+        _trajectory(problem, steps, factorization, viscous, scheme, None, checkpoint, dynamic, cfl)
+    )
