@@ -22,7 +22,7 @@ from lmhdx.grid import (
 from lmhdx.ops import (
     cell_average,
     cell_inner_product,
-    charge_residual,
+    divergence,
     face_average,
     face_average_adjoint,
     face_conductivity,
@@ -331,14 +331,14 @@ def test_the_anl_fringe_is_divergence_free_on_the_grid():
         fringe_field(pipe_grid(16, 24, 100.0))
 
 
-def test_a_divergence_free_current_leaves_no_charge_residual():
+def test_a_divergence_free_current_leaves_no_divergence():
     grid = STRETCHED
     currents = (
         _faces(grid, 0, lambda x, y, z: 2.0 * x),
         _faces(grid, 1, lambda x, y, z: -3.0 * y),
         _faces(grid, 2, lambda x, y, z: 1.0 * z),
     )
-    residual = np.asarray(charge_residual(currents).data)
+    residual = np.asarray(divergence(currents).data)
     assert np.max(np.abs(residual)) < 1e-12
 
 
@@ -357,7 +357,7 @@ def test_insulated_conduction_current_conserves_charge_when_the_potential_solves
     emfs = [face_electromotive_force(velocity, magnetic_field, axis, conditions) for axis in range(3)]
 
     # With uniform conductivity the potential equation is the plain Laplacian.
-    source = charge_residual(
+    source = divergence(
         tuple(
             conductivities[axis].replace_data(conductivities[axis].data * emfs[axis].data)
             for axis in range(3)
@@ -369,7 +369,7 @@ def test_insulated_conduction_current_conserves_charge_when_the_potential_solves
     currents = tuple(
         face_current(potential, conductivities[axis], emfs[axis], axis, conditions[axis]) for axis in range(3)
     )
-    residual = np.asarray(charge_residual(currents).data)
+    residual = np.asarray(divergence(currents).data)
     scale = float(np.max(np.abs(np.asarray(source.data)))) or 1.0
     assert np.max(np.abs(residual)) < 1e-12 * scale
 

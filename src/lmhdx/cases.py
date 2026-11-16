@@ -324,7 +324,7 @@ def nested_wall_layer_resolution_summary(
     }
 
 
-# The structured mesh a solution reports, and tabulated imposed fields (formerly ``lmhdx.cases``).
+# The structured mesh a solution reports, and tabulated imposed fields.
 
 
 @dataclass(frozen=True)
@@ -515,7 +515,7 @@ def _interpolate_tabulated_field(data: dict[str, np.ndarray], **coordinates: np.
     return np.asarray(sampled).reshape((*values[0].shape, 3))
 
 
-# The case schema, solution containers, run configuration and solver log (formerly ``lmhdx.cases``).
+# The case schema, solution containers, run configuration and solver log.
 
 RegionKind = Literal["fluid", "solid"]
 GeometryKind = Literal["rect_duct", "layered_duct"]

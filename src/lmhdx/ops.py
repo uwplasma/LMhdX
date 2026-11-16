@@ -119,7 +119,6 @@ __all__ = [
     "axis_divergence",
     "cell_average",
     "cell_inner_product",
-    "charge_residual",
     "divergence",
     "face_average",
     "face_average_adjoint",
@@ -586,7 +585,7 @@ def _roll(data: jnp.ndarray, axis: int, shift: int) -> jnp.ndarray:
     return jnp.roll(data, shift, axis=axis)
 
 
-# Conservative momentum transport on the staggered grid (formerly ``lmhdx.ops``).
+# Conservative momentum transport on the staggered grid.
 
 
 def momentum_advection(
@@ -770,7 +769,7 @@ def _lower_weight(widths: np.ndarray, condition: BoundaryCondition) -> np.ndarra
     return ghosted[1:] / (ghosted[:-1] + ghosted[1:])
 
 
-# Charge-conservative electric coupling on the staggered grid (formerly ``lmhdx.ops``).
+# Charge-conservative electric coupling on the staggered grid.
 
 # (normal axis, first transverse axis, second transverse axis) in cyclic order.
 _CYCLIC = ((0, 1, 2), (1, 2, 0), (2, 0, 1))
@@ -982,11 +981,6 @@ def face_current(
     if electromotive_force.offset != gradient.offset or electromotive_force.shape != gradient.shape:
         raise ValueError("electromotive force must live on the same faces as the potential gradient")
     return gradient.replace_data(conductivity.data * (electromotive_force.data - gradient.data))
-
-
-def charge_residual(currents: tuple[Field, Field, Field]) -> Field:
-    """Return the net current leaving each cell per unit volume."""
-    return divergence(currents)
 
 
 def lorentz_force(

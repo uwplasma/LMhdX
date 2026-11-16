@@ -193,7 +193,7 @@ def _steady(problem: Problem, solver: Solver, method: str) -> Solution:
     unit = rate is not None
     if unit and problem.advection != "off":
         raise NotImplementedError(
-            "a flow rate sets the drive of a Stokes duct; constant-flux control is plan H2.5"
+            "a flow rate sets the drive of a Stokes duct; constant-flux control is plan H2.3"
         )
     if forcing is not None or is_traced(scale) or solver.tol is not None or walls is not None:
         tolerance = 1.0e-9 if solver.tol is None else solver.tol

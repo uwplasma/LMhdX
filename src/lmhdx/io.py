@@ -780,7 +780,7 @@ def write_case_overview_plots(
     return [*overview_paths, *diagnostics_paths]
 
 
-# The command line (formerly ``lmhdx.io``).
+# The command line.
 
 
 def _build_case(args: argparse.Namespace):

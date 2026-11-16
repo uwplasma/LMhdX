@@ -746,7 +746,7 @@ def _target_flow_rate(case: CaseSpec) -> float | None:
     return None
 
 
-# Fully developed duct design: throughput, pumping power and their derivatives (formerly ``lmhdx.fully_developed``).
+# Fully developed duct design: throughput, pumping power and their derivatives.
 
 
 @retired("lmhdx.steady.channel_cross_section_weights")
