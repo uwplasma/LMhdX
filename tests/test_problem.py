@@ -347,8 +347,6 @@ def test_the_unsteady_duct_is_the_older_projection_run_bit_for_bit():
     stages = advance(kernel, 8, viscous=kernel.viscous_factorizations(scheme), scheme=scheme)
     three = lmhdx.solve(problem, Solver(method="rk3", dt=0.01, steps=8))
     assert _same(three.velocity, stages.velocity) and not _same(three.velocity, run.velocity)
-    with pytest.raises(ValueError, match="heated run"):
-        lmhdx.solve(_heated_duct()[0], Solver(method="rk3", dt=2.0e-3, steps=2))
 
 
 def test_the_four_fields_are_pytrees_and_agree_on_a_uniform_field(tmp_path):

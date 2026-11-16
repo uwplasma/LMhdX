@@ -815,7 +815,7 @@ def build_thermal_step(
     if problem.advection == "central" and scheme is EULER:
         raise ValueError("central heat transport is unstable under Euler at every step; use RK3")
     pressure = flow.factorization()
-    viscous = None if hold_flow else flow.viscous_factorizations(scheme)
+    viscous = None if hold_flow else flow.viscous_factorizations(*(() if scheme is EULER else (scheme,)))
     if flow.conducting_walls:
         flow.potential_factorization()  # built once here, so tracing only looks it up
     dt, alpha, capacity = float(flow.dt), problem.diffusivity, problem.heat_capacity

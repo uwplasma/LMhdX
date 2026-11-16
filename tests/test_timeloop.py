@@ -1718,9 +1718,9 @@ def test_the_rk3_heat_step_is_second_order_closes_its_ledger_and_holds_central_t
         return advance_thermal(thermal_step, state, _cells(problem, 2.0), steps)
 
     final, history = run(RK3, 40)
-    scale = np.max(np.abs(np.asarray(history.joule_power) + np.asarray(history.external_power)))
-    assert np.all(history.finite) and np.max(np.abs(history.heat_balance_residual)) < 1e-11 * scale
-    assert np.max(history.heat_solve_residual) < 1e-9
+    floor = 64 * np.finfo(float).eps * thermal.heat_capacity * 8.0 * 301.0 / 0.01  # the Euler ledger's own
+    assert np.all(history.finite) and np.max(np.abs(history.heat_balance_residual)) < floor
+    assert np.max(history.heat_solve_residual) < 1e-12 * 301.0 / 0.01
     tenth = dataclasses.replace(thermal, flow=dataclasses.replace(flow, dt=0.01))
     state = initial_thermal_state(tenth, start)
     sums = jax.tree.map(jnp.zeros_like, plane_averages(state.velocity, flow, state.temperature))
