@@ -79,6 +79,7 @@ from .core3d import (
     enforce_face_constraints,
     face_currents,
     face_lorentz_force,
+    plane_averages,
     velocity_offset,
     zero_velocity,
 )
@@ -537,12 +538,14 @@ def _outlet_hydrostatic(buoyancy: tuple[Field, Field, Field], problem: ThermalPr
 class ThermalState(NamedTuple):
     """What a thermal step advances: the staggered velocity, the cell temperature and the time.
 
-    Its five leaves are arrays; grids and offsets are static.
+    Its five leaves are arrays; grids and offsets are static. ``statistics``, when not None, are the time
+    integrals :func:`advance_thermal` keeps of :func:`lmhdx.core3d.plane_averages`, the temperature's included.
     """
 
     velocity: tuple[Field, Field, Field]
     temperature: Field
     time: jnp.ndarray
+    statistics: dict | None = None
 
 
 class ThermalDiagnostics(NamedTuple):
@@ -933,6 +936,7 @@ def build_thermal_step(
 
     if scheme is not EULER:
         thermal_step = _staged(problem, scheme, cfl, pressure, viscous, total, upwind)
+    thermal_step.problem = problem
     thermal_step.hold_flow = hold_flow  # load_attribution needs a flow the load cannot move
     thermal_step.affine = hold_flow and problem.advection in ("upwind", "off")  # and a transport linear in T
     return thermal_step
@@ -1031,6 +1035,9 @@ def advance_thermal(
     (the last step of each block), ``steps // diagnostics`` of them, and ``steps`` must be a multiple. The
     default keeps every step's.
 
+    A state that carries ``statistics`` (a fluid without solid walls) integrates the plane averages of
+    velocity and temperature inside the scan, so a run in chunks integrates as the run in one.
+
     ``backflow_temperature`` goes to every step, constant over the call as the
     heat source is. The carry is the state alone and only the scalar diagnostics are stacked, one
     per step, so no field history is kept. ``steps`` is static and the heat source
@@ -1046,6 +1053,14 @@ def advance_thermal(
     def single(carry: ThermalState, _) -> tuple[ThermalState, ThermalDiagnostics]:
         # A step that ends non-finite is not taken: the run holds its last finite state, which a rejection keeps.
         new, diagnostics = thermal_step(carry, heat_source, **options)
+        if carry.statistics is not None:  # each step's end state, weighed by its step
+            averages = plane_averages(new.velocity, thermal_step.problem.flow, new.temperature) | {
+                "time": 1.0
+            }
+            weight = new.time - carry.time
+            new = new._replace(
+                statistics=jax.tree.map(lambda a, b: a + weight * b, carry.statistics, averages)
+            )
         return jax.tree.map(lambda a, b: jnp.where(diagnostics.finite, a, b), new, carry), diagnostics
 
     def block(carry: ThermalState, _) -> tuple[ThermalState, ThermalDiagnostics]:

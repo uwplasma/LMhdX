@@ -1698,7 +1698,7 @@ def test_the_rk3_heat_step_is_second_order_closes_its_ledger_and_holds_central_t
     """H2.2 for heat: temperature through the IMEX stages, against Euler's first order; Euler refuses central."""
     import dataclasses
 
-    from lmhdx.core3d import EULER, RK3
+    from lmhdx.core3d import EULER, RK3, plane_averages, turbulence_statistics
     from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state, thermal_boundary
 
     insulated = thermal_boundary("heat_flux", conductivity=0.5)
@@ -1721,6 +1721,16 @@ def test_the_rk3_heat_step_is_second_order_closes_its_ledger_and_holds_central_t
     scale = np.max(np.abs(np.asarray(history.joule_power) + np.asarray(history.external_power)))
     assert np.all(history.finite) and np.max(np.abs(history.heat_balance_residual)) < 1e-11 * scale
     assert np.max(history.heat_solve_residual) < 1e-9
+    tenth = dataclasses.replace(thermal, flow=dataclasses.replace(flow, dt=0.01))
+    state = initial_thermal_state(tenth, start)
+    sums = jax.tree.map(jnp.zeros_like, plane_averages(state.velocity, flow, state.temperature))
+    state = state._replace(statistics=sums | {"time": jnp.zeros(())})
+    halves, tenth_step = [state], build_thermal_step(tenth, dtype=jnp.float64, scheme=RK3)
+    for _ in range(2):
+        halves.append(advance_thermal(tenth_step, halves[-1], _cells(tenth, 2.0), 20)[0])
+    stats = turbulence_statistics(halves[-1].statistics)
+    assert float(stats["time"]) == pytest.approx(0.4) and stats["T"].shape == (6, 6)
+    assert np.allclose(halves[-1].temperature.data, final.temperature.data, rtol=0, atol=1e-12)
     reference = run(RK3, 160)[0].temperature.data
     errors = [float(jnp.max(jnp.abs(run(RK3, n)[0].temperature.data - reference))) for n in (10, 20, 40)]
     assert np.all(np.log2(np.divide(errors[:-1], errors[1:])) > 1.8), errors

@@ -538,6 +538,11 @@ def _heated(
             velocity = solve_open_duct(flow).velocity if start == "steady" else with_inflow(_lift(flow), flow)
         state = initial_thermal_state(heat_problem, temperature, velocity)
     heat = Field(jnp.full(grid.shape, source, dtype=jnp.result_type(float)), _CELL, grid)
+    if solver.statistics and state.statistics is None:
+        if heat_problem.has_walls:
+            raise NotImplementedError("statistics are of the fluid: a run with solid walls takes none")
+        zero = jax.tree.map(jnp.zeros_like, plane_averages(state.velocity, flow, state.temperature))
+        state = state._replace(statistics=zero | {"time": jnp.zeros_like(state.time)})
     envelope = _SCHEMES[heat_problem.advection]
     courant = solver.advective_cfl_limit if heat_problem.advection != "off" else None
     limits = {
@@ -573,7 +578,8 @@ def _heated(
                 Field(heat_problem.on_thermal_grid(cell_average(v, a).data), _CELL, grid)
                 for a, v in enumerate(velocity)
             )
-        return {"velocity": velocity, "temperature": s.temperature}
+        found = {"velocity": velocity, "temperature": s.temperature}
+        return found | ({} if s.statistics is None else {"statistics": turbulence_statistics(s.statistics)})
 
     first = round(float(state.time) / flow.dt) if not is_traced(state) else 0
     run = _Run(
@@ -588,9 +594,9 @@ def _heated(
         solver.history or 1,
     )
     state, history, summary = _drive(run, subject, solver, output, record)
-    return Solution(
-        {"velocity": state.velocity, "temperature": state.temperature}, history=history, summary=summary
-    )
+    found = {"velocity": state.velocity, "temperature": state.temperature}
+    found |= {} if state.statistics is None else {"statistics": turbulence_statistics(state.statistics)}
+    return Solution(found | {"state": state}, history=history, summary=summary)
 
 
 def _written(solution: Solution, problem, solver: Solver, method: str, output: Output) -> Solution:
