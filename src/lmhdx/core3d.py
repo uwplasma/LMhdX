@@ -124,6 +124,7 @@ from .grid import (
 )
 from .ops import (
     advective_step_limit,
+    cell_average,
     cell_force_to_faces,
     divergence,
     face_conductivity,
@@ -161,6 +162,7 @@ __all__ = [
     "Tableau",
     "Trajectory",
     "advance",
+    "at_walls",
     "conjugate_grid",
     "courant_step",
     "duct_problem",
@@ -170,10 +172,14 @@ __all__ = [
     "face_currents",
     "face_lorentz_force",
     "fringe_field",
+    "friction_coefficient",
     "kinetic_energy",
+    "nusselt_number",
+    "plane_averages",
     "project",
     "step",
     "trajectory_diagnostics",
+    "turbulence_statistics",
     "velocity_condition",
     "velocity_offset",
     "zero_velocity",
@@ -1361,6 +1367,7 @@ class Trajectory:
 
     ``dt`` is each step's time step and ``finite`` whether it ended finite; a run given ``dt`` or
     ``cfl`` keeps the last finite state after the first step that is not, so ``time`` is where it stopped.
+    ``statistics`` holds the time integrals of :func:`plane_averages`, and their span as ``"time"``.
     """
 
     velocity: tuple[Field, Field, Field]
@@ -1373,6 +1380,7 @@ class Trajectory:
     dt: jnp.ndarray | None = None
     finite: jnp.ndarray | None = None
     time: jnp.ndarray | None = None
+    statistics: dict | None = None
 
     @property
     def steps(self) -> int:
@@ -1400,6 +1408,93 @@ def trajectory_diagnostics(
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Return the divergence residual and kinetic energy of one state."""
     return jnp.max(jnp.abs(divergence(velocity).data)), kinetic_energy(velocity, problem)
+
+
+def plane_averages(
+    velocity: tuple[Field, Field, Field], problem: ChannelProblem, temperature: Field | None = None
+) -> dict:
+    """Return the averages over the periodic axes of the cell-centred ``u, v, w`` (and ``T``) and their products.
+
+    ``"uv"`` is the plane mean of ``u v``; the remaining axes stay, so a channel walled in ``z`` gives profiles
+    in ``z`` and a duct periodic in ``x`` gives sections. :func:`turbulence_statistics` turns their time integrals
+    into means and covariances.
+    """
+    periodic = tuple(axis for axis, condition in enumerate(problem.conditions) if condition.is_periodic)
+    values = {name: cell_average(field, axis).data for axis, (name, field) in enumerate(zip("uvw", velocity))}
+    values |= {} if temperature is None else {"T": temperature.data}
+    factors = problem.grid.volume_factors()
+    weight = functools.reduce(np.multiply, (factors[axis] for axis in periodic), np.ones((1, 1, 1)))
+    weight = jnp.asarray(weight / np.sum(weight), velocity[0].dtype)
+    names = list(values)
+    products = {a + b: values[a] * values[b] for i, a in enumerate(names) for b in names[i:]}
+    return {name: jnp.sum(weight * value, axis=periodic) for name, value in (values | products).items()}
+
+
+def turbulence_statistics(sums: dict) -> dict:
+    """Return the means and covariances of a run's integrated :func:`plane_averages`: ``uv`` is ``<u'v'>``."""
+    span = sums["time"]
+    means = {name: value / span for name, value in sums.items() if name != "time"}
+    return (
+        means
+        | {name: means[name] - means[name[0]] * means[name[1]] for name in means if len(name) == 2}
+        | {"time": span}
+    )
+
+
+def at_walls(profile: jnp.ndarray, faces: np.ndarray, axis: int = -1) -> tuple:
+    """Return ``(value, derivative into the fluid)`` of ``profile`` at the lower and upper face of ``axis``.
+
+    Each is the quadratic through the three cells nearest that wall, second order on a stretched mesh.
+    """
+    centres, pairs = 0.5 * (faces[1:] + faces[:-1]), []
+    for cells, wall in (([0, 1, 2], faces[0]), ([-1, -2, -3], faces[-1])):
+        d = np.abs(centres[cells] - wall)
+        value = [np.prod([-d[j] / (d[i] - d[j]) for j in range(3) if j != i]) for i in range(3)]
+        slope = [sum(-d[3 - i - k] / np.prod([d[i] - d[j] for j in range(3) if j != i]) for k in range(3) if k != i)
+                 for i in range(3)]  # fmt: skip
+        taken = jnp.moveaxis(jnp.take(profile, np.array(cells), axis=axis), axis, -1)
+        pairs.append((taken @ np.array(value), taken @ np.array(slope)))
+    return tuple(pairs)
+
+
+def friction_coefficient(statistics: dict, problem: ChannelProblem, axis: int = 2) -> jnp.ndarray:
+    """Return ``c_f = 2 tau_w / (rho U_b^2)`` of the walls normal to ``axis``, from the mean streamwise velocity.
+
+    ``tau_w = mu dU/dn`` is averaged over both walls and, in a duct, along them by the cell widths.
+    """
+    walled = [a for a, condition in enumerate(problem.conditions) if not condition.is_periodic]
+    mean, weights = statistics["u"], _section_weights(problem, walled)
+    shear = sum(slope for _, slope in at_walls(mean, problem.grid.faces[axis], walled.index(axis))) / 2
+    shear = jnp.sum(shear * _section_weights(problem, [a for a in walled if a != axis]))
+    bulk = jnp.sum(mean * weights)
+    return 2.0 * float(problem.viscosity) * shear / bulk**2
+
+
+def nusselt_number(statistics: dict, problem: ChannelProblem, axis: int = 2, diameter: float | None = None):
+    """Return ``Nu = -D_h dT/dn / (T_w - T_b)`` at the walls normal to ``axis``, each wall's, from the mean ``T``.
+
+    ``T_b = <uT>/<u>`` is the bulk temperature and ``D_h`` the hydraulic diameter, by default twice the gap.
+    """
+    walled = [a for a, condition in enumerate(problem.conditions) if not condition.is_periodic]
+    weights, along = (
+        _section_weights(problem, walled),
+        _section_weights(problem, [a for a in walled if a != axis]),
+    )
+    bulk = jnp.sum((statistics["uT"] + statistics["u"] * statistics["T"]) * weights) / jnp.sum(
+        statistics["u"] * weights
+    )
+    faces = problem.grid.faces[axis]
+    diameter = 2.0 * float(faces[-1] - faces[0]) if diameter is None else diameter
+    walls = at_walls(statistics["T"], faces, walled.index(axis))
+    return tuple(
+        -diameter * jnp.sum(slope * along) / (jnp.sum(value * along) - bulk) for value, slope in walls
+    )
+
+
+def _section_weights(problem: ChannelProblem, axes: list[int]) -> np.ndarray:
+    """The normalised cell widths of the walled ``axes``, as one array over them (a number when none)."""
+    weights = functools.reduce(np.multiply.outer, (problem.grid.widths[a] for a in axes), np.ones(()))
+    return weights / np.sum(weights)
 
 
 @dataclass(frozen=True)
@@ -1551,6 +1646,7 @@ def advance(
     pressure: Field | None = None,
     dt: float | jnp.ndarray | None = None,
     cfl: float | None = None,
+    statistics: dict | bool = False,
 ) -> Trajectory:
     """Run ``steps`` steps of ``scheme`` as one compiled scan, from ``time``.
 
@@ -1566,6 +1662,8 @@ def advance(
     is ``min(dt, cfl * scheme.limit / max(outgoing_rate))``: ``cfl`` is the fraction of the
     scheme's central-transport limit (:func:`courant_step`) the step is held at, measured cell by
     cell. Either way a step that ends non-finite is not taken, and the run holds the last finite state.
+    ``statistics=True`` integrates :func:`plane_averages` over the run inside the scan; a previous
+    run's ``Trajectory.statistics`` continues the integral, so a run in chunks is the run in one.
 
     The compiled run is kept per problem, ``steps``, factorizations, ``scheme``, ``checkpoint`` and
     ``cfl``: a restart in chunks compiles once, and only the state, the time and ``dt`` are
@@ -1588,7 +1686,10 @@ def advance(
         run = _compiled_trajectory(problem, steps, factorization, viscous, scheme, checkpoint, dynamic, cfl)
     else:
         run = _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint, dynamic, cfl)
-    return run(velocity, time, pressure, dt)
+    if statistics is True:
+        zero = jnp.zeros((), velocity[0].dtype)
+        statistics = jax.tree.map(jnp.zeros_like, plane_averages(velocity, problem)) | {"time": zero}
+    return run(velocity, time, pressure, dt, statistics or None)
 
 
 def _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoint, dynamic=False, cfl=None):
@@ -1597,7 +1698,7 @@ def _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoin
     limit = None if cfl is None or problem.advection == "off" else cfl * scheme.limit
 
     def single(carry, _):
-        velocity, pressure, potential, now, largest, good = carry
+        velocity, pressure, potential, now, largest, good, sums = carry
         if largest is None:
             updated, pressure, potential, solves = _step(
                 velocity, problem, factorization, viscous, scheme, force, now, pressure
@@ -1623,19 +1724,26 @@ def _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoin
             )
             now, good = now + jnp.where(finite, dt, 0.0), finite
         history = (*trajectory_diagnostics(updated, problem), *solves, dt, finite)
-        return (updated, pressure, potential, now, largest, good), history
+        if sums is not None:  # each step's end state, weighed by its step
+            weight = jnp.where(finite, dt, 0.0)
+            sums = jax.tree.map(
+                lambda a, b: a + weight * b, sums, plane_averages(updated, problem) | {"time": 1.0}
+            )
+        return (updated, pressure, potential, now, largest, good, sums), history
 
-    def run(velocity, time, pressure=None, dt=None):
+    def run(velocity, time, pressure=None, dt=None, sums=None):
         # The last pressure and potential ride in the carry: stacked as scan outputs they cost two
         # cell fields per step (3.1 GiB over 100 steps at 128^3 in float64) to return the last one.
         real = velocity[0].dtype
         cell = Field(jnp.zeros(problem.grid.shape, real), (CENTER,) * 3, problem.grid)
         largest = jnp.asarray(dt, real) if dynamic else None
         start = (velocity, cell if pressure is None else pressure, cell, jnp.asarray(time, real), largest)
-        start = (*start, jnp.asarray(True))
+        start = (*start, jnp.asarray(True), sums)
         body = jax.checkpoint(single) if checkpoint else single
-        (final, pressure, potential, now, *_), history = jax.lax.scan(body, start, xs=None, length=steps)
-        return Trajectory(final, pressure, potential, *history, now)
+        (final, pressure, potential, now, *_, sums), history = jax.lax.scan(
+            body, start, xs=None, length=steps
+        )
+        return Trajectory(final, pressure, potential, *history, now, sums)
 
     return run
 

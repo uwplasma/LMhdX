@@ -39,7 +39,7 @@ from .axial import _lift, method_for, solve_open_duct
 from .axial import pressure_drop as _pressure_drop
 from .cases import NumericalFailure
 from .cases import solve as _solve_model
-from .core3d import EULER, RK3, advance, zero_velocity
+from .core3d import EULER, RK3, advance, plane_averages, turbulence_statistics, zero_velocity
 from .fields import Uniform, host, is_traced, primal
 from .grid import CENTER, Field
 from .ops import cell_average
@@ -71,6 +71,8 @@ class Solver:
     none), or when the start's divergence exceeds ``divergence_tolerance``. ``cfl`` makes ``dt`` the largest
     step of a mechanical run and holds each step at that fraction of the scheme's central-transport limit
     (:func:`lmhdx.core3d.advance`); its ``dt`` is an argument of the compiled run, so a new one does not compile.
+    ``statistics`` integrates the plane averages of a mechanical run inside its scan, through every chunk; the
+    solution's ``statistics`` are then their means and covariances (:func:`lmhdx.core3d.turbulence_statistics`).
     """
 
     method: str = "auto"
@@ -85,6 +87,7 @@ class Solver:
     buoyancy_courant_limit: float | None = None
     divergence_tolerance: float = 1.0e-10
     cfl: float | None = None
+    statistics: bool = False
 
     def resolve(self, problem) -> str:
         """Return the concrete method for ``problem``, refusing what the kernels cannot do."""
@@ -369,6 +372,7 @@ class _Flow(NamedTuple):
     pressure: Field
     potential: Field
     time: jnp.ndarray
+    statistics: dict | None = None
 
 
 class _Plane(NamedTuple):
@@ -454,6 +458,7 @@ def _transient(problem: Problem, solver: Solver, start, output, record, scheme=E
             time=state.time,
             dt=solver.dt,
             cfl=solver.cfl,
+            statistics=state.statistics or False,
         )
         history = {
             "divergence": run.divergence_residual,
@@ -461,12 +466,17 @@ def _transient(problem: Problem, solver: Solver, start, output, record, scheme=E
             "dt": run.dt,
             "finite": run.finite,
         }
-        return _Flow(run.velocity, run.pressure, run.potential, run.time), history
+        return _Flow(run.velocity, run.pressure, run.potential, run.time, run.statistics), history
 
+    zero = jnp.zeros((), velocity[0].dtype)
+    sums = jax.tree.map(jnp.zeros_like, plane_averages(velocity, kernel)) | {"time": zero}
+    sums = sums if solver.statistics else None
     run = _Run(
-        _Flow(velocity, cell, cell, jnp.zeros((), velocity[0].dtype)),
+        _Flow(velocity, cell, cell, zero, sums),
         step,
-        lambda s: s._replace(time=None)._asdict(),
+        lambda s: s._replace(
+            time=None, statistics=s.statistics and turbulence_statistics(s.statistics)
+        )._asdict(),
         kernel.grid,
         _header(problem, "euler" if scheme is EULER else "rk3"),
         {"cfl": solver.cfl},

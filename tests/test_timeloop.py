@@ -1657,3 +1657,38 @@ def test_solid_walls_are_refused_where_they_cannot_be_and_kept_in_records(tmp_pa
     developed = ThermalProblem(flow, (periodic, insulated, insulated), 1.0, 0.2, 0.0, walls=walls)
     with pytest.raises(ValueError, match="no solid walls"):
         developed_heat(developed, zero_velocity(flow), _cells(developed, 0.0))
+
+
+def test_statistics_integrate_inside_the_scan_and_give_friction_and_nusselt():
+    """H5: plane means and covariances of a known field, slug-flow Nu 12, Poiseuille c_f, chunks equal to one run."""
+    from lmhdx.core3d import friction_coefficient, nusselt_number, plane_averages, turbulence_statistics
+    from lmhdx.grid import CENTER, Field, tanh_faces
+
+    grid = Grid(uniform_faces(8, 0.0, 2 * np.pi), uniform_faces(2, 0.0, 1.0), tanh_faces(12, -1.0, 1.0, 1.5))
+    problem = ChannelProblem(grid, (PERIODIC_AXIS, PERIODIC_AXIS, WALL), viscosity=0.01, dt=0.05)
+    x, z = np.asarray(grid.faces[0])[:, None, None], np.asarray(grid.centers[2])[None, None, :]
+    velocity = zero_velocity(problem)
+    u = 1.5 * (1 - z**2) + 0.3 * np.sin(x) + 0 * velocity[0].data
+    velocity = (velocity[0].replace_data(jnp.asarray(u)), *velocity[1:])
+    temperature = Field(jnp.asarray(np.broadcast_to(1.0 - z**2, grid.shape)), (CENTER,) * 3, grid)
+    averages = plane_averages(velocity, problem, temperature) | {"time": 1.0}
+    stats = turbulence_statistics(averages)
+    widths = np.diff(grid.faces[2]) / 2.0
+    bulk, heat = (np.sum(f * widths) for f in (1.5 * (1 - z[0, 0] ** 2), 1 - z[0, 0] ** 2))
+    assert np.allclose(stats["u"], 1.5 * (1 - z[0, 0] ** 2)) and np.allclose(stats["uT"], 0.0, atol=1e-15)
+    assert np.allclose(stats["uu"], 0.0225 * (1 + np.cos(np.pi / 4)))
+    assert float(friction_coefficient(stats, problem)) == pytest.approx(2 * 0.01 * 3.0 / bulk**2, rel=1e-12)
+    slug = turbulence_statistics(plane_averages(zero_velocity(problem), problem, temperature) | {"time": 1.0})
+    slug["u"], slug["uT"] = jnp.ones_like(slug["u"]), jnp.zeros_like(slug["uT"])
+    assert np.allclose(nusselt_number(slug, problem), 8.0 / heat, rtol=1e-12) and abs(8.0 / heat - 12.0) < 0.1
+    factorization, viscous = problem.factorization(), problem.viscous_factorizations()
+    whole = advance(problem, 6, velocity, factorization=factorization, viscous=viscous, statistics=True)
+    first = advance(problem, 3, velocity, factorization=factorization, viscous=viscous, statistics=True)
+    second = advance(
+        problem, 3, first.velocity, factorization=factorization, viscous=viscous, statistics=first.statistics
+    )
+    assert float(whole.statistics["time"]) == pytest.approx(0.3)
+    assert all(
+        np.allclose(whole.statistics[k], second.statistics[k], rtol=1e-13, atol=1e-15)
+        for k in whole.statistics
+    )
