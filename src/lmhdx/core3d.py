@@ -468,6 +468,10 @@ class ChannelProblem:
                 raise ValueError("the magnetic field must be finite")
         if isinstance(field, ImposedField) and field.grid != self.grid:
             raise ValueError("the imposed field is sampled on a different grid")
+        if self.open_circuit_axes and (self.conducting_walls or self.has_solid_walls):
+            raise NotImplementedError(
+                "a Hartmann channel takes insulating walls: a wall would carry current along it"
+            )
         # True float32 contractions unless the user chose a precision; see lmhdx.enable_x64.
         _pin_matmul_precision()
 
@@ -524,6 +528,18 @@ class ChannelProblem:
             raise ValueError("solid walls take no thin or resolved wall beside them")
         if not float(self.conductivity):
             raise ValueError("solid walls carry current from a conducting fluid")
+
+    @property
+    def open_circuit_axes(self) -> tuple[int, ...]:
+        """The periodic cross-stream axes along which ``u_x`` times the field drives a current: a Hartmann channel's.
+
+        No circuit closes such an axis, so it carries no net current (plan H2.5): :func:`face_currents` removes
+        the face-volume mean of the current along it, which is a uniform electric field ``E = -<u x B>``. The
+        potential's gradient has zero mean on a periodic axis, so the potential is unchanged, and so is the charge.
+        """
+        field = self.magnetic_field
+        peak = [np.max(np.abs(c)) for c in field.components] if isinstance(field, ImposedField) else field
+        return tuple(a for a in (1, 2) if self.conditions[a].is_periodic and float(peak[3 - a]))
 
     @property
     def has_solid_walls(self) -> bool:
@@ -710,11 +726,16 @@ def face_currents(
         return (*_solid_wall_currents(motional, problem), field)
     factorization = problem.factorization() if factorization is None else factorization
     potential, walls = _solve_potential(divergence(motional), problem, factorization)
-    currents = tuple(
+    currents = [
         _closed_current(potential, walls[axis], conductivities[axis], emfs[axis], axis, problem)
         for axis in range(3)
-    )
-    return potential, currents, field
+    ]
+    for axis in problem.open_circuit_axes:
+        current, condition = currents[axis], problem.scalar_conditions[axis]
+        ones = current.replace_data(jnp.ones_like(current.data))
+        net, measure = (face_inner_product(f, ones, axis, condition) for f in (current, ones))
+        currents[axis] = current.replace_data(current.data - net / measure)
+    return potential, tuple(currents), field
 
 
 def _motional(velocity, problem: ChannelProblem, field_scale=1.0):
