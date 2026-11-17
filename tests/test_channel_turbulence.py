@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = [pytest.mark.slow, pytest.mark.timeout(0)]
+pytestmark = [pytest.mark.slow, pytest.mark.scheduled, pytest.mark.timeout(0)]
 
 ROOT = Path(__file__).resolve().parents[1]
 # Table 1: spectral 256^3, then the finite-difference scheme B on 64^3, 128^3 and 256^3.

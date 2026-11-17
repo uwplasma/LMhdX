@@ -31,4 +31,4 @@ jobs:
           python-version: "3.11"
           cache-suffix: turbulence
       - name: Run the channel and check its statistics
-        run: python -m pytest tests/test_channel_turbulence.py -m slow -s --durations=5
+        run: python -m pytest tests/test_channel_turbulence.py -m scheduled -s --durations=5
