@@ -89,3 +89,12 @@ status = "stable"
 runtime = "portable"
 outputs = ["summary", "heat balance diagnostics"]
 docs = "docs/reference/cli.md"
+
+[[example]]
+id = "channel-turbulence"
+path = "examples/channel_turbulence_example.py"
+command = "python examples/channel_turbulence_example.py"
+status = "research-stage"
+runtime = "portable"
+outputs = ["mean profile", "friction Reynolds number and centreline velocity", "stationarity figure", "diagnostics"]
+docs = "docs/validation/channel_turbulence.md"

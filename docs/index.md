@@ -95,6 +95,7 @@ validation/q2d
 validation/freemhd
 validation/mistrangelo
 validation/mhd_nusselt
+validation/channel_turbulence
 ```
 
 ```{toctree}
