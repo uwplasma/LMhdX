@@ -35,6 +35,7 @@ from validation.mistrangelo import (
 __all__ = [
     "CASE1_GATED",
     "CASE1_STATIONS",
+    "CASE2_BANDED",
     "CASE2_FIGURES",
     "bulk_temperature",
     "edge_faces",
@@ -45,6 +46,7 @@ __all__ = [
     "case2",
     "case2_independence",
     "case2_observables",
+    "case2_reported",
     "case2_settled",
     "case2_settling",
 ]
@@ -237,52 +239,63 @@ def _on_band(curve, figure: dict) -> tuple[np.ndarray, np.ndarray]:
     return x, np.interp(x, at, values)
 
 
+def _offset_fit(curve, figure: dict) -> dict:
+    """A pressure against its band after the one offset that best fits the band's middle (Figs. 8 and 30): the
+    offset, the shares inside the band as drawn and passing :func:`band_misfit`, the largest excess and where, and
+    the drop over the band's span against the band's."""
+    x, ours = _on_band(curve, figure)
+    band = {key: np.asarray(value, float) for key, value in figure["band"].items()}
+    lower, upper = (np.interp(x, band["x"], band[side]) for side in ("lower", "upper"))
+    shifted = ours + np.mean(0.5 * (lower + upper) - ours)
+    excess = np.array([band_misfit(xi, yi, figure) for xi, yi in zip(x, shifted)])
+    return {
+        "points": int(x.size),
+        "offset": float(shifted[0] - ours[0]),
+        "inside": float(np.mean((shifted >= lower) & (shifted <= upper))),
+        "passing": float(np.mean(excess == 0.0)),
+        "largest_excess": float(excess.max()),
+        "where_largest": float(x[np.argmax(excess)]),
+        "drop": float(ours[0] - ours[-1]),
+        "band_drop": float(0.5 * (lower[0] + upper[0] - lower[-1] - upper[-1])),
+    }
+
+
+def _against_curve(curve, figure: dict, name: str, half: float | None = None) -> dict:
+    """A curve against one code's (Figs. 11 and 38): the largest difference, where, and the mean offset, over the
+    code's points that the curve covers, within ``|x| <= half`` if given, with the largest also for ``|x| < 0.28``."""
+    cx, cy = (np.asarray(figure["curves"][name][k], float) for k in ("x", "y"))
+    at, values = (np.asarray(c, float) for c in curve)
+    finite = np.isfinite(values)
+    keep = (cx >= at[finite].min()) & (cx <= at[finite].max())
+    if half is not None:
+        keep &= np.abs(cx) <= half
+    where = cx[keep]
+    difference = np.interp(where, at[finite], values[finite]) - cy[keep]
+    result = {
+        "points": int(keep.sum()),
+        "largest_difference": float(np.max(np.abs(difference))),
+        "where_largest": float(where[np.argmax(np.abs(difference))]),
+        "mean_offset": float(np.mean(difference)),
+    }
+    if half is not None:
+        result["largest_away_from_edges"] = float(np.max(np.abs(difference[np.abs(where) < 0.28])))
+    return result
+
+
 def case1_reported(observables: dict, references: Path = REFERENCES) -> dict:
     """Case 1's reported figures, from :func:`case1_observables`, against their references; nothing is gated.
 
     - Fig. 8: the paper removes some codes' pressure offsets (p. 14), so the pressure meets the band after the one
-      offset that best fits the band's middle. Reported: the offset, the shares inside the band as drawn and passing
-      :func:`band_misfit`, the largest excess and where, and the drop over the band's span against the band's.
+      offset that best fits the band's middle (:func:`_offset_fit`).
     - Figs. 11 and 38, OF_KIT's curves: the largest difference, where, and the mean offset. Fig. 38's are over the
       heated stations, with the largest also for ``|x| < 0.28`` m, away from the patch's edges.
     """
     figures = {entry["figure"]: entry for entry in json.loads(Path(references).read_text())["figures"]}
-    result = {}
-    if 8 in observables:
-        x, ours = _on_band(observables[8], figures[8])
-        band = {key: np.asarray(value, float) for key, value in figures[8]["band"].items()}
-        lower, upper = (np.interp(x, band["x"], band[side]) for side in ("lower", "upper"))
-        shifted = ours + np.mean(0.5 * (lower + upper) - ours)
-        excess = np.array([band_misfit(xi, yi, figures[8]) for xi, yi in zip(x, shifted)])
-        result["8"] = {
-            "points": int(x.size),
-            "offset": float(shifted[0] - ours[0]),
-            "inside": float(np.mean((shifted >= lower) & (shifted <= upper))),
-            "passing": float(np.mean(excess == 0.0)),
-            "largest_excess": float(excess.max()),
-            "where_largest": float(x[np.argmax(excess)]),
-            "drop": float(ours[0] - ours[-1]),
-            "band_drop": float(0.5 * (lower[0] + upper[0] - lower[-1] - upper[-1])),
-        }
+    result = {"8": _offset_fit(observables[8], figures[8])} if 8 in observables else {}
     curves = [(f"11 x={s}", 11, f"x={s}", None) for s in CASE1_STATIONS]
     curves += [(f"38 {name}", 38, f"{name} case1", 0.3) for name in ("T_w", "T_b")]
     for key, number, name, half in curves:
-        cx, cy = (np.asarray(figures[number]["curves"][name][k], float) for k in ("x", "y"))
-        at, values = (np.asarray(c, float) for c in observables[key])
-        finite = np.isfinite(values)
-        keep = (cx >= at[finite].min()) & (cx <= at[finite].max())
-        if half is not None:
-            keep &= np.abs(cx) <= half
-        where = cx[keep]
-        difference = np.interp(where, at[finite], values[finite]) - cy[keep]
-        result[key] = {
-            "points": int(keep.sum()),
-            "largest_difference": float(np.max(np.abs(difference))),
-            "where_largest": float(where[np.argmax(np.abs(difference))]),
-            "mean_offset": float(np.mean(difference)),
-        }
-        if half is not None:
-            result[key]["largest_away_from_edges"] = float(np.max(np.abs(difference[np.abs(where) < 0.28])))
+        result[key] = _against_curve(observables[key], figures[number], name, half)
     return result
 
 
@@ -482,14 +495,7 @@ def case2_independence(subs: list, references: Path = REFERENCES_CASE2, threshol
         figure = figures[number]
         x = np.asarray(figure["band"]["x"], float)
         x = x[np.all([np.isin(x, _on_band(s[number], figure)[0]) for s in subs], axis=0)]
-        values = []
-        for s in subs:
-            at, y = (np.asarray(c, float) for c in s[number])
-            finite = np.isfinite(y)
-            values.append(np.interp(x, at[finite], y[finite]))
-        values = np.asarray(values)
-        if figure["y_scale"] == "log10":
-            values = np.log10(np.maximum(values, 1e-300))
+        values = _plotted(subs, number, x, figure)
         pairs = 0.5 * (values[0::2] + values[1::2])
         error_subs = np.std(values, axis=0, ddof=1) / np.sqrt(len(values))
         error_pairs = np.std(pairs, axis=0, ddof=1) / np.sqrt(len(pairs))
@@ -498,3 +504,56 @@ def case2_independence(subs: list, references: Path = REFERENCES_CASE2, threshol
         result[number] = {"points": int(kept.sum()), "ratio": ratio}
     independent = all(entry["ratio"] is None or entry["ratio"] >= threshold for entry in result.values())
     return {"figures": result, "independent": bool(result) and independent}
+
+
+def _plotted(subs: list, number: int, x: np.ndarray, figure: dict) -> np.ndarray:
+    """Each sub-batch's curve at ``x``, finite points only, in the figure's plotted coordinate (decades on a log
+    axis): one row a sub-batch."""
+    values = []
+    for s in subs:
+        at, y = (np.asarray(c, float) for c in s[number])
+        finite = np.isfinite(y)
+        values.append(np.interp(x, at[finite], y[finite]))
+    values = np.asarray(values)
+    return np.log10(np.maximum(values, 1e-300)) if figure["y_scale"] == "log10" else values
+
+
+CASE2_BANDED = (23, 24, 26, 27, 28, 29, 31, 32, 33, 34, 35, 37)  # Fig. 30 meets its band after an offset
+
+
+def case2_reported(
+    mean: dict, subs: list, references: Path = REFERENCES_CASE2, case1_references: Path = REFERENCES
+) -> dict:
+    """Case 2's figures against the codes' spread, as step 5.4f's record reports them; nothing is gated.
+
+    ``mean`` holds the observables of the averaging window's mean fields and ``subs`` the sub-batches', in time order
+    (:func:`case2_observables`). The statistical error at a point is the standard error of the batch means, the
+    sub-batches in pairs, in the plotted coordinate (:func:`case2_independence`).
+    - The banded figures (:data:`CASE2_BANDED`), at the band's points that the mean covers: the shares inside the
+      band as drawn and passing :func:`band_misfit`, the largest excess, where, and the error there.
+    - Fig. 30, the pressure, as Fig. 8: after the one offset that best fits the band's middle (:func:`_offset_fit`).
+    - Fig. 38's Case 2 curves, OF_KIT's ``T_w`` and ``T_b``, as Case 1's (:func:`case1_reported`).
+    """
+    figures = {entry["figure"]: entry for entry in json.loads(Path(references).read_text())["figures"]}
+    result = {}
+    for number in CASE2_BANDED:
+        figure = figures[number]
+        x, ours, band = (*_on_band(mean[number], figure), figure["band"])
+        lower, upper = (np.interp(x, band["x"], band[side]) for side in ("lower", "upper"))
+        excess = np.array([band_misfit(xi, yi, figure) for xi, yi in zip(x, ours)])
+        pairs = _plotted(subs, number, x, figure)
+        pairs = 0.5 * (pairs[0::2] + pairs[1::2])
+        worst = int(np.argmax(excess))
+        result[str(number)] = {
+            "points": int(x.size),
+            "inside": float(np.mean((ours >= lower) & (ours <= upper))),
+            "passing": float(np.mean(excess == 0.0)),
+            "largest_excess": float(excess[worst]),
+            "where_largest": float(x[worst]),
+            "error_there": float(np.std(pairs[:, worst], ddof=1) / np.sqrt(len(pairs))),
+        }
+    result["30"] = _offset_fit(mean[30], figures[30])
+    case1 = {entry["figure"]: entry for entry in json.loads(Path(case1_references).read_text())["figures"]}
+    for name in ("T_w", "T_b"):
+        result[f"38 {name}"] = _against_curve(mean[f"38 {name}"], case1[38], f"{name} case2", 0.3)
+    return result

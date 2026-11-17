@@ -2684,6 +2684,56 @@ def test_case_2_s_settling_and_independence_checks_follow_the_record():
         duct.case2_independence([batch(1e-2) for _ in range(9)])
 
 
+def test_case_2_s_reported_figures_follow_the_record():
+    """``case2_reported`` on curves made from the references, without a solve. At the band's middle every banded
+    figure lies inside at every point, Fig. 30 after its offset, and OF_KIT's Fig. 38 curves differ by nothing. One
+    point of Fig. 24 off by twice the band's range is its only failure and its largest excess. The error is the batch
+    means' standard error: sub-batches in equal pairs a step apart give the step over sqrt(2), in decades on Fig. 35's
+    log axis."""
+    import json
+
+    from validation import mistrangelo
+    from validation import mistrangelo_duct as duct
+
+    figures = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES_CASE2.read_text())["figures"]}
+    case1 = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES.read_text())["figures"]}
+
+    def middle(number):
+        x, lower, upper = (np.asarray(figures[number]["band"][k], float) for k in ("x", "lower", "upper"))
+        return x, np.sqrt(lower * upper) if figures[number]["y_scale"] == "log10" else 0.5 * (lower + upper)
+
+    centred = {n: middle(n) for n in (*duct.CASE2_BANDED, 30)}
+    centred |= {
+        f"38 {name}": tuple(np.asarray(case1[38]["curves"][f"{name} case2"][k], float) for k in ("x", "y"))
+        for name in ("T_w", "T_b")
+    }
+    x30, y30 = centred[30]
+    exact = duct.case2_reported(centred | {30: (x30, y30 + 50.0)}, [centred] * 10)
+    assert set(exact) == {*map(str, duct.CASE2_BANDED), "30", "38 T_w", "38 T_b"}
+    for number in duct.CASE2_BANDED:
+        entry = exact[str(number)]
+        assert entry["points"] == len(figures[number]["band"]["x"]), number
+        assert [entry[k] for k in ("inside", "passing", "largest_excess")] == [1, 1, 0], number
+        assert entry["error_there"] == pytest.approx(0.0, abs=1e-15), number
+    assert exact["30"]["offset"] == pytest.approx(-50.0) and exact["30"]["passing"] == 1.0
+    assert exact["38 T_w"]["largest_difference"] == 0.0 == exact["38 T_b"]["largest_difference"]
+    x24, y24 = centred[24]
+    k, band = x24.size // 2, figures[24]["band"]
+    bump = 2.0 * (max(band["upper"]) - min(band["lower"]))  # beyond the band's range, x uncertainty or not
+    off = centred | {24: (x24, y24 + bump * (np.arange(x24.size) == k))}
+    step = 1e-3
+    subs = [
+        {n: (c[0], c[1] * 10.0 ** (j * step) if n == 35 else c[1] + j * step) for n, c in off.items()}
+        for j in range(5)
+        for _ in range(2)
+    ]
+    report = duct.case2_reported(off, subs)
+    assert report["24"]["passing"] == pytest.approx(1.0 - 1.0 / x24.size) and report["24"]["inside"] < 1.0
+    assert report["24"]["where_largest"] == x24[k] and report["24"]["largest_excess"] > 0.5 * bump
+    for number in (23, 24, 35):
+        assert report[str(number)]["error_there"] == pytest.approx(step / np.sqrt(2.0), rel=1e-6), number
+
+
 def test_the_edge_study_s_faces_refine_both_ends_of_the_heated_zone():
     """``edge_faces`` puts faces on the heated zone's ends with cells of ``fine`` either side, grows them by at most
     the ratio up to the core's spacing, and keeps the buffers; ``case1(edge_spacing=)`` builds on them."""
