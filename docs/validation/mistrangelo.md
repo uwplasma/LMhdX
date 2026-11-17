@@ -484,6 +484,40 @@ Without a solve, on curves made from the references:
 - Figure 8's offset takes out a constant;
 - Figures 11 and 38 report a constant difference as it is.
 
+## Step 5.4e: the heater's edges, reported — the edge study (declared before the run)
+
+The gate leaves Figures 9 and 18 too uncertain to judge at the heater's leading edge (above). The heat flux steps
+there, and the campaign's 4–5 mm axial cells interpolate across the step. This study refines the axial mesh at both
+ends of the heated zone and reports what it finds. The gate's verdict stands as declared (D12).
+
+**The runs.** M2's and M3's cross-sections, with `case1(edge_spacing=0.001)`: cells of 1 mm either side of both
+ends of the heated zone, each 1.1 times the one before up to the core's spacing (`edge_faces`; 31 and 24 more axial
+cells). As M2L1 and M3L1, the outlet is at 1.5 m, and each run goes 300 s from the inlet's developed profile,
+averaged over the last 100 s in four sub-windows. `dt` is 0.005 s on both, because the 1 mm cells carry the
+side-layer jets at 2.8 u₀ and the advective Courant number must stay under 0.5.
+
+**Reported.**
+- Figure 9 at x = −0.3 m: the three points in the heated wall that were too uncertain to gate, on both runs beside
+  M1L1 to M3L1, with their excess beyond the band and the change between the two runs.
+- Figure 18 at the leading edge: Nu at the band's first two points, 3.5 and 4.4 mm in, against the one code there,
+  and the curve against the fit Nu ≈ 34 d^−0.37 found above.
+- Every other gated figure, for information: its change from M2L1 and M3L1, against its U.
+- Figure 8 from the averaged pressure the thermal state now carries, against the first campaign's recovered one.
+
+**Hypothesis.**
+- Figure 9's three points converge into the band. M3's excess there was already zero, and the edge cells remove the
+  interpolation across the step.
+- Figure 18's first point resolves near 21.5, about 11 % above the one code there, and the second near 19.7, within
+  1 % of the band. The first would then be a resolved miss, not an unresolved one.
+- Elsewhere the figures move by less than their U.
+
+**Budget.** From 5.4e's measured cost per step, with 4–6 % more cells:
+- the M2 cross-section: 60,000 steps at about 0.1 s, 1.7 hours;
+- the M3 cross-section: 60,000 steps at about 0.21 s, 3.5 hours;
+- about 5 GPU hours in all.
+
+**Exit.** Reported, not gated, beside the gate's results. Any change to the rule would be a new declaration.
+
 ## Step 5.4f: Case 2, reported — the campaign (draft, declared before the run)
 
 Plan step 5.4f reports Case 2 against the codes' spread (ADR 0009 D35). It has no pass or fail: the references differ
@@ -534,14 +568,16 @@ the heater's end (pp. 12–15).
 - Burn-in: at least one flow-through, L/u₀ = 300 s for the 3 m duct. From then on the bulk temperature T_b(x) and
   the heat stored are averaged over consecutive 50 s windows. Averaging starts at the end of the first window whose
   T_b agrees with the one before within 1 % of the bulk rise (0.76 K) at every station, and whose stored heat is
-  under 1 % of the input (30 W).
+  under 1 % of the input (30 W). A run is advanced in compiled chunks of whole steps, about 1 s, so each window is
+  the nearest whole number of chunks (`validation.mistrangelo_duct.case2_settled`).
 - The second condition is added because of the coarse run: its probes' 50 s means agreed within 0.76 K by 400 s,
   while 10 % of the input was still being stored.
 - Averaging: 450 s, the longest of the codes' windows (OF_KIT's, Table 5), at every step, kept as ten 45 s
   sub-batches.
 - Statistical uncertainty: the standard error of the five 90 s batch means (pairs of sub-batches) at each point.
   The batches count as independent if the ten sub-batches give a standard error at least 0.8 times the five
-  batches' at the median point of every figure. If not, averaging goes on in 90 s batches up to 900 s; an error
+  batches' at the median point of every figure: the median, over the figure's band points, of the ratio of the
+  two errors. Points where the batches do not differ, to rounding, are left out (`case2_independence`). If not, averaging goes on in 90 s batches up to 900 s; an error
   that still fails the check is quoted as a lower bound.
 - The corrected momentum step that the Case 2 section asks for is 5.4d's (#314, #315).
 

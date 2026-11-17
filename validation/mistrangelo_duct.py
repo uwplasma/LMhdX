@@ -4,7 +4,8 @@ The fringe, steel walls that carry current and conduct and store heat, inertia a
 evolving through step 5.4d's open duct. :func:`case1` builds Case 1, :func:`case1_observables` gives each figure's
 quantity as the paper defines it, :func:`case1_gate` applies the campaign record's rule and
 :func:`case1_reported` compares the figures reported, not gated (``docs/validation/mistrangelo.md``).
-:func:`case2` and :func:`case2_observables` do the same for Case 2, which is reported, not gated. The
+:func:`case2` and :func:`case2_observables` do the same for Case 2, which is reported, not gated, and
+:func:`case2_settled` and :func:`case2_independence` are its record's settling and independence checks. The
 specification, the PbLi properties pinned to it and the reference curves are :mod:`validation.mistrangelo`'s.
 """
 
@@ -21,18 +22,31 @@ from lmhdx.axial import axial_faces, open_duct
 from lmhdx.core3d import ChannelProblem, SolidWall, face_currents, velocity_offset, zero_velocity
 from lmhdx.grid import PERIODIC, BoundaryCondition, Field, Grid, wall_resolving_faces
 from lmhdx.thermal import ThermalProblem, initial_thermal_state, thermal_boundary
-from validation.mistrangelo import REFERENCES, _midplane, band_misfit, field, pinned_pbli, spec
+from validation.mistrangelo import (
+    REFERENCES,
+    REFERENCES_CASE2,
+    _midplane,
+    band_misfit,
+    field,
+    pinned_pbli,
+    spec,
+)
 
 __all__ = [
     "CASE1_GATED",
     "CASE1_STATIONS",
     "CASE2_FIGURES",
+    "bulk_temperature",
+    "edge_faces",
     "case1",
     "case1_gate",
     "case1_observables",
     "case1_reported",
     "case2",
+    "case2_independence",
     "case2_observables",
+    "case2_settled",
+    "case2_settling",
 ]
 
 _WALL = BoundaryCondition("neumann")
@@ -52,6 +66,7 @@ def case1(
     dt: float = 0.01,
     record: dict | None = None,
     case: str = "case1",
+    edge_spacing: float | None = None,
 ) -> tuple:
     """Step 5.4e's coupled problem and its start: Case 1's full duct in SI units, temperatures in deg C.
 
@@ -60,8 +75,9 @@ def case1(
     limited momentum transport and buoyancy, from the inlet's developed profile at ``u0`` carried along the duct.
     The heat is carried by van Leer transport; the PbLi enters at 300 C and leaves with no conductive flux, and the
     outer bottom surface takes ``q''`` over ``|x| <= 0.3`` m and its full outer width. The axial mesh has
-    ``spacing`` over ``core`` and grows into the buffers out to ``span``. No Joule heat. ``case`` names the
-    specification's case whose ``u0`` and ``q''`` it takes (:func:`case2`). Returns the problem and its start.
+    ``spacing`` over ``core`` and grows into the buffers out to ``span``; ``edge_spacing`` refines it toward the
+    heated zone's two ends (:func:`edge_faces`). No Joule heat. ``case`` names the specification's case whose ``u0``
+    and ``q''`` it takes (:func:`case2`). Returns the problem and its start.
     """
     enable_x64()
     record = record or spec()
@@ -73,6 +89,8 @@ def case1(
     across = a * wall_resolving_faces(cells, -1.0, 1.0, layer_thickness=1.0 / ha, **layers)
     along = a * wall_resolving_faces(cells, -1.0, 1.0, layer_thickness=1.0 / np.sqrt(ha), **layers)
     edges = axial_faces(*span, core, spacing)
+    if edge_spacing is not None:
+        edges = edge_faces(edges, core, (heating["x_min_m"], heating["x_max_m"]), edge_spacing)
     if not all(np.any(np.isclose(edges, end)) for end in (heating["x_min_m"], heating["x_max_m"])):
         raise ValueError("the heated zone's ends must fall on faces of the axial mesh")
     grid = Grid(edges, across, along)
@@ -345,6 +363,43 @@ def case1_gate(runs: dict, references: Path = REFERENCES) -> dict:
 # Step 5.4f: Case 2, reported.
 
 
+def edge_faces(faces, core: tuple[float, float], ends: tuple[float, ...], fine: float, growth: float = 1.1):
+    """``faces``, with the uniform cells over ``core`` graded to ``fine`` at each of ``ends``, which become faces.
+
+    Moving away from an end, each cell is ``growth`` times the one before until it reaches the core's spacing; each
+    stretch between ends is then filled with equal cells of at most that spacing. The buffers outside ``core`` are
+    kept as they are. Step 5.4e's edge study: the heat flux steps at the heated zone's ends (Figures 9 and 18).
+    """
+    faces = np.asarray(faces, float)
+    inside = (faces >= core[0] - 1e-12) & (faces <= core[1] + 1e-12)
+    spacing = float(np.max(np.diff(faces[inside])))
+    if not 0.0 < fine <= spacing or growth < 1.0 or not all(core[0] < end < core[1] for end in ends):
+        raise ValueError(
+            "the ends must lie inside the core, with 0 < fine <= the core's spacing and growth >= 1"
+        )
+    widths = [fine]
+    while widths[-1] * growth < spacing:
+        widths.append(widths[-1] * growth)
+    graded = np.cumsum(widths)  # the faces' distances from an end
+
+    def stretch(a: float, b: float, fine_a: bool, fine_b: bool) -> np.ndarray:
+        """Faces from ``a`` to ``b``, graded at whichever end is an edge, uniform between."""
+        length = b - a
+        near = graded[graded < 0.45 * length] if (fine_a and fine_b) else graded[graded < 0.9 * length]
+        start = near if fine_a else np.zeros(0)
+        stop = near if fine_b else np.zeros(0)
+        left, right = (start[-1] if start.size else 0.0), (stop[-1] if stop.size else 0.0)
+        cells = max(1, int(np.ceil((length - left - right) / spacing - 1e-9)))
+        middle = left + (length - left - right) * np.arange(cells + 1) / cells
+        return a + np.unique(np.concatenate([[0.0], start, middle, length - stop[::-1], [length]]))
+
+    stops = [core[0], *sorted(ends), core[1]]
+    pieces = [stretch(a, b, a in ends, b in ends)[:-1] for a, b in zip(stops[:-1], stops[1:], strict=True)]
+    return np.concatenate(
+        [faces[faces < core[0] - 1e-12], *pieces, [core[1]], faces[faces > core[1] + 1e-12]]
+    )
+
+
 def case2(**options) -> tuple:
     """Step 5.4f's problem and its start: :func:`case1`'s duct with Case 2's ``u0`` (0.01 m/s) and ``q''``
     (10 W/cm^2), both inferred (the specification). Its rolls about the field's axis make it time-dependent."""
@@ -363,3 +418,83 @@ def case2_observables(thermal, fields: dict, record: dict | None = None) -> dict
     out = {number: same[key] for number, key in CASE2_FIGURES.items() if key in same}
     out["38 T_w"], out["38 T_b"] = same["38 T_w"], same["38 T_b"]
     return out
+
+
+def bulk_temperature(thermal, u, temperature):
+    """The bulk temperature at each axial cell, eq. 6, of one state: ``int(u T dA) / int(u dA)`` over the fluid.
+
+    ``u`` is the axial velocity on the flow's faces and ``temperature`` the cells' on ``thermal.thermal_grid``; either
+    NumPy or JAX arrays (it is traced inside a run's scan). The axial velocity is the mean of the cell's two faces.
+    """
+    grid, xp = thermal.flow.grid, jnp if isinstance(u, jnp.ndarray) else np
+    areas = xp.asarray(np.outer(np.diff(np.asarray(grid.faces[1])), np.diff(np.asarray(grid.faces[2]))))
+    centred = 0.5 * (u[1:] + u[:-1])
+    return xp.sum(centred * temperature[thermal.fluid_block] * areas, axis=(1, 2)) / xp.sum(
+        centred * areas, axis=(1, 2)
+    )
+
+
+def case2_settling(record: dict | None = None) -> tuple[float, float]:
+    """Case 2's settling tolerances (step 5.4f's record): 1 % of the bulk rise, in kelvins, and 1 % of the heat input,
+    in watts: ``q''`` over the heated length and the outer width of the bottom wall."""
+    record = record or spec()
+    geometry, heating, case = record["geometry"], record["heating"], record["cases"]["case2"]
+    a, t_w, pbli = geometry["half_width_m"], geometry["wall_thickness_m"], pinned_pbli(record)
+    power = case["heat_flux_W_per_m2"] * (heating["x_max_m"] - heating["x_min_m"]) * 2.0 * (a + t_w)
+    flow = (
+        pbli["density_kg_per_m3"]
+        * pbli["heat_capacity_J_per_kg_K"]
+        * case["mean_velocity_m_per_s"]
+        * (2 * a) ** 2
+    )
+    return 0.01 * power / flow, 0.01 * power
+
+
+def case2_settled(previous, current, record: dict | None = None) -> tuple[bool, float, float]:
+    """Whether a burn-in window ends Case 2's settling (step 5.4f's record): its mean ``T_b(x)`` within 1 % of the bulk
+    rise of the window before's at every station, and its mean rate of storing heat under 1 % of the input.
+
+    ``previous`` and ``current`` are a window's ``(bulk, storage)``: the means over it of :func:`bulk_temperature` and of
+    the step's ``storage_rate``; ``previous`` is None for the first window. Returns the verdict, the largest change in
+    ``T_b`` and the stored heat.
+    """
+    tolerance, limit = case2_settling(record)
+    bulk, storage = np.asarray(current[0], float), float(current[1])
+    change = np.inf if previous is None else float(np.max(np.abs(bulk - np.asarray(previous[0], float))))
+    return bool(change <= tolerance and abs(storage) <= limit), change, storage
+
+
+def case2_independence(subs: list, references: Path = REFERENCES_CASE2, threshold: float = 0.8) -> dict:
+    """The record's check that Case 2's sub-batches are independent, figure by figure (step 5.4f).
+
+    ``subs`` are the sub-batches' observables (:func:`case2_observables`), an even number in time order; pairs of them
+    are the batches. At each of a figure's band points that every sub-batch covers, in the plotted coordinate, the
+    standard error of the mean from the sub-batches is divided by the one from the batches; the figure's ratio is the
+    median over those points. Points where the batches' error is zero to rounding (a steady flow) are left out, and a
+    figure with none left has no ratio. The sub-batches count as independent when every figure's ratio is at least
+    ``threshold``. Returns ``{"figures": {number: {"points", "ratio"}}, "independent": bool}``.
+    """
+    if len(subs) < 4 or len(subs) % 2:
+        raise ValueError("the check takes an even number of sub-batches, at least four")
+    figures = {entry["figure"]: entry for entry in json.loads(Path(references).read_text())["figures"]}
+    result = {}
+    for number in sorted(n for n in CASE2_FIGURES if n in figures and all(n in s for s in subs)):
+        figure = figures[number]
+        x = np.asarray(figure["band"]["x"], float)
+        x = x[np.all([np.isin(x, _on_band(s[number], figure)[0]) for s in subs], axis=0)]
+        values = []
+        for s in subs:
+            at, y = (np.asarray(c, float) for c in s[number])
+            finite = np.isfinite(y)
+            values.append(np.interp(x, at[finite], y[finite]))
+        values = np.asarray(values)
+        if figure["y_scale"] == "log10":
+            values = np.log10(np.maximum(values, 1e-300))
+        pairs = 0.5 * (values[0::2] + values[1::2])
+        error_subs = np.std(values, axis=0, ddof=1) / np.sqrt(len(values))
+        error_pairs = np.std(pairs, axis=0, ddof=1) / np.sqrt(len(pairs))
+        kept = error_pairs > 1e-12 * np.maximum(1.0, np.abs(np.mean(values, axis=0)))
+        ratio = float(np.median(error_subs[kept] / error_pairs[kept])) if kept.any() else None
+        result[number] = {"points": int(kept.sum()), "ratio": ratio}
+    independent = all(entry["ratio"] is None or entry["ratio"] >= threshold for entry in result.values())
+    return {"figures": result, "independent": bool(result) and independent}

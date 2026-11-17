@@ -2634,6 +2634,75 @@ def test_case_1_takes_the_specified_heat_and_flow_and_gives_every_figure():
     for number, same in duct.CASE2_FIGURES.items():
         scale = second["heat_flux_W_per_m2"] / q if number == 37 else 1.0  # E_t is zero for this flow
         np.testing.assert_allclose(figures2[number][1], scale * observables[same][1], rtol=1e-13)
+    bulk = jax.jit(
+        lambda u, temperature: duct.bulk_temperature(thermal, u, temperature)
+    )  # as a run's scan takes it
+    for found in (duct.bulk_temperature(thermal, known["u"], known["T"]), bulk(known["u"], known["T"])):
+        np.testing.assert_allclose(np.asarray(found), observables[17][1], rtol=1e-13)
+
+
+def test_case_2_s_settling_and_independence_checks_follow_the_record():
+    """Case 2's settling tolerances are 1 % of its 75.9 K bulk rise and of its 3000 W, and a window settles only when
+    both hold. Sub-batches with independent noise pass the independence check; pairs of equal ones fail it, at
+    sqrt(4/9) at every point; a steady run, whose batches do not differ, passes; an odd count is refused."""
+    import json
+
+    from validation import mistrangelo
+    from validation import mistrangelo_duct as duct
+
+    tolerance, limit = duct.case2_settling()
+    assert tolerance == pytest.approx(0.759, abs=5e-4) and limit == pytest.approx(30.0, rel=1e-12)
+    bulk = np.linspace(300.0, 375.9, 50)
+    assert duct.case2_settled(None, (bulk, 0.0)) == (False, np.inf, 0.0)
+    assert duct.case2_settled((bulk, 0.0), (bulk + 0.75, 29.0))[0]
+    assert not duct.case2_settled((bulk, 0.0), (bulk + 0.77, 0.0))[0]
+    assert not duct.case2_settled((bulk, 0.0), (bulk, -31.0))[0]
+    figures = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES_CASE2.read_text())["figures"]}
+    middle = {
+        n: (
+            np.asarray(f["band"]["x"]),
+            0.5 * (np.asarray(f["band"]["lower"]) + np.asarray(f["band"]["upper"])),
+        )
+        for n, f in figures.items()
+        if n in duct.CASE2_FIGURES
+    }
+    rng = np.random.default_rng(5)
+
+    def batch(noise):  # the band's middle times (1 + noise): positive, for the log axis
+        return {n: (x, y * (1.0 + noise * rng.standard_normal(y.size))) for n, (x, y) in middle.items()}
+
+    independent = duct.case2_independence([batch(1e-2) for _ in range(10)])
+    assert independent["independent"] and set(independent["figures"]) == set(middle)
+    assert all(0.8 < f["ratio"] < 1.3 for f in independent["figures"].values())
+    pairs = [b for b in (batch(1e-2) for _ in range(5)) for _ in range(2)]
+    correlated = duct.case2_independence(pairs)
+    assert not correlated["independent"]
+    assert all(f["ratio"] == pytest.approx(np.sqrt(4 / 9), rel=1e-9) for f in correlated["figures"].values())
+    steady = duct.case2_independence([batch(0.0) for _ in range(10)])
+    assert steady["independent"] and all(f["ratio"] is None for f in steady["figures"].values())
+    with pytest.raises(ValueError, match="even number"):
+        duct.case2_independence([batch(1e-2) for _ in range(9)])
+
+
+def test_the_edge_study_s_faces_refine_both_ends_of_the_heated_zone():
+    """``edge_faces`` puts faces on the heated zone's ends with cells of ``fine`` either side, grows them by at most
+    the ratio up to the core's spacing, and keeps the buffers; ``case1(edge_spacing=)`` builds on them."""
+    from lmhdx.axial import axial_faces
+    from validation import mistrangelo_duct as duct
+
+    plain = axial_faces(-1.5, 1.5, (-1.0, 1.0), 0.004)
+    faces = duct.edge_faces(plain, (-1.0, 1.0), (-0.3, 0.3), 0.001)
+    widths, core = np.diff(faces), (faces[:-1] >= -1.0) & (faces[1:] <= 1.0)
+    for end in (-0.3, 0.3):
+        at = int(np.argmin(np.abs(faces - end)))
+        assert faces[at] == end and widths[at - 1] == pytest.approx(0.001) == widths[at]
+    ratios = widths[1:] / widths[:-1]
+    assert np.max(np.maximum(ratios, 1.0 / ratios)[core[1:] & core[:-1]]) <= 1.1 + 1e-12
+    assert widths[core].max() <= 0.004 + 1e-12 and np.array_equal(faces[faces < -1.0], plain[plain < -1.0])
+    with pytest.raises(ValueError, match="inside the core"):
+        duct.edge_faces(plain, (-1.0, 1.0), (-0.3, 1.2), 0.001)
+    thermal, _ = duct.case1(cells=16, cells_in_layer=3, wall_cells=2, spacing=0.05, edge_spacing=0.01)
+    assert np.min(np.diff(np.asarray(thermal.flow.grid.faces[0]))) == pytest.approx(0.01)
 
 
 def test_case_1_s_gate_and_reported_figures_follow_their_declared_rules():
