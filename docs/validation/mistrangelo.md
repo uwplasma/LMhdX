@@ -467,8 +467,9 @@ uncertain to gate stays so, however M3 converges.
 - its reported figures (8, 11 and 38), with the pressure step's velocity change;
 - the gate.
 
-Its SHA-256 is `a5964eef19a404c3f08ed39e274766199f3a720543155c11e71e6c961c1618d5`. It goes to the research-assets
-release with this step's pull request (D38), with `case1_reported.py`. The averaged fields (2.5 GB) and the
+Its SHA-256 is `703e31e7385a7c7cb1c3976e2128ca9c158d2336ad74a836bad275909296968c`, as released, with the runs'
+directories named under `$SCRATCH`. It went to the research-assets release with this step's pull request (D38), with
+`case1_reported.py` (`0ff92cfde1cab4b084d191625e624593d0f71187d476ea0b6630d8610501219e`). The averaged fields (2.5 GB) and the
 recovered pressures are kept outside the repository.
 
 `tests/test_steady.py` checks the functions that made these results in about 20 s. On 16 cells across, 2 per
