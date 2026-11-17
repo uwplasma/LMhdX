@@ -5,7 +5,8 @@ horizontal duct*, Nucl. Fusion 65 (2025) 116006, compares six codes on a heated
 PbLi duct with conducting steel walls in a fringing field. There is no
 experiment. Plan step 5.4 reproduces it in stages (ADR 0009). This page records
 step 5.4a: the frozen specification, the developed section, and both cases'
-digitized figures; and step 5.4c, Case 1's reduced heated zone.
+digitized figures; step 5.4c, Case 1's reduced heated zone; step 5.4e, Case 1
+gated, with its edge study; and step 5.4f, Case 2 reported.
 
 The specification is `src/lmhdx/data/benchmarks/specs/mistrangelo2025.toml`.
 Each value there is marked *printed*, *inferred* or *pinned*, with its source,
@@ -518,6 +519,99 @@ side-layer jets at 2.8 u₀ and the advective Courant number must stay under 0.5
 
 **Exit.** Reported, not gated, beside the gate's results. Any change to the rule would be a new declaration.
 
+## Step 5.4e: the heater's edges, reported — the results
+
+The two runs ran as declared, on NERSC Perlmutter: one A100 each, float64, NVIDIA's JAX 26.10 container (image
+`20cf0aa0e1`), commit `6863c42`. The comparisons are commit `37841a8`'s; the tag `mistrangelo2025-case2-runs` keeps
+both. They are reported, not gated: the gate's verdict above stands.
+
+| Run | Cells | Axial cells | `dt` (s) | Simulated | s a step | Wall time | Courant max | Ledger max |
+|:--|--:|--:|--:|--:|--:|--:|--:|--:|
+| M2's cross-section, edges refined | 3.76 M | 587 | 0.005 | 300 s | 0.076 | 77 min | 0.431 | 8.6e-12 |
+| M3's cross-section, edges refined | 7.42 M | 686 | 0.005 | 300 s | 0.161 | 162 min | 0.432 | 7.2e-12 |
+
+- They took 4.0 GPU hours, against the 5 budgeted.
+- Both stayed finite. Mass stayed under 2e-10, the charge residual at the solver's stop as on M2L1 and M3L1 (0.015
+  and 0.025), and no flow returned through the outlet.
+- Both were steady over the window: storage within 1e-11 of the 1200 W heat input.
+
+**Figure 9: the hypothesis is met.**
+- The gate's three unresolved points, at z = −24.77, −24.69 and −24.61 mm in the heated wall, lie inside the widened
+  band on both runs.
+  - On M2's cross-section they are 302.92, 302.84 and 302.75 °C. M2L1 had 303.01, 302.92 and 302.83 °C, and M3L1
+    302.98, 302.90 and 302.81 °C.
+  - The two runs differ there by 0.004 K, against the gate's U of 0.037 K. The points have converged.
+- One point lies further out, at the wall's outer face (z = −24.85 mm). It is outside the gate's common points,
+  because M1L1 does not reach it. The two runs lie 0.015 and 0.019 K beyond the widened band there, against 0.10
+  and 0.07 K on M2L1 and M3L1.
+- So Figure 9's misses were the interpolation across the step in the heat flux, as found above. With 1 mm cells
+  either side of the step, Figure 9 lies in the band at every point the gate judged.
+
+**Figure 18: the first point is a resolved miss; the numbers sit above the hypothesis.**
+
+| Band point | The one code / band | M1L1 / M2L1 / M3L1 | Edges, M2 / M3 | Beyond the widened band, edges |
+|:--|--:|--:|--:|--:|
+| 3.48 mm from the edge | 19.43 | 22.70 / 23.10 / 23.11 | 22.12 / 22.06 | 2.55 / 2.49 |
+| 4.41 mm | 18.72–19.48 | 21.19 / 21.04 / 20.47 | 19.96 / 19.91 | 0.22 / 0.17 |
+
+- At the first point the two runs differ by 0.06, inside the digitizing half-width of 0.09. So the point is
+  resolved, and it misses: 13 % above the one code. The hypothesis put it near 21.5; it lies 3 % above that.
+- At the second point the two runs differ by 0.05. They lie 2 % above the band as drawn and 0.17–0.22 beyond the
+  widened band. The hypothesis put it at 19.7, within 1 % of the band.
+- On both runs the 12 cells within 20 mm of the edge follow Nu = 33.9 d^−0.373, with d in mm, to within −6 % and
+  +5 %. That is the curve found on 5.4e's meshes, Nu ≈ 34 d^−0.37. The first cell, 0.5 mm in, has Nu 41.
+- The finest of the codes' axial cells is 1.5 mm (0.065 a, Table 3).
+
+**Every other gated figure: the hypothesis is met away from the leading edge.** Each figure's change from M2L1 to
+M2's refined cross-section, and from M3L1 to M3's, at the gate's points, against U there:
+
+| Figure | Largest change, M2 / M3 | Where | Points beyond U, M2 / M3 | Change over the widened half-width |
+|:--|--:|:--|--:|--:|
+| 6 | 2.3e-4 / 1.4e-4 K | x = −0.15 and −0.20 m | 2 / 2 | under 0.01 |
+| 7 | 4.7e-6 / 2.1e-6 m/s | x = −0.72 m | 1 / 0 | under 0.01 |
+| 9 | 0.12 / 0.086 K | z = −22.7 mm, x = −0.3 m | 63 / 50 | 1.1 / 0.8 |
+| 10 | 1.9e-4 / 6.2e-5 K | the heated wall's outer face | 0 / 0 | under 0.01 |
+| 12 | 7.1e-6 / 5.0e-6 m/s | the −z jet | 0 / 0 | 0.01 |
+| 13 | 5.8e-8 / 5.6e-8 m/s | the jets | 0 / 0 | under 0.01 |
+| 15 | 0.022 / 0.010 µV | x = −0.63 m | 1 / 0 | under 0.01 |
+| 16 | 1.0e-4 / 3.5e-5 µV | z = −21 mm | 0 / 0 | under 0.01 |
+| 17 | 0.009 / 0.006 K | x = −0.2997 m, the leading edge | 7 / 4 | 0.10 / 0.07 |
+| 18 | 1.09 / 1.05 | the leading edge | 7 / 2 | 2.3 / 11 |
+| 19 | 0.005 / 0.005 decades | x = −0.31 m | 2 / 1 | 0.13 / 0.11 |
+
+- The refinement moves Figures 9, 17 and 18 by more than U at the heater's leading edge, where it acts.
+  - Figure 9 is the profile across the duct at x = −0.3 m. Much of it moves, 63 of its 155 points by more than U,
+    and it stays in the band except at the wall's outer face, as above.
+- Four figures move by more than U at one or two points each: 6, 7, 15 and 19. Their U there is far below the
+  band's half-width, and their largest changes stay under 0.13 of it.
+
+**Figure 8: the averaged pressure.**
+- The pressure the thermal state now carries, averaged over the window, agrees with 5.4e's recovered one. It differs
+  by at most 0.008 Pa on M2's cross-section and 0.003 Pa on M3's, out of a 791 Pa drop.
+- The best offsets are 1.36 and 0.85 Pa, as before. Every point lies within the widened band.
+- So 5.4e's one-step recovery agrees with the averaged pressure, which now replaces it.
+
+**Figures 11 and 38, for information.**
+- At x = 0.3 m, Figure 11's largest difference from OF_KIT falls from 0.25 and 0.20 K (M2L1, M3L1) to 0.15 and
+  0.12 K.
+- Figure 38 is unchanged: T_w within 0.44 K, T_b within 0.80 K at the leading edge.
+
+**What this changes.**
+- The gate is unchanged (D12).
+- Figure 9's three unresolved points were numerical, as found above, and converge into the band.
+- Figure 18's first point is now a resolved miss, 13 % above the one code. Its second point lies 2 % above the band.
+
+**The record.** `mistrangelo2025-case1-edges.json` holds the following:
+- each run's arguments and metadata;
+- its diagnostics every simulated second;
+- its observables, with the four sub-windows;
+- its reported figures (8, 11 and 38);
+- the comparisons above, against step 5.4e's released record (`mistrangelo2025-case1-gated.json`, SHA-256
+  `703e31e7…`).
+
+Its SHA-256 is `b264e0a44d6dc9b2b2838fa51867d706fce6288972c9094f498ccb2c8a925792`. It goes to the research-assets
+release with Case 2's record below (D38).
+
 ## Step 5.4f: Case 2, reported — the campaign (draft, declared before the run)
 
 Plan step 5.4f reports Case 2 against the codes' spread (ADR 0009 D35). It has no pass or fail: the references differ
@@ -577,8 +671,8 @@ the heater's end (pp. 12–15).
 - Statistical uncertainty: the standard error of the five 90 s batch means (pairs of sub-batches) at each point.
   The batches count as independent if the ten sub-batches give a standard error at least 0.8 times the five
   batches' at the median point of every figure: the median, over the figure's band points, of the ratio of the
-  two errors. Points where the batches do not differ, to rounding, are left out (`case2_independence`). If not, averaging goes on in 90 s batches up to 900 s; an error
-  that still fails the check is quoted as a lower bound.
+  two errors. Points where the batches do not differ, to rounding, are left out (`case2_independence`). If not,
+  averaging goes on in 90 s batches up to 900 s; an error that still fails the check is quoted as a lower bound.
 - The corrected momentum step that the Case 2 section asks for is 5.4d's (#314, #315).
 
 **Diagnostics expected every step.** As in 5.4e: the heat ledger within 1e-9 of its largest term, mass and charge at
@@ -600,6 +694,194 @@ About 1,100 s simulated: up to 650 s of burn-in and settling, as the coarse run 
   (D37's fallback).
 - If M2 settles to a steady flow, as the coarse mesh did, it is run again with half its axial spacing (2 mm,
   0.087 a, nearer OF_KIT's 0.065 a), about 10 GPU hours more, before Case 2 is reported steady on LMhdX.
+
+## Step 5.4f: Case 2, reported — the results
+
+The three runs ran as drafted, on NERSC Perlmutter: one A100 each, float64, NVIDIA's JAX 26.10 container (image
+`20cf0aa0e1`), commit `6863c42`. The comparisons are commit `37841a8`'s; the tag `mistrangelo2025-case2-runs` keeps
+both. The protocol was applied as written. Case 2 is reported, not gated.
+
+**The runs.**
+
+| Run | Cells | `dt` (s) | Settled at | Averaged | Simulated | s a step | Wall time | Courant max | Ledger max |
+|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| M2, outlet at 1.5 m (main) | 3.56 M | 0.012 | 649 s | 450 s | 1,098 s | 0.080 | 125 min | 0.39 | 4.7e-12 |
+| M1, outlet at 1.5 m | 1.62 M | 0.015 | 652 s | 450 s | 1,104 s | 0.035 | 45 min | 0.31 | 2.9e-12 |
+| M1, outlet at 2.25 m | 1.68 M | 0.015 | 903 s | 900 s | 1,808 s | 0.036 | 74 min | 0.31 | 2.9e-12 |
+
+- The three took 4.1 GPU hours, within the 4 to 7 budgeted.
+- The M2 and M1 runs at 1.5 m each began as a 20 s timing job and went on from its checkpoint. A run resumed so is
+  the same, bit for bit, as one run straight through; that was checked on a coarse mesh before the runs.
+
+**Diagnostics against those expected.**
+- Every run stayed finite. The heat ledger stayed within 5e-12 of its largest term, mass under 1.7e-9, and the
+  charge residual at the solver's stop (0.002–0.004). The Courant number peaked at 0.39.
+- Flow returned through the outlet during the burn-in, as on the coarse mesh, while the heated fluid first reached
+  it: from 120 s to 526 s on M2, up to 49 % of the throughflow. On M1 it lasted to 541 s, and with the long outlet
+  from 178 s to 737 s, both up to about 50 %.
+- None returned during any averaging window. So no run falls back to the long outlet (D37).
+- Settling:
+  - On M2, T_b's change from one 50 s window to the next fell 3.9, 2.6, 1.9, 1.4 and 1.2 K, then 0.59 K. The heat
+    stored fell from 307 W to 1.2 W over the same windows.
+  - M1 settled alike, at 652 s.
+  - The long outlet took twelve windows, to 903 s, with more fluid to heat: 1027 W stored over its first window.
+  - At the end of every run the heat stored was within 0.12 W of zero, 4e-5 of the 3000 W input.
+
+**Independence of the sub-batches.**
+- On M2 and M1 the ten sub-batches pass at 450 s:
+  - On M2, every figure's ratio is 0.93 or more. The lowest is Figure 37's, against the 0.8 required.
+  - On M1, every ratio is 1.16 or more.
+- With the long outlet they fail through 900 s. Figures 23, 24, 30, 34 and 37 give 0.74–0.77, so that run's errors
+  are quoted as lower bounds, as declared.
+  - *Why:* its 45 s means drift together on a cycle of about 300 s, by ±0.1 K in T_b at x = 0.29 m, a
+    lag-1 autocorrelation of 0.6.
+  - That is 0.1 % of the bulk rise. It changes no comparison below.
+- Figures 26–29, at x = −0.3 m and 0, do not differ between batches to rounding: the flow there is steady. They
+  have no ratio, and their error is zero.
+- The potential's three figures share one ratio on each run: 2.0, 11.2 and 1.8. The potential is set to zero mean
+  over the whole duct, so the unsteady flow downstream shifts it by the same amount everywhere. A ratio above 1
+  means the quoted error is, if anything, too large.
+
+**The flow: time-dependent behind the heater, steady over its first half.** The first hypothesis is met behind the
+heated zone, not in it.
+- The flow is steady to rounding at x = 0: the probes there move by 1e-8 K. At x = 0.15 m they move by under 1e-3 K.
+- Fluctuations grow along the heated zone from the rounding level, about fiftyfold every 5 cm, alike on M1 and with
+  the long outlet. They saturate at the heater's end, at about half of u₀. The RMS of u on the plane y = 0, on M2:
+
+| x | 0.10 m | 0.15 m | 0.20 m | 0.25 m | 0.30 m |
+|:--|--:|--:|--:|--:|--:|
+| RMS of u | 1.6e-9 m/s | 6.4e-8 m/s | 3.7e-6 m/s | 1.5e-4 m/s | 4.7e-3 m/s |
+
+- Behind the heater, at x = 0.33 m on the axis:
+  - T swings by 27.1 K on M2, 30.2 K on M1 and 22.4 K with the long outlet. The paper finds up to 30 K there.
+  - The RMS is 9.4 K. The period is 3.8 s on M2, and 4.5–4.6 s on M1.
+- The largest RMS of T is 13.0 K on the plane y = 0 (x = 0.31 m, z = −8 mm), and 1.9 K on the heated interface
+  (x = 0.34 m).
+- At x = 0.6 m the swing is down to 0.7 K, over slower periods of 26 s and more.
+
+**Against the codes' spread.** M2's run, with M1's and the long outlet's shares within the widened band in brackets.
+The error is the standard error of the batch means at the largest excess.
+
+| Figure | Quantity | Points | Inside the band as drawn | Within the widened band | Largest excess, where | Error there |
+|:--|:--|--:|--:|--:|:--|--:|
+| 23 | u on the axis | 175 | 60 % | 95 % (95, 95) | 0.72 mm/s, x = 0.33 m | 0.05 mm/s |
+| 24 | T on the axis | 119 | 31 % | 67 % (71, 71) | 5.8 K, x = 0.26 m | 0.002 K |
+| 26 | u(z), x = −0.3 m | 190 | 45 % | 97 % (95, 95) | 0.42 mm/s, the +z jet | steady |
+| 27 | u(z), x = 0 | 206 | 69 % | 100 % (100, 100) | — | steady |
+| 28 | T(z), x = −0.3 m | 80 | 4 % | 86 % (65, 65) | 0.057 K, z = −20.9 mm | steady |
+| 29 | T(z), x = 0 | 175 | 95 % | 100 % (100, 100) | — | steady |
+| 31 | φ on z = −a | 122 | 6 % | 74 % (73, 83) | 1.9 µV, x = 0.31 m | 0.001 µV |
+| 32 | φ on z = +a | 126 | 15 % | 81 % (81, 92) | 1.4 µV, x = 0.32 m | 0.004 µV |
+| 33 | φ(z), x = 0 | 155 | 11 % | 100 % (100, 100) | — | 0.0005 µV |
+| 34 | bulk T | 191 | 30 % | 98 % (97, 97) | 1.8 K, x = 0.31 m | 0.025 K |
+| 35 | E_t | 426 | 43 % | 79 % (81, 81) | 8.9 decades, x = −1.20 m | 1e-6 decades |
+| 37 | Nu | 212 | 29 % | 62 % (63, 63) | 2.1, x = 0.30 m | 0.001 |
+
+- The statistical error is far below every excess. No miss is a matter of averaging.
+- M1 and M2 agree: no figure's share within the widened band changes by more than 4 points between them, except
+  Figure 28's, which rises from 65 % to 86 % on M2.
+
+**Figure 30, the pressure on the axis.**
+- After the one best-fit offset (−0.70 Pa on M2; −0.40 and −0.85 Pa on M1), every point lies within the widened
+  band, and 86–88 % inside the band as drawn.
+- The drop over the band's span is 258.8 Pa on M2 and 258.3 Pa on M1, against the band's 259.3 Pa: within 0.4 %.
+- It is the time average of the pressure the thermal state carries (option 1 on #327).
+
+**Figure 38, OF_KIT's Case 2 curves.**
+- T_b lies within 1.5 K of OF_KIT for |x| < 0.28 m, with a mean offset of −0.17 K.
+- T_w runs up to 24.7 K above OF_KIT there, and 27.7 K at x = 0.30 m, with a mean offset of +5.7 K. It agrees
+  within 1 K up to x ≈ 0, then rises above:
+
+| x | 0 | 0.10 m | 0.20 m | 0.26 m | 0.29 m |
+|:--|--:|--:|--:|--:|--:|
+| T_w, OF_KIT | 386.3 °C | 397.0 °C | 394.0 °C | 400.1 °C | 402.1 °C |
+| T_w, LMhdX on M2 | 385.4 °C | 401.2 °C | 415.3 °C | 424.8 °C | 428.6 °C |
+
+**The hypothesis on the bands.**
+- *Within the band at most points of the figures on which the codes agree:* met. Every figure has most of its points
+  within the widened band:
+  - 95–100 % on six: 26, 27, 29, 33, 34, and 30 after its offset;
+  - 74–95 % on five: 23, 28, 31, 32 and 35;
+  - about two thirds on Figures 24 and 37.
+- The misses gather in the heated zone's second half, below.
+- *The bulk temperature's outlet plateau is the energy balance's 375.9 °C:* met. It is 375.93 °C from x = 0.5 m on,
+  on every run.
+
+**Where LMhdX leaves the band.**
+- **The second half of the heated zone, x ≈ 0.09–0.36 m: Figures 24, 37 and 38's T_w.**
+  - Nu stays at 2.1–2.2 from x = 0.1 m to the heater's end. The band rises from 2.5–2.8 at x = 0.1 m to 3.6–5.1 at
+    0.2 m: LMhdX's Nu is about half the codes' there.
+  - So the wall runs hot (T_w, above), and the axis runs cold: up to 8 K below the band as drawn, and 5.8 K beyond
+    the widened band, at x = 0.25 m (353.6 °C against 361.6–363.0 °C). Past the heater's end it runs
+    2.7 K beyond the band's top, at 0.34 m.
+  - The bulk temperature, which the energy balance fixes, stays in the band: the same heat, carried less from the
+    wall into the core.
+  - *Why:* in the codes the rolls mix the heated fluid into the core from about x = 0.05 m, where their Nu starts to
+    rise. In LMhdX the flow there is steady, and the rolls grow from the rounding level and saturate only at the
+    heater's end.
+  - What seeds the codes' rolls is not given. At the growth measured above, each tenfold larger seed moves the
+    saturation about 3 cm upstream. A seed six or seven decades above the rounding level would bring it to about
+    x = 0.1 m, where the codes' Nu has risen.
+  - This is inferred, not checked. A run seeded at the inlet would check it; it would be a new declaration (D12).
+  - Over x = 0.09–0.28 m, M1 and M2 agree to within 0.13 K in T on the axis and 0.02 in Nu. So the miss there is
+    not the axial resolution between 5 and 4 mm. At the heater's end, where the rolls saturate, they differ by up to
+    3.5 K.
+- **The potential, Figures 31 and 32.**
+  - On both interfaces LMhdX lies below the band, by up to 2 µV beyond the widened band, out of 117 µV. Across the
+    duct at x = 0, Figure 33, it lies within the widened band but mostly below the band as drawn.
+  - On M2, a uniform shift of +2 µV puts every point of all three figures within the widened band, and 93–100 %
+    inside the band as drawn.
+  - So the miss is in the potential's constant, not its shape. LMhdX sets the potential's mean over the whole duct
+    to zero. So the flow downstream, which differs from the codes', can shift it everywhere.
+- **At the heater's leading edge, x = −0.3 m, Figure 28:** 0.057 K on M2 and 0.17 K on M1. The misses are at the
+  heated wall's outer face and in the fluid 2–5 mm above the heated interface. The band there holds two codes only.
+  The miss falls with the mesh, as Case 1's Figure 9 did at the same edge.
+- **The jets, Figure 26:** 0.42 mm/s at the +z jet. That is the jets' resolution, as in Case 1's Figure 12.
+- **u on the axis, Figure 23:** 0.09 mm/s below the band at x = 0.06 m, and 0.72 mm/s above it at 0.33 m, in the
+  rolls.
+- **E_t, Figure 35:**
+  - *Upstream of x = −1.0 m:* up to 8.9 decades below the band. LMhdX's inflow is the inlet section's developed
+    profile, as in Case 1's Figure 19.
+  - *At the heater's end (x = 0.29–0.35 m):* up to 0.74 decades above, where LMhdX's rolls saturate.
+  - *Downstream of x = 0.8 m, where the field falls off:* up to 1.3 decades above, alike with the long outlet. Not
+    traced.
+- **Bulk temperature at the heater's end, Figure 34:** 1.8 K above the band at x = 0.31 m on M2 (3.0 K on M1),
+  where the rolls saturate. Then it returns to the plateau.
+
+**The record.** `mistrangelo2025-case2-reported.json` holds the following:
+- each run's arguments and metadata;
+- its diagnostics every simulated second;
+- its settling windows and sub-batches;
+- its observables, the window's mean and every sub-batch;
+- the comparison (`case2_reported`) and the independence check;
+- its fluctuations: the probes' swings, RMS and periods, and the RMS planes' maxima.
+
+`mistrangelo2025-case2-fluctuations.npz` holds each run's probes at the step nearest every 0.1 s, from the start.
+It also holds the RMS over the averaging window on the plane y = 0 (T, u and w) and on the heated interface (T),
+with their coordinates.
+
+| File | SHA-256 |
+|:--|:--|
+| `mistrangelo2025-case2-reported.json` | `1795cb16da52cb2b97318716d7e64717940bdc80186bfa3b94b46b86b007f251` |
+| `mistrangelo2025-case2-fluctuations.npz` | `662070017f4181eb09d8a5394e13498a3c2ec1ac87038736322a5c8364d0b1c6` |
+| `mistrangelo2025-case1-edges.json` | `b264e0a44d6dc9b2b2838fa51867d706fce6288972c9094f498ccb2c8a925792` |
+| `case2_reported.py` | `15d1dc5dbfc513a186611e997b240363a007d5a2ed24ca805656f29a00a0e9a2` |
+| `mistrangelo2025-case2-runs.zip` | `2346bb672db3bb30fb618c802b906f80b762014a80f4f6fa3140fa52cdff96b9` |
+
+- They go to the research-assets release with this step's pull request (D38).
+- `case2_reported.py` writes all three records from the runs' outputs and 5.4e's record.
+- `mistrangelo2025-case2-runs.zip` holds the run harness:
+  - the runs (`case2_run.py`, `case1_edge_run.py`);
+  - the observables of the averaged fields on a GPU (`post.py`);
+  - the batch and deploy scripts;
+  - the coarse resume check (`smoke.py`).
+- Each run's output directory is given under `$SCRATCH`. The averaged fields and sub-batches (5.9 GB) are kept
+  outside the repository.
+
+`tests/test_steady.py` checks `case2_reported` without a solve, on curves made from the references:
+- at the band's middle every figure lies inside, and Figure 30 after its offset;
+- one point off is a figure's only failure and its largest excess;
+- the error is the batch means' standard error, in decades on a log axis.
 
 ## Sources
 
