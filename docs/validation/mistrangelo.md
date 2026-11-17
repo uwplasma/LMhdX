@@ -953,6 +953,9 @@ a calibration on M1 from M1L1's last state (`calibrate.py`):
 - If a seeded M1 run brings Nu at x = 0.2 m into the band, M2 repeats it at the same level, from M2L1's last state:
   about 1.5 GPU hours more.
 - If none does, the study reports how far the largest seed moves the onset.
+- *Added after the M1 runs, before M2's:* two M1 runs bring Nu at x = 0.2 m into the band, the seeds before the
+  heater at 1e-4 and 1e-3 u₀. The rule above does not say which M2 repeats. It repeats the smaller, 1e-4 u₀:
+  3.158e-5 m/s² from the same calibration on M2.
 
 **Budget.**
 - The calibration takes about 0.1 GPU hours.
