@@ -822,7 +822,7 @@ The error is the standard error of the batch means at the largest excess.
   - What seeds the codes' rolls is not given. At the growth measured above, each tenfold larger seed moves the
     saturation about 3 cm upstream. A seed six or seven decades above the rounding level would bring it to about
     x = 0.1 m, where the codes' Nu has risen.
-  - This is inferred, not checked. A run seeded at the inlet would check it; it would be a new declaration (D12).
+  - This is inferred, not checked. The seeded study below, declared before its runs, checks it.
   - Over x = 0.09–0.28 m, M1 and M2 agree to within 0.13 K in T on the axis and 0.02 in Nu. So the miss there is
     not the axial resolution between 5 and 4 mm. At the heater's end, where the rolls saturate, they differ by up to
     3.5 K.
@@ -882,6 +882,87 @@ with their coordinates.
 - at the band's middle every figure lies inside, and Figure 30 after its offset;
 - one point off is a figure's only failure and its largest excess;
 - the error is the batch means' standard error, in decades on a log axis.
+
+## Step 5.4f: the rolls' onset, seeded (declared before the run)
+
+The results above leave one question. Over the heated zone's second half LMhdX's Nu is about half the codes', its
+wall up to 25 K hotter and its axis up to 8 K cooler. Is that because its rolls start late, or because of something in
+the flow itself? This study adds a small disturbance and reports what it changes. Case 2's results above stand as
+declared (D12).
+
+**What the codes show.** Each code's curves are in the extraction archive (above).
+- *The axis temperature, Figure 24.*
+  - At x = 0.05 m, OF_KIT, OF_ORNL and COMSOL lie within 1.6 K of LMhdX's 330.0 °C. CFX, whose rise is steeper
+    throughout, lies 8 K above.
+  - By x = 0.1 m all five codes plotted lie at 340–345 °C, against LMhdX's 335.9 °C. That includes CFX, whose flow
+    is steady (p. 12).
+  - So in the codes hot fluid reaches the axis between x = 0.05 and 0.1 m. In LMhdX it arrives only between 0.25
+    and 0.35 m.
+- *Nu, Figure 37.* Five codes' Nu rises from x ≈ 0.1–0.2 m. CFX's stays at 1.5–1.6, below LMhdX's 2.1–2.2, though
+  its axis warms as the others' do.
+- *LMhdX's fluctuations* grow from the rounding level and saturate at the heater's end (above). Over x = 0.12–0.24 m
+  they grow 48-fold every 5 cm on M2 and 63-fold on M1, so a tenfold larger seed would move them about 3 cm.
+
+**Two explanations, and how to tell them apart.**
+- *The seed.* The rolls are a convective instability that amplifies whatever reaches it. LMhdX's flow carries only
+  rounding, so they saturate late. The codes' solvers carry more, from their inflows or their stopping tolerances,
+  so theirs saturate earlier. Then a seed moves the saturation upstream, about 3 cm for each tenfold larger seed at
+  the measured growth.
+- *The flow.* The rolls are the heater's end's own, a global mode, or the onset is set by the base flow. Then a seed
+  that reaches the heated zone leaves the saturation where it is.
+
+**The seed.** A random force on the vertical velocity in a slab, added through the thermal step's `force(t)`, with no
+change to the library (`case2_run.py --seed`):
+- uniform along the field;
+- the three lowest sine modes across z, each with its own random amplitude;
+- the amplitudes standard normal at knots every 2 s and linear between them;
+- the slab's sin² window along x;
+- scaled by ρ₀ times the seed's acceleration.
+
+Two slabs:
+- *at the inlet,* x = −1.45 to −1.25 m, in the field's fringe, where a code's inflow would carry its disturbances;
+- *before the heater,* x = −0.5 to −0.35 m, in the uniform field.
+
+**The levels.** 1e-4, 1e-3 and 1e-2 u₀, the RMS of the vertical velocity at the slab's downstream end. They are set by
+a calibration on M1 from M1L1's last state (`calibrate.py`):
+- each slab is seeded at 1e-4 m/s² for 60 s;
+- the RMS of w on the rows either side of y = 0 is taken over the last 40 s, the largest across z;
+- the amplitudes scale linearly from there.
+
+**The runs.** Six, on M1 with the outlet at 1.5 m: two slabs at three levels each.
+- Each starts from M1L1's last state, at t = 1104.5 s, and is seeded throughout.
+- Each follows 5.4f's protocol, counted from its start: a 300 s burn-in, 50 s settling windows, then 450 s of
+  averaging in ten sub-batches, checked for independence up to 900 s.
+- The comparisons are 5.4f's (`case2_reported`).
+
+**Reported.**
+- *What the seed reaches.* The RMS of u and w on the plane y = 0 along x, and where the fluctuations saturate: the
+  first x where the RMS of u on y = 0 reaches 1e-3 m/s, 0.1 u₀. Unseeded, that is x = 0.266 m on M1 and 0.274 m on M2.
+- *The figures.* Nu (Figure 37), T_w (Figure 38) and the axis temperature (Figure 24) between x = 0 and 0.3 m. Every
+  figure is compared as above, with the probes' swings and periods.
+
+**Hypotheses.**
+- *The seed explains the miss* if, before the heater, each tenfold larger seed moves the saturation upstream by 2–4 cm,
+  and Nu and the axis temperature move toward the band with it.
+- *The flow's own onset explains it* if a seed that reaches the heated zone leaves the saturation within 1 cm of the
+  unseeded run's.
+- *The inlet's seeds* arrive damped by the field. How much reaches the heater is measured. It shows whether a code's
+  inflow could set its onset.
+
+**Then.**
+- If a seeded M1 run brings Nu at x = 0.2 m into the band, M2 repeats it at the same level, from M2L1's last state:
+  about 1.5 GPU hours more.
+- If none does, the study reports how far the largest seed moves the onset.
+
+**Budget.**
+- The calibration takes about 0.1 GPU hours.
+- Each M1 run simulates 800–1,350 s at 0.035 s a step: 30–50 minutes.
+- About 4 GPU hours in all, and 5.5 with M2.
+
+**Exit.** Reported, not gated.
+- Case 2's results above stay the record of LMhdX's unseeded flow.
+- This study says what sets the rolls' onset.
+- A seeded Case 2 protocol would be a new declaration (D12).
 
 ## Sources
 
