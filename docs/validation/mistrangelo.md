@@ -185,6 +185,305 @@ The coarse run:
 - defines Nu over the heated stations only;
 - is compared with every figure listed here.
 
+## Step 5.4e: Case 1, gated — the campaign (draft, declared before the run)
+
+Plan step 5.4e gates Case 1 (ADR 0009 D35). This record states the hypothesis, the runs, the rule for each check,
+the budget and the exit before any production run (D12). It is a draft until agreed.
+
+**The problem.** `validation.mistrangelo.case1` builds the whole duct: eq. 1's fringe along `y`; steel walls that
+carry current at the pinned ratio and conduct and store heat (5.4b); the flow evolving through the open duct of 5.4d,
+with limited momentum transport and buoyancy; van Leer heat transport; the PbLi entering at 300 °C on the developed
+profile of the inlet section; the heated patch. The axial mesh is fine over |x| ≤ 1 m and grows into buffers out to
+±1.5 m, the long end of the codes' 2–3 m domains.
+
+**Checked so far** (coarse mesh, 12 cells across, 5 cm along): the ledger closes to 1e-12 and the throughflow holds at
+every station. In the Stokes limit the uniform field's flow at x = 0 tends to the developed section on its transverse
+mesh (jets 3.026 against 3.040 u₀, still closing). With inertia, the jets there are 8 % higher: the fringe's
+development, with the paper's "almost developed" jets at 0.935 a beyond the section's 0.917.
+
+**Hypothesis.** The time-averaged observables lie within the codes' band, widened by the digitizing uncertainty and by
+LMhdX's own uncertainty, on every run below. In the heated zone, buoyancy and the fringe move the temperatures from
+5.4c's held flow by a few tenths of a kelvin.
+
+**Gated and reported.**
+- Gated: Figures 6 and 7 (T and u on the axis), 9 and 10 (T(z)), 12 and 13 (u(z)), 15 and 16 (the potential),
+  17 (the bulk temperature), 18 (Nu) and 19 (the transverse energy).
+- Reported: Figure 8, the pressure, whose uniform-field slope is calibrated; Figures 11 and 38, one code's curves
+  only.
+
+**Runs.** The time step keeps `dt/Δx` at 3 s/m on every mesh.
+- M1L1: 48 cells across (6 in each layer, 6 per wall), 5 mm along the core, outlet at 1.5 m, `dt` 0.015 s.
+- M2L1: 64 across (8, 8), 4 mm along, outlet at 1.5 m, `dt` 0.012 s.
+- M3L1: 84 across (10, 10), 3.33 mm along, outlet at 1.5 m, `dt` 0.01 s. This third mesh checks that the mesh
+  change from M1 to M2 does not understate the discretization error.
+- M1L2 and M2L2: the outlet at 2.25 m.
+- M1L1 at half the time step.
+- M1L1 with every solver's stop 100 times looser: the conduction PCG (1e-11), the charge PCG through the walls
+  (1e-13) and the momentum stage's Schur PCG (1e-13).
+
+**Averaging.** After two flow-through times (2 L/u₀, L the duct's length), average over one more, at every step. The
+statistical uncertainty is twice the spread of four sub-window means.
+
+**The rule, at each gated point.**
+- The excess is `band_misfit`: how far LMhdX lies outside the codes' spread, widened by the digitizing uncertainty in
+  both axes.
+- LMhdX's uncertainty U is the largest of these at that point:
+  - the mesh changes, M1 to M2 and M2 to M3;
+  - the outlet-length change, on M1 and on M2;
+  - the time-step and tolerance changes;
+  - the statistical uncertainty.
+- A point passes if its excess is at most U, and U is at most half the band's local width. A larger U means the run
+  is not resolved enough to gate there.
+- The gate holds if every gated point passes on M1L1, M2L1, M3L1, M1L2 and M2L2. A failure is recorded, not
+  dropped.
+
+**Diagnostics expected every step.**
+- The heat ledger within 1e-9 of its largest term.
+- Mass and charge at their solve floors.
+- The throughflow held at every station.
+- The advective Courant number at most 0.5.
+- No flow returning through the outlet. Case 1 is steady and laminar in the heated zone, and unsteady only at the
+  magnet's ends.
+
+**Budget.**
+- Measured on one NERSC Perlmutter A100 (40 GB), in float64 with NVIDIA's JAX 26.10 container:
+  - M1 (48 across, 5 mm along; 1.62 million cells): 0.038 s a step, peak 0.5 GiB.
+  - M2 (64 across, 4 mm along; 3.56 million cells): 0.093 s a step, peak 1.0 GiB.
+- For comparison, an RTX 3060 Laptop took 0.53 s a step at 850,000 cells.
+- Three flow-through times (300 s) take 20,000 steps on M1 at 0.015 s (about 13 minutes) and 25,000 on M2 at
+  0.012 s (about 40 minutes). M3 (about 7 million cells) runs 30,000 steps at 0.01 s. The seven runs take about
+  5 GPU hours, a little over a charged node-hour in the shared QOS.
+- The time step keeps the advective Courant number under 0.5. In the first 8 s at 0.02 s it rose from 0.25 to
+  0.32 as the jets formed.
+
+**Exit (D12).**
+- A run whose heated zone is not statistically steady after four flow-through times is reported, not gated.
+- A point that fails because of the outlet takes D37's fallback: one more doubling of the outlet region, within this
+  budget.
+- Otherwise Case 1 is reported as code-to-code agreement, with every failure shown. The band is not relaxed.
+
+## Step 5.4e: Case 1, gated — the results
+
+The seven runs above ran as drafted, before the record's review, on NERSC Perlmutter: one A100 each, float64,
+NVIDIA's JAX 26.10 container (image `20cf0aa0e1`), commit `1fc5507`. The observables and the gate are commit
+`a83d942`'s; the tag `mistrangelo2025-case1-runs` keeps both. The rule was applied as written.
+
+**The gate holds on six of the eleven gated figures: 6, 7, 10, 15, 16 and 17. It does not hold on 9, 12, 13, 18
+and 19.** By the exit, Case 1 is reported as code-to-code agreement, with every failure shown below. The band is not
+relaxed, and the rule is not amended after the run.
+
+**The runs.**
+
+| Run | Cells | `dt` (s) | Simulated | s a step | Wall time | Courant max | Ledger max |
+|:--|--:|--:|--:|--:|--:|--:|--:|
+| M1L1 | 1.62 M | 0.015 | 300 s | 0.039 | 13 min | 0.31 | 4.2e-12 |
+| M2L1 | 3.56 M | 0.012 | 300 s | 0.092 | 38 min | 0.32 | 4.8e-12 |
+| M3L1 | 7.16 M | 0.010 | 300 s | 0.199 | 100 min | 0.34 | 5.1e-12 |
+| M1L2 | 1.68 M | 0.015 | 375 s | 0.040 | 17 min | 0.31 | 5.8e-12 |
+| M2L2 | 3.71 M | 0.012 | 375 s | 0.091 | 47 min | 0.32 | 8.3e-12 |
+| M1L1, half the time step | 1.62 M | 0.0075 | 300 s | 0.035 | 24 min | 0.16 | 7.5e-12 |
+| M1L1, stops 100 times looser | 1.62 M | 0.015 | 300 s | 0.031 | 11 min | 0.31 | 5.2e-10 |
+
+The seven took 4.2 GPU hours, against the 5 budgeted. M3L1's observables were computed on an A100 too; the 7.2
+million cells do not fit a laptop's memory.
+
+**Diagnostics against those expected.**
+- Every run stayed finite.
+- The heat ledger stayed within 1e-11 of its largest term, and 5.2e-10 with the looser stops, inside the 1e-9
+  expected.
+- The mass residual stayed under 5e-10 (1.8e-9 with the looser stops), and the outlet carried the prescribed
+  6.348e-5 m³/s, so the throughflow held at every station.
+- The charge residual (the currents' divergence) follows the solver's stop: 0.007, 0.015 and 0.024 on M1, M2 and
+  M3, and 0.072 with the stops 100 times looser.
+- The advective Courant number peaked at 0.34, under the 0.5 allowed.
+- No run had flow returning through the outlet.
+- Every run was steady over its window: storage stayed within 3e-7 of the 1200 W heat input. No unsteadiness
+  appeared at the magnet's ends either. So no run falls under the exit's "not statistically steady".
+
+**What sets U.** The mesh change, M1 to M2 or M2 to M3, sets U on every figure.
+- The outlet, time-step, tolerance and statistical terms are each at most 0.006 of the band's half-width on any
+  figure. The runs reach the same steady state whatever the time step, the solver's stops or the outlet's length.
+- The largest of them, 0.012 µV on Figures 15 and 16, is the potential's gauge. The longer domain shifts its zero
+  mean, uniformly to 7e-6 µV.
+- So no point fails because of the outlet, and D37's fallback is not taken.
+
+**Against the bands.** The points are the band's points that every run covers. "Inside the band" is the band as
+drawn. A point passes with the digitizing uncertainty added in both axes, since the bands are about a pixel wide, so a
+figure can hold with fewer points inside the band as drawn.
+
+| Figure | Quantity | Points | Inside the band, M3L1 | Not passing, M1L1 / M2L1 / M3L1 / M1L2 / M2L2 | Largest U | Gate |
+|:--|:--|--:|--:|:--|--:|:--|
+| 6 | T on the axis | 168 | 71 % | 0 / 0 / 0 / 0 / 0 | 0.014 K | holds |
+| 7 | u on the axis | 60 | 58 % | 0 / 0 / 0 / 0 / 0 | 0.05 mm/s | holds |
+| 9 | T(z) at x = −0.3 m | 155 | 58 % | 3 / 3 / 3 / 3 / 3 | 0.047 K | does not hold |
+| 10 | T(z) at x = 0 | 244 | 46 % | 0 / 0 / 0 / 0 / 0 | 0.045 K | holds |
+| 12 | u(z) at x = −0.3 m | 174 | 70 % | 3 / 2 / 1 / 3 / 2 | 0.93 mm/s | does not hold |
+| 13 | u(z) at x = 0 | 235 | 68 % | 4 / 4 / 3 / 4 / 4 | 0.85 mm/s | does not hold |
+| 15 | potential on z = −a | 207 | 84 % | 0 / 0 / 0 / 0 / 0 | 0.076 µV | holds |
+| 16 | potential across z at x = 0 | 189 | 98 % | 0 / 0 / 0 / 0 / 0 | 0.55 µV | holds |
+| 17 | bulk temperature | 169 | 75 % | 0 / 0 / 0 / 0 / 0 | 0.004 K | holds |
+| 18 | Nu | 169 | 93 % | 2 / 2 / 2 / 2 / 2 | 0.86 | does not hold |
+| 19 | transverse energy E_t | 287 | 41 % | 15 / 16 / 16 / 15 / 16 | 0.072 decades | does not hold |
+
+**Where the five miss.**
+- **Figure 9.** Three points are too uncertain to gate. They sit in the heated wall within 0.4 mm of its outer face
+  (z = −24.6 to −24.8 mm), at the heater's leading edge.
+  - The band there is 0.005–0.023 K wide. With the digitizing uncertainty, its half-width is 0.025–0.034 K.
+  - The M1-to-M2 change there is 0.037 K. The M2-to-M3 change is 0.024 K, and M3's excess is zero at all three.
+  - *Why:* x = −0.3 m is where the outer heat flux steps from zero to q''. The value there is interpolated between
+    the cells either side of the step, so it converges slowly, toward the band: 303.08, 303.04 and 303.02 C at
+    z = −24.8 mm from M1 to M3. M3 is 0.09 K above the band as drawn, 3 % of the 3 K local rise, in a gradient
+    where 0.1 K is 0.09 mm of z. Numerical.
+- **Figure 12.** At the side-layer jet's peak (z = −21.4 mm), the misfit beyond the band falls with the mesh:
+  - 0.21 mm/s on M1, 0.18 on M2 and 0.04 on M3, against a U of 0.14 mm/s. So the M1 and M2 runs fail there and M3
+    passes.
+  - At z = +21.3 mm, M1 fails, by 0.28 mm/s against a U of 0.23 mm/s.
+  - One point on the jet's flank (z = −22.7 mm) is too uncertain to gate: the M1-to-M2 change is 0.93 mm/s, above
+    the 0.83 mm/s half-width. The M2-to-M3 change is 0.02 mm/s, and no run lies outside there.
+  - *Why:* the jets' resolution. M3 is 0.66 mm/s (0.8 %) above the band as drawn and inside the widened band.
+- **Figure 13.** The jet's peak at x = 0, on the +z side only (z = 21.2 to 21.5 mm), misses, and refinement does
+  not close it.
+  - At z = 21.4 and 21.5 mm, M3 lies 0.75 and 0.42 mm/s beyond the widened band, against a U of 0.12 and
+    0.14 mm/s.
+  - At z = 21.2 mm, M3 lies 0.32 mm/s beyond the band, within its U of 0.38 mm/s. The M1 and M2 runs fail there.
+  - The peak moves slowly with the mesh: 83.86, 83.74 and 83.66 mm/s from M1 to M3. Extrapolating that sequence
+    leaves about 0.6 mm/s beyond the band, 0.7 % of the peak.
+  - The −z side passes.
+  - One flank point (z = 22.9 mm) is too uncertain to gate: the M1-to-M2 change is 0.85 mm/s, above the 0.61 mm/s
+    half-width. The M2-to-M3 change is 0.28 mm/s.
+  - The largest gap is 1.5 mm/s above the band as drawn, 1.8 % of the peak.
+  - *Why, the mesh, about a third:* the developed section's jet peak (`section_flow`) on 48, 64, 84 and 128 cells
+    across is 84.79, 84.40, 84.18 and 83.98 mm/s. It converges near 83.8 mm/s (order 1.6–1.8), 0.4 mm/s below its
+    value on M3's mesh. More side-layer refinement trims the jets by that much, not into the band.
+  - *Why, the wall's ratio, an input:* it is pinned to the printed gradient. Matolich's measured ratio lowers the
+    developed jet by 0.85 mm/s (1 %) but misses the gradient by 4 %. The jet moves about 2 % per 10 % of the ratio.
+    So matching the printed gradient raises the jets about 1 %. This suggests the codes' walls differ slightly
+    from LMhdX's resolved steel; it is inferred, not checked against the codes.
+  - *Why, buoyancy's asymmetry:* heated from below, the −z jet runs faster than the +z jet: by 2.2 mm/s in LMhdX,
+    against 2.9 mm/s between the band's top edges. The weaker asymmetry leaves the +z peak high. It is not traced
+    to an input.
+- **Figure 18.** No point fails. The first two heated points, at the heater's leading edge, are too uncertain to
+  gate.
+  - At x = −0.2965 m, Nu is 22.7, 23.1 and 23.1 from M1 to M3. The band narrows there to one code's value, 19.4, so
+    its widened half-width is the digitizing 0.09. The M1-to-M2 change, 0.39, exceeds it.
+  - At the next point, x = −0.2956 m, M3 moves toward the band (21.2, 21.1 and 20.5 from M1 to M3). That M2-to-M3
+    change, 0.57, exceeds the 0.47 half-width.
+  - *Why:* Nu is singular at the heater's edge. Every mesh's cell values lie on one curve, Nu ≈ 34 d^−0.37 with d
+    the distance from the edge in mm, so LMhdX's Nu is converged point by point. The band's first point is 3.5 mm
+    in, between the first two cells, 3.3–5 mm apart. Linear interpolation between them overestimates a curve this
+    sharp, and M2 and M3 agree at 23.1 by coincidence.
+  - On the curve, Nu is about 21.5 at the first point, 11 % above the one code, and 19.7 at the second, 1 % above
+    the band. Past 5 mm from the edge LMhdX lies in the band. 5.4c's 3.3 there is the same interpolation on its
+    5 mm cells.
+  - Numerical: axial cells of about 0.5 mm within a few centimetres of each edge would resolve it.
+- **Figure 19.** Upstream of x = −0.964 m, E_t is converged but far below the band.
+  - M2 and M3 agree to within 0.03 decades there.
+  - LMhdX's E_t runs from 5e-17 at x = −1.25 m to 1e-7 at −0.964 m.
+  - For x < −1.006 m the band is a single value, about 1e-4. Beyond that, the codes' lower edge lies between 1e-7
+    and 1e-4.
+  - LMhdX's inflow is the inlet section's developed profile, so little transverse motion arrives from upstream. The
+    specification leaves the inlet profile and the domain's length to each code (Table 4).
+  - *Why:* the setup, not resolution. Upstream of x = −1.006 m the band is one code's, with transverse motion of
+    about 1 % of u0 where the field is nearly zero, most likely from its inlet.
+  - The two most upstream points are also too uncertain to gate. Their mesh change, 0.06–0.07 decades, exceeds the
+    single-valued band's digitizing half-width, 0.02 decades.
+
+**What the misses are.** Numerical, or from the inputs; only part of Figure 13's is not traced.
+- *Numerical, at the heater's leading edge, where the heat flux steps:* Figures 9 and 18. LMhdX converges toward
+  the band; axial refinement near x = ±0.3 m would resolve them.
+- *Numerical, the jets' resolution:* Figure 12's jet peak fails on M1 and M2 and passes on M3.
+- *Inputs:*
+  - Figure 13's +z jet peak, 0.7 % beyond the widened band after extrapolation: the pinned wall ratio, with a
+    weaker buoyant asymmetry not traced to an input;
+  - Figure 19 upstream of x = −0.964 m: the inlet, which each code chooses.
+- *Too uncertain to gate, though converging:*
+  - Figure 9's three points;
+  - the jets' flanks in Figures 12 and 13;
+  - Figure 18's two points;
+  - Figure 19's two most upstream points.
+
+**A property of the rule.** U takes the larger of the two mesh changes. So a point that the M1-to-M2 change leaves too
+uncertain to gate stays so, however M3 converges.
+- For information only, and not the rule: suppose U dropped the M1-to-M2 change, kept every other term, and only
+  M3L1 were judged. Then Figures 9 and 12 would hold, and Figures 13, 18 and 19 would not.
+- Any change to the rule would be a new declaration (D12), made in review.
+
+**Figure 38, reported.** M3L1 against OF_KIT:
+- T_w lies within 0.40 K for |x| < 0.28 m and 0.44 K at the leading edge, with a mean offset of −0.27 K.
+- T_b lies within 0.12 K, and 0.79 K at the leading edge, with a mean offset of −0.05 K.
+- 5.4c's held flow had 0.41 K and 0.12 K, with offsets of −0.08 K and −0.05 K. So against OF_KIT, the wall's mean
+  offset grows from −0.08 to −0.27 K: it runs cooler than in 5.4c.
+
+**Figure 8, reported: the pressure on the axis.** The runs averaged velocity and temperature, not the pressure.
+- *How it was recovered.* The momentum stage returns the pressure and the thermal step drops it. So the pressure is
+  the stage's for one more step from each run's last state (`case1_reported.py`, beside the record).
+  - That step moved the velocity by at most 5e-14 m/s, against a peak of 0.086 m/s.
+  - At a steady state the stage's pressure is the steady pressure, `G p / ρ = R − λ u`, whatever the step.
+- *How it is compared.* The paper removes some codes' pressure offsets (p. 14). So `case1_reported` adds the one
+  offset that best fits the band.
+- *The offset.* It is small against the 790 Pa drop: +2.3, +1.4 and +0.9 Pa on M1, M2 and M3, and −0.2 and
+  −1.2 Pa with the outlet at 2.25 m.
+- *Against the band.* After the offset, every point on every run lies within the band widened by the digitizing
+  uncertainty, and 52–54 % lie inside the band as drawn.
+- *The drop.* Over the band's span (x = −1.49 to 1.40 m) the drop is 789.3, 791.0 and 791.8 Pa on M1, M2 and M3,
+  against the band's 789.9 Pa: within 0.25 %. The outlet's length and the time step leave it unchanged.
+- The core's slope is calibrated, since the wall's ratio is fitted to the printed gradient. So the figure is
+  reported, not gated.
+
+**Figure 11, reported: OF_KIT's temperatures across the duct at five stations.**
+
+| Station | Largest difference, M1 / M2 / M3 | Where (M3) | Mean offset, M3 | Within the digitizing 0.156 K, M3 |
+|:--|--:|:--|--:|--:|
+| x = 0 | 0.25 / 0.21 / 0.19 K | the heated interface, z = −23.0 mm | −0.04 K | 99 % |
+| x = 0.15 m | 0.24 / 0.19 / 0.17 K | z = −22.3 mm | −0.04 K | 99 % |
+| x = 0.3 m | 0.34 / 0.25 / 0.20 K | the heated interface | −0.03 K | 98 % |
+| x = 0.6 m | 0.07 / 0.06 / 0.06 K | z = +6.9 mm | 0.00 K | 100 % |
+| x = 1 m | 0.28 / 0.29 / 0.30 K | z = −10.2 mm | +0.05 K | 25 % |
+
+- The largest differences sit at the heated interface and shrink with the mesh.
+- At x = 1 m, the magnet's exit, LMhdX stays within 0.30 K but lies mostly just outside the digitizing uncertainty.
+- *Excluded at x = 0.15 m:* two adjacent digitized points at z = −13.4 mm.
+  - OF_KIT's trace there jumps 2–4 K onto the x = 0.3 and 0.6 m curves, which cross it at 315.8 K, and comes back
+    within 0.4 mm.
+  - LMhdX's profile is smooth through them, the same on all three meshes. With them, the largest difference is
+    4.0 K and the mean −0.10 K.
+
+**The hypothesis.**
+- *The observables lie in the widened band on every run:* not met. Five figures miss, as above.
+- *Buoyancy and the fringe move the heated zone's temperatures from 5.4c's held flow by a few tenths of a kelvin:*
+  met. On 5.4c's mesh (M1L1):
+  - T_w moves by at most 0.46 K, with a mean of −0.25 K.
+  - T(z) at x = 0 moves by at most 0.28 K.
+  - The bulk temperature, which the energy balance fixes, moves by 3e-4 K. The outlet rise is 10.124 K against
+    10.123 K.
+  - Nu at x = 0.29 m is 2.39 against 2.33. Figure 18's band there is 2.23–2.41.
+  - The heated wall runs cooler, consistent with the faster jets of the fringe's development (above).
+
+**The record.** `mistrangelo2025-case1-gated.json` holds the following:
+- each run's arguments and metadata;
+- its diagnostics every simulated second;
+- its observables, with the four sub-windows;
+- its reported figures (8, 11 and 38), with the pressure step's velocity change;
+- the gate.
+
+Its SHA-256 is `a5964eef19a404c3f08ed39e274766199f3a720543155c11e71e6c961c1618d5`. It goes to the research-assets
+release with this step's pull request (D38), with `case1_reported.py`. The averaged fields (2.5 GB) and the
+recovered pressures are kept outside the repository.
+
+`tests/test_steady.py` checks the functions that made these results in about 20 s. On 16 cells across, 2 per
+wall and 0.05 m along the core:
+- a mesh without faces at the heated ends is refused;
+- three steps take 1200 W in and pass u0 out, with the ledger closed and no return flow;
+- every observable of a known flow, the inlet's profile all along with T and p linear, is as defined.
+
+Without a solve, on curves made from the references:
+- the rule holds every figure at the band's middle;
+- it leaves unresolved a point the M1 runs move, however M2 and M3 agree;
+- it fails a converged miss on every run, and takes U from the statistics when they set it;
+- it gates only the points every run covers, and measures U in decades on a log axis;
+- Figure 8's offset takes out a constant;
+- Figures 11 and 38 report a constant difference as it is.
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
