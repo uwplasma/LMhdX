@@ -485,6 +485,7 @@ def _heated(
         _CELL,
         _SCHEMES,
         ThermalState,
+        _with_pressure,
         advance_thermal,
         build_thermal_step,
         initial_thermal_state,
@@ -493,7 +494,7 @@ def _heated(
 
     flow, grid = heat_problem.flow, heat_problem.thermal_grid
     if isinstance(start, ThermalState):
-        state = start
+        state = _with_pressure(start)
     else:
         if flow.open_axis is None:
             velocity = solve_steady_state(flow).velocity if start == "steady" else None
@@ -524,24 +525,25 @@ def _heated(
     )
 
     def fields(s):
-        velocity = s.velocity
-        if (
-            heat_problem.has_walls
-        ):  # ParaView draws cells: the velocity, zero in any wall, padded onto the grid
+        velocity, pressure = s.velocity, s.pressure
+        # ParaView draws cells: the velocity and the pressure, zero in any wall, padded onto the grid.
+        if heat_problem.has_walls:
             velocity = tuple(
                 Field(heat_problem.on_thermal_grid(cell_average(v, a).data), _CELL, grid)
                 for a, v in enumerate(velocity)
             )
-        return {"velocity": velocity, "temperature": s.temperature}
+            pressure = Field(heat_problem.on_thermal_grid(pressure.data), _CELL, grid)
+        moving = {} if hold_flow else {"pressure": pressure}  # a held flow's pressure is not solved for
+        return {"velocity": velocity, "temperature": s.temperature} | moving
 
     first = round(float(state.time) / flow.dt) if not is_traced(state) else 0
     run = _Run(
         state, chunk, fields, grid, _header(subject, "euler"), limits, check, first, solver.history or 1
     )
     state, history, summary = _drive(run, subject, solver, output, record)
-    return Solution(
-        {"velocity": state.velocity, "temperature": state.temperature}, history=history, summary=summary
-    )
+    moving = {} if hold_flow else {"pressure": state.pressure}
+    found = {"velocity": state.velocity, "temperature": state.temperature} | moving
+    return Solution(found, history=history, summary=summary)
 
 
 def _written(solution: Solution, problem, solver: Solver, method: str, output: Output) -> Solution:
@@ -569,7 +571,8 @@ def solve(
     unsteady run at its flow's ``dt`` with Joule heating alone, from rest at zero temperature, the ``"steady"``
     flow or a given :class:`~lmhdx.thermal.ThermalState`; its temperature is on ``thermal_grid`` and so are the
     ParaView cells, the velocity zero in a wall. An open duct's flow evolves with it, its rest being the inlet
-    profile carried along the duct and its steady flow :func:`lmhdx.axial.solve_open_duct`'s.
+    profile carried along the duct and its steady flow :func:`lmhdx.axial.solve_open_duct`'s. A flow that evolves
+    gives its pressure, as a mechanical run does; a held flow does not.
 
     ``start`` is the initial state of an unsteady run: for a thermal run ``None`` (rest, at the
     problem's initial temperature), ``"steady"`` (the steady flow, temperature at rest) or a

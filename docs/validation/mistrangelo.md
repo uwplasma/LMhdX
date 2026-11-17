@@ -515,8 +515,9 @@ the heater's end (pp. 12–15).
   Figures 23 and 24 (u and T on the axis), 26–29 (u(z) and T(z) at x = −0.3 and 0 m), 31–33 (the potential on both
   interfaces and across), 34 (the bulk temperature), 35 (E_t) and 37 (Nu). For each: the share of points inside the
   band as drawn and within the widened band, the largest excess and where, and the statistical uncertainty there.
-- Figure 30, the pressure on the axis, with one best-fit offset as Figure 8, once the thermal step gives the
-  stage's pressure ([asked on #327](https://github.com/uwplasma/LMhdX/pull/327#issuecomment-6929038011)).
+- Figure 30, the pressure on the axis, with one best-fit offset as Figure 8. It is the time average of the
+  pressure the thermal state carries, the momentum stage's, as `core3d.step` returns it
+  ([option 1 on #327](https://github.com/uwplasma/LMhdX/pull/327#issuecomment-6929038011)).
 - Figure 38's Case 2 curves, OF_KIT's T_w and T_b: the largest difference and the mean offset, as in 5.4e.
 - The fluctuations: the RMS of T and u over the averaging window on the plane y = 0 and on the heated interface;
   time series every 0.1 s at probes on the heated interface and on the axis at x = 0, 0.15, 0.33 and 0.6 m; and the
