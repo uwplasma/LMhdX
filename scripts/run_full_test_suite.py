@@ -150,7 +150,8 @@ _TEST_SHARDS = {
             "test_the_wall_leaves_of_a_problem_pair_forward_and_reverse_mode",
         )
     ),
-    "anchors": ("tests/test_laminar_anchors.py",),
+    # Marked slow, so the pull-request tiers deselect it; the turbulence workflow runs it.
+    "anchors": ("tests/test_laminar_anchors.py", "tests/test_channel_turbulence.py"),
 }
 
 _ALL_TESTS = tuple(dict.fromkeys(path.split("::")[0] for shard in _TEST_SHARDS.values() for path in shard))

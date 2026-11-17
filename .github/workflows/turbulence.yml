@@ -1,0 +1,34 @@
+name: turbulence
+
+# Turbulence validation, outside the pull-request gate: hours of CPU on a uwplasma Mac, weekly and on request.
+on:
+  schedule:
+    - cron: "43 3 * * 0"
+  workflow_dispatch:
+
+concurrency:
+  group: lmx-turbulence
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  MPLBACKEND: Agg
+  XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+
+jobs:
+  channel:
+    name: Spanwise-field channel, KZB 2011 Table 1
+    runs-on: ["self-hosted", "macOS"]
+    timeout-minutes: 720
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-lmhdx
+        with:
+          python-version: "3.11"
+          cache-suffix: turbulence
+      - name: Run the channel and check its statistics
+        run: python -m pytest tests/test_channel_turbulence.py -m slow -s --durations=5
