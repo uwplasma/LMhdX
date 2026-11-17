@@ -6,7 +6,7 @@ PbLi duct with conducting steel walls in a fringing field. There is no
 experiment. Plan step 5.4 reproduces it in stages (ADR 0009). This page records
 step 5.4a: the frozen specification, the developed section, and both cases'
 digitized figures; step 5.4c, Case 1's reduced heated zone; step 5.4e, Case 1
-gated, with its edge study; and step 5.4f, Case 2 reported.
+gated, with its edge study; and step 5.4f, Case 2 reported, with a seeded study of its rolls' onset.
 
 The specification is `src/lmhdx/data/benchmarks/specs/mistrangelo2025.toml`.
 Each value there is marked *printed*, *inferred* or *pinned*, with its source,
@@ -822,7 +822,8 @@ The error is the standard error of the batch means at the largest excess.
   - What seeds the codes' rolls is not given. At the growth measured above, each tenfold larger seed moves the
     saturation about 3 cm upstream. A seed six or seven decades above the rounding level would bring it to about
     x = 0.1 m, where the codes' Nu has risen.
-  - This is inferred, not checked. The seeded study below, declared before its runs, checks it.
+  - The seeded study below, declared before its runs, checks this. A seed of 1e-4 u₀ just before the heater moves
+    the saturation to x = 0.07 m on M1 and brings Nu, the axis temperature and T_w to the codes'.
   - Over x = 0.09–0.28 m, M1 and M2 agree to within 0.13 K in T on the axis and 0.02 in Nu. So the miss there is
     not the axial resolution between 5 and 4 mm. At the heater's end, where the rolls saturate, they differ by up to
     3.5 K.
@@ -841,10 +842,11 @@ The error is the standard error of the batch means at the largest excess.
   rolls.
 - **E_t, Figure 35:**
   - *Upstream of x = −1.0 m:* up to 8.9 decades below the band. LMhdX's inflow is the inlet section's developed
-    profile, as in Case 1's Figure 19.
+    profile, as in Case 1's Figure 19. A disturbance of 1e-2 u₀ at the inlet brings it within 0.3 decades (the
+    seeded study below).
   - *At the heater's end (x = 0.29–0.35 m):* up to 0.74 decades above, where LMhdX's rolls saturate.
-  - *Downstream of x = 0.8 m, where the field falls off:* up to 1.3 decades above, alike with the long outlet. Not
-    traced.
+  - *Downstream of x = 0.8 m, where the field falls off:* up to 1.3 decades above, alike with the long outlet. The
+    seeded study below finds that it follows the rolls' onset too.
 - **Bulk temperature at the heater's end, Figure 34:** 1.8 K above the band at x = 0.31 m on M2 (3.0 K on M1),
   where the rolls saturate. Then it returns to the plateau.
 
@@ -865,18 +867,24 @@ with their coordinates.
 | `mistrangelo2025-case2-reported.json` | `1795cb16da52cb2b97318716d7e64717940bdc80186bfa3b94b46b86b007f251` |
 | `mistrangelo2025-case2-fluctuations.npz` | `662070017f4181eb09d8a5394e13498a3c2ec1ac87038736322a5c8364d0b1c6` |
 | `mistrangelo2025-case1-edges.json` | `b264e0a44d6dc9b2b2838fa51867d706fce6288972c9094f498ccb2c8a925792` |
-| `case2_reported.py` | `15d1dc5dbfc513a186611e997b240363a007d5a2ed24ca805656f29a00a0e9a2` |
-| `mistrangelo2025-case2-runs.zip` | `2346bb672db3bb30fb618c802b906f80b762014a80f4f6fa3140fa52cdff96b9` |
+| `mistrangelo2025-case2-seeded.json` | `28b73d09fd10a24a7b188ae2747547548e870916f8803673c0d8715a96512a23` |
+| `mistrangelo2025-case2-seeded-fluctuations.npz` | `7f8e916616f4a2a68c0e0fa0356ed3de4404fe2e6ae57a403d02246907345d60` |
+| `mistrangelo2025-case2-seeded-calibration.json` | `4874fd87c5e8a3dbb5855b4f8c9f2b7d9e561752fbfd1382db4c6b08d0949574` |
+| `case2_reported.py` | `cd7a53ea92d09c1accd2fdb2322f027666059e7aa7eb146017dc453ae1178548` |
+| `mistrangelo2025-case2-runs.zip` | `d555bcfd531b1719e05171e71471dd80cb308929108d09f91f7e0273651e29c8` |
 
-- They go to the research-assets release with this step's pull request (D38).
-- `case2_reported.py` writes all three records from the runs' outputs and 5.4e's record.
+- They go to the research-assets release with this step's pull request (D38). The seeded study's three are below.
+- `case2_reported.py` writes all six records from the runs' outputs and 5.4e's record. Written again, the first three
+  differ from those above only in the commit they name.
 - `mistrangelo2025-case2-runs.zip` holds the run harness:
-  - the runs (`case2_run.py`, `case1_edge_run.py`);
+  - the runs (`case2_run.py`, `case1_edge_run.py`), and the seeded study's calibration (`calibrate.py`);
   - the observables of the averaged fields on a GPU (`post.py`);
   - the batch and deploy scripts;
-  - the coarse resume check (`smoke.py`).
-- Each run's output directory is given under `$SCRATCH`. The averaged fields and sub-batches (5.9 GB) are kept
-  outside the repository.
+  - the coarse resume checks: `smoke.py`, and `smoke_seeded.py` for the seeded runs;
+  - `main-runs/case2_run.py`, the script as the three main runs used it. Without a seed `case2_run.py` runs as it
+    does, bit for bit on the coarse mesh (`smoke_seeded.py`).
+- Each run's output directory is given under `$SCRATCH`. The averaged fields and sub-batches (5.9 GB, and 3.7 GB for
+  the seeded study) are kept outside the repository.
 
 `tests/test_steady.py` checks `case2_reported` without a solve, on curves made from the references:
 - at the band's middle every figure lies inside, and Figure 30 after its offset;
@@ -966,6 +974,175 @@ a calibration on M1 from M1L1's last state (`calibrate.py`):
 - Case 2's results above stay the record of LMhdX's unseeded flow.
 - This study says what sets the rolls' onset.
 - A seeded Case 2 protocol would be a new declaration (D12).
+
+## Step 5.4f: the rolls' onset, seeded — the results
+
+The study ran as declared, on NERSC Perlmutter: one A100 each, float64, the image and commit (`6863c42`) of the
+main runs. One choice was added after the M1 runs and before M2's: which seed M2 repeats (above). The comparisons are
+`case2_reported`'s, unchanged since `37841a8`; the record was written at `5ecf45c`. The study is reported, not gated.
+Case 2's results above stay the record of LMhdX's unseeded flow.
+
+**The runs.** On M1 each from M1L1's last state, at t = 1104.5 s, and on M2 from M2L1's, at 1097.6 s, with the outlet
+at 1.5 m. The level is the RMS of w at the slab's downstream end; the M1 runs reached it to within 17 %.
+
+| Run | Seed | Amplitude (m/s²) | Settled after | Averaged | Independence, lowest ratio | Wall time | Courant max |
+|:--|:--|--:|--:|--:|--:|--:|--:|
+| inlet-4 | 1e-4 u₀ at the inlet | 1.332e-5 | 602 s | 450 s | 0.93 | 40 min | 0.29 |
+| inlet-3 | 1e-3 u₀ at the inlet | 1.332e-4 | 451 s | 630 s | 0.82 | 43 min | 0.28 |
+| inlet-2 | 1e-2 u₀ at the inlet | 1.332e-3 | 401 s | 810 s | 0.80 | 48 min | 0.30 |
+| heater-4 | 1e-4 u₀ before the heater | 3.194e-5 | 602 s | 450 s | 0.90 | 42 min | 0.32 |
+| heater-3 | 1e-3 u₀ before the heater | 3.194e-4 | 401 s | 450 s | 0.88 | 33 min | 0.31 |
+| heater-2 | 1e-2 u₀ before the heater | 3.194e-3 | not settled | — | — | 47 min | 0.31 |
+| M2, heater-4 | 1e-4 u₀ before the heater | 3.158e-5 | not settled | — | — | 142 min | 0.37 |
+
+- Every run stayed finite, with the heat ledger within 1.5e-12 of its largest term, and mass under 4e-10 on M1 and
+  2.1e-9 on M2.
+- Flow returning through the outlet stayed under 0.2 % of the throughflow, and under 0.002 % in every averaging
+  window.
+- The sub-batches are independent on every averaged run. inlet-3 and inlet-2 needed 630 s and 810 s of their 900.
+- The calibrations took 6 minutes on M1 and 13 on M2. The six M1 runs took 4.2 GPU hours and M2's 2.4: 6.9 in all,
+  against the 5.5 budgeted, M2's run having gone to the settling limit.
+- **heater-2 and M2's run did not settle** (below). They have no averaged fields and so no comparison of figures.
+
+**The settling rule with a seed.** A run settles when T_b's mean over a 50 s window changes by at most 0.759 K, 1 % of
+the bulk rise, from the window before at every station, and the heat stored is under 30 W.
+- With the rolls saturated over the heater's second half, the windows' means swing by about 1 K about a steady level.
+  A seeded run settles only when one window happens to fall under the limit:
+  - heater-4 on M1 at its sixth window (0.712 K, after 0.88–1.44 K), heater-3 at its second (0.695 K), the inlet's at
+    their second to sixth (0.57–0.73 K, after 0.85–1.09 K);
+  - heater-2 not in 18 windows (0.93–2.16 K), nor M2's run in 19 (0.97–2.10 K).
+- The heat stored stayed within 14.1 W of zero on every seeded run, so none was drifting. heater-2 swings by 2.4 K
+  RMS on the axis at x = 0 and 6.6 K at 0.15 m.
+- The rule was declared for the unseeded flow and stands (D12). A seeded protocol would need its own.
+
+**What the seed reaches.** The RMS of w on the plane y = 0, the largest across z, and where the rolls saturate: the
+first x where the RMS of u there reaches 1e-3 m/s.
+
+| Run | Slab's end | x = −0.3 m | x = 0 | x = 0.1 m | Saturated at |
+|:--|--:|--:|--:|--:|--:|
+| unseeded | — | 2.9e-12 m/s | 3.7e-12 m/s | 1.3e-9 m/s | 0.266 m |
+| inlet-4 | 1.2e-6 m/s | 1.2e-11 m/s | 2.2e-10 m/s | 1.8e-7 m/s | 0.216 m |
+| inlet-3 | 1.2e-5 m/s | 1.3e-10 m/s | 2.9e-9 m/s | 2.4e-6 m/s | 0.185 m |
+| inlet-2 | 1.2e-4 m/s | 1.8e-9 m/s | 2.2e-8 m/s | 1.8e-5 m/s | 0.159 m |
+| heater-4 | 1.1e-6 m/s | 2.1e-7 m/s | 1.7e-5 m/s | 5.0e-3 m/s | 0.068 m |
+| heater-3 | 1.1e-5 m/s | 2.1e-6 m/s | 1.7e-4 m/s | 7.4e-3 m/s | 0.032 m |
+
+- The field damps the inlet's seeds by five decades on their way to the heater's leading edge, x = −0.3 m.
+- Over the heater's first half, to x = 0, every seed grows 12- to 82-fold. The unseeded run's rounding does not grow
+  there.
+- The smallest inlet seed arrives at x = −0.3 m only four times above the rounding, yet moves the saturation 5 cm.
+  So what the seed carries matters, not only its size.
+
+**The hypotheses.**
+- *The seed explains the miss:* met.
+  - Before the heater, the tenfold larger seed moved the saturation 3.6 cm upstream, from 0.068 to 0.032 m. The
+    next decade's run did not settle.
+  - At the inlet each tenfold larger seed moved it 3.1 cm and then 2.6 cm.
+  - Nu and the axis temperature moved into the band with it (below).
+- *The flow's own onset explains it:* not met. Every seed moved the saturation, by 5 to 23 cm.
+- *The inlet's seeds* arrive five decades weaker. Even the largest, 1e-2 u₀, leaves Nu at x = 0.2 m at 2.34
+  against the band's 3.55–5.13. So a disturbance at the inflow alone does not explain the codes' earlier onset.
+
+**The heated zone's second half.** Nu, the axis temperature and T_w at four stations, on M1. Values within the band
+widened by the digitizing uncertainty are in bold.
+
+| x | Nu, unseeded | Nu, heater-4 | Nu, heater-3 | Nu, the band |
+|:--|--:|--:|--:|:--|
+| 0.10 m | 2.26 | 2.33 | **2.73** | 2.52–2.80 |
+| 0.15 m | 2.20 | **3.00** | **3.78** | 3.25–4.19 |
+| 0.20 m | 2.15 | **4.09** | **4.05** | 3.55–5.13 |
+| 0.25 m | 2.12 | **3.96** | 3.63 | 3.87–4.39 |
+
+| x | T on the axis, unseeded | heater-4 | heater-3 | The band |
+|:--|--:|--:|--:|:--|
+| 0.10 m | 335.9 °C | **338.9 °C** | **342.2 °C** | 340.4–345.3 °C |
+| 0.15 m | 341.9 °C | **348.7 °C** | **349.0 °C** | 347.4–349.5 °C |
+| 0.20 m | 347.9 °C | **356.0 °C** | **355.4 °C** | 355.4–358.7 °C |
+| 0.25 m | 354.0 °C | **361.8 °C** | **361.3 °C** | 362.0–363.2 °C |
+
+| x | 0.10 m | 0.15 m | 0.20 m | 0.25 m |
+|:--|--:|--:|--:|--:|
+| T_w, OF_KIT | 397.2 °C | 392.4 °C | 394.5 °C | 399.2 °C |
+| T_w, unseeded | 400.8 °C | 408.4 °C | 415.8 °C | 423.0 °C |
+| T_w, heater-4 | 400.1 °C | 397.0 °C | 391.8 °C | 398.6 °C |
+| T_w, heater-3 | 394.6 °C | 388.0 °C | 391.7 °C | 401.4 °C |
+
+**Every figure.** The share within the widened band, on M1:
+
+| Figure | Unseeded | inlet-4 | inlet-3 | inlet-2 | heater-4 | heater-3 |
+|:--|--:|--:|--:|--:|--:|--:|
+| 23, u on the axis | 95 % | 93 % | 94 % | 93 % | 95 % | 99 % |
+| 24, T on the axis | 71 % | 81 % | 82 % | 85 % | 100 % | 100 % |
+| 31, φ on z = −a | 73 % | 72 % | 71 % | 69 % | 75 % | 75 % |
+| 32, φ on z = +a | 81 % | 80 % | 79 % | 78 % | 80 % | 79 % |
+| 33, φ(z), x = 0 | 100 % | 100 % | 100 % | 100 % | 100 % | 100 % |
+| 34, bulk T | 97 % | 95 % | 96 % | 99 % | 100 % | 98 % |
+| 35, E_t | 81 % | 81 % | 80 % | 79 % | 88 % | 88 % |
+| 37, Nu | 63 % | 63 % | 64 % | 70 % | 84 % | 88 % |
+| 30, p after its offset | 100 % | 100 % | 100 % | 100 % | 100 % | 100 % |
+
+- *Figures 26–29, at x = −0.3 m and 0:* 95, 100, 65 and 100 % on every run, as unseeded.
+- *Figure 38, T_w against OF_KIT:* the mean offset falls from +5.5 K unseeded to +0.3 K (heater-4) and −0.8 K
+  (heater-3). The largest difference away from the heater's ends falls from 24.5 K to 6.3 K and 4.5 K. T_b stays
+  within 2.2 K of OF_KIT with either. With the inlet's seeds it moves up to 3.4 K away, at x = 0.22–0.26 m, where
+  their rolls saturate.
+- *Figure 30:* the drop is 258.6 Pa with either seed before the heater, against the band's 259.3 Pa, and the offset
+  falls from −0.40 Pa to −0.21 and −0.15 Pa.
+- *E_t, Figure 35:*
+  - Downstream of x = 0.8 m, the unseeded miss of up to 1.2 decades falls to 0.32 decades with heater-4. So this miss,
+    not traced above, follows the rolls' onset too.
+  - Upstream of x = −1.0 m only the inlet's seeds act: the miss falls from 8.8 decades to 6.3, 3.7 and 0.29. So the
+    codes' E_t there is about what a disturbance of 1e-2 u₀ at the inlet gives LMhdX. That disturbance does not, on its
+    own, bring Nu into the band.
+- *Unchanged by any seed:* the potential's uniform offset (Figures 31 and 32), the heater's leading edge (Figure 28)
+  and the jets (Figure 26). These lie upstream of the rolls or do not depend on them.
+
+**What is left with a seed before the heater.**
+- Nu at the heater's end, x = 0.28–0.36 m: up to 0.55 below the widened band with heater-4 and 0.74 with heater-3.
+  Elsewhere along the heater it is within 0.12 (heater-4, at x = 0.1–0.2 m) and 0.34 (heater-3, at 0.2–0.28 m).
+- The swings are larger than unseeded. On the axis at x = 0.33 m T swings by 41 K with heater-4 and 44 K with
+  heater-3, against 30 K unseeded, and by 49–55 K at 0.15 m. The paper finds fluctuations of up to 30 K behind the
+  heater; it does not say whether that is a swing or an amplitude. The period at 0.33 m is 12.6 s with heater-4 and
+  7.0 s with heater-3, against 4.5 s unseeded.
+
+**M2.** The repeat at 1e-4 u₀ before the heater did not settle, so M2 is compared at its probes: their means over its
+last 450 s, each station's four together, with the standard error of ten batch means. M1's are over its averaging
+window.
+
+| Probe | M2, unseeded | M2, seeded | M1, seeded | M1, unseeded |
+|:--|--:|--:|--:|--:|
+| Heated interface, x = 0.15 m | 409.01 °C | 397.40 ± 0.57 °C | 397.96 ± 0.53 °C | 408.67 °C |
+| Axis, x = 0.15 m | 342.09 °C | 348.96 ± 0.33 °C | 348.57 ± 0.28 °C | 341.81 °C |
+| Heated interface, x = 0.33 m | 406.03 ± 0.06 °C | 388.40 ± 0.80 °C | 391.63 ± 1.05 °C | 403.99 ± 0.08 °C |
+| Axis, x = 0.33 m | 376.67 ± 0.06 °C | 371.32 ± 0.35 °C | 370.61 ± 0.30 °C | 375.14 ± 0.03 °C |
+
+- At x = 0.15 m the seed moves M2 as it moves M1: the heated interface cools by 11.6 K (10.7 K on M1) and the axis
+  warms by 6.9 K (6.8 K). M1 and M2 agree there within one standard error.
+- The rolls are saturated at x = 0.15 m on both: u on the axis has an RMS of 5.5 mm/s on M2 and 5.0 mm/s on M1.
+- At the heater's end the interface differs by 3.2 K between the meshes, as it does unseeded (2.0 K).
+- So M2 confirms M1 where the probes are. The figures, Nu among them, are M1's alone.
+- heater-2's probe means lie within 1.2 K of heater-3's on the axis at x = 0.15 and 0.33 m. On the heated interface
+  at 0.15 m it lies 4.5 K below them.
+
+**What sets the onset.** The miss over the heated zone's second half is the rolls' late onset. It is set by the
+disturbances that reach the heater, not by the flow: LMhdX's flow carries only rounding there, and a seed of 1e-4 u₀
+just before the heater brings Nu, the axis temperature and T_w to the codes' on M1, and M2 moves as M1 does. The
+paper does not give its codes' disturbances. The codes' E_t upstream is about what a disturbance of 1e-2 u₀ at
+LMhdX's inlet gives, and that much does not bring Nu into the band. So in the codes the disturbance that sets the
+onset likely arises nearer the heater; from what, this study cannot say. That is inferred, not checked. A seeded
+Case 2 protocol, with a settling rule for the seeded flow, would be a new declaration (D12).
+
+**The record.** `mistrangelo2025-case2-seeded.json` holds, for M1L1 and M2L1 unseeded and each seeded run:
+- its arguments, metadata and seed;
+- its diagnostics every simulated second, settling windows and sub-batches;
+- its observables, comparison and independence check, as the main record's;
+- its fluctuations and its onset: where the rolls saturate, the RMS of w along x, and Nu, T on the axis and T_w at
+  x = 0.1, 0.15, 0.2 and 0.25 m against the band and OF_KIT.
+
+Each run also has its probes' means over 450 s with their batch error. heater-2 and M2's run, which did not settle,
+have instead their windows, diagnostics and probes over their last 450 s.
+- `mistrangelo2025-case2-seeded-fluctuations.npz` holds the arrays of the main record's npz for each averaged run.
+- `mistrangelo2025-case2-seeded-calibration.json` holds both calibrations.
 
 ## Sources
 
