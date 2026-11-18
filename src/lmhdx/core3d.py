@@ -133,7 +133,6 @@ from .ops import (
     face_inner_product,
     lorentz_force,
     momentum_advection,
-    outgoing_rate,
     staggered_laplacian,
     thin_wall_current,
     wall_insulated,
@@ -1563,10 +1562,9 @@ def advance(
 
     ``dt`` (default the problem's) is an argument of the compiled run, so a new step does not
     compile again, and the factorizations are reshifted to it in the trace. With ``cfl`` each step
-    is ``min(dt, cfl * scheme.limit / max(outgoing_rate))``: ``cfl`` is the fraction of the
-    scheme's central-transport limit the step is held at, measured cell by cell (the largest
-    cell's total outgoing rate). :func:`courant_step` uses the sum of the per-axis maxima, which is
-    never smaller, so in 3-D the controlled step can be up to about three times ``courant_step``'s.
+    is ``min(dt, courant_step(velocity, scheme, cfl))``: ``cfl`` is the fraction of the scheme's
+    central-transport limit the step is held at, measured as :func:`courant_step` does, by the sum of
+    the per-axis maxima of ``|u_j| / dx_j``, so the controlled step never exceeds :func:`courant_step`'s.
     An open (inflow-outflow) axis is refused: it is marched by :mod:`lmhdx.axial`. Either way a step that ends non-finite is not taken, and the run holds the last finite state.
 
     The compiled run is kept per problem, ``steps``, factorizations, ``scheme``, ``checkpoint`` and
@@ -1608,8 +1606,8 @@ def _trajectory(problem, steps, factorization, viscous, scheme, force, checkpoin
             now = now + problem.dt
         else:  # a step that would end non-finite is not taken, nor is any after it: the run holds there
             dt = largest
-            if limit is not None:  # the cell-wise Courant number held at ``limit``
-                dt = limit / jnp.maximum(jnp.max(outgoing_rate(velocity)), limit / largest)
+            if limit is not None:  # the Courant number of :func:`courant_step`, held at ``limit``
+                dt = jnp.minimum(largest, limit * advective_step_limit(velocity))
 
             def taken():
                 out = _step(

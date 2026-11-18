@@ -439,8 +439,11 @@ def _q2d(problem: Q2D, solver: Solver, output, record) -> Solution:
 
 
 def _transient(problem: Problem, solver: Solver, start, output, record, scheme=EULER) -> Solution:
-    # The kernel is built at a unit step, and the run takes solver.dt as an argument: one program for every dt.
-    kernel, forcing, scale, _, walls = channel_kernel(problem, 1.0, solver.precision)
+    # The kernel is built at solver.dt; only a run held by ``cfl`` takes its step as an argument of one program.
+    controlled = solver.cfl is not None
+    kernel, forcing, scale, _, walls = channel_kernel(
+        problem, 1.0 if controlled else solver.dt, solver.precision
+    )
     if forcing is not None or is_traced(scale) or kernel.open_axis is not None or float(scale) != 1.0:
         raise NotImplementedError("an unsteady run takes a concrete drive and field, and no open axis")
     viscous = _viscous(kernel, scheme)
@@ -457,7 +460,7 @@ def _transient(problem: Problem, solver: Solver, start, output, record, scheme=E
             checkpoint=solver.checkpoint,
             pressure=state.pressure,
             time=state.time,
-            dt=solver.dt,
+            dt=solver.dt if controlled else None,
             cfl=solver.cfl,
         )
         history = {
