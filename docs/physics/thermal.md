@@ -99,6 +99,13 @@ boundary data enter as the fixed lift $b=L(0)$. Its unit shift keeps the
 operator nonsingular under insulated and periodic walls, so the mean
 temperature is kept rather than removed as a gauge.
 
+**Time stepping** is first-order partitioned (Euler) by default. `method="rk3"` advances the flow and the
+temperature together through the stages of the three-stage IMEX tableau, second order in time: each stage's heat
+is carried by that stage's velocity, with that state's buoyancy and Joule heat, and the ledger closes per step.
+It takes no solid walls, held flow or open axis. `Solver(cfl=)` holds the step there at the smaller of that
+fraction of the RK3 limit and the transport's Courant limit; Euler refuses it. A step that ends non-finite is
+not taken.
+
 **Transport** is conservative, first-order upwind by default:
 - Each face carries $u_f T_\mathrm{up}$.
 - A wall face carries no advective heat.

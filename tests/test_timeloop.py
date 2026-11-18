@@ -1738,3 +1738,40 @@ def test_the_rk3_heat_step_is_second_order_closes_its_ledger_and_holds_central_t
     euler = [run(EULER, n, upwind)[0].temperature.data for n in (20, 40, 160)]
     ratio = float(jnp.max(jnp.abs(euler[0] - euler[2])) / jnp.max(jnp.abs(euler[1] - euler[2])))
     assert ratio < 3.0
+
+
+def test_statistics_equal_the_step_weighted_sum_of_plane_averages():
+    """The in-scan integral is sum(dt * plane_averages(state_k)); a duct needs its diameter."""
+    from lmhdx.core3d import nusselt_number, plane_averages
+
+    grid = Grid(uniform_faces(4, 0.0, 1.0), uniform_faces(4, 0.0, 1.0), uniform_faces(6, -1.0, 1.0))
+    problem = ChannelProblem(
+        grid, (PERIODIC_AXIS, WALL, WALL), viscosity=0.1, dt=0.05, forcing=(1.0, 0.0, 0.0)
+    )
+    factorization, viscous = problem.factorization(), problem.viscous_factorizations()
+    kw = {"factorization": factorization, "viscous": viscous}
+    velocity, total = zero_velocity(problem), None
+    for _ in range(4):
+        velocity = advance(problem, 1, velocity, **kw).velocity
+        step = plane_averages(velocity, problem) | {"time": 1.0}
+        total = step if total is None else jax.tree.map(lambda a, b: a + b, total, step)
+    # rest start: the states of the four single steps against the one scan
+    scan = advance(problem, 4, zero_velocity(problem), statistics=True, **kw).statistics
+    assert all(np.allclose(scan[k], 0.05 * total[k], rtol=1e-12, atol=1e-15) for k in total)
+    with pytest.raises(ValueError, match="hydraulic diameter"):
+        nusselt_number({}, problem)
+
+
+def test_a_run_holds_its_last_finite_state_on_the_state_alone_not_the_outlet_diagnostics():
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
+
+    thermal = _heated(_uniform_duct(4))
+    step = build_thermal_step(thermal, dtype=jnp.float64)
+
+    def noisy(state, heat, **kw):  # a finite state whose reported ``finite`` is False
+        new, diagnostics = step(state, heat, **kw)
+        return new, diagnostics._replace(finite=jnp.asarray(False))
+
+    state = initial_thermal_state(thermal, 300.0)
+    final, history = advance_thermal(noisy, state, _cells(thermal, 0.0), 3)
+    assert float(final.time) == pytest.approx(3 * thermal.flow.dt) and not np.any(history.finite)
