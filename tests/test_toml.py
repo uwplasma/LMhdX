@@ -399,7 +399,8 @@ def test_the_upgraded_hartmann_example_solves_to_the_spectral_reference(tmp_path
     weights = np.asarray(case.problem.grid.cell_volumes())[0]
     mean = float((weights * velocity).sum() / weights.sum())
     assert mean == pytest.approx(2.0 * flow_rate(20.0 * np.sqrt(2.0), 48), rel=0.03)
-    assert mean == pytest.approx(0.05843007866250953, rel=1e-8)  # float64, JAX 0.7.2 and 0.10.2 agree to 3e-15
+    # Pinned in float64; JAX 0.7.2 and 0.10.2 agree to 3e-15.
+    assert mean == pytest.approx(0.05843007866250953, rel=1e-8)
 
 
 @pytest.mark.parametrize(
