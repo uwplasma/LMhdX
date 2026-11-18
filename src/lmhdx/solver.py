@@ -76,7 +76,8 @@ class Solver:
     The sums start at the run's first step and are plain sums in the state's dtype: use float64 for variances far
     below their mean squared, and note a record written without them cannot be resumed with them. A heated run with
     solid walls refuses them.
-    Only a mechanical (unheated, non-Q2D) unsteady run takes ``cfl``; the others refuse it. Under ``cfl`` the
+    Only an unsteady projection run takes ``cfl``, a heated one under ``rk3`` (its Euler step refuses it), and it is
+    held at the smaller of ``cfl`` times the RK3 limit and the heat transport's ``advective_cfl_limit``. Under ``cfl`` the
     log's ``end`` is the latest the run can reach, ``start + steps * dt``.
     """
 
@@ -560,8 +561,12 @@ def _heated(
     }
     bounds = {"buoyancy_courant_limit": limits["buoyancy_courant"]}
     bounds |= {} if limits["advective_cfl"] is None else {"advective_cfl_limit": limits["advective_cfl"]}
-    if solver.cfl is not None and limits["advective_cfl"] is not None:  # the start's step is the controller's
+    cfl = solver.cfl
+    if cfl is not None and limits["advective_cfl"] is not None:  # the start's step is the controller's
         bounds["advective_cfl_limit"] = float(np.finfo(float).max)
+        cfl = min(
+            cfl, (1 - 1e-6) * limits["advective_cfl"] / scheme.limit
+        )  # and stays inside the transport's own limit
 
     def check(state):
         if not is_traced(state, heat):
@@ -570,7 +575,7 @@ def _heated(
             )
 
     thermal_step = build_thermal_step(
-        heat_problem, dtype=jnp.result_type(float), hold_flow=hold_flow, scheme=scheme, cfl=solver.cfl
+        heat_problem, dtype=jnp.result_type(float), hold_flow=hold_flow, scheme=scheme, cfl=cfl
     )
     chunk = jax.jit(  # every step's diagnostics, so that each is checked; _drive keeps every history-th
         lambda s, steps: advance_thermal(thermal_step, s, heat, steps, checkpoint=solver.checkpoint),
@@ -667,9 +672,13 @@ def solve(
     solver = Solver() if solver is None else solver
     method = solver.resolve(problem)
     if solver.cfl is not None and (
-        isinstance(problem, (Q2D, ThermalProblem)) or method not in ("euler", "rk3") or problem.thermal
+        isinstance(problem, (Q2D, ThermalProblem))
+        or method not in ("euler", "rk3")
+        or (problem.thermal is not None and method != "rk3")
     ):
-        raise ValueError("Solver.cfl holds the step of an unheated unsteady projection run only")
+        raise ValueError(
+            "Solver.cfl holds the step of an unsteady projection run only, a heated one under rk3"
+        )
     configure(dtype=solver.dtype)
     if isinstance(problem, ThermalProblem):
         if method != "euler" or solver.dt not in (None, problem.flow.dt):

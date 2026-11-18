@@ -1760,3 +1760,18 @@ def test_statistics_equal_the_step_weighted_sum_of_plane_averages():
     assert all(np.allclose(scan[k], 0.05 * total[k], rtol=1e-12, atol=1e-15) for k in total)
     with pytest.raises(ValueError, match="hydraulic diameter"):
         nusselt_number({}, problem)
+
+
+def test_a_run_holds_its_last_finite_state_on_the_state_alone_not_the_outlet_diagnostics():
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
+
+    thermal = _heated(_uniform_duct(4))
+    step = build_thermal_step(thermal, dtype=jnp.float64)
+
+    def noisy(state, heat, **kw):  # a finite state whose reported ``finite`` is False
+        new, diagnostics = step(state, heat, **kw)
+        return new, diagnostics._replace(finite=jnp.asarray(False))
+
+    state = initial_thermal_state(thermal, 300.0)
+    final, history = advance_thermal(noisy, state, _cells(thermal, 0.0), 3)
+    assert float(final.time) == pytest.approx(3 * thermal.flow.dt) and not np.any(history.finite)

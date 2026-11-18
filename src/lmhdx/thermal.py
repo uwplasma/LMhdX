@@ -761,11 +761,14 @@ def build_thermal_step(
     when any of them changes. ``heat_source`` is the external heat per unit volume
     and time on the cells.
 
-    Everything is taken from the old state, a first-order partitioned step: one
+    Under Euler, the default, everything is taken from the old state, a first-order partitioned step: one
     electric solve gives the Lorentz force and the Joule heat, buoyancy comes from
     the old temperature, the momentum takes :func:`lmhdx.core3d.step`'s predictor
     and projection with the flow's implicit viscous factorizations, and the
-    temperature takes its transport by the old velocity, then implicit conduction.
+    temperature takes its transport by the old velocity, then implicit conduction. With ``scheme=RK3`` (no solid
+    walls, held flow or open axis) the flow and the temperature advance together through the stages of
+    :data:`lmhdx.core3d.RK3`, each stage's heat carried by that stage's velocity, with its buoyancy and Joule heat,
+    second order in time; ``cfl`` holds the step at that fraction of the scheme's limit.
 
     ``hold_flow`` keeps the state's velocity, a steady flow the heat is carried by,
     without buoyancy, and prepares no viscous inverses: for an inflow-outflow duct,
@@ -1038,6 +1041,9 @@ def advance_thermal(
     A state that carries ``statistics`` (a fluid without solid walls) integrates the plane averages of
     velocity and temperature inside the scan, so a run in chunks integrates as the run in one.
 
+    A step whose new state is not finite is not taken, under either scheme: the run holds the last finite state
+    and its time, while the step's diagnostics still report.
+
     ``backflow_temperature`` goes to every step, constant over the call as the
     heat source is. The carry is the state alone and only the scalar diagnostics are stacked, one
     per step, so no field history is kept. ``steps`` is static and the heat source
@@ -1051,8 +1057,10 @@ def advance_thermal(
     options = {} if backflow_temperature is None else {"backflow_temperature": backflow_temperature}
 
     def single(carry: ThermalState, _) -> tuple[ThermalState, ThermalDiagnostics]:
-        # A step that ends non-finite is not taken: the run holds its last finite state, which a rejection keeps.
+        # A state that ends non-finite is not taken: the run holds its last finite state (the diagnostics' own
+        # ``finite``, which counts the outlet values too, is only reported).
         new, diagnostics = thermal_step(carry, heat_source, **options)
+        ended = jnp.all(jnp.stack([jnp.all(jnp.isfinite(x)) for x in jax.tree_util.tree_leaves(new)]))
         if carry.statistics is not None:  # each step's end state, weighed by its step
             averages = plane_averages(new.velocity, thermal_step.problem.flow, new.temperature) | {
                 "time": 1.0
@@ -1061,7 +1069,7 @@ def advance_thermal(
             new = new._replace(
                 statistics=jax.tree.map(lambda a, b: a + weight * b, carry.statistics, averages)
             )
-        return jax.tree.map(lambda a, b: jnp.where(diagnostics.finite, a, b), new, carry), diagnostics
+        return jax.tree.map(lambda a, b: jnp.where(ended, a, b), new, carry), diagnostics
 
     def block(carry: ThermalState, _) -> tuple[ThermalState, ThermalDiagnostics]:
         if diagnostics > 1:
