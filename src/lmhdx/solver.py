@@ -68,7 +68,11 @@ class Solver:
     ``"state"`` or ``"mixed"``, ``dtype`` ``"float64"`` or ``"float32"``. A heated run is rejected, at its
     start or at the first step past them, when its advective Courant number exceeds ``advective_cfl_limit``
     (default the transport scheme's own) or its buoyancy Courant number ``buoyancy_courant_limit`` (default
-    none), or when the start's divergence exceeds ``divergence_tolerance``.
+    none), or when the start's divergence exceeds ``divergence_tolerance``. ``cfl`` makes ``dt`` the largest
+    step of a mechanical run and holds each step at that fraction of the scheme's central-transport limit
+    (:func:`lmhdx.core3d.advance`); its ``dt`` is an argument of the compiled run, so a new one does not compile.
+    Only a mechanical (unheated, non-Q2D) unsteady run takes ``cfl``; the others refuse it. Under ``cfl`` the
+    log's ``end`` is the latest the run can reach, ``start + steps * dt``.
     """
 
     method: str = "auto"
@@ -82,6 +86,7 @@ class Solver:
     advective_cfl_limit: float | None = None
     buoyancy_courant_limit: float | None = None
     divergence_tolerance: float = 1.0e-10
+    cfl: float | None = None
 
     def resolve(self, problem) -> str:
         """Return the concrete method for ``problem``, refusing what the kernels cannot do."""
@@ -317,7 +322,10 @@ def _drive(run: _Run, problem, solver: Solver, output: Output | None, record: St
         )
     if output is not None:
         info = None if record is None else {"path": record.path, "mode": record.mode, "step": first}
-        session = Session(output, identity, run.grid, solver.dt, first, steps, run.header, run.limits, info)
+        start = None if solver.cfl is None else float(state.time)
+        session = Session(
+            output, identity, run.grid, solver.dt, first, steps, run.header, run.limits, info, start
+        )
     histories, rejected = [], None
     try:
         for done in range(first, first + steps, every):
@@ -360,11 +368,12 @@ def _identity(problem, solver: Solver) -> str:
 
 
 class _Flow(NamedTuple):
-    """What a projection step advances: the staggered velocity, and the last pressure that starts its solve."""
+    """What a projection step advances: the staggered velocity, the last pressure that starts its solve, the time."""
 
     velocity: tuple
     pressure: Field
     potential: Field
+    time: jnp.ndarray
 
 
 class _Plane(NamedTuple):
@@ -430,10 +439,14 @@ def _q2d(problem: Q2D, solver: Solver, output, record) -> Solution:
 
 
 def _transient(problem: Problem, solver: Solver, start, output, record, scheme=EULER) -> Solution:
-    kernel, forcing, scale, _, walls = channel_kernel(problem, solver.dt, solver.precision)
+    # The kernel is built at solver.dt; only a run held by ``cfl`` takes its step as an argument of one program.
+    controlled = solver.cfl is not None
+    kernel, forcing, scale, _, walls = channel_kernel(
+        problem, 1.0 if controlled else solver.dt, solver.precision
+    )
     if forcing is not None or is_traced(scale) or kernel.open_axis is not None or float(scale) != 1.0:
         raise NotImplementedError("an unsteady run takes a concrete drive and field, and no open axis")
-    viscous = kernel.viscous_factorizations(scheme)
+    viscous = _viscous(kernel, scheme)
     velocity = zero_velocity(kernel) if start in (None, "rest") else start
     cell = Field(jnp.zeros(kernel.grid.shape, velocity[0].dtype), (CENTER,) * 3, kernel.grid)
 
@@ -446,19 +459,32 @@ def _transient(problem: Problem, solver: Solver, start, output, record, scheme=E
             scheme=scheme,
             checkpoint=solver.checkpoint,
             pressure=state.pressure,
+            time=state.time,
+            dt=solver.dt if controlled else None,
+            cfl=solver.cfl,
         )
-        history = {"divergence": run.divergence_residual, "kinetic_energy": run.kinetic_energy}
-        return _Flow(run.velocity, run.pressure, run.potential), history
+        history = {
+            "divergence": run.divergence_residual,
+            "kinetic_energy": run.kinetic_energy,
+            "dt": run.dt,
+            "finite": run.finite,
+        }
+        return _Flow(run.velocity, run.pressure, run.potential, run.time), history
 
     run = _Run(
-        _Flow(velocity, cell, cell),
+        _Flow(velocity, cell, cell, jnp.zeros((), velocity[0].dtype)),
         step,
-        lambda s: s._asdict(),
+        lambda s: s._replace(time=None)._asdict(),
         kernel.grid,
         _header(problem, "euler" if scheme is EULER else "rk3"),
+        {"cfl": solver.cfl},
     )
     state, history, summary = _drive(run, problem, solver, output, record)
-    return hold_walls(Solution(state._asdict(), history=history, summary=summary), walls)
+    fields = {name: value for name, value in run.fields(state).items() if value is not None}
+    return hold_walls(Solution(fields, history=history, summary=summary), walls)
+
+
+_viscous = functools.lru_cache(maxsize=8)(lambda kernel, scheme: kernel.viscous_factorizations(scheme))
 
 
 def _thermal(problem: Problem, solver: Solver, start, output, record) -> Solution:
@@ -606,6 +632,10 @@ def solve(
         )
     solver = Solver() if solver is None else solver
     method = solver.resolve(problem)
+    if solver.cfl is not None and (
+        isinstance(problem, (Q2D, ThermalProblem)) or method not in ("euler", "rk3") or problem.thermal
+    ):
+        raise ValueError("Solver.cfl holds the step of an unheated unsteady projection run only")
     configure(dtype=solver.dtype)
     if isinstance(problem, ThermalProblem):
         if method != "euler" or solver.dt not in (None, problem.flow.dt):

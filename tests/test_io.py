@@ -913,6 +913,27 @@ def test_a_run_in_chunks_or_from_its_record_is_the_run_in_one_bit_for_bit(tmp_pa
             assert all(np.array_equal(resumed[k], chunked[k]) for k in chunked.files if k != "notes")
 
 
+def test_a_courant_step_is_refused_where_it_is_not_taken_and_the_log_ends_from_the_record_time(tmp_path):
+    solver = Solver(dt=0.01, steps=4, cfl=0.9)
+    with pytest.raises(ValueError, match="Solver.cfl holds the step"):
+        lmhdx.solve(_heated_duct()[0], solver)
+    with pytest.raises(ValueError, match="Solver.cfl holds the step"):
+        lmhdx.solve(duct(5, 12, cells_in_layer=3), dataclasses.replace(solver, method="stokes"))
+    problem = duct(5, 12, cells_in_layer=3)
+    lmhdx.solve(problem, solver, Output(str(tmp_path / "a")))
+    with np.load(tmp_path / "a" / "run_000004.npz") as record:
+        arrays = dict(record)
+    last = f"leaf{max(int(k[4:]) for k in arrays if k.startswith('leaf'))}"
+    np.savez(tmp_path / "late.npz", **{**arrays, last: np.asarray(0.5, arrays[last].dtype)})
+    lmhdx.solve(
+        problem,
+        solver,
+        Output(str(tmp_path / "b")),
+        start=Start(path=str(tmp_path / "late.npz"), mode="import"),
+    )
+    assert "end=5.400000e-01" in (tmp_path / "b" / "run.log").read_text()
+
+
 def test_a_record_resumes_only_the_run_that_wrote_it(tmp_path):
     problem, solver = duct(5, 12, cells_in_layer=3), Solver(dt=0.01, steps=4)
     lmhdx.solve(problem, solver, Output(str(tmp_path)))

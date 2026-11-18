@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from lmhdx import core3d, ops
 from lmhdx.core3d import (
     EULER,
     RK3,
@@ -119,6 +120,53 @@ def test_the_courant_step_is_the_stage_map_limit_over_the_peak_rate():
     assert courant_step(velocity, RK3, 1.0) == pytest.approx(np.sqrt(3.0) * 2.0 * np.pi / 16)
     with pytest.raises(ValueError, match="unstable"):
         courant_step(velocity, EULER)
+
+
+def test_a_courant_controlled_run_holds_its_step_and_a_fixed_one_stops_at_its_last_finite_state(monkeypatch):
+    """A traced ``dt`` reuses one program; ``cfl`` holds the step; a run past the limit stops where it was finite."""
+    problem = _rk_box(viscosity=1e-12)
+    start = _smooth_vortex(problem)
+    scale = float(jnp.max(ops.outgoing_rate(start)))
+    viscous = problem.viscous_factorizations(RK3)
+    once = dataclasses.replace(problem, dt=0.3 / scale)
+    fixed = advance(once, 4, start, viscous=once.viscous_factorizations(RK3), scheme=RK3)
+    traced = advance(problem, 4, start, viscous=viscous, scheme=RK3, dt=0.3 / scale)
+    assert all(
+        np.allclose(a.data, b.data, rtol=0, atol=1e-13) for a, b in zip(fixed.velocity, traced.velocity)
+    )
+    traces, original = [], core3d._step
+    monkeypatch.setattr(core3d, "_step", lambda *a, **k: traces.append(1) or original(*a, **k))
+    again = advance(problem, 4, start, viscous=viscous, scheme=RK3, dt=0.2 / scale)
+    assert not traces and np.all(again.dt == 0.2 / scale)  # a new dt does not trace the step again
+    monkeypatch.undo()
+    held = advance(problem, 40, start, viscous=viscous, scheme=RK3, dt=10.0 / scale, cfl=0.9)
+    rates = jnp.max(ops.outgoing_rate(held.velocity))
+    assert np.all(held.finite) and float(held.dt[0]) == pytest.approx(
+        courant_step(start, RK3, 0.9), rel=1e-12
+    )
+    assert (
+        float(held.time) == pytest.approx(float(np.sum(held.dt))) and float(rates * held.dt[-1]) < RK3.limit
+    )
+    blown = advance(problem, 40, start, viscous=viscous, scheme=RK3, dt=10.0 / scale)
+    first = int(np.argmin(blown.finite))
+    assert 0 < first and not np.any(blown.finite[first:]) and np.all(blown.finite[:first])
+    assert all(np.all(np.isfinite(v.data)) for v in blown.velocity)
+    assert float(blown.time) == pytest.approx(first * 10.0 / scale)
+
+
+def test_a_controlled_step_never_exceeds_the_courant_step_in_three_dimensions():
+    """Every component moves: the controlled step is the sum-of-axis-maxima ``courant_step``, not the cell's outflow."""
+    problem = _rk_box(viscosity=1e-12)
+    vortex = _smooth_vortex(problem)
+    z = jnp.asarray(problem.grid.faces[2])[None, None, :]
+    lift = 0.7 * jnp.cos(3.0 * z) * jnp.ones(vortex[2].data.shape)
+    start = (*vortex[:2], vortex[2].replace_data(lift))
+    viscous = problem.viscous_factorizations(RK3)
+    for cfl in (0.5, 0.9):
+        run = advance(problem, 1, start, viscous=viscous, scheme=RK3, dt=1.0e3, cfl=cfl)
+        allowed = courant_step(start, RK3, cfl)
+        assert float(run.dt[0]) <= allowed and float(run.dt[0]) == pytest.approx(allowed, rel=1e-12)
+        assert np.all(run.finite)
 
 
 def _shatrov_velocity(point, t):
@@ -411,3 +459,14 @@ def test_rk3_gives_the_derivative_standard_through_a_short_window():
         )
     slopes = np.log2(np.asarray(remainders[:-1]) / np.asarray(remainders[1:]))
     assert np.all(np.abs(slopes - 2.0) < 0.1), (remainders, slopes)
+
+
+def test_a_marched_run_refuses_an_open_axis():
+    from lmhdx import Open, Wall
+    from lmhdx.problem import channel_kernel, fringe_duct
+
+    problem = fringe_duct(10.0, upstream=2.0, downstream=2.0, spacing=1.0, cells=8, cells_in_layer=2)
+    kernel = channel_kernel(problem.replace(bc=(Open(np.ones((8, 8))), Wall(0.02), Wall(0.02))))[0]
+    for options in (dict(dt=0.01), dict(cfl=0.5)):
+        with pytest.raises(NotImplementedError, match="inflow-outflow"):
+            advance(kernel, 1, **options)
