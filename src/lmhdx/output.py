@@ -137,7 +137,9 @@ def read_record(path: str | Path, template, identity: str | None = None):
     except (KeyError, TypeError, ValueError):
         ok = False
     if not ok or len(arrays) != len(leaves) + 5:
-        raise ValueError(f"{path} is not a {_SCHEMA} record of version {_VERSION} for this state")
+        raise ValueError(
+            f"{path} is not a {_SCHEMA} record of version {_VERSION} for this state (one written before the state gained a leaf is refused)"
+        )
     if identity is not None and str(arrays["identity"]) != identity:
         raise ValueError(f"{path} was written for another problem or solver (import it with mode='import')")
     for i, (found, wanted) in enumerate(zip(stored, leaves)):
@@ -440,12 +442,14 @@ class Session:
     the step it starts at, ``grid`` the ParaView grid, ``limits`` and ``restart`` what the summary records.
     """
 
-    def __init__(self, output: Output, identity, grid, dt, first, steps, header, limits=None, restart=None):
+    def __init__(
+        self, output: Output, identity, grid, dt, first, steps, header, limits=None, restart=None, time=None
+    ):
         output = dataclasses.replace(output, name=output.name or "run")
         self.output, self.identity, self.grid, self.dt, self.first = output, identity, grid, dt, first
         self.limits, self.restart = limits, restart
         self.dir, self.frames, self.extremes, self.rejected = Path(output.dir), [], {}, None
-        self.done, self.time, self.handles, self.log = first, first * dt, [], None
+        self.done, self.time, self.handles, self.log = first, first * dt if time is None else time, [], None
         self.dir.mkdir(parents=True, exist_ok=True)
         if output.log:
             self.log, mode = StreamingSolverLogger(stream=sys.stderr), "a" if first else "w"
@@ -454,12 +458,12 @@ class Session:
                 for suffix in (".log", ".jsonl")
             ]
             self.log.add_stream(self.handles[0])
-            info = None if restart is None else RestartLogInfo(True, restart["path"], first * dt, False)
+            info = None if restart is None else RestartLogInfo(True, restart["path"], self.time, False)
             self.log.emit_header(
                 name=output.name,
                 **header,
                 dt=dt,
-                end=(first + steps) * dt,
+                end=(first + steps) * dt if time is None else time + steps * dt,
                 max_steps=first + steps,
                 restart=info,
             )

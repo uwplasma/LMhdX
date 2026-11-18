@@ -1017,7 +1017,7 @@ def step(
 
 def _step(velocity, problem, factorization, viscous, scheme, force, time, pressure=None, dynamic=None):
     """:func:`step` with ``dynamic = (dt, field_scale, lift)``, any of which may be traced, for a marched duct."""
-    if dynamic is None and problem.open_axis is not None:
+    if (dynamic is None or dynamic[2] is None) and problem.open_axis is not None:
         raise NotImplementedError(
             "an inflow-outflow axis is marched by lmhdx.axial: it needs the lifted inlet"
         )
@@ -1663,8 +1663,10 @@ def advance(
     ``dt`` (default the problem's) is an argument of the compiled run, so a new step does not
     compile again, and the factorizations are reshifted to it in the trace. With ``cfl`` each step
     is ``min(dt, cfl * scheme.limit / max(outgoing_rate))``: ``cfl`` is the fraction of the
-    scheme's central-transport limit (:func:`courant_step`) the step is held at, measured cell by
-    cell. Either way a step that ends non-finite is not taken, and the run holds the last finite state.
+    scheme's central-transport limit the step is held at, measured cell by cell (the largest
+    cell's total outgoing rate). :func:`courant_step` uses the sum of the per-axis maxima, which is
+    never smaller, so in 3-D the controlled step can be up to about three times ``courant_step``'s.
+    An open (inflow-outflow) axis is refused: it is marched by :mod:`lmhdx.axial`. Either way a step that ends non-finite is not taken, and the run holds the last finite state.
     ``statistics=True`` integrates :func:`plane_averages` over the run inside the scan; a previous
     run's ``Trajectory.statistics`` continues the integral, so a run in chunks is the run in one. The sums are
     plain ``dt``-weighted sums in the state's dtype and a covariance is ``E[ab] - E[a]E[b]``, so use float64 where
