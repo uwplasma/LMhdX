@@ -74,9 +74,10 @@ class Solver:
     ``statistics`` integrates the plane averages of a mechanical run inside its scan, through every chunk; the
     solution's ``statistics`` are then their means and covariances (:func:`lmhdx.core3d.turbulence_statistics`).
     The sums start at the run's first step and are plain sums in the state's dtype: use float64 for variances far
-    below their mean squared, and note a record written without them cannot be resumed with them. A heated run
-    is refused.
-    Only a mechanical (unheated, non-Q2D) unsteady run takes ``cfl``; the others refuse it. Under ``cfl`` the
+    below their mean squared, and note a record written without them cannot be resumed with them. A heated run with
+    solid walls refuses them.
+    Only an unsteady projection run takes ``cfl``, a heated one under ``rk3`` (its Euler step refuses it), and it is
+    held at the smaller of ``cfl`` times the RK3 limit and the heat transport's ``advective_cfl_limit``. Under ``cfl`` the
     log's ``end`` is the latest the run can reach, ``start + steps * dt``.
     """
 
@@ -500,20 +501,29 @@ def _transient(problem: Problem, solver: Solver, start, output, record, scheme=E
 _viscous = functools.lru_cache(maxsize=8)(lambda kernel, scheme: kernel.viscous_factorizations(scheme))
 
 
-def _thermal(problem: Problem, solver: Solver, start, output, record) -> Solution:
+def _thermal(problem: Problem, solver: Solver, start, output, record, scheme=EULER) -> Solution:
     kernel, forcing, scale, _, walls = channel_kernel(problem, solver.dt, solver.precision)
     if forcing is not None or is_traced(scale) or float(scale) != 1.0:
         raise NotImplementedError("an unsteady run takes a concrete drive and field")
     thermal = problem.thermal
     found = _heated(
         thermal_kernel(problem, kernel), problem, solver, start, thermal.initial_temperature,
-        thermal.heat_source, output, record, hold_flow=thermal.hold_flow,
+        thermal.heat_source, output, record, hold_flow=thermal.hold_flow, scheme=scheme,
     )  # fmt: skip
     return hold_walls(found, walls)
 
 
 def _heated(
-    heat_problem, subject, solver: Solver, start, temperature, source, output, record, hold_flow=False
+    heat_problem,
+    subject,
+    solver: Solver,
+    start,
+    temperature,
+    source,
+    output,
+    record,
+    hold_flow=False,
+    scheme=EULER,
 ) -> Solution:
     """Run a :class:`~lmhdx.thermal.ThermalProblem`, with solid walls or without, in chunks.
 
@@ -531,10 +541,6 @@ def _heated(
         validate_thermal_inputs,
     )
 
-    if solver.statistics:
-        raise NotImplementedError(
-            "statistics integrate a mechanical run's plane averages, not a heated one's"
-        )
     flow, grid = heat_problem.flow, heat_problem.thermal_grid
     if isinstance(start, ThermalState):
         state = _with_pressure(start)
@@ -545,15 +551,26 @@ def _heated(
             velocity = solve_open_duct(flow).velocity if start == "steady" else with_inflow(_lift(flow), flow)
         state = initial_thermal_state(heat_problem, temperature, velocity)
     heat = Field(jnp.full(grid.shape, source, dtype=jnp.result_type(float)), _CELL, grid)
-    scheme = _SCHEMES[heat_problem.advection]
+    if solver.statistics and state.statistics is None:
+        if heat_problem.has_walls:
+            raise NotImplementedError("statistics are of the fluid: a run with solid walls takes none")
+        zero = jax.tree.map(jnp.zeros_like, plane_averages(state.velocity, flow, state.temperature))
+        state = state._replace(statistics=zero | {"time": jnp.zeros_like(state.time)})
+    envelope = _SCHEMES[heat_problem.advection]
     courant = solver.advective_cfl_limit if heat_problem.advection != "off" else None
     limits = {
-        "advective_cfl": scheme if courant is None else courant,
-        "advective_cfl_override": courant is not None and courant != scheme,
+        "advective_cfl": envelope if courant is None else courant,
+        "advective_cfl_override": courant is not None and courant != envelope,
         "buoyancy_courant": solver.buoyancy_courant_limit,
     }
     bounds = {"buoyancy_courant_limit": limits["buoyancy_courant"]}
     bounds |= {} if limits["advective_cfl"] is None else {"advective_cfl_limit": limits["advective_cfl"]}
+    cfl = solver.cfl
+    if cfl is not None and limits["advective_cfl"] is not None:  # the start's step is the controller's
+        bounds["advective_cfl_limit"] = float(np.finfo(float).max)
+        cfl = min(
+            cfl, (1 - 1e-6) * limits["advective_cfl"] / scheme.limit
+        )  # and stays inside the transport's own limit
 
     def check(state):
         if not is_traced(state, heat):
@@ -561,7 +578,9 @@ def _heated(
                 heat_problem, state, heat, divergence_tolerance=solver.divergence_tolerance, **bounds
             )
 
-    thermal_step = build_thermal_step(heat_problem, dtype=jnp.result_type(float), hold_flow=hold_flow)
+    thermal_step = build_thermal_step(
+        heat_problem, dtype=jnp.result_type(float), hold_flow=hold_flow, scheme=scheme, cfl=cfl
+    )
     chunk = jax.jit(  # every step's diagnostics, so that each is checked; _drive keeps every history-th
         lambda s, steps: advance_thermal(thermal_step, s, heat, steps, checkpoint=solver.checkpoint),
         static_argnums=1,
@@ -576,16 +595,31 @@ def _heated(
                 for a, v in enumerate(velocity)
             )
             pressure = Field(heat_problem.on_thermal_grid(pressure.data), _CELL, grid)
-        moving = {} if hold_flow else {"pressure": pressure}  # a held flow's pressure is not solved for
-        return {"velocity": velocity, "temperature": s.temperature} | moving
+        found = {"velocity": velocity, "temperature": s.temperature}
+        if not hold_flow:
+            found["pressure"] = pressure
+        if s.statistics is not None:
+            found["statistics"] = turbulence_statistics(s.statistics)
+        return found
 
     first = round(float(state.time) / flow.dt) if not is_traced(state) else 0
     run = _Run(
-        state, chunk, fields, grid, _header(subject, "euler"), limits, check, first, solver.history or 1
+        state,
+        chunk,
+        fields,
+        grid,
+        _header(subject, "euler" if scheme is EULER else "rk3"),
+        limits,
+        check,
+        first,
+        solver.history or 1,
     )
     state, history, summary = _drive(run, subject, solver, output, record)
-    moving = {} if hold_flow else {"pressure": state.pressure}
-    found = {"velocity": state.velocity, "temperature": state.temperature} | moving
+    found = {"velocity": state.velocity, "temperature": state.temperature, "state": state}
+    if not hold_flow:
+        found["pressure"] = state.pressure
+    if state.statistics is not None:
+        found["statistics"] = turbulence_statistics(state.statistics)
     return Solution(found, history=history, summary=summary)
 
 
@@ -650,9 +684,13 @@ def solve(
     solver = Solver() if solver is None else solver
     method = solver.resolve(problem)
     if solver.cfl is not None and (
-        isinstance(problem, (Q2D, ThermalProblem)) or method not in ("euler", "rk3") or problem.thermal
+        isinstance(problem, (Q2D, ThermalProblem))
+        or method not in ("euler", "rk3")
+        or (problem.thermal is not None and method != "rk3")
     ):
-        raise ValueError("Solver.cfl holds the step of an unheated unsteady projection run only")
+        raise ValueError(
+            "Solver.cfl holds the step of an unsteady projection run only, a heated one under rk3"
+        )
     configure(dtype=solver.dtype)
     if isinstance(problem, ThermalProblem):
         if method != "euler" or solver.dt not in (None, problem.flow.dt):
@@ -666,9 +704,7 @@ def solve(
         found = _pipe(problem, solver)
     elif method in ("euler", "rk3"):
         if problem.thermal is not None:
-            if method == "rk3":
-                raise ValueError("a heated run takes method 'euler'")
-            return _thermal(problem, solver, start, output, record)
+            return _thermal(problem, solver, start, output, record, RK3 if method == "rk3" else EULER)
         return _transient(problem, solver, start, output, record, RK3 if method == "rk3" else EULER)
     else:
         if record is not None or start is not None or problem.thermal is not None:

@@ -59,7 +59,7 @@ smallest eigenvalue of the cross-section.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 import jax
@@ -69,13 +69,17 @@ import solvax
 
 from .axial import _lift
 from .core3d import (
+    EULER,
+    RK3,
     ChannelProblem,
+    Tableau,
     _advance_momentum,
     _lorentz_from_currents,
     conjugate_grid,
     enforce_face_constraints,
     face_currents,
     face_lorentz_force,
+    plane_averages,
     velocity_offset,
     zero_velocity,
 )
@@ -135,7 +139,7 @@ __all__ = [
 _KINDS = {"temperature": DIRICHLET, "heat_flux": NEUMANN, "periodic": PERIODIC}
 # Each transport's default Courant limit: inside upwinding's bound of one for no new extremum, and van Leer's a
 # tested envelope, not a derived bound; conduction alone has none.
-_SCHEMES = {"upwind": 0.8, "van_leer": 0.5, "off": None}
+_SCHEMES = {"upwind": 0.8, "van_leer": 0.5, "central": RK3.limit, "off": None}
 _CELL = (CENTER, CENTER, CENTER)
 
 
@@ -202,7 +206,8 @@ class ThermalProblem:
     three axes; while ``beta > 0`` it has no component along a periodic axis,
     where no periodic pressure balances its mean (ADR 0008, D32). ``advection`` is ``"upwind"``,
     first order; ``"van_leer"``, a van Leer-limited second-order face value, bounded by the two cells it lies
-    between; or ``"off"`` for conduction alone, whatever the flow's own momentum transport.
+    between; ``"central"``, the mean of the two cells, which conserves the temperature's variance and needs the
+    RK3 step; or ``"off"`` for conduction alone, whatever the flow's own momentum transport.
 
     ``outlet_backflow`` says what enters where the flow returns through the
     outlet of an inflow-outflow axis: ``"error"`` refuses such a run, and
@@ -420,7 +425,8 @@ def _upwind_fluxes(
         lower, upper = neighbours(padded, axis)
         if problem.advection == "van_leer" and grid.shape[axis] > 1:
             lower, upper = _limited(padded, axis, problem, lower, upper)
-        flux = carrier.data * jnp.where(carrier.data >= 0.0, lower, upper)
+        face = 0.5 * (lower + upper) if problem.advection == "central" else None
+        flux = carrier.data * (jnp.where(carrier.data >= 0.0, lower, upper) if face is None else face)
         if axis != opening:
             fluxes.append(wall_insulated(carrier.replace_data(flux), axis, scalar[axis]))
             continue
@@ -534,13 +540,15 @@ class ThermalState(NamedTuple):
 
     ``pressure`` is the momentum stage's, on the flow's cells, as :func:`lmhdx.core3d.step` returns it, and it
     starts the next step's pressure solve as there; zero at rest, and kept as it is by a held flow. A state built
-    without one starts from zero. Its six leaves are arrays; grids and offsets are static.
+    without one starts from zero.
+    ``statistics``, when supplied, are the time integrals of the plane averages, including temperature.
     """
 
     velocity: tuple[Field, Field, Field]
     temperature: Field
     time: jnp.ndarray
     pressure: Field | None = None
+    statistics: dict | None = None
 
 
 def _with_pressure(state: ThermalState) -> ThermalState:
@@ -764,6 +772,8 @@ def build_thermal_step(
     dtype: jnp.dtype | type | str,
     hold_flow: bool = False,
     force: Callable[[jnp.ndarray], tuple[Field, Field, Field]] | None = None,
+    scheme: Tableau = EULER,
+    cfl: float | None = None,
 ) -> Callable[[ThermalState, Field], tuple[ThermalState, ThermalDiagnostics]]:
     """Factorize on the host and return the pure step ``(state, heat_source) -> (state, diagnostics)``.
 
@@ -773,13 +783,15 @@ def build_thermal_step(
     when any of them changes. ``heat_source`` is the external heat per unit volume
     and time on the cells.
 
-    Everything is taken from the old state, a first-order partitioned step: one
+    Under Euler, the default, everything is taken from the old state, a first-order partitioned step: one
     electric solve gives the Lorentz force and the Joule heat, buoyancy comes from
     the old temperature, the momentum takes :func:`lmhdx.core3d.step`'s predictor
     and projection with the flow's implicit viscous factorizations, and the
-    temperature takes its transport by the old velocity, then implicit conduction.
-    The projection's solve starts from the state's pressure and the new state carries
-    the stage's, as :func:`lmhdx.core3d.step` takes and returns it.
+    temperature takes its transport by the old velocity, then implicit conduction. With ``scheme=RK3`` (no solid
+    walls, held flow or open axis) the flow and the temperature advance together through the stages of
+    :data:`lmhdx.core3d.RK3`, each stage's heat carried by that stage's velocity, with its buoyancy and Joule heat,
+    second order in time; ``cfl`` holds the step at that fraction of the scheme's limit.
+    The projection starts from the state's pressure and carries the returned pressure forward.
 
     ``hold_flow`` keeps the state's velocity, a steady flow the heat is carried by,
     without buoyancy, and prepares no viscous inverses: for an inflow-outflow duct,
@@ -820,8 +832,16 @@ def build_thermal_step(
     if flow.open_axis is not None and buoyant and problem.gravity[flow.open_axis]:
         raise ValueError("an inflow-outflow duct takes no gravity along its open axis")
     inflow = None if hold_flow or flow.open_axis is None else with_inflow(_lift(flow), flow)
+    if scheme is not EULER and (
+        hold_flow or problem.has_walls or flow.open_axis is not None or force is not None
+    ):
+        raise NotImplementedError(
+            "the RK3 heat step takes an advancing flow, without solid walls or an open axis"
+        )
+    if problem.advection == "central" and scheme is EULER:
+        raise ValueError("central heat transport is unstable under Euler at every step; use RK3")
     factorization = flow.factorization()
-    viscous = None if hold_flow else flow.viscous_factorizations()
+    viscous = None if hold_flow else flow.viscous_factorizations(*(() if scheme is EULER else (scheme,)))
     if flow.conducting_walls:
         flow.potential_factorization()  # built once here, so tracing only looks it up
     dt, alpha, capacity = float(flow.dt), problem.diffusivity, problem.heat_capacity
@@ -942,8 +962,89 @@ def build_thermal_step(
         finite = jnp.all(jnp.stack([jnp.all(jnp.isfinite(leaf)) for leaf in leaves]))
         return new, ThermalDiagnostics(*values, finite, *exchange, buoyant, iterations)
 
+    if scheme is not EULER:
+        thermal_step = _staged(problem, scheme, cfl, factorization, viscous, total, upwind)
+    thermal_step.problem = problem
     thermal_step.hold_flow = hold_flow  # load_attribution needs a flow the load cannot move
     thermal_step.affine = hold_flow and problem.advection in ("upwind", "off")  # and a transport linear in T
+    return thermal_step
+
+
+def _staged(problem: ThermalProblem, scheme: Tableau, cfl, pressure, viscous, total, upwind):
+    """The step of :func:`build_thermal_step` under a multi-stage ``scheme``: heat and flow advance stage by stage."""
+    flow, capacity, alpha = problem.flow, problem.heat_capacity, problem.diffusivity
+    diffusion, conditions, lift = (
+        problem.diffusion_factorization(),
+        problem.thermal_conditions,
+        problem.boundary_lift(),
+    )
+    reference = float(problem.reference_temperature)
+    limit = None if cfl is None or not upwind else cfl * scheme.limit
+
+    def heat_rate(temperature, velocity, currents):
+        joule = _joule_heating(currents, problem).data
+        transport = divergence(_upwind_fluxes(temperature, velocity, problem)).data if upwind else 0.0
+        return joule, transport
+
+    def thermal_step(state, heat_source, *, backflow_temperature=None):
+        state = _with_pressure(state)
+        velocity, temperature = state.velocity, state.temperature
+        largest = jnp.asarray(flow.dt, temperature.dtype)
+        rate = jnp.max(outgoing_rate(velocity))
+        dt = largest if limit is None else limit / jnp.maximum(rate, limit / largest)
+        u, heated, pressure_field, carried, before = velocity, temperature, state.pressure, None, None
+        joule_power, transport_sum, conducted_sum, out = 0.0, 0.0, 0.0, 0.0
+        for k, (explicit, previous, implicit) in enumerate(
+            zip(scheme.explicit, scheme.carried, scheme.implicit)
+        ):
+            _, currents, field = face_currents(u, flow, pressure)
+            body = face_lorentz_force(_lorentz_from_currents(currents, field, flow), flow)
+            joule, transport = heat_rate(heated, u, currents)
+            explicit_rate = (joule + heat_source.data) / capacity - transport
+            old = explicit + previous - implicit
+            conducted = alpha * laplacian(heated, conditions).data
+            change = explicit * explicit_rate + old * conducted + implicit * alpha * lift.data
+            if before is not None:
+                change = change + previous * before[0]
+            solver = replace(diffusion, coefficient=implicit * dt * alpha)
+            u, pressure_field, _, carried = _advance_momentum(
+                u, body, flow, viscous[k], extra_force=_buoyancy(heated, problem),
+                weights=(explicit, previous, implicit), carried=carried, pressure=pressure_field,
+                dynamic=(dt, 1.0, None),
+            )  # fmt: skip
+            new = solver.solve(heated.replace_data(heated.data + dt * change))
+            joule_power = joule_power + explicit * joule + (0.0 if before is None else previous * before[1])
+            transport_sum = (
+                transport_sum + explicit * transport + (0.0 if before is None else previous * before[2])
+            )
+            conducted_sum = (
+                conducted_sum + old * conducted + implicit * alpha * laplacian(new, conditions).data
+            )
+            out = out + old * _heat_out(heated, problem) + implicit * _heat_out(new, problem)
+            before, heated = (explicit_rate, joule, transport), new
+        stored = heated.data - temperature.data
+        sources = joule_power + heat_source.data
+        balance = stored / dt + transport_sum - conducted_sum - sources / capacity
+        storage, sensible = (
+            total(capacity * stored) / dt,
+            total(capacity * (heated.data - reference)),
+        )
+        joule_total, external = total(joule_power), total(heat_source.data)
+        excess = jnp.maximum(*(jnp.max(jnp.abs(t.data - reference)) for t in (temperature, heated)))
+        zero = jnp.zeros((), temperature.dtype)
+        values = (
+            jnp.max(jnp.abs(divergence(u).data)), jnp.max(jnp.abs(divergence(currents).data)),
+            jnp.min(heated.data), jnp.max(heated.data), sensible, joule_total, external, out, zero, storage,
+            storage + out - joule_total - external, jnp.max(jnp.abs(balance)),
+            dt * rate if upwind else zero, float(problem.expansion_coefficient) * excess,
+        )  # fmt: skip
+        new = state._replace(velocity=u, temperature=heated, time=state.time + dt, pressure=pressure_field)
+        buoyant = _buoyancy_courant(temperature, problem) * dt / float(flow.dt)
+        leaves = jax.tree_util.tree_leaves((new, values, buoyant))
+        finite = jnp.all(jnp.stack([jnp.all(jnp.isfinite(leaf)) for leaf in leaves]))
+        exchange = (zero, zero, zero, jnp.asarray(True))
+        return new, ThermalDiagnostics(*values, finite, *exchange, buoyant, jnp.zeros((), jnp.int32))
+
     return thermal_step
 
 
@@ -963,6 +1064,12 @@ def advance_thermal(
     (the last step of each block), ``steps // diagnostics`` of them, and ``steps`` must be a multiple. The
     default keeps every step's.
 
+    A state that carries ``statistics`` (a fluid without solid walls) integrates the plane averages of
+    velocity and temperature inside the scan, so a run in chunks integrates as the run in one.
+
+    A step whose new state is not finite is not taken, under either scheme: the run holds the last finite state
+    and its time, while the step's diagnostics still report.
+
     ``backflow_temperature`` goes to every step, constant over the call as the
     heat source is. The carry is the state alone and only the scalar diagnostics are stacked, one
     per step, so no field history is kept. ``steps`` is static and the heat source
@@ -977,7 +1084,19 @@ def advance_thermal(
     options = {} if backflow_temperature is None else {"backflow_temperature": backflow_temperature}
 
     def single(carry: ThermalState, _) -> tuple[ThermalState, ThermalDiagnostics]:
-        return thermal_step(carry, heat_source, **options)
+        # A state that ends non-finite is not taken: the run holds its last finite state (the diagnostics' own
+        # ``finite``, which counts the outlet values too, is only reported).
+        new, diagnostics = thermal_step(carry, heat_source, **options)
+        ended = jnp.all(jnp.stack([jnp.all(jnp.isfinite(x)) for x in jax.tree_util.tree_leaves(new)]))
+        if carry.statistics is not None:  # each step's end state, weighed by its step
+            averages = plane_averages(new.velocity, thermal_step.problem.flow, new.temperature) | {
+                "time": 1.0
+            }
+            weight = new.time - carry.time
+            new = new._replace(
+                statistics=jax.tree.map(lambda a, b: a + weight * b, carry.statistics, averages)
+            )
+        return jax.tree.map(lambda a, b: jnp.where(ended, a, b), new, carry), diagnostics
 
     def block(carry: ThermalState, _) -> tuple[ThermalState, ThermalDiagnostics]:
         if diagnostics > 1:

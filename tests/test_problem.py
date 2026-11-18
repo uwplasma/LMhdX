@@ -347,8 +347,6 @@ def test_the_unsteady_duct_is_the_older_projection_run_bit_for_bit():
     stages = advance(kernel, 8, viscous=kernel.viscous_factorizations(scheme), scheme=scheme)
     three = lmhdx.solve(problem, Solver(method="rk3", dt=0.01, steps=8))
     assert _same(three.velocity, stages.velocity) and not _same(three.velocity, run.velocity)
-    with pytest.raises(ValueError, match="heated run"):
-        lmhdx.solve(_heated_duct()[0], Solver(method="rk3", dt=2.0e-3, steps=2))
 
 
 def test_the_four_fields_are_pytrees_and_agree_on_a_uniform_field(tmp_path):
@@ -780,3 +778,17 @@ def test_the_wall_derivative_is_refused_where_it_is_not_defined_or_not_yet_avail
     assert np.isnan(float(gradient.bc[1].conductance)) and np.isfinite(float(gradient.flow_rate))
     exact = lmhdx.solve(fringe.replace(bc=(Open(), Wall(jnp.asarray(0.02)), Wall(0.02))))
     assert float(exact.pressure_drop(-1.0, 1.0)) == float(lmhdx.solve(fringe).pressure_drop(-1.0, 1.0))
+
+
+def test_a_heated_rk3_run_holds_the_smaller_of_the_two_courant_limits_and_euler_refuses_cfl():
+    new = _heated_duct()[0]
+    plain = lmhdx.solve(new, Solver(method="rk3", dt=2.0e-3, steps=5))
+    assert bool(jnp.all(plain.history.finite)) and not _same(
+        plain.temperature, lmhdx.solve(new, Solver(dt=2.0e-3, steps=5)).temperature
+    )
+    low = lmhdx.solve(new, Solver(method="rk3", dt=1.0, steps=40, cfl=0.2))
+    capped = lmhdx.solve(new, Solver(method="rk3", dt=1.0, steps=40, cfl=1.5))  # 1.5 * sqrt(3) > upwind's 0.8
+    assert float(jnp.max(low.history.advective_cfl)) < 0.2 * 1.7321
+    assert 0.79 < float(jnp.max(capped.history.advective_cfl)) <= 0.8
+    with pytest.raises(ValueError, match="a heated one under rk3"):
+        lmhdx.solve(new, Solver(dt=2.0e-3, steps=2, cfl=0.5))

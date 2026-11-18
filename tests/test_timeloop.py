@@ -1710,10 +1710,57 @@ def test_statistics_integrate_inside_the_scan_and_give_friction_and_nusselt():
     )
 
 
-def test_statistics_equal_the_step_weighted_sum_of_plane_averages_and_refuse_heat():
-    """The in-scan integral is sum(dt * plane_averages(state_k)); a duct needs its diameter; a heated run is refused."""
+def test_the_rk3_heat_step_is_second_order_closes_its_ledger_and_holds_central_transport():
+    """H2.2 for heat: temperature through the IMEX stages, against Euler's first order; Euler refuses central."""
+    import dataclasses
+
+    from lmhdx.core3d import EULER, RK3, plane_averages, turbulence_statistics
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state, thermal_boundary
+
+    insulated = thermal_boundary("heat_flux", conductivity=0.5)
+    walls = (PERIODIC_AXIS, insulated, thermal_boundary("temperature", 301.0, 299.0))
+    flow = _uniform_duct(6, hartmann=4.0, grid=Grid(
+        uniform_faces(6, 0.0, 2.0), uniform_faces(6, -1.0, 1.0), uniform_faces(6, -1.0, 1.0)
+    ))  # fmt: skip
+    thermal = _heated(flow, walls, expansion_coefficient=5e-2, gravity=(0.0, 0.0, -1.0), advection="central")
+    with pytest.raises(ValueError, match="central"):
+        build_thermal_step(thermal, dtype=jnp.float64)
+    start = 300.0 + 0.5 * _pattern(thermal, 3)
+
+    def run(scheme, steps, problem=thermal):
+        problem = dataclasses.replace(problem, flow=dataclasses.replace(problem.flow, dt=0.4 / steps))
+        thermal_step = build_thermal_step(problem, dtype=jnp.float64, scheme=scheme)
+        state = initial_thermal_state(problem, start)
+        return advance_thermal(thermal_step, state, _cells(problem, 2.0), steps)
+
+    final, history = run(RK3, 40)
+    floor = 64 * np.finfo(float).eps * thermal.heat_capacity * 8.0 * 301.0 / 0.01  # the Euler ledger's own
+    assert np.all(history.finite) and np.max(np.abs(history.heat_balance_residual)) < floor
+    assert np.max(history.heat_solve_residual) < 1e-12 * 301.0 / 0.01
+    tenth = dataclasses.replace(thermal, flow=dataclasses.replace(flow, dt=0.01))
+    state = initial_thermal_state(tenth, start)
+    sums = jax.tree.map(jnp.zeros_like, plane_averages(state.velocity, flow, state.temperature))
+    state = state._replace(statistics=sums | {"time": jnp.zeros(())})
+    halves, tenth_step = [state], build_thermal_step(tenth, dtype=jnp.float64, scheme=RK3)
+    for _ in range(2):
+        halves.append(advance_thermal(tenth_step, halves[-1], _cells(tenth, 2.0), 20)[0])
+    stats = turbulence_statistics(halves[-1].statistics)
+    assert float(stats["time"]) == pytest.approx(0.4) and stats["T"].shape == (6, 6)
+    assert np.allclose(halves[-1].temperature.data, final.temperature.data, rtol=0, atol=1e-12)
+    assert np.max(np.abs(final.pressure.data)) > 1e-6
+    np.testing.assert_allclose(halves[-1].pressure.data, final.pressure.data, rtol=0, atol=1e-12)
+    reference = run(RK3, 160)[0].temperature.data
+    errors = [float(jnp.max(jnp.abs(run(RK3, n)[0].temperature.data - reference))) for n in (10, 20, 40)]
+    assert np.all(np.log2(np.divide(errors[:-1], errors[1:])) > 1.8), errors
+    upwind = dataclasses.replace(thermal, advection="upwind")
+    euler = [run(EULER, n, upwind)[0].temperature.data for n in (20, 40, 160)]
+    ratio = float(jnp.max(jnp.abs(euler[0] - euler[2])) / jnp.max(jnp.abs(euler[1] - euler[2])))
+    assert ratio < 3.0
+
+
+def test_statistics_equal_the_step_weighted_sum_of_plane_averages():
+    """The in-scan integral is sum(dt * plane_averages(state_k)); a duct needs its diameter."""
     from lmhdx.core3d import nusselt_number, plane_averages
-    from lmhdx.solver import Solver, solve
 
     grid = Grid(uniform_faces(4, 0.0, 1.0), uniform_faces(4, 0.0, 1.0), uniform_faces(6, -1.0, 1.0))
     problem = ChannelProblem(
@@ -1731,6 +1778,18 @@ def test_statistics_equal_the_step_weighted_sum_of_plane_averages_and_refuse_hea
     assert all(np.allclose(scan[k], 0.05 * total[k], rtol=1e-12, atol=1e-15) for k in total)
     with pytest.raises(ValueError, match="hydraulic diameter"):
         nusselt_number({}, problem)
-    heated = ChannelProblem(_uniform_duct(4).grid, (PERIODIC_AXIS, WALL, WALL))
-    with pytest.raises(NotImplementedError, match="mechanical"):
-        solve(_heated(heated), Solver(dt=heated.dt, steps=1, statistics=True))
+
+
+def test_a_run_holds_its_last_finite_state_on_the_state_alone_not_the_outlet_diagnostics():
+    from lmhdx.thermal import advance_thermal, build_thermal_step, initial_thermal_state
+
+    thermal = _heated(_uniform_duct(4))
+    step = build_thermal_step(thermal, dtype=jnp.float64)
+
+    def noisy(state, heat, **kw):  # a finite state whose reported ``finite`` is False
+        new, diagnostics = step(state, heat, **kw)
+        return new, diagnostics._replace(finite=jnp.asarray(False))
+
+    state = initial_thermal_state(thermal, 300.0)
+    final, history = advance_thermal(noisy, state, _cells(thermal, 0.0), 3)
+    assert float(final.time) == pytest.approx(3 * thermal.flow.dt) and not np.any(history.finite)
