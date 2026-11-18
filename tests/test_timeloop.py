@@ -532,7 +532,8 @@ def test_the_heat_ledger_closes_at_its_rounding_floor(case):
 
 
 def test_the_thermal_step_keeps_its_structure_and_compute_dtype():
-    """Five array leaves in, the same out, whole-output jit; a foreign dtype is refused, true float32 runs."""
+    """Six array leaves in, the pressure's among them, the same out, whole-output jit; a foreign dtype is refused,
+    true float32 runs."""
     import subprocess
     import sys
 
@@ -543,7 +544,7 @@ def test_the_thermal_step_keeps_its_structure_and_compute_dtype():
     state = initial_thermal_state(thermal, 300.0)
     leaves, tree = jax.tree_util.tree_flatten(state)
     new, record = jax.jit(thermal_step)(state, _cells(thermal, 1.0))
-    assert len(leaves) == 5 and jax.tree_util.tree_structure(new) == tree and len(record) == 21
+    assert len(leaves) == 6 and jax.tree_util.tree_structure(new) == tree and len(record) == 21
     flags = ("finite", "backflow_boundary_valid", "conduction_iterations")  # two flags and a count
     values = [value for name, value in record._asdict().items() if name not in flags]
     assert all(leaf.dtype == jnp.float64 for leaf in jax.tree_util.tree_leaves((new, values)))
@@ -1546,8 +1547,9 @@ def test_walls_of_the_fluids_own_material_reproduce_the_step_without_walls(advec
 
 def test_a_moving_walled_flow_steps_as_the_flow_does_and_feels_only_the_fluids_buoyancy():
     """A closed duct walled on four sides, its flow moving: without buoyancy the walled step moves the flow exactly as
-    ``core3d.step`` does; with it, a hot outer wall cell changes neither the new velocity nor the Boussinesq measure
-    nor the buoyancy Courant number, which are the fluid's, while the extremes span every cell."""
+    ``core3d.step`` does, and gives its pressure, which starts the next step's solve as there; a state without a
+    pressure steps as one at rest. With buoyancy, a hot outer wall cell changes neither the new velocity nor the
+    Boussinesq measure nor the buoyancy Courant number, which are the fluid's, while the extremes span every cell."""
     import dataclasses
 
     from lmhdx.core3d import SolidWall
@@ -1560,11 +1562,25 @@ def test_a_moving_walled_flow_steps_as_the_flow_does_and_feels_only_the_fluids_b
     insulated = thermal_boundary("heat_flux", conductivity=0.18)
     walls = ((None, None), (wall, wall), (wall, wall))
     passive = ThermalProblem(flow, (PERIODIC_AXIS, insulated, insulated), 2.0, 0.5, 300.0, walls=walls)
-    moved = build_thermal_step(passive, dtype=jnp.float64)(
-        initial_thermal_state(passive, 300.0, velocity), _cells(passive, 0.0)
+    # A uniform vertical push, which only a pressure can balance, on both steps alike.
+    push = tuple(
+        v.replace_data(jnp.full_like(v.data, 1.0 if a == 2 else 0.0)) for a, v in enumerate(velocity)
     )
-    expected = step(velocity, flow, flow.factorization(), viscous)[0]
-    assert all(np.array_equal(a.data, b.data) for a, b in zip(moved[0].velocity, expected))
+    pushed = build_thermal_step(passive, dtype=jnp.float64, force=lambda t: push)
+    start, still = initial_thermal_state(passive, 300.0, velocity), _cells(passive, 0.0)
+    moved = pushed(start, still)[0]
+    expected, pressure, _ = step(velocity, flow, flow.factorization(), viscous, force=lambda t: push)
+    assert all(np.array_equal(a.data, b.data) for a, b in zip(moved.velocity, expected))
+    assert np.array_equal(moved.pressure.data, pressure.data) and np.ptp(np.asarray(pressure.data)) > 0.1
+    leaves = jax.tree_util.tree_leaves
+    bare = pushed(start._replace(pressure=None), still)[0]  # a state built without one
+    assert all(np.array_equal(a, b) for a, b in zip(leaves(bare), leaves(moved), strict=True))
+    again = pushed(moved, still)[0]
+    expected, pressure, _ = step(
+        expected, flow, flow.factorization(), viscous, force=lambda t: push, pressure=pressure
+    )
+    assert all(np.array_equal(a.data, b.data) for a, b in zip(again.velocity, expected))
+    assert np.array_equal(again.pressure.data, pressure.data)
     buoyant = dataclasses.replace(passive, expansion_coefficient=1e-3, gravity=(0.0, 0.0, -1.0))
     thermal_step = build_thermal_step(buoyant, dtype=jnp.float64)
     warm = 300.0 + np.random.default_rng(3).random(buoyant.thermal_grid.shape)
@@ -1731,6 +1747,8 @@ def test_the_rk3_heat_step_is_second_order_closes_its_ledger_and_holds_central_t
     stats = turbulence_statistics(halves[-1].statistics)
     assert float(stats["time"]) == pytest.approx(0.4) and stats["T"].shape == (6, 6)
     assert np.allclose(halves[-1].temperature.data, final.temperature.data, rtol=0, atol=1e-12)
+    assert np.max(np.abs(final.pressure.data)) > 1e-6
+    np.testing.assert_allclose(halves[-1].pressure.data, final.pressure.data, rtol=0, atol=1e-12)
     reference = run(RK3, 160)[0].temperature.data
     errors = [float(jnp.max(jnp.abs(run(RK3, n)[0].temperature.data - reference))) for n in (10, 20, 40)]
     assert np.all(np.log2(np.divide(errors[:-1], errors[1:])) > 1.8), errors

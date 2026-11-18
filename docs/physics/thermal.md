@@ -220,7 +220,10 @@ $$
 
 The velocity takes the predictor and projection of `core3d.step`, with the
 flow's implicit viscous factorizations and the buoyancy of $T^n$. One electric
-solve per step supplies both the Lorentz force and the Joule heat.
+solve per step supplies both the Lorentz force and the Joule heat. The
+`ThermalState` carries the projection's pressure, which starts the next step's
+pressure solve, as `core3d.step(pressure=)` does; a `Solution` of an evolving
+flow gives it, and a held flow's state keeps the pressure it was given.
 
 The fractional step does not hold every hydrostatic state exactly. A
 temperature varying only along gravity stays at rest; in general, the claim

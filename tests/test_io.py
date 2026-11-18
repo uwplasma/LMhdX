@@ -1162,7 +1162,7 @@ def _walled_periodic_duct():
 
 def test_a_run_with_solid_walls_is_recorded_on_the_extended_grid_and_resumes_exactly(tmp_path):
     """The temperature, its record and its ParaView cells are on ``thermal_grid``, the walls' cells included, the
-    velocity zero in a wall; the run in two halves is the run in one, bit for bit."""
+    velocity and the pressure zero in a wall; the run in two halves is the run in one, bit for bit."""
     thermal, solver = _walled_periodic_duct(), Solver(dt=2.0e-3, steps=6)
     grid = thermal.thermal_grid
     assert grid.shape != thermal.flow.grid.shape
@@ -1176,6 +1176,8 @@ def test_a_run_with_solid_walls_is_recorded_on_the_extended_grid_and_resumes_exa
     inside = np.zeros_like(speed, bool)
     inside[2:-2, 2:-2] = True  # the walls are two cells thick on each side
     assert speed[~inside].max() == 0.0 and speed[inside].max() > 0.0
+    assert whole.pressure.shape == thermal.flow.grid.shape  # the Solution's, on the flow's cells
+    assert np.abs(arrays["pressure"].reshape(grid.shape[::-1])).max(axis=2)[~inside].max() == 0.0
     lmhdx.solve(thermal, dataclasses.replace(solver, steps=3), Output(str(tmp_path / "half")))
     again = lmhdx.solve(
         thermal,
@@ -1307,6 +1309,12 @@ def test_a_failed_steady_write_closes_the_log_and_a_late_thermal_start_numbers_i
     state = early.fields  # the end state of ten steps: time 0.02
     from lmhdx.thermal import ThermalState
 
-    late = ThermalState(state["velocity"], state["temperature"], jnp.asarray(10 * 2.0e-3))
+    late = ThermalState(
+        state["velocity"], state["temperature"], jnp.asarray(10 * 2.0e-3)
+    )  # no pressure: zero
     lmhdx.solve(problem, Solver(dt=2.0e-3, steps=10), Output(str(tmp_path / "b")), start=late)
     assert (tmp_path / "b/run_000020.npz").exists() and not (tmp_path / "b/run_000010.npz").exists()
+    held = problem.replace(
+        thermal=dataclasses.replace(problem.thermal, hold_flow=True, expansion_coefficient=0.0)
+    )
+    assert "pressure" in state and "pressure" not in lmhdx.solve(held, Solver(dt=2.0e-3, steps=2)).fields
