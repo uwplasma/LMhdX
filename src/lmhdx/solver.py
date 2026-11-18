@@ -501,6 +501,16 @@ def _transient(problem: Problem, solver: Solver, start, output, record, scheme=E
 _viscous = functools.lru_cache(maxsize=8)(lambda kernel, scheme: kernel.viscous_factorizations(scheme))
 
 
+@functools.lru_cache(maxsize=8)
+def _thermal_program(heat_problem, dtype, hold_flow, scheme, cfl, checkpoint):
+    """One compiled chunk per problem and options, so a run in chunks compiles once; the heat is an argument."""
+    from .thermal import advance_thermal, build_thermal_step
+
+    step = build_thermal_step(heat_problem, dtype=dtype, hold_flow=hold_flow, scheme=scheme, cfl=cfl)
+    run = lambda s, heat, steps: advance_thermal(step, s, heat, steps, checkpoint=checkpoint)  # noqa: E731
+    return jax.jit(run, static_argnums=2)  # every step's diagnostics, so that each is checked
+
+
 def _thermal(problem: Problem, solver: Solver, start, output, record, scheme=EULER) -> Solution:
     kernel, forcing, scale, _, walls = channel_kernel(problem, solver.dt, solver.precision)
     if forcing is not None or is_traced(scale) or float(scale) != 1.0:
@@ -535,8 +545,6 @@ def _heated(
         _SCHEMES,
         ThermalState,
         _with_pressure,
-        advance_thermal,
-        build_thermal_step,
         initial_thermal_state,
         validate_thermal_inputs,
     )
@@ -578,13 +586,12 @@ def _heated(
                 heat_problem, state, heat, divergence_tolerance=solver.divergence_tolerance, **bounds
             )
 
-    thermal_step = build_thermal_step(
-        heat_problem, dtype=jnp.result_type(float), hold_flow=hold_flow, scheme=scheme, cfl=cfl
-    )
-    chunk = jax.jit(  # every step's diagnostics, so that each is checked; _drive keeps every history-th
-        lambda s, steps: advance_thermal(thermal_step, s, heat, steps, checkpoint=solver.checkpoint),
-        static_argnums=1,
-    )
+    options = (heat_problem, jnp.result_type(float), hold_flow, scheme, cfl, solver.checkpoint)
+    try:
+        program = _thermal_program(*options)
+    except TypeError:  # a traced property is not a key: the program is built in this trace
+        program = _thermal_program.__wrapped__(*options)
+    chunk = lambda s, steps: program(s, heat, steps)  # noqa: E731
 
     def fields(s):
         velocity, pressure = s.velocity, s.pressure

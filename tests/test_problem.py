@@ -304,12 +304,16 @@ def test_the_heated_duct_run_is_the_older_thermal_run_bit_for_bit():
     half = lmhdx.solve(new, Solver(dt=2.0e-3, steps=20), start=None)
     from lmhdx.thermal import ThermalState
 
+    compiled = lmhdx.solver._thermal_program.cache_info()
     resumed = lmhdx.solve(
         new,
         Solver(dt=2.0e-3, steps=20),
         start=ThermalState(half.velocity, half.temperature, jnp.asarray(20 * 2.0e-3)),
     )
     assert np.max(np.abs(np.asarray(resumed.temperature.data) - np.asarray(final.temperature.data))) < 1e-12
+    # The second chunk runs the first one's program: one compile for a run in chunks.
+    now = lmhdx.solver._thermal_program.cache_info()
+    assert now.hits == compiled.hits + 1 and now.currsize == compiled.currsize
     with pytest.raises(ValueError, match="no start and no heat"):
         lmhdx.solve(new)
     # A heat source and an initial temperature are leaves, differentiated through the scan.
