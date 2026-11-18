@@ -468,6 +468,10 @@ class ChannelProblem:
                 raise ValueError("the magnetic field must be finite")
         if isinstance(field, ImposedField) and field.grid != self.grid:
             raise ValueError("the imposed field is sampled on a different grid")
+        if self.open_circuit_axes and (self.conducting_walls or self.has_solid_walls):
+            raise NotImplementedError(
+                "a Hartmann channel takes insulating walls: a wall would carry current along it"
+            )
         # True float32 contractions unless the user chose a precision; see lmhdx.enable_x64.
         _pin_matmul_precision()
 
@@ -524,6 +528,21 @@ class ChannelProblem:
             raise ValueError("solid walls take no thin or resolved wall beside them")
         if not float(self.conductivity):
             raise ValueError("solid walls carry current from a conducting fluid")
+
+    @property
+    def open_circuit_axes(self) -> tuple[int, ...]:
+        """The periodic cross-stream axes along which ``u_x`` times the field drives a current: a Hartmann channel's.
+
+        No circuit closes such an axis, so it carries no net current (plan H2.3): :func:`face_currents` removes
+        the face-volume mean of the current along it, which is a uniform electric field ``E = -<u x B>``. The
+        potential's gradient has zero mean on a periodic axis, so the potential is unchanged, and so is the charge.
+        An inflow-outflow axis has none: an inlet breaks the uniform mean the correction relies on.
+        """
+        if self.open_axis is not None:
+            return ()
+        field = self.magnetic_field
+        peak = [np.max(np.abs(c)) for c in field.components] if isinstance(field, ImposedField) else field
+        return tuple(a for a in (1, 2) if self.conditions[a].is_periodic and float(peak[3 - a]))
 
     @property
     def has_solid_walls(self) -> bool:
@@ -710,11 +729,16 @@ def face_currents(
         return (*_solid_wall_currents(motional, problem), field)
     factorization = problem.factorization() if factorization is None else factorization
     potential, walls = _solve_potential(divergence(motional), problem, factorization)
-    currents = tuple(
+    currents = [
         _closed_current(potential, walls[axis], conductivities[axis], emfs[axis], axis, problem)
         for axis in range(3)
-    )
-    return potential, currents, field
+    ]
+    for axis in problem.open_circuit_axes:
+        current, condition = currents[axis], problem.scalar_conditions[axis]
+        ones = current.replace_data(jnp.ones_like(current.data))
+        net, measure = (face_inner_product(f, ones, axis, condition) for f in (current, ones))
+        currents[axis] = current.replace_data(current.data - net / measure)
+    return potential, tuple(currents), field
 
 
 def _motional(velocity, problem: ChannelProblem, field_scale=1.0):
@@ -1176,12 +1200,18 @@ def _advance_momentum(
         if problem.advection == "off"
         else momentum_advection(velocity, velocity_conditions, limited=problem.advection == "limited")
     )
+    # The zero-mean-current field leaves the mean of u_x undamped: implicitly too.
+    if problem.open_circuit_axes:
+        undamped = _undamped_mean(inverse[0], implicit * dt * rates[0], velocity[0], velocity_conditions[0])
+        inverse = (undamped, *inverse[1:])
     predicted, rate = [], []
     for axis, field in enumerate(velocity):
         force = body[axis].data + problem.forcing[axis]
         if extra_force is not None:
             force = force + extra_force[axis].data
         damping = rates[axis] * field.data
+        if axis == 0 and problem.open_circuit_axes:
+            damping = damping - rates[0] * _face_mean(field.data, field, velocity_conditions[0])
         viscous_term = problem.viscosity * staggered_laplacian(field, velocity_conditions).data
         now = force / problem.density - (0.0 if transport is None else transport[axis].data) + damping
         now = now + (viscous_term if viscous is None else 0.0)
@@ -1233,6 +1263,31 @@ def _outlet_weight(problem: ChannelProblem, axis: int) -> np.ndarray:
     with jax.ensure_compile_time_eval():
         zero = Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid)
         return np.asarray(face_gradient(zero, axis, unit).data)[(slice(None),) * axis + (-1,)]
+
+
+def _face_mean(data, like: Field, condition: BoundaryCondition):
+    """The mean of ``data`` on ``like``'s faces normal to x, under the measure of :func:`face_inner_product`.
+
+    A solve leaves the wrap face of a periodic x at zero, as a prescribed entry: it is the first face's copy.
+    """
+    data = data.at[-1].set(data[0]) if condition.is_periodic else data
+    ones = like.replace_data(jnp.ones_like(like.data))
+    return face_inner_product(like.replace_data(data), ones, 0, condition) / face_inner_product(
+        ones, ones, 0, condition
+    )
+
+
+def _undamped_mean(inverse, rate, like: Field, condition: BoundaryCondition):
+    """``H^-1`` of ``H = H_0 - rate P`` by Sherman-Morrison, ``P`` the x-face mean: a Hartmann channel's u_x stage.
+
+    The mean is not damped (the uniform field of the zero-mean-current condition returns it), so it is taken
+    out of the implicit damping as it is out of the explicit one; RK3 at ``dt sigma B^2`` of 40 grows without it.
+    ``D H^-1 G`` is unchanged: ``H_0^-1 1`` is uniform along x, where a gradient has zero mean.
+    """
+    unit = inverse(jnp.ones_like(like.data))
+    unit = unit.at[-1].set(unit[0]) if condition.is_periodic else unit
+    gain = rate / (1.0 - rate * _face_mean(unit, like, condition))
+    return lambda f: (w := inverse(f)) + gain * _face_mean(w, like, condition) * unit
 
 
 @functools.lru_cache(maxsize=16)

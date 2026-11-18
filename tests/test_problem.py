@@ -25,7 +25,7 @@ from lmhdx.core3d import ChannelProblem, advance, duct_problem
 from lmhdx.fields import Fringe, Func, Table
 from lmhdx.grid import CENTER, NEUMANN, PERIODIC, BoundaryCondition, Field, Grid, axis, uniform_faces
 from lmhdx.pipe import pipe_problem, solve_pipe
-from lmhdx.problem import _BKZ_DOMAINS, bulk_ratio, channel, fringe_duct, pipe, q2d
+from lmhdx.problem import _BKZ_DOMAINS, bulk_ratio, channel, channel_kernel, fringe_duct, pipe, q2d
 from lmhdx.q2d import evolve_q2d, make_q2d_case, solve_q2d
 from lmhdx.thermal import (
     ThermalProblem,
@@ -599,8 +599,54 @@ def test_a_spanwise_field_leaves_the_laminar_channel_a_parabola_and_a_wall_norma
 
     result = grid_convergence(drive(16), drive(32), drive(64), 2.0)
     assert 1.95 < result.order < 2.05 and result.extrapolated == pytest.approx(3.0, rel=1e-5)
-    with pytest.raises(NotImplementedError, match="net current"):
-        lmhdx.solve(channel(R=700, ha=20.0, cells=(1, 1, 33)))
+
+
+def test_the_hartmann_channel_carries_no_net_current_and_meets_the_exact_profile():
+    """H2.3: no net spanwise current; the drive meets ``G = B^2 Uav t / (1 - t)``, ``t = tanh Ha / Ha``, at second order.
+
+    Without the condition the mean flow would be damped too, and the drive would be ``B^2 Uav / (1 - t)``, ten times higher.
+    """
+    from lmhdx.core3d import face_currents
+    from lmhdx.ops import face_inner_product
+    from validation.gci import grid_convergence
+
+    ha, re = 10.0, 1000.0
+    t = np.tanh(ha) / ha
+    exact = ha**2 / re * t / (1.0 - t)
+
+    def drive(cells):
+        problem = channel(re=re, ha=ha, cells=(1, 1, cells), lengths=(1.0, 1.0), stretch=dict(ratio=1.0))
+        found = lmhdx.solve(problem)
+        z = problem.grid.centers[2]
+        profile = (np.cosh(ha) - np.cosh(ha * z)) / (np.cosh(ha) - np.sinh(ha) / ha)
+        error = np.max(np.abs(np.asarray(found.velocity[0].data)[0, 0] - profile))
+        kernel = channel_kernel(problem)[0]
+        currents = face_currents(found.velocity, kernel)[1]
+        ones = currents[1].replace_data(jnp.ones_like(currents[1].data))
+        net = face_inner_product(currents[1], ones, 1, kernel.scalar_conditions[1])
+        assert kernel.open_circuit_axes == (1,) and abs(float(net)) < 1e-12
+        return float(found.pressure_gradient), error
+
+    (g1, e1), (g2, e2), (g3, e3) = (drive(cells) for cells in (64, 128, 256))
+    result = grid_convergence(g1, g2, g3, 2.0)
+    assert 1.9 < result.order < 2.1 and result.extrapolated == pytest.approx(exact, rel=1e-4)
+    assert e3 < 1e-3 and 3.5 < e2 / e3 < 4.5 and e1 > e2
+    # The undamped mean is implicit too: RK3 at dt sigma B^2 = 40, where it grew as 1e8 before, settles on the same
+    # flow; at 1000 Crank-Nicolson barely damps the layers, so atol=1 only checks that the run stays bounded.
+    problem = channel(re=re, ha=ha, cells=(1, 1, 64), lengths=(1.0, 1.0), stretch=dict(ratio=1.0))
+    steady = lmhdx.solve(problem)
+    driven = problem.replace(flow_rate=None, forcing=(float(steady.pressure_gradient), 0.0, 0.0))
+    for product, steps, tolerance in ((40.0, 200, 1e-5), (1000.0, 60, 1.0)):
+        run = lmhdx.solve(driven, Solver(method="rk3", dt=product * re / ha**2, steps=steps))
+        assert np.allclose(run.velocity[0].data, steady.velocity[0].data, rtol=0, atol=tolerance)
+
+
+def test_a_field_across_a_periodic_axis_of_an_open_duct_is_refused():
+    problem = fringe_duct(10.0, upstream=2.0, downstream=2.0, spacing=1.0, cells=8, cells_in_layer=2)
+    with pytest.raises(NotImplementedError, match="inflow-outflow duct"):
+        channel_kernel(
+            problem.replace(bc=(Open(np.ones((8, 8))), "periodic", Wall(0.0)), B=Uniform(0.0, 0.0, 10.0))
+        )
 
 
 def test_the_beginner_example_solves_and_differentiates_the_duct(tmp_path):
