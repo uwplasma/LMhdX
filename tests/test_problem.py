@@ -602,7 +602,7 @@ def test_a_spanwise_field_leaves_the_laminar_channel_a_parabola_and_a_wall_norma
 
 
 def test_the_hartmann_channel_carries_no_net_current_and_meets_the_exact_profile():
-    """H2.5: no net spanwise current; the drive meets ``G = B^2 Uav t / (1 - t)``, ``t = tanh Ha / Ha``, at second order.
+    """H2.3: no net spanwise current; the drive meets ``G = B^2 Uav t / (1 - t)``, ``t = tanh Ha / Ha``, at second order.
 
     Without the condition the mean flow would be damped too, and the drive would be ``B^2 Uav / (1 - t)``, ten times higher.
     """
@@ -632,13 +632,21 @@ def test_the_hartmann_channel_carries_no_net_current_and_meets_the_exact_profile
     assert 1.9 < result.order < 2.1 and result.extrapolated == pytest.approx(exact, rel=1e-4)
     assert e3 < 1e-3 and 3.5 < e2 / e3 < 4.5 and e1 > e2
     # The undamped mean is implicit too: RK3 at dt sigma B^2 = 40, where it grew as 1e8 before, settles on the same
-    # flow; at 1000 Crank-Nicolson barely damps the layers, and the run stays bounded.
+    # flow; at 1000 Crank-Nicolson barely damps the layers, so atol=1 only checks that the run stays bounded.
     problem = channel(re=re, ha=ha, cells=(1, 1, 64), lengths=(1.0, 1.0), stretch=dict(ratio=1.0))
     steady = lmhdx.solve(problem)
     driven = problem.replace(flow_rate=None, forcing=(float(steady.pressure_gradient), 0.0, 0.0))
     for product, steps, tolerance in ((40.0, 200, 1e-5), (1000.0, 60, 1.0)):
         run = lmhdx.solve(driven, Solver(method="rk3", dt=product * re / ha**2, steps=steps))
         assert np.allclose(run.velocity[0].data, steady.velocity[0].data, rtol=0, atol=tolerance)
+
+
+def test_a_hartmann_channel_refuses_an_open_axis():
+    problem = fringe_duct(10.0, upstream=2.0, downstream=2.0, spacing=1.0, cells=8, cells_in_layer=2)
+    with pytest.raises(NotImplementedError, match="periodic along its flow"):
+        channel_kernel(
+            problem.replace(bc=(Open(np.ones((8, 8))), "periodic", Wall(0.0)), B=Uniform(0.0, 0.0, 10.0))
+        )
 
 
 def test_the_beginner_example_solves_and_differentiates_the_duct(tmp_path):

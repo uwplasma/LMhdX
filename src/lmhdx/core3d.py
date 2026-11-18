@@ -468,6 +468,10 @@ class ChannelProblem:
                 raise ValueError("the magnetic field must be finite")
         if isinstance(field, ImposedField) and field.grid != self.grid:
             raise ValueError("the imposed field is sampled on a different grid")
+        if self.open_circuit_axes and self.open_axis is not None:
+            raise NotImplementedError(
+                "a Hartmann channel is periodic along its flow: an inlet breaks the uniform mean its correction uses"
+            )
         if self.open_circuit_axes and (self.conducting_walls or self.has_solid_walls):
             raise NotImplementedError(
                 "a Hartmann channel takes insulating walls: a wall would carry current along it"
@@ -533,7 +537,7 @@ class ChannelProblem:
     def open_circuit_axes(self) -> tuple[int, ...]:
         """The periodic cross-stream axes along which ``u_x`` times the field drives a current: a Hartmann channel's.
 
-        No circuit closes such an axis, so it carries no net current (plan H2.5): :func:`face_currents` removes
+        No circuit closes such an axis, so it carries no net current (plan H2.3): :func:`face_currents` removes
         the face-volume mean of the current along it, which is a uniform electric field ``E = -<u x B>``. The
         potential's gradient has zero mean on a periodic axis, so the potential is unchanged, and so is the charge.
         """
