@@ -14,7 +14,7 @@ Core references used by the implemented models and validation contracts include:
   National Laboratory report ANL/FPP/TM-228, 1988,
   [OSTI 6789158](https://www.osti.gov/biblio/6789158) — the inertialess
   core-flow equations, the side-layer closure and the ANL fringe reference of
-  `lmhdx.coreflow`.
+  `validation.coreflow`.
 - J. S. Walker, “Magnetohydrodynamic flows in rectangular ducts with thin
   conducting walls. Part I,” *Journal de Mécanique* 20, 1981 — the fully
   developed thin-wall limits.

@@ -15,7 +15,6 @@ from solvax import (
 )
 
 from . import _pin_matmul_precision
-from .cases import require_finite
 
 __all__ = ["Q2DDiagnostics", "Q2DProblem", "Q2DResult", "evolve_q2d", "make_q2d_case", "solve_q2d"]
 
@@ -28,6 +27,16 @@ def _state_arrays(initial_vorticity, forcing, *coefficients):
     if not jnp.issubdtype(dtype, jnp.floating):
         raise ValueError("Q2D state, forcing, and coefficients must be real")
     return vorticity.astype(dtype), forcing.astype(dtype)
+
+
+def require_finite(stage: str, **values) -> None:
+    """Raise :class:`~lmhdx.solver.NumericalFailure` naming the fields that are nonfinite."""
+
+    failed = [name for name, value in values.items() if not bool(jnp.all(jnp.isfinite(jnp.asarray(value))))]
+    if failed:
+        from .solver import NumericalFailure
+
+        raise NumericalFailure(f"{stage} produced nonfinite {', '.join(failed)}")
 
 
 @dataclass(frozen=True)

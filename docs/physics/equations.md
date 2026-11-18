@@ -36,7 +36,7 @@ Lorentz-force components; a duct with an inlet and an outlet (`lmhdx.axial`)
 is solved in the inertialess limit, without $\mathbf u\cdot\nabla\mathbf u$, or
 with it by Newton's method or by marching that solution to its steady state; the
 pipe with an inlet and an outlet is solved in the inertialess limit only.
-The inertialess core-flow model (`lmhdx.coreflow`) reduces the core of a
+The inertialess core-flow model (`validation.coreflow`) reduces the core of a
 thin-walled duct in a field $B_y(x)$ to three two-dimensional equations
 (ANL/FPP/TM-228, eqs. 4a–4c). Their verification and open gates are in the
 [validation matrix](../validation/index.md).

@@ -107,7 +107,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [support, design, operators, timeloop, physics, channel, walls, plane, axial, steady, steady_thermal, programs, fully_developed, gradients, api, api_gradients, anchors]
+        shard: [support, design, operators, timeloop, physics, channel, walls, plane, axial, steady, steady_thermal, programs, gradients, api, api_gradients, anchors]
         include:
           # Coverage on the steady shard peaks near 12 GB of resident memory with four
           # workers, against 16 GB on a hosted runner; two workers keep it well inside.
@@ -127,8 +127,6 @@ jobs:
             cache: channel
           - shard: axial
             cache: channel
-          - shard: fully_developed
-            cache: steady
           - shard: programs
             workers: 2
             cache: steady
@@ -223,12 +221,6 @@ jobs:
           path: artifacts/test-evidence/steady_thermal
           key: lmx-test-evidence-${{ github.run_id }}-steady_thermal
           fail-on-cache-miss: true
-      - name: Restore fully_developed evidence
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: artifacts/test-evidence/fully_developed
-          key: lmx-test-evidence-${{ github.run_id }}-fully_developed
-          fail-on-cache-miss: true
       - name: Restore programs evidence
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -306,7 +298,7 @@ jobs:
           # The unit tier, then the regression tier in three jobs packed on recorded per-shard
           # time (about 12 to 14 minutes each); a longer job has been killed for memory.
           - tier: unit
-            shard: "support design operators timeloop physics channel walls plane axial steady steady_thermal programs fully_developed gradients"
+            shard: "support design operators timeloop physics channel walls plane axial steady steady_thermal programs gradients"
             label: unit
             budget: 900
             cache: pr-unit
@@ -321,7 +313,7 @@ jobs:
             budget: 1500
             mac: true
           - tier: regression
-            shard: "support fully_developed api api_gradients walls"
+            shard: "support api api_gradients walls"
             label: regression-c
             budget: 1500
             mac: true

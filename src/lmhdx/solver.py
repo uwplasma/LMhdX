@@ -37,9 +37,7 @@ import numpy as np
 from . import configure
 from .axial import _lift, method_for, solve_open_duct
 from .axial import pressure_drop as _pressure_drop
-from .cases import NumericalFailure
-from .cases import solve as _solve_model
-from .core3d import EULER, RK3, advance, zero_velocity
+from .core3d import EULER, RK3, ChannelProblem, advance, zero_velocity
 from .fields import Uniform, host, is_traced, primal
 from .grid import CENTER, Field
 from .ops import cell_average
@@ -51,7 +49,17 @@ from .q2d import Q2DProblem, _setup, evolve_q2d, solve_q2d
 from .steady import _MAX_STEPS, solve_compiled, solve_steady_state, with_inflow
 from .thermal import ThermalProblem
 
-__all__ = ["Case", "Solution", "Solver", "solve"]
+__all__ = ["Case", "NumericalFailure", "Solution", "Solver", "solve"]
+
+
+class NumericalFailure(RuntimeError):
+    """Raised when a solver produces nonfinite numerical state or a run is rejected.
+
+    A rejected run that wrote files carries its ``summary``.
+    """
+
+    summary = None
+
 
 _RESERVED = {"implicit": "H2.2"}
 _METHODS = ("auto", "stokes", "newton", "march", "euler", "rk3", "ifrk4")
@@ -297,7 +305,7 @@ def _drive(run: _Run, problem, solver: Solver, output: Output | None, record: St
     """Take ``solver.steps`` steps in chunks of ``output.every`` (one chunk without an output).
 
     Each chunk is checked against the run's limits before it is written; the first one past them stops the run,
-    which raises :class:`~lmhdx.cases.NumericalFailure` once the rejected state and the summary are written.
+    which raises :class:`~lmhdx.solver.NumericalFailure` once the rejected state and the summary are written.
     Returns the end state, the history and the summary (None without an output). The history is that of every chunk
     without an output; with one it is the last chunk's, so that the run's memory does not grow with its length (the
     summary and ``{name}.jsonl`` hold the rest).
@@ -565,7 +573,7 @@ def _written(solution: Solution, problem, solver: Solver, method: str, output: O
 def solve(
     problem: object, solver: Solver | None = None, output: Output | None = None, start: object = None
 ) -> object:
-    """Solve ``problem`` with ``solver``; the older models go to :func:`lmhdx.cases.solve`.
+    """Solve ``problem`` with ``solver``; a :class:`lmhdx.core3d.ChannelProblem` or a :class:`lmhdx.q2d.Q2DProblem` goes to its kernel.
 
     A :class:`lmhdx.thermal.ThermalProblem`, which may have solid walls the :class:`Problem` has not, is an
     unsteady run at its flow's ``dt`` with Joule heating alone, from rest at zero temperature, the ``"steady"``
@@ -594,7 +602,13 @@ def solve(
     if not isinstance(problem, (Problem, Q2D, ThermalProblem)):
         if solver is not None or start is not None or output is not None:
             raise TypeError(f"{type(problem).__name__} takes no solver, output or start")
-        return _solve_model(problem)
+        if isinstance(problem, ChannelProblem):
+            return solve_open_duct(problem) if problem.open_axis is not None else solve_compiled(problem)
+        if isinstance(problem, Q2DProblem):
+            return solve_q2d(problem)
+        raise TypeError(
+            f"solve expects a Problem, ChannelProblem or Q2DProblem, got {type(problem).__name__}"
+        )
     if isinstance(start, (str, os.PathLike)) and start not in ("rest", "steady"):
         start = Start(path=os.fspath(start))
     if isinstance(start, Start) and not start.path:

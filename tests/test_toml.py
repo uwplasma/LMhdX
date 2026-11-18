@@ -1,11 +1,10 @@
 """TOML schema 3 (plan H4.3): a table is a constructor call, so TOML and Python build the same objects.
 
 Every preset and field kind is written, read back and compared as a pytree; a file solves bit for bit
-as the Python problem does; the old schemas upgrade to files that build the kernels the old loaders built;
+as the Python problem does; the old schemas upgrade to files that build the kernels the old loaders built (pinned below);
 and every malformed key, kind and type is refused with the table path in the message.
 """
 
-import dataclasses
 import json
 from pathlib import Path
 
@@ -15,19 +14,16 @@ import pytest
 
 import lmhdx
 from lmhdx import Open, Problem, Sides, Solver, Thermal, Uniform, Wall, duct
-from lmhdx.cases import WallLayer, load_run_config
+from lmhdx.cli import main
 from lmhdx.config import dumps, load, upgrade
 from lmhdx.fields import Fringe, Func, Table
-from lmhdx.fully_developed import channel_problem
 from lmhdx.grid import Grid, axis
-from lmhdx.io import main
 from lmhdx.output import Output, Start
 from lmhdx.problem import channel, channel_kernel, fringe_duct, pipe, q2d
+from lmhdx.units import WallLayer
+from validation.shercliff import flow_rate
 
-pytestmark = [
-    pytest.mark.numerical,
-    pytest.mark.filterwarnings("ignore:.*retired in lmhdx 2.0:DeprecationWarning"),
-]  # the api shard runs in the regression tier
+pytestmark = pytest.mark.numerical  # the api shard runs in the regression tier
 
 ROOT = Path(__file__).resolve().parents[1]
 _SMALL = dict(
@@ -358,41 +354,53 @@ directory = "out"
 """
 
 
-@pytest.mark.parametrize(
-    ("text", "method"),
-    (
-        (_case(), "auto"),
-        (_case("density = 2.0\nviscosity = 0.25", "[0.0, 3.0, 0.5]", 3.0, 1.0, 20, 36), "auto"),
-        (_case(field="[0.0, 0.0, 0.0]"), "auto"),
-        (
-            _case(properties="viscosity = 0.1", field="[0.0, 15.0, 0.0]", ny=40, nz=40, mode="transient"),
-            "implicit",
-        ),
-    ),
-)
-def test_a_schema_2_file_upgrades_to_the_kernel_the_old_loader_built(tmp_path, text, method):
-    old = _write(tmp_path, text, "old.toml")
+# What the schema 2 loader of 1.x built from `_case(...)`: the cells and layers of the section, the material,
+# the field and the thin wall, as the measured widths of its first cells (a/Ha and a/sqrt(Ha) layers).
+_UPGRADED = (
+    (dict(), (24, 24), (2.0, 2.0), (1.0, 1.0, 2.0), (0.0, 0.0, 20.0), "auto", (
+        (0.015645231482990574, 0.01996491165821712, 0.025477264299589963),
+        (0.0009887621607550523, 0.001715578379080096, 0.0029766604058957258))),
+    (dict(properties="density = 2.0\nviscosity = 0.25", field="[0.0, 3.0, 0.5]", width=3.0, height=1.0,
+          ny=20, nz=36), (20, 36), (3.0, 1.0), (2.0, 0.25, 2.0), (0.0, 3.0, 0.5), "auto", (
+        (0.004723190398640442, 0.008138127448892085, 0.014022114880966052), (1 / 36,) * 3)),
+    (dict(field="[0.0, 0.0, 0.0]"), (24, 24), (2.0, 2.0), (1.0, 1.0, 2.0), (0.0, 0.0, 0.0), "auto", (
+        (1 / 12,) * 3, (1 / 12,) * 3)),
+    (dict(properties="viscosity = 0.1", field="[0.0, 15.0, 0.0]", ny=40, nz=40, mode="transient"),
+     (40, 40), (2.0, 2.0), (1.0, 0.1, 2.0), (0.0, 15.0, 0.0), "implicit", (
+        (0.001079886736153779, 0.0014382198844947736, 0.001915456840893337),
+        (0.015389095207343662, 0.017098040953524962, 0.018996763650465542))),
+)  # fmt: skip
+
+
+@pytest.mark.parametrize(("arguments", "cells", "extent", "material", "field", "method", "widths"), _UPGRADED)
+def test_a_schema_2_file_upgrades_to_the_kernel_the_old_loader_built(
+    tmp_path, arguments, cells, extent, material, field, method, widths
+):
+    old = _write(tmp_path, _case(**arguments), "old.toml")
     case = load(_write(tmp_path, upgrade(old), "new.toml"))
-    # The older loader's kernel has unit drive and scales the solution by the case's forcing.
-    expected = dataclasses.replace(
-        channel_problem(load_run_config(old).case), dt=case.solver.dt, forcing=case.problem.forcing
-    )
-    assert channel_kernel(case.problem, case.solver.dt)[0] == expected
+    kernel = channel_kernel(case.problem, case.solver.dt)[0]
+    assert kernel.grid.shape == (1, *cells)
+    assert tuple(float(f[-1] - f[0]) for f in kernel.grid.faces[1:]) == extent
+    for faces, first in zip(kernel.grid.faces[1:], widths, strict=True):
+        np.testing.assert_allclose(np.diff(faces)[:3], first, rtol=1e-12)
+    assert (kernel.density, kernel.viscosity, kernel.conductivity) == material
+    assert kernel.magnetic_field == field and kernel.wall_conductance == (0.0, 0.0, 0.0)
+    assert case.problem.forcing == (2.0, 0.0, 0.0)
     assert case.solver.method == method and upgrade(old).startswith("# not carried over: [output]")
     assert (case.solver.steps, case.solver.dt) == (
         (7, 0.01) if method == "implicit" else (None, case.solver.dt)
     )
 
 
-def test_the_upgraded_hartmann_example_solves_as_the_older_case_does(tmp_path):
-    from lmhdx.fully_developed import solve_fully_developed_fields
-
-    old = _write(tmp_path, _case(), "old.toml")
-    case = load(_write(tmp_path, upgrade(old)))
-    velocity = lmhdx.solve(case).velocity[0].data
-    expected = solve_fully_developed_fields(load_run_config(old).case)[0]
-    # The older entry point runs the same kernel in its own program: equal to round-off, 3e-15 here.
-    np.testing.assert_allclose(velocity[0], expected, rtol=0, atol=1e-13 * np.abs(expected).max())
+def test_the_upgraded_hartmann_example_solves_to_the_spectral_reference(tmp_path):
+    """Forcing 2, sigma 2, B 20 along z: Ha 20 sqrt 2 on 24 cells, 2.2 % above the spectral mean velocity (the cells' error)."""
+    case = load(_write(tmp_path, upgrade(_write(tmp_path, _case(), "old.toml"))))
+    velocity = np.asarray(lmhdx.solve(case).velocity[0].data[0])
+    weights = np.asarray(case.problem.grid.cell_volumes())[0]
+    mean = float((weights * velocity).sum() / weights.sum())
+    assert mean == pytest.approx(2.0 * flow_rate(20.0 * np.sqrt(2.0), 48), rel=0.03)
+    # Pinned in float64; JAX 0.7.2 and 0.10.2 agree to 3e-15.
+    assert mean == pytest.approx(0.05843007866250953, rel=1e-8)
 
 
 @pytest.mark.parametrize(
@@ -562,7 +570,7 @@ def test_the_command_line_upgrades_and_runs_a_file(tmp_path, capsys):
     expected = lmhdx.solve(duct(20, 24), Solver(tol=1e-8))
     assert summary["pressure_gradient"] == 1.0 and summary["flow_rate"] == float(expected.flow_rate)
     assert summary["residual"] == float(expected.residual)
-    with pytest.raises(ValueError, match="overrides apply to schema 3"):
+    with pytest.raises(ValueError, match="needs a \\[problem\\] table"):
         main([str(old), "solver.tol=1e-8"])
 
 

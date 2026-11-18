@@ -6,14 +6,14 @@ import numpy as np
 import pytest
 
 from lmhdx.core3d import fringe_field
-from lmhdx.coreflow import (
+from lmhdx.grid import Grid, uniform_faces
+from validation.coreflow import (
     CoreFlow,
     fully_developed_gradient,
     layer_conductances,
     midplane_field,
     side_layer_coefficient,
 )
-from lmhdx.grid import Grid, uniform_faces
 from validation.gci import grid_convergence
 
 pytestmark = pytest.mark.unit

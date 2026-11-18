@@ -1,19 +1,9 @@
 import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-import lmhdx.io as benchmarks
-from lmhdx.io import (
-    benchmark_solver,
-    write_benchmark_report,
-)
-
-pytestmark = [
-    pytest.mark.unit,
-    pytest.mark.filterwarnings("ignore:.*retired in lmhdx 2.0:DeprecationWarning"),
-]
+pytestmark = pytest.mark.unit
 
 
 def test_device_environment_records_cpu_count_without_affinity(monkeypatch):
@@ -222,44 +212,3 @@ def test_device_benchmark_discards_warmups_and_pools_alternating_runs(tmp_path):
     with pytest.raises(SystemExit) as error:
         runner.main(["--combine", str(paths[0]), str(paths[2]), "--output", str(output)])
     assert error.value.code == 2
-
-
-_MATCHED = ("matched_contract",)
-_SHARED = _MATCHED + ("shared",)
-_EQUATIONS = _SHARED + ("equations",)
-_SEMANTICS = "matched formulation semantics differ"
-_STEADY_STEPS = _MATCHED + ("roles", "b2-production", "stopping_rules", "steady_steps_min")
-_STOPPING = "matched stopping contract differs"
-_REFERENCE_HEADER = "x_over_L,b_over_B0,b_uncertainty,pressure_observable,pressure_uncertainty"
-
-
-def test_benchmark_solver_returns_positive_timings(monkeypatch: pytest.MonkeyPatch):
-    times = iter([10.0, 10.4, 10.4, 10.7])
-
-    monkeypatch.setattr(
-        benchmarks,
-        "make_hartmann_case",
-        lambda ha, ny, nz: SimpleNamespace(name="hartmann_ha5"),
-    )
-    fields = SimpleNamespace(u=object(), phi=object())
-    monkeypatch.setattr(
-        "lmhdx.fully_developed.solve_fully_developed", lambda case: SimpleNamespace(fields=fields)
-    )
-    synchronized = []
-    monkeypatch.setattr(benchmarks.jax, "block_until_ready", synchronized.append)
-    monkeypatch.setattr(benchmarks.time, "perf_counter", lambda: next(times))
-    monkeypatch.setattr(benchmarks.jax, "default_backend", lambda: "cpu")
-    monkeypatch.setattr(benchmarks.jax, "devices", lambda: [SimpleNamespace(device_kind="cpu")])
-    monkeypatch.setattr(benchmarks.platform, "python_version", lambda: "3.13.7")
-
-    report = benchmark_solver(repeats=2, ha=5.0, ny=16, nz=16)
-    assert float(report["cold_seconds"]) > 0.0
-    assert float(report["warm_seconds"]) == pytest.approx(0.3)
-    assert report["warm_cv"] == 0.0
-    assert report["backend"]
-    assert synchronized == [(fields.u, fields.phi)] * 2
-
-
-def test_benchmark_writer(tmp_path: Path):
-    path = write_benchmark_report({"cold_seconds": 1.0, "warm_seconds": 0.5}, tmp_path / "benchmark.json")
-    assert path.exists()

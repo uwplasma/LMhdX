@@ -32,7 +32,7 @@ CURRENT_STATE_TERMS = ("legacy", "deprecated", "previously", "no longer", "backw
 
 RESEARCH_STAGE: set[str] = set()
 COMPATIBILITY: set[str] = set()
-VISUALIZATION = {"io.py"}
+VISUALIZATION: set[str] = set()
 VALIDATION: set[str] = set()
 
 
@@ -235,21 +235,21 @@ def build_inventory(root: Path = ROOT) -> dict[str, Any]:
             },
         },
         "targets": {
-            "package_module_count_max": 21,
-            "total_package_lines_max": 15475,
+            "package_module_count_max": 19,
+            "total_package_lines_max": 12335,
             "largest_package_module_lines_max": 1703,
-            "maintained_core_lines_max": 14341,
-            "test_file_count_max": 27,
-            "test_lines_max": 18154,
-            "external_validation_file_count_max": 11,
+            "maintained_core_lines_max": 12335,
+            "test_file_count_max": 26,
+            "test_lines_max": 16445,
+            "external_validation_file_count_max": 12,
             "largest_external_validation_lines_max": 595,
             "maintenance_script_count_max": 5,
-            "stable_root_exports_max": 41,
+            "stable_root_exports_max": 36,
             "curated_examples_max": 11,
-            "checkout_bytes_max": 4393558,
+            "checkout_bytes_max": 4196985,
             "root_import_median_seconds_max": 0.25,
-            "sdist_bytes_max": 512 * 1024,
-            "wheel_bytes_max": 384 * 1024,
+            "sdist_bytes_max": 240 * 1024,
+            "wheel_bytes_max": 256 * 1024,
         },
     }
 

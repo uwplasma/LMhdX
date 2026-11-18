@@ -8,7 +8,6 @@ ChannelProblem ──> staggered core (grid, ops, poisson) ──> steady / axia
 PipeProblem ──> the developed pipe on its polar grid
 Q2DProblem ──> vorticity dynamics ──> SOLVAX periodic Poisson
 ThermalProblem ──> the core's stages + conduction ──> advance_thermal, developed_heat
-CaseSpec ── fully developed ──> the core (the 1.x entry: it warns since H4.5, removed in 2.0.0)
 ```
 
 `lmhdx.problem`, `lmhdx.solver`, `lmhdx.fields`, `lmhdx.config` and
@@ -26,11 +25,10 @@ dependencies load only when an output function requests them.
 operators and the direct and preconditioned solves. `lmhdx.core3d` and
 `lmhdx.steady` are the 3-D kernel, with the projection and RK3 steps;
 `lmhdx.axial` adds an inlet and an outlet, with the steady root by the RK3
-march or by Newton, `lmhdx.pipe` the developed pipe and `lmhdx.coreflow` the
-inertialess core-flow model. `lmhdx.q2d` is the quasi-two-dimensional model.
+march or by Newton, `lmhdx.pipe` the developed pipe. `lmhdx.q2d` is the quasi-two-dimensional model.
 `lmhdx._programs` compiles one program per problem shape.
-`lmhdx.fully_developed`, `lmhdx.cases` and `lmhdx.io` hold the older case
-entry, its builders, reports, figures and commands until 2.0.0.
+`lmhdx.units` holds the material and wall-stack relations, and `lmhdx.cli` the `lmhdx` command. The
+inertialess core-flow model is evidence code in `validation/coreflow.py`.
 
 `lmhdx.thermal` (ADRs 0008, 0009 and 0011) composes two private stages of
 `lmhdx.core3d`, one electric solve for the Lorentz force and the Joule heat,

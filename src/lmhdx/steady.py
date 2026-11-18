@@ -670,7 +670,7 @@ def solve_steady_state(
     problem: ChannelProblem,
     velocity: tuple[Field, Field, Field] | None = None,
     *,
-    tolerance: float = 1.0e-9,
+    tolerance: float | None = None,
     max_steps: int = _MAX_STEPS,
     pseudo_step: float | None = None,
     forcing: tuple[float, float, float] | None = None,
@@ -681,6 +681,9 @@ def solve_steady_state(
     linear_max_restarts: int = 200,
 ) -> SteadySolution:
     """Find the steady state, differentiably, in memory independent of the iteration count.
+
+    ``tolerance`` is the relative residual the root must reach; None is 1e-9 in float64 and 1e-5 in float32,
+    whose rounding keeps a residual of this problem from falling much below 1e-6.
 
     Without advection, with insulating or thin conducting walls, the problem is affine and
     symmetric, and one preconditioned conjugate-gradient solve answers it; its
@@ -695,6 +698,8 @@ def solve_steady_state(
     time. Rejected roots raise eagerly or yield nonfinite fields and
     derivatives during tracing.
     """
+    if tolerance is None:
+        tolerance = 1.0e-9 if jnp.result_type(float) == jnp.float64 else 1.0e-5
     problem = problem if walls is None else problem.with_walls(*walls)
     step = float(problem.dt if pseudo_step is None else pseudo_step)
     for name, value in (
@@ -973,9 +978,8 @@ def channel_cross_section_weights(problem: ChannelProblem) -> jnp.ndarray:
 
     Axis 0 is the flow axis of every channel this package builds (see
     :func:`lmhdx.core3d.duct_problem`), so a cell's weight is its transverse
-    ``(y, z)`` area alone, independent of the axial spacing -- unlike
-    :func:`fluid_cell_areas`, a channel carries no fluid mask, so every
-    transverse cell counts.
+    ``(y, z)`` area alone, independent of the axial spacing -- and
+    a channel carries no fluid mask, so every transverse cell counts.
     """
     _, dy, dz = problem.grid.widths
     return jnp.asarray(dy)[:, None] * jnp.asarray(dz)[None, :]

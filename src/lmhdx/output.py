@@ -26,7 +26,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .cases import LoggingSpec
 from .fields import Table
 from .grid import FACE, Field, Grid
 from .ops import cell_average
@@ -272,6 +271,18 @@ class SolverStepRecord:
     charge_balance_residual: float = 0.0
     potential_initial_residual: float = 0.0
     linear_initial_residual: float = 0.0
+
+
+@dataclass(frozen=True)
+class LoggingSpec:
+    enabled: bool = True
+    banner: bool = True
+    print_footer: bool = True
+    flush: bool = True
+    step_stride: int = 1
+
+    def is_enabled(self) -> bool:
+        return bool(self.enabled)
 
 
 class StreamingSolverLogger:

@@ -11,7 +11,7 @@ in a fringing field:
    `[free_mhd_discretization_reference]` of `alex-b2-square.toml`;
 3. it runs FreeMHD in Docker and reads the native log and probe tables;
 4. it solves the same duct with the core-flow model
-   (`lmhdx.coreflow.CoreFlow`): aspect 1, thin walls `c_t = c_s = 0.07`, unit
+   (`validation.coreflow.CoreFlow`): aspect 1, thin walls `c_t = c_s = 0.07`, unit
    mean velocity;
 5. it writes `record.json` with both observables and the SHA-256 of every input
    and output.

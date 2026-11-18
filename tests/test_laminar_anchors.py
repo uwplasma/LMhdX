@@ -11,10 +11,12 @@ import numpy as np
 import pytest
 
 import lmhdx
-from lmhdx import Problem, Uniform, Wall
+from lmhdx import Problem, Sides, Solver, Uniform, Wall, duct
+from lmhdx.fields import Func
 from lmhdx.grid import Grid, axis
+from lmhdx.units import WallLayer
 from validation.gci import grid_convergence
-from validation.shercliff import quadrant_flow_rate
+from validation.shercliff import flow_rate, quadrant_flow_rate
 
 pytestmark = pytest.mark.validation
 
@@ -210,3 +212,148 @@ def test_the_wall_derivative_converges_with_the_mesh_at_second_order():
         study = grid_convergence(*(float(run[index]) for run in runs), 1.5, 1.5)
         assert 1.9 < study.order < 2.1 and study.monotone
     assert study.extrapolated == pytest.approx(31.8176, rel=1e-4)
+
+
+# The unit duct on the 2.0 route: the matched, resolved-wall, field and time-accuracy pins of the
+# fully developed case route that `duct` replaced (mean velocity is the flow rate over the area 4).
+
+
+def _mean(found):
+    return float(found.flow_rate) / 4.0
+
+
+def test_the_spectral_quadrant_reproduces_the_full_domain_solve():
+    """The Ha 1000 and Hunt Ha 300 references come from the quadrant; it must agree where both converge.
+
+    Measured at Ha 20: 3e-8 apart for the insulating duct, and 1.1e-4 for Hunt's c = 0.1,
+    where the full-domain solve converges slowly (0.0171481 on 48 points, 0.0171494 on 64)
+    towards the quadrant's 0.0171500 (32 and 48 mapped points agree to 1e-6).
+    """
+    assert quadrant_flow_rate(20.0, 32) == pytest.approx(flow_rate(20.0, 48), rel=1e-7)
+    assert quadrant_flow_rate(20.0, 32, hartmann_wall=0.1) == pytest.approx(
+        flow_rate(20.0, 48, hartmann_wall=0.1), rel=2e-4
+    )
+
+
+def test_spectral_reference_takes_an_aspect_ratio():
+    """A rectangle at B = 0 is the Fourier series of Poiseuille flow; with a field the two solves agree."""
+    beta, odd = 0.4, np.arange(1, 4000, 2)
+    series = (
+        (16.0 / np.pi**3)
+        / (4.0 * beta)
+        * np.sum(
+            4.0 / (np.pi * odd**4) * (2.0 * beta - 4.0 / (np.pi * odd) * np.tanh(np.pi * odd * beta / 2.0))
+        )
+    )
+    assert flow_rate(0.0, 48, aspect=beta) == pytest.approx(series, rel=1e-9)
+    assert quadrant_flow_rate(20.0, 32, aspect=beta) == pytest.approx(
+        flow_rate(20.0, 48, aspect=beta), rel=1e-7
+    )
+
+
+_CONDUCTING = WallLayer("hartmann wall", 1.0, 0.1, 8)
+
+
+@pytest.mark.parametrize(
+    ("y", "fine", "cell_centred"),
+    [
+        (Wall(layers=(_CONDUCTING,)), 0.0172604, 0.0174251),
+        (Sides(Wall(layers=(_CONDUCTING,)), Wall()), 0.0237986, 0.0241184),
+    ],
+    ids=["both Hartmann walls", "lower Hartmann wall"],
+)
+def test_walls_resolved_in_cells_converge_to_the_cell_centred_answer(y, fine, cell_centred):
+    """Hunt Ha 20, c = 0.1 as a 0.1-thick wall of the fluid's conductivity in 8 cells.
+
+    Office, float64, mean velocity on 32/64/96/128 cells: both Hartmann walls resolved
+    0.017346/0.017288/0.017267/0.017260 (cell-centred 32/64/96 0.017425/0.017310/0.017265);
+    the lower one alone 0.023915/0.023831/0.023807/0.023799 (0.024118/0.023868/0.023777).
+    """
+    found = lmhdx.solve(duct(20, 32, walls=dict(y=y)))
+    assert found.residual < 1e-8
+    assert _mean(found) == pytest.approx(fine, rel=0.006)
+    assert _mean(found) == pytest.approx(cell_centred, rel=0.01)
+
+
+def test_resolved_walls_on_both_axes_match_the_cell_centred_corners():
+    """Hartmann walls 4x and side walls 0.5x the fluid's conductivity, 0.05 thick in 8 cells.
+
+    Office, float64, mean velocity at Ha 20, core 32/64/96/128 0.0123907/0.0123487/0.0123297/0.0123234,
+    cell-centred 32/64/96 0.0123993/0.0123538/0.0123333. Thin walls of the same conductance sit 0.16 %
+    lower.
+    """
+    walls = dict(
+        y=Wall(layers=(WallLayer("hartmann wall", 4.0, 0.05, 8),)),
+        z=Wall(layers=(WallLayer("side wall", 0.5, 0.05, 8),)),
+    )
+    assert _mean(lmhdx.solve(duct(20, 32, walls=walls))) == pytest.approx(0.0123993, rel=0.001)
+
+
+def test_thin_walls_conduct_on_both_axes():
+    """Every wall a sheet, c = 0.05, joined in series at the corners.
+
+    Office, float64, mean velocity at Ha 20: core 32/64/96 0.022599/0.022526/0.022502, the
+    cell-centred solver with 0.02-thick walls in 8 cells 0.022559 (64 cells).
+    """
+    found = lmhdx.solve(duct(20, 32, walls=dict(y=Wall(0.05), z=Wall(0.05))))
+    assert _mean(found) == pytest.approx(0.022559, rel=0.003)
+
+
+def test_a_varying_field_converges_to_the_cell_centred_answer():
+    """Office, float64, Ha 20, ``B_y (1 + 0.3 z)``: 16/32/64/128 cells 0.042082/0.039003/0.038792/0.038739
+    (differences shrink 14.6x then 4.0x: second order); cell-centred 16/32/64 0.044505/0.039116/0.038733.
+    """
+
+    def sheared(x, y, z, strength):
+        return 0 * y, strength * (1.0 + 0.3 * z) + 0 * y, 0 * y
+
+    mean = _mean(lmhdx.solve(duct(20, 32).replace(B=Func(sheared, 20.0))))
+    assert mean == pytest.approx(0.0387386, rel=0.007)
+    assert mean == pytest.approx(0.0391165, rel=0.01)
+
+
+def test_an_axial_field_component_leaves_the_fully_developed_flow_alone():
+    """``u x B`` of an axial flow has no ``B_x`` part, and the transverse force it adds is a gradient."""
+    plain = lmhdx.solve(duct(10, 12, cells_in_layer=2))
+    axial = lmhdx.solve(duct(10, 12, cells_in_layer=2).replace(B=Uniform(3.0, 10.0, 0.0)))
+    np.testing.assert_allclose(axial.velocity[0].data, plain.velocity[0].data, rtol=1e-9, atol=1e-12)
+
+
+def test_an_odd_mesh_is_as_accurate_as_its_even_neighbours():
+    """An odd cell count keeps one geometric centre cell; measured against the spectral mean velocity.
+
+    Office, float64, Ha 20: 15 / 16 cells +10.9 % / +7.7 %, 31 / 32 +0.94 % / +0.89 %,
+    63 / 64 +0.45 % / +0.44 % (the cell-centred solver on 31 cells: +2.7 %).
+    """
+    exact = flow_rate(20.0, 48)
+    errors = {}
+    for cells in (31, 32):
+        found = lmhdx.solve(duct(20, cells))
+        assert found.velocity[0].data.shape[1:] == (cells, cells)
+        errors[cells] = (_mean(found) - exact) / exact
+    assert 0.0 < errors[31] < 0.0100
+    assert errors[31] == pytest.approx(errors[32], rel=0.1)
+
+
+def _startup_mean(time, terms=200):
+    """Mean velocity of the unit-forced square duct started from rest: the eigenfunction series."""
+    odd = np.arange(1, 2 * terms, 2)
+    m, n = np.meshgrid(odd, odd, indexing="ij")
+    rate = np.pi**2 / 4 * (m**2 + n**2)
+    return float(np.sum(64 / (np.pi**4 * m**2 * n**2 * rate) * (1 - np.exp(-rate * time))))
+
+
+def test_a_duct_started_from_rest_runs_at_first_order_in_time():
+    """Euler steps of the unforced-field duct from rest: first order in dt, and the series within 1 % on 16^2.
+
+    Office, float64, 16^2 at t = 0.2: dt 0.02/0.01/0.005 give 0.08996/0.09114/0.09175 against the
+    eigenfunction series 0.09091.
+    """
+    problem = duct(0.0, 16)
+    weights = np.asarray(problem.grid.cell_volumes())[0]
+    means = []
+    for dt in (0.02, 0.01, 0.005):
+        found = lmhdx.solve(problem, Solver(method="euler", dt=dt, steps=round(0.2 / dt)))
+        means.append(float((weights * np.asarray(found.velocity[0].data[0])).sum() / weights.sum()))
+    assert 1.7 < (means[1] - means[0]) / (means[2] - means[1]) < 2.3
+    assert means[2] == pytest.approx(_startup_mean(0.2), rel=0.01)

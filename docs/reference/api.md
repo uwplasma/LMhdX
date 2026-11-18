@@ -2,7 +2,7 @@
 
 `enable_x64` explicitly enables JAX float64 arrays process-wide. Call it before
 constructing meshes or tracing functions; importing LMhdX does not change precision.
-`enable_x64`, a case `dtype`, `ChannelProblem` and `Q2DProblem` also set JAX's
+`enable_x64`, `ChannelProblem` and `Q2DProblem` also set JAX's
 `jax_default_matmul_precision` to `'highest'` when it is unset. Float32 matrix
 products on Ampere GPUs then run in float32 rather than TensorFloat-32, which
 was 3e-4 from float64 on an RTX A4000. A value you set yourself, in
@@ -26,8 +26,7 @@ live in the module that owns their concepts.
 |---|---|
 | Problems | `Problem`, `Wall`, `Sides`, `Open`, `Thermal`, `Uniform`, `Solver`, `Output`, `duct`, `channel`, `fringe_duct`, `configure`, `solve` |
 | Staggered core | `ChannelProblem`, `duct_problem`, `solve_steady_state`, `advance` |
-| Cases and solves | `make_hartmann_case`, `make_shercliff_case`, `make_hunt_case`, `solve_fully_developed_fields` (1.x names, retired in 2.0), `make_q2d_case`, `evolve_q2d`, `Q2DProblem`, `solve` |
-| Meshes | `generate_rect_duct_mesh_from_faces` (the mesh a case's solution reports) |
+| Quasi-2-D | `make_q2d_case`, `evolve_q2d`, `Q2DProblem` |
 | Wall models | `WallLayer`, `wall_conductance_ratio`, `effective_pinhole_conductance_ratio`, `tangential_stack_conductance_ratio`, `normal_stack_leakage_ratio`, `equivalent_single_layer`, `nested_wall_layer_resolution_summary` |
 | Units | `dynamic_to_kinematic_viscosity`, `kinematic_to_dynamic_viscosity`, `hartmann_number`, `reynolds_number`, `interaction_parameter`, `magnetic_reynolds_number`, `magnetic_field_from_hartmann` |
 | Evidence | The energy budget of `lmhdx.core3d` and the analytical profiles of `validation/` |
@@ -62,24 +61,17 @@ the guide is [Problems, solvers and one verb](../getting_started/problem.md).
 .. automodule:: lmhdx.output
    :members: Output, Start, read_record, write_record, write_vtk, write_pvd
 .. automodule:: lmhdx.config
-   :members: load, dumps, upgrade
+   :members: load, dumps, run, upgrade
 .. autofunction:: lmhdx.configure
 .. autofunction:: lmhdx.grid.axis
 ```
 
-## Units, wall models, tabulated fields and the 1.x case schema
+## Units and wall models
 
 ```{eval-rst}
-.. automodule:: lmhdx.cases
+.. automodule:: lmhdx.units
    :members:
    :show-inheritance:
-```
-
-## Inertialess core flow
-
-```{eval-rst}
-.. automodule:: lmhdx.coreflow
-   :members:
 ```
 
 ## Ducts with an inlet and an outlet
@@ -120,16 +112,9 @@ The pipe names remain importable from `lmhdx.poisson`, where they lived in 1.9.
    :members:
 ```
 
-## Fully developed cases on the staggered core
+## The command line
 
 ```{eval-rst}
-.. automodule:: lmhdx.fully_developed
-   :members:
-```
-
-## Outputs, validation reports and the command line
-
-```{eval-rst}
-.. automodule:: lmhdx.io
+.. automodule:: lmhdx.cli
    :members:
 ```

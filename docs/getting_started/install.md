@@ -42,9 +42,9 @@ solve 35–60 % slower; for long loops over one compiled function, call
 It stays off on macOS with jaxlib older than 0.10, which can crash reading
 back a large cached program.
 
-On import, LMhdX also adds `--xla_gpu_enable_triton_gemm=false` to `XLA_FLAGS`,
-which halves the GPU compile of a steady solve at about 10 % warm cost. A value
-you set yourself wins; `LMHDX_XLA_DEFAULTS=0` leaves `XLA_FLAGS` untouched.
+Importing LMhdX sets no JAX or XLA option. `lmhdx.configure(gpu_gemm=True)` adds
+`--xla_gpu_enable_triton_gemm=false` to `XLA_FLAGS`, which halves the GPU compile of a steady solve at
+about 10 % warm cost; call it before the first array is made. A flag you set yourself wins.
 
 A run uses JAX's default device: one GPU when a CUDA `jaxlib` is installed, else the CPU with XLA's own threads. Multi-device execution is not supported yet.
 

@@ -24,11 +24,11 @@ _TEST_TIERS = {
 }
 _TEST_SHARDS = {
     "support": (
-        "tests/test_config.py",
-        "tests/test_io.py",
+        "tests/test_repository.py",
+        "tests/test_output.py",
         "tests/test_units_and_wall_models.py",
         "tests/test_freemhd.py",
-        "tests/test_benchmarks.py",
+        "tests/test_run_benchmarks.py",
         "tests/test_example_runner.py",
     ),
     # Split from support: the design studies are most of its unit time.
@@ -117,7 +117,6 @@ _TEST_SHARDS = {
             "test_case_1_s_gate_and_reported_figures_follow_their_declared_rules",
         )
     ),
-    "fully_developed": ("tests/test_fully_developed.py",),
     "gradients": tuple(
         f"tests/test_steady.py::{name}"
         for name in (
@@ -131,7 +130,7 @@ _TEST_SHARDS = {
         )
     ),
     "physics": (
-        "tests/test_physics.py",
+        "tests/test_q2d.py",
         "tests/test_q2d_identities.py",
         "tests/test_stepper.py",
     ),
@@ -156,24 +155,23 @@ _TEST_SHARDS = {
 
 _ALL_TESTS = tuple(dict.fromkeys(path.split("::")[0] for shard in _TEST_SHARDS.values() for path in shard))
 _CHANGE_TEST_NAMES = {
-    "__init__": "config example_runner problem",
-    "__main__": "io",
-    "cases": "config physics fully_developed units_and_wall_models design io",
+    "__init__": "repository example_runner problem",
+    "__main__": "output",
+    "cli": "output toml repository",
+    "units": "units_and_wall_models problem repository example_runner",
     "axial": "axial example_runner",
-    "core3d": "core3d stepper timeloop steady coreflow axial",
-    "coreflow": "coreflow freemhd",
-    "fully_developed": "fully_developed design config example_runner",
-    "steady": "steady fully_developed axial",
+    "core3d": "core3d stepper timeloop steady axial",
+    "steady": "steady design axial",
     "grid": "grid ops core3d timeloop steady pipe axial toml",
     "problem": "problem laminar_anchors example_runner toml",
-    "fields": "problem laminar_anchors toml",
-    "solver": "problem laminar_anchors example_runner toml",
-    "config": "toml",
+    "fields": "problem laminar_anchors toml units_and_wall_models",
+    "solver": "problem laminar_anchors example_runner toml output",
+    "output": "output problem",
+    "config": "toml output",
     "ops": "ops em core3d timeloop steady pipe axial",
     "poisson": "poisson core3d timeloop steady pipe axial",
     "pipe": "pipe poisson axial em",
-    "io": "io benchmarks physics example_runner config toml",
-    "q2d": "physics q2d_identities example_runner",
+    "q2d": "q2d q2d_identities example_runner",
 }
 _CHANGE_TESTS = {
     module: tuple(f"tests/test_{name}.py" for name in names.split())
@@ -226,17 +224,17 @@ def _tests_for_changes(paths: tuple[str, ...]) -> tuple[str, ...]:
         elif path.startswith("examples/"):
             selected.append("tests/test_example_runner.py")
         elif path == "scripts/run_benchmarks.py":
-            selected.append("tests/test_benchmarks.py")
-        elif path == "validation/freemhd.py":
-            selected.append("tests/test_freemhd.py")
+            selected.append("tests/test_run_benchmarks.py")
+        elif path in {"validation/freemhd.py", "validation/coreflow.py"}:
+            selected.extend(("tests/test_freemhd.py", "tests/test_coreflow.py"))
         elif path in {
             "scripts/audit_architecture.py",
             "scripts/run_full_test_suite.py",
             "scripts/make_showcase_figures.py",
         }:
-            selected.append("tests/test_config.py")
+            selected.append("tests/test_repository.py")
         elif path in {"pyproject.toml", "MANIFEST.in"}:
-            selected.append("tests/test_config.py")
+            selected.append("tests/test_repository.py")
         elif path in _NO_PYTHON_TEST_FILES or path.startswith(_NO_PYTHON_TEST_PREFIXES):
             continue
         else:

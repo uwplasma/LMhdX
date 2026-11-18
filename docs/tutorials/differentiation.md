@@ -156,7 +156,7 @@ complex physical inputs. No manual cast of the initial state is required.
 This derivative is exact for the finite dealiased IFRK4 evolution. Its default
 SOLVAX checkpoint schedule stores `O(sqrt(steps))` trajectory states instead of
 the full tape. The analytical decay, JVP/VJP identity, and compiled reverse
-memory tests in `tests/test_physics.py` are the executable acceptance contract.
+memory tests in `tests/test_q2d.py` are the executable acceptance contract.
 
 The explicit field-level optimization surfaces are
 `lmhdx.solve`, `lmhdx.axial.solve_open_duct`, and `evolve_q2d`.

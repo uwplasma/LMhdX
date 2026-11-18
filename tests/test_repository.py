@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 
 import lmhdx
-from lmhdx.cases import _parse_boundary_value, _wall_conductivity_from_conductance_ratio, load_run_config
 from lmhdx.config import load
 from scripts.audit_architecture import (
     _checkout_size,
@@ -26,10 +25,7 @@ from scripts.audit_architecture import (
 )
 from scripts.run_full_test_suite import _ALL_TESTS, _test_environment, _tests_for_changes
 
-pytestmark = [
-    pytest.mark.unit,
-    pytest.mark.filterwarnings("ignore:.*retired in lmhdx 2.0:DeprecationWarning"),
-]
+pytestmark = pytest.mark.unit
 
 
 def test_ci_tiers_cover_collection_without_overlapping_pr_work():
@@ -115,44 +111,19 @@ def _shard_members(all_tests: set[str], shards: str) -> set[str]:
 @pytest.mark.parametrize("x64", ["false", "true"])
 def test_explicit_precision_in_fresh_process(x64):
     code = """
-import warnings
 import jax
 import jax.numpy as jnp
 import lmhdx
-from dataclasses import replace
-from lmhdx import axial, cases, q2d
-warnings.filterwarnings("ignore", message=".*retired in lmhdx 2.0")
 initial = jax.config.x64_enabled
 assert initial == EXPECTED
 assert jax.config.jax_default_matmul_precision is None
-case32 = lmhdx.make_hartmann_case(ha=2, ny=8, nz=8, dtype="float32")
+lmhdx.Q2DProblem(jnp.zeros((8, 8), dtype=jnp.float32))
 assert jax.config.x64_enabled == initial
 assert jax.config.jax_default_matmul_precision == "highest"
-values = []
-for dtype in ("float32", "float64"):
-    with warnings.catch_warnings(record=True) as recorded:
-        warnings.simplefilter("always")
-        warnings.filterwarnings("ignore", message=".*retired in lmhdx 2.0")
-        case = lmhdx.make_hartmann_case(ha=2, ny=8, nz=8, dtype=dtype)
-    assert len(recorded) == int(dtype == "float64" and not initial)
-    if recorded:
-        assert recorded[0].category is DeprecationWarning
-    objective = lambda x: jnp.mean(lmhdx.solve_fully_developed_fields(case, forcing=x)[0])
-    x = jnp.asarray(1., dtype=case.dtype)
-    value, grad = jax.jit(jax.value_and_grad(objective))(x)
-    tangent = jax.jit(lambda x: jax.jvp(objective, (x,), (jnp.ones_like(x),))[1])(x)
-    assert value.dtype == grad.dtype == tangent.dtype == case.dtype
-    assert bool(jnp.isfinite(grad))
-    # Linear forcing response is an exact derivative oracle at fixed field.
-    assert bool(jnp.allclose(grad, value, rtol=2e-5, atol=1e-7))
-    assert bool(jnp.allclose(grad, tangent, rtol=2e-5, atol=1e-7))
-    values.append(float(value))
-    short = replace(case, time_stepper=replace(case.time_stepper, max_steps=2))
-    result = lmhdx.solve(short)
-    assert result.state.u.dtype == result.state.phi.dtype == case.dtype
-assert abs(values[0] - values[1]) < 2e-6
-lmhdx.enable_x64()
-assert jnp.asarray(1.).dtype == jnp.float64
+lmhdx.configure(dtype="float32")
+assert jax.config.x64_enabled == initial
+lmhdx.configure(dtype="float64")
+assert jax.config.x64_enabled and jnp.asarray(1.).dtype == jnp.float64
 """.replace("EXPECTED", str(x64 == "true"))
     subprocess.run(
         [sys.executable, "-c", code],
@@ -166,12 +137,12 @@ assert jnp.asarray(1.).dtype == jnp.float64
 
 
 @pytest.mark.parametrize("choice", ["0", "cache"])
-def test_first_case_enables_the_shared_disk_cache_by_default(tmp_path, choice):
+def test_x64_enables_the_shared_disk_cache_by_default_and_import_sets_no_xla_flag(tmp_path, choice):
     code = """
 import os, jax, jaxlib, platform, lmhdx
-assert "--xla_gpu_enable_triton_gemm=false" in os.environ["XLA_FLAGS"]
-assert jax.config.jax_compilation_cache_dir is None
-lmhdx.make_hartmann_case(ha=2, ny=4, nz=4)
+assert "XLA_FLAGS" not in os.environ and jax.config.jax_compilation_cache_dir is None
+lmhdx.enable_x64()
+assert "XLA_FLAGS" not in os.environ
 unsafe = platform.system() == "Darwin" and tuple(map(int, jaxlib.__version__.split(".")[:2])) < (0, 10)
 enabled = os.environ["LMHDX_COMPILATION_CACHE"] != "0" and not unsafe
 assert (jax.config.jax_compilation_cache_dir == os.environ["LMHDX_COMPILATION_CACHE"]) == enabled
@@ -179,6 +150,10 @@ assert jax.config.jax_compilation_cache_max_size == (2**31 if enabled else -1)
 # JAX reads and writes a size-bounded cache only through filelock; without it every entry fails.
 import importlib.util
 assert importlib.util.find_spec("filelock") is not None
+lmhdx.configure(gpu_gemm=True)
+assert os.environ["XLA_FLAGS"] == "--xla_gpu_enable_triton_gemm=false"
+lmhdx.configure(gpu_gemm=True)
+assert os.environ["XLA_FLAGS"] == "--xla_gpu_enable_triton_gemm=false"
 """
     environment = {
         key: value
@@ -187,58 +162,6 @@ assert importlib.util.find_spec("filelock") is not None
     }
     environment["LMHDX_COMPILATION_CACHE"] = choice if choice == "0" else str(tmp_path / choice)
     subprocess.run([sys.executable, "-c", code], check=True, timeout=90, env=environment)
-
-
-def _write_minimal_config(
-    tmp_path: Path,
-    name: str,
-    *,
-    case_extra: str = "",
-    geometry_kind: str | None = "rect_duct",
-    geometry_extra: str = "",
-    magnetic_kind: str = "constant",
-    solver: str = "",
-) -> Path:
-    geometry_type = "" if geometry_kind is None else f'kind = "{geometry_kind}"'
-    magnetic_value = "value = [0.0, 0.0, 1.0]" if magnetic_kind == "constant" else ""
-    solver_table = f"[solver]\n{solver}" if solver else ""
-    path = tmp_path / f"{name}.toml"
-    path.write_text(
-        f"""
-[case]
-name = "{name}"
-{case_extra}
-
-[geometry]
-{geometry_type}
-width = 1.0
-height = 1.0
-ny = 4
-nz = 4
-{geometry_extra}
-
-[magnetic_field]
-kind = "{magnetic_kind}"
-{magnetic_value}
-
-{solver_table}
-
-[time_stepper]
-dt = 0.1
-t_final = 0.1
-max_steps = 1
-
-[[regions]]
-name = "fluid"
-kind = "fluid"
-conductivity = 1.0
-
-[[boundary_conditions]]
-name = "wall"
-kind = "no_slip"
-""".strip()
-    )
-    return path
 
 
 def test_draft_ci_defers_numerics_without_skipping_ready_or_coverage_jobs(tmp_path):
@@ -309,9 +232,9 @@ def test_every_test_file_reaches_the_combined_coverage():
         (".github/workflows/docs.yml", "true", "false", "true", "false"),
         (".github/workflows/external-validation.yml", "true", "false", "false", "true"),
         (".github/actions/setup-lmhdx/action.yml", "true", "false", "true", "true"),
-        ("src/lmhdx/cases.py", "true", "false", "true", "false"),
+        ("src/lmhdx/units.py", "true", "false", "true", "false"),
         ("src/lmhdx/q2d.py", "true", "false", "true", "false"),
-        ("src/lmhdx/io.py", "true", "false", "true", "false"),
+        ("src/lmhdx/cli.py", "true", "false", "true", "false"),
         ("validation/freemhd.py", "true", "false", "false", "true"),
         ("tests/test_grid.py", "true", "false", "false", "false"),
         ("scripts/run_full_test_suite.py", "false", "true", "false", "false"),
@@ -375,156 +298,6 @@ def test_ci_scope_and_superseded_work_policy(tmp_path, changed, full, targeted, 
         groups.add(group)
 
 
-def test_load_run_config_reads_complete_toml(tmp_path: Path):
-    input_file = tmp_path / "hartmann.toml"
-    input_file.write_text(
-        """
-[case]
-name = "hartmann_toml_demo"
-forcing = 1.0
-initial_velocity = 0.0
-reference_pressure_gradient = -1.0
-reference_phi_cell = [0, 0]
-notes = "unit test"
-
-[geometry]
-kind = "rect_duct"
-width = 2.0
-height = 2.0
-length = 1.0
-nx = 1
-ny = 8
-nz = 8
-wall_thickness = [0.0, 0.0, 0.0, 0.0]
-wall_cells = [0, 0, 0, 0]
-wall_model = "resolved"
-target_ha = 20.0
-
-[magnetic_field]
-kind = "constant"
-value = [0.0, 0.0, 20.0]
-ramp_start = 0.0
-ramp_duration = 0.0
-
-[solver]
-kind = "fully_developed_inductionless"
-mode = "steady"
-preconditioner = "jacobi"
-time_scheme = "implicit_euler"
-coupling_iterations = 9
-coupling_tolerance = 1.0e-7
-coupling_acceleration = "aitken"
-coupling_min_relaxation = 0.1
-coupling_max_relaxation = 12.0
-coupling_history_depth = 5
-coupling_regularization = 1.0e-9
-coupling_damping = 0.8
-
-[time_stepper]
-dt = 0.001
-t_final = 0.01
-max_steps = 10
-potential_iterations = 100
-potential_relaxation = 1.0
-potential_solver = "cg"
-steady_tolerance = 1e-8
-
-[output]
-directory = "./out"
-write_paraview = true
-write_csv_profiles = true
-write_npz = true
-write_json_summary = true
-write_plots = false
-copy_input_file = true
-write_stride = 1
-history_stride = 3
-
-[logging]
-enabled = true
-banner = true
-print_footer = true
-flush = true
-step_stride = 2
-
-[restart]
-enabled = true
-path = "./previous_results.npz"
-reset_histories = false
-write_restart = true
-restart_filename = "hartmann_restart.npz"
-
-[[regions]]
-name = "fluid"
-kind = "fluid"
-conductivity = 1.0
-density = 1.0
-viscosity = 0.01
-
-[[boundary_conditions]]
-name = "y_min_wall"
-kind = "no_slip"
-axis = "y"
-side = "min"
-
-[[boundary_conditions]]
-name = "y_max_wall"
-kind = "no_slip"
-axis = "y"
-side = "max"
-
-[[boundary_conditions]]
-name = "z_min_wall"
-kind = "insulating"
-axis = "z"
-side = "min"
-
-[[boundary_conditions]]
-name = "z_max_wall"
-kind = "insulating"
-axis = "z"
-side = "max"
-""".strip()
-    )
-
-    config = load_run_config(input_file)
-
-    assert config.case.name == "hartmann_toml_demo"
-    assert config.case.geometry.kind == "rect_duct"
-    assert config.case.geometry.wall_model == "resolved"
-    assert config.case.output.directory == str((tmp_path / "out").resolve())
-    assert config.case.output.history_stride == 3
-    assert config.case.solver.kind == "fully_developed_inductionless"
-    assert config.case.solver.mode == "steady"
-    # Keys of the retired solver are read and ignored.
-    assert not hasattr(config.case.solver, "coupling_iterations")
-    assert config.logging.step_stride == 2
-    assert config.restart.enabled is True
-    assert config.restart.path == (tmp_path / "previous_results.npz").resolve()
-    assert config.restart.reset_histories is False
-    assert config.restart.write_restart is True
-    assert config.restart.restart_filename == "hartmann_restart.npz"
-    assert len(config.case.regions) == 1
-    assert len(config.case.boundary_conditions) == 4
-
-
-@pytest.mark.parametrize(
-    ("kwargs", "message"),
-    [
-        ({"magnetic_kind": "analytic"}, "analytic magnetic-field"),
-        ({"solver": 'kind = "invalid"'}, "Unsupported solver kind"),
-        ({"geometry_kind": None}, "Missing required TOML key 'kind'"),
-        ({"geometry_extra": "wall_thickness = [0.1, 0.2]"}, "must have length 4"),
-        ({"solver": 'mode = "invalid"'}, "Unsupported solve mode"),
-    ],
-)
-def test_load_run_config_rejects_invalid_inputs(tmp_path: Path, kwargs: dict[str, str | None], message: str):
-    input_file = _write_minimal_config(tmp_path, "rejected", **kwargs)
-
-    with pytest.raises(ValueError, match=message):
-        load_run_config(input_file)
-
-
 def test_shipped_example_toml_files_parse():
     root = Path(__file__).resolve().parents[1]
 
@@ -555,34 +328,6 @@ def test_tutorials_map_to_executable_examples_or_numerical_tests():
         assert "```python" in path.read_text()
 
 
-def test_parse_boundary_value_accepts_scalar_and_vector_and_rejects_bad_inputs():
-    assert _parse_boundary_value(None) is None
-    assert _parse_boundary_value(1.25) == pytest.approx(1.25)
-    assert _parse_boundary_value([1, 2, 3]) == pytest.approx((1.0, 2.0, 3.0))
-
-    with pytest.raises(ValueError, match="length 3"):
-        _parse_boundary_value([1, 2])
-
-    with pytest.raises(ValueError, match="Unsupported boundary-condition value"):
-        _parse_boundary_value({"bad": True})
-
-
-@pytest.mark.parametrize(
-    ("wall_thickness", "hartmann_half_spacing", "message"),
-    ((0.0, 1.0, "wall_thickness"), (1.0, 0.0, "hartmann_half_spacing")),
-)
-def test_wall_conductivity_rejects_nonpositive_geometry(
-    wall_thickness: float, hartmann_half_spacing: float, message: str
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        _wall_conductivity_from_conductance_ratio(
-            wall_conductance_ratio=1.0,
-            fluid_conductivity=1.0,
-            wall_thickness=wall_thickness,
-            hartmann_half_spacing=hartmann_half_spacing,
-        )
-
-
 def test_precision_setup_pins_true_float32_contractions_and_keeps_a_user_choice():
     """Unset, JAX allows TensorFloat-32 contractions on Ampere GPUs (3e-4 from float64 on an A4000)."""
     import jax
@@ -590,7 +335,6 @@ def test_precision_setup_pins_true_float32_contractions_and_keeps_a_user_choice(
 
     setups = {
         "enable_x64": lmhdx.enable_x64,
-        "case dtype": lambda: lmhdx.make_hartmann_case(ha=2, ny=8, nz=8, dtype="float32"),
         "ChannelProblem": lambda: lmhdx.duct_problem(hartmann=20.0, cells=24),
         "Q2DProblem": lambda: lmhdx.Q2DProblem(jnp.zeros((8, 8), dtype=jnp.float32)),
     }
@@ -625,15 +369,10 @@ EXPECTED_ROOT_API = {
     "solve_steady_state",
     "advance",
     "enable_compilation_cache",
-    "make_hartmann_case",
-    "make_shercliff_case",
-    "make_hunt_case",
     "make_q2d_case",
     "evolve_q2d",
-    "solve_fully_developed_fields",
     "Q2DProblem",
     "solve",
-    "generate_rect_duct_mesh_from_faces",
     "WallLayer",
     "dynamic_to_kinematic_viscosity",
     "kinematic_to_dynamic_viscosity",
@@ -675,11 +414,11 @@ def test_change_gate_selects_affected_tests_and_fails_closed() -> None:
         "tests/test_example_runner.py",
     )
     assert _tests_for_changes(("src/lmhdx/q2d.py", "examples/q2d_vortex.py")) == (
-        "tests/test_physics.py",
+        "tests/test_q2d.py",
         "tests/test_q2d_identities.py",
         "tests/test_example_runner.py",
     )
-    assert _tests_for_changes(("tests/test_io.py",)) == ("tests/test_io.py",)
+    assert _tests_for_changes(("tests/test_output.py",)) == ("tests/test_output.py",)
     assert _tests_for_changes(("unknown executable",)) == _ALL_TESTS
 
 
@@ -746,7 +485,9 @@ def test_root_import_is_lazy_and_within_budget() -> None:
 def test_numerical_modules_do_not_import_optional_visualization() -> None:
     code = """
 import sys
-import lmhdx.io
+import lmhdx.cli
+import lmhdx.config
+import lmhdx.solver
 assert not any(name == 'matplotlib' or name.startswith('matplotlib.') for name in sys.modules)
 assert not any(name == 'PIL' or name.startswith('PIL.') for name in sys.modules)
 """
@@ -897,3 +638,43 @@ def test_workflow_actions_are_pinned_to_commit_shas():
 
     text = "".join(p.read_text() for p in Path(".github").rglob("*.yml"))
     assert not re.findall(r"uses:\s*(?!\./)\S+(?<!@[0-9a-f]{40})\s*$", text, re.M)
+
+
+def test_no_tracked_file_names_a_removed_1x_entry_point():
+    """The 1.x names went in 2.0; only the plan, its log, the ADRs and the migration guide still say them."""
+    removed = re.compile(
+        r"make_(?:hartmann|shercliff|hunt)_case|solve_fully_developed|CaseSpec|RunConfig"
+        r"|lmhdx\.(?:cases|io|fully_developed|coreflow)\b|load_run_config|write_solution_outputs"
+        r"|hartmann_validation|MagneticFieldSpec|LMHDX_XLA_DEFAULTS"
+    )
+    allowed = (
+        "plan.md",
+        "plan-log.md",
+        "docs/adr/",
+        "docs/reference/migration.md",
+        "tests/test_repository.py",
+    )
+    root = Path(__file__).resolve().parents[1]
+    listing = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=True).stdout
+    found = []
+    for name in (item.decode() for item in listing.split(b"\0") if item):
+        if name.startswith(allowed[2:]) or name in allowed:
+            continue
+        try:
+            text = (root / name).read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        found += [f"{name}: {match.group(0)}" for match in removed.finditer(text)]
+    assert not found, "\n".join(found[:20])
+
+
+def test_gpu_gemm_adds_its_xla_flag_once_and_keeps_the_users(monkeypatch: pytest.MonkeyPatch, caplog):
+    flag = "--xla_gpu_enable_triton_gemm=false"
+    monkeypatch.delenv("XLA_FLAGS", raising=False)
+    with caplog.at_level("INFO", logger="lmhdx"):
+        lmhdx.configure(gpu_gemm=True)
+        lmhdx.configure(gpu_gemm=True)
+    assert os.environ["XLA_FLAGS"] == flag and caplog.text.count("XLA_FLAGS gained") == 1
+    monkeypatch.setenv("XLA_FLAGS", "--xla_gpu_enable_triton_gemm=true --xla_cpu_enable_fast_math=false")
+    lmhdx.configure(gpu_gemm=True)
+    assert os.environ["XLA_FLAGS"] == "--xla_gpu_enable_triton_gemm=true --xla_cpu_enable_fast_math=false"

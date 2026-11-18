@@ -47,12 +47,11 @@ jobs:
           /tmp/lmhdx-wheel-check/bin/python -m pip install "$GITHUB_WORKSPACE"/dist/*.whl
           cd /tmp
           /tmp/lmhdx-wheel-check/bin/lmhdx --help >/dev/null
-          /tmp/lmhdx-wheel-check/bin/lmx --help >/dev/null
           /tmp/lmhdx-wheel-check/bin/python - <<'PY'
           import jax
           import jax.numpy as jnp
 
-          from lmhdx import make_hartmann_case, solve, solve_fully_developed_fields
+          import lmhdx
           import tomllib
           from importlib.resources import files
 
@@ -61,12 +60,13 @@ jobs:
               assert tomllib.loads((data / "specs" / f"{name}.toml").read_text())["id"]
           for name in ("alex-b1-pipe.csv", "alex-b2-square.csv", "samper-table-i.toml"):
               assert (data / "references" / name).read_text()
-          solution = solve(make_hartmann_case(ha=5, ny=4, nz=4))
-          assert solution.state.residual < 1e-7
-          case = make_hartmann_case(ha=5, ny=4, nz=4)
+          lmhdx.configure(dtype="float64")
+          solution = lmhdx.solve(lmhdx.duct(5, 12, cells_in_layer=2))
+          assert solution.residual < 1e-7
+          problem = lmhdx.duct_problem(hartmann=5.0, cells=12, cells_in_layer=2)
           value, derivative = jax.jit(jax.value_and_grad(
               lambda scale: jnp.mean(
-                  solve_fully_developed_fields(case, magnetic_field_scale=scale)[0]
+                  lmhdx.solve_steady_state(problem, field_scale=scale).velocity[0].data
               )
           ))(jnp.asarray(1.0))
           assert jnp.isfinite(value)

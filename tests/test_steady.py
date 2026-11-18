@@ -5,6 +5,7 @@ import functools
 import os
 
 import jax
+import jax.experimental  # noqa: F401
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -1010,26 +1011,18 @@ _FAMILIES = {
 }
 
 
-@pytest.mark.parametrize("route", ["steady", "fully developed"])
 @pytest.mark.parametrize("family", sorted(_FAMILIES))
-def test_the_shared_program_holds_no_value_of_the_problem(family, route):
+def test_the_shared_program_holds_no_value_of_the_problem(family):
     """2b.1 stage 5: two problems of a shape lower to the same program, which solves each to round-off.
 
     A number or an array of one problem left in the trace would change the lowered text
     and give every later problem that problem's value; the fingerprint is that text.
-    ``route`` is the program of :func:`lmhdx.steady.solve_compiled` or the unit-drive
-    program of :func:`lmhdx.solve`, whose argument is the field scale.
+    The program is that of :func:`lmhdx.steady.solve_compiled`.
     """
     import lmhdx._programs as _programs
-    import lmhdx.fully_developed as fully_developed
     import lmhdx.steady as steady
 
-    if route == "steady":
-        build, arguments, values = steady._solve_program, (), ()
-    else:
-        dtype = jnp.result_type(float)
-        build, arguments = fully_developed._unit_drive, (jax.ShapeDtypeStruct((), dtype),)
-        values = (np.asarray(1.3, dtype=dtype),)
+    build, arguments, values = steady._solve_program, (), ()
     first, *problems = (_FAMILIES[family](hartmann) for hartmann in (20.0, 30.0, 45.0))
     with _programs.discovering(first) as trace:
         jax.jit(build(first)).lower(*arguments)
@@ -3061,3 +3054,17 @@ def test_the_digitized_case_2_curves_confirm_its_inferred_velocity_and_flux():
     # physical reason, not to pass: every sample from x = 0.35 m is within 1.2 px.
     plateau = (x > 0.5) & (x < 0.9)
     assert np.max(np.abs(upper[plateau] - 300.0 - rise)) <= figures[34]["uncertainty"]["y"]
+
+
+def test_a_float32_steady_solve_converges_at_the_default_tolerance():
+    """The default 1e-9 is below what float32 rounding allows, so the solve used to raise; None is 1e-5 there."""
+    reference = solve_steady_state(duct_problem(hartmann=20.0, cells=12, cells_in_layer=2))
+    float32 = (
+        jax.enable_x64(False) if hasattr(jax, "enable_x64") else jax.experimental.disable_x64()
+    )  # JAX 0.7.2
+    with float32:
+        found = solve_steady_state(duct_problem(hartmann=20.0, cells=12, cells_in_layer=2))
+        assert found.velocity[0].data.dtype == jnp.float32 and float(found.residual_norm) < 1e-3
+    assert np.sum(np.asarray(found.velocity[0].data)) == pytest.approx(
+        np.sum(np.asarray(reference.velocity[0].data)), rel=1e-3
+    )

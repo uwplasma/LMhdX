@@ -70,7 +70,7 @@ What is and is not established:
   Runge-Kutta stepper, whichever `method="auto"` finds faster (status `converged`, `stagnated` or `unsteady`); [Numerics](../physics/numerics.md) gives the measured inertial share
   ("Inertia on the open axis").
 - On the ANL case the excess drop over the locally fully developed drop agrees
-  within 1 % with the inertialess core-flow model (`lmhdx.coreflow`, TM-228
+  within 1 % with the inertialess core-flow model (`validation.coreflow`, TM-228
   eqs. 4a–4c) once the model carries the layers' conductance
   (`coreflow.layer_conductances`; c 0.1, Ha 2×10⁴), and within 4–5 % at
   c 0.02. Both models are LMhdX's: internal consistency, not validation.

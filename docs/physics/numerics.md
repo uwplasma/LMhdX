@@ -368,7 +368,7 @@ keeps primal result storage independent of the number of time steps.
 
 ## Inertialess core-flow model
 
-`lmhdx.coreflow` solves the three-dimensional core of a thin-walled rectangular
+`validation.coreflow` solves the three-dimensional core of a thin-walled rectangular
 duct in a field $B_y(x)$ at large Hartmann number and interaction parameter,
 following Hua, Walker, Picologlou and Reed (ANL/FPP/TM-228, 1988). Inertia and
 viscosity are confined to layers; in the core $\nabla p=\mathbf j\times\mathbf B$,
@@ -753,7 +753,7 @@ core-flow model, doubling $c_s$ from 0.02 to 0.04 raises the excess from 0.0178
 to 0.0282 (TM-228's fit is $0.126\,c^{1/2}$).
 
 **The core-flow model at the layers' conductances.** Both conductances are
-inputs of `lmhdx.coreflow.CoreFlow.solve`, so no code change is needed. Two
+inputs of `validation.coreflow.CoreFlow.solve`, so no code change is needed. Two
 closures were run, each with its own locally fully developed drop:
 
 - *global*: $c_t = c + 1/Ha$ and $c_s = c_{s,\mathrm{eff}}(Ha)$, uniform along
@@ -762,8 +762,8 @@ closures were run, each with its own locally fully developed drop:
   $c_s = c + k(Ha\,B)/\sqrt{Ha\,B}$, with $k$ interpolated in $\log Ha$. This
   needs conductances that vary along $x$. `CoreFlow.solve` takes them per
   station (an array or a callable of $x$), and
-  `lmhdx.coreflow.layer_conductances(c_t, c_s, Ha, B, k)` builds them, with
-  $k$ from `lmhdx.coreflow.side_layer_coefficient(c, Ha)` (one fully developed
+  `validation.coreflow.layer_conductances(c_t, c_s, Ha, B, k)` builds them, with
+  $k$ from `validation.coreflow.side_layer_coefficient(c, Ha)` (one fully developed
   solve on the core). Where $Ha\,B < 1$ the correction is frozen (`floor`). Freezing it at $Ha\,B < 100$ or
   $1000$ instead moves the result by at most 0.6 % at $2\times10^4$ and 11 % at 3200.
 
@@ -816,7 +816,7 @@ The comparison at $c=0.1$, Ha $2\times10^4$ is a test
 (`tests/test_coreflow.py`, from the stored 3-D numbers, so no 3-D solve runs):
 
 ```python
-from lmhdx.coreflow import CoreFlow, layer_conductances
+from validation.coreflow import CoreFlow, layer_conductances
 
 k = ((100, 400, 800, 1600, 3200, 1e4, 2e4), (2.585, 1.397, 1.242, 1.138, 1.041, 0.832, 0.636))
 c_t, c_s = layer_conductances(0.1, 0.1, 2e4, field, k)   # field: B_y at the stations of x
@@ -838,7 +838,7 @@ result = CoreFlow(x, nz=20, ny=20).solve(field, c_t=c_t, c_s=c_s)
   within 5 % at $c=0.02$.
 - **Final (owner, 2026-10-04).** Row 24 is met against the layer-corrected
   core-flow model (within 1 % at $c=0.1$, Ha $2\times10^4$, through
-  `lmhdx.coreflow.layer_conductances`). Row 7 is closed as not reachable on
+  `validation.coreflow.layer_conductances`). Row 7 is closed as not reachable on
   the three-dimensional core: a physical model difference, not a waiver.
 
 ### The ALEX pipe on an open polar axis (row 6)

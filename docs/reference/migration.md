@@ -1,6 +1,6 @@
 # Migrating from 1.x to 2.0
 
-Every 1.x entry point below warns (`DeprecationWarning`) and is retired in 2.0. The numbers do not change: each
+Every 1.x entry point below is removed in 2.0 (1.12 and the releases before 2.0 warn). The numbers do not change: each
 replacement reaches the same kernel, and `tests/test_problem.py` pins the duct, Hunt and fringe presets against
 the older constructors bit for bit.
 
@@ -16,4 +16,9 @@ the older constructors bit for bit.
 | `write_solution_outputs`, `write_restart_npz`, `load_restart_bundle` | `lmhdx.Output(dir)` and `solve(..., start=path)` |
 | `hartmann_validation`, `validation_summary`, plots | the analytic profiles of `validation/`; ParaView files of `Output` |
 | `lmhdx run/validate/benchmark`, schema 1 and 2 TOML files | `lmhdx FILE.toml` over a schema 3 file; `lmhdx upgrade OLD.toml` converts schema 1 and 2 |
-| `lmx` command, x64 and `XLA_FLAGS` set on import | `lmhdx`; `lmhdx.configure(dtype="float64")` |
+| `lmx` command, x64 and `XLA_FLAGS` set on import | `lmhdx`; `lmhdx.configure(dtype="float64", gpu_gemm=True)` |
+| `lmhdx.cases`: the units, ratios and `WallLayer` | `lmhdx.units` (the root names are unchanged) |
+| `lmhdx.cases`: `NumericalFailure` | `lmhdx.solver.NumericalFailure` |
+| `lmhdx.cases`: `generate_rect_duct_mesh_from_faces`, `make_divergence_free_cross_section_field`, `sample_cross_section_field`, `sample_tabulated_cross_section_field` | the grid of the `Problem`; `lmhdx.fields.Func` and `Table`; `lmhdx.fields.write_tabulated_field_npz` and `load_tabulated_field` |
+| `lmhdx.coreflow` | `validation/coreflow.py` (`from validation.coreflow import CoreFlow` from a checkout) |
+| `lmhdx.fully_developed`, `lmhdx.cases` (`CaseSpec`, `RunConfig`), `lmhdx.io` | removed with their entry points above |

@@ -121,8 +121,8 @@ JAX configuration: no x64 switch, no `XLA_FLAGS`, no compile cache.
 `lmhdx.configure(dtype=, cache=, gpu_gemm=)` does it explicitly, and `build()`
 calls the safe parts (x64 for `dtype="float64"`, announced once; matmul
 precision `highest`; the persistent cache with the Darwin jaxlib exclusion). The
-XLA flag that must precede the backend is set only by `configure(gpu_gemm=...)`
-and by the command line. Environment variables `LMHDX_*` are replaced by flags.
+XLA flag that must precede the backend is set only by `configure(gpu_gemm=...)`;
+the command takes no flag for it (H4.7). Environment variables `LMHDX_*` are replaced by flags.
 The logger banner, footer and ETA text are kept and move into `Output.log`
 (owner decision); the JSON-lines chunk record is added beside them.
 
