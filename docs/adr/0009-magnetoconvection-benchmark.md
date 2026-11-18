@@ -222,8 +222,9 @@ and fringe structures are inertial.
   - `src/lmhdx/data/benchmarks/references/` holds each figure's band and its
     axis calibration, with its figure, page and image hash;
   - `benchmarks/provenance.json` holds the sources and the benchmark's entry;
-  - `validation/mistrangelo.py` holds the observables as the paper defines
-    them, and the gate;
+  - `validation/mistrangelo.py` and `validation/mistrangelo_duct.py` (Cases 1
+    and 2 on the full duct, split out at #327's review) hold the observables
+    as the paper defines them, and the gate;
   - `scripts/digitize_mistrangelo.py` is the digitizer. It runs only on figure
     images extracted from the journal's PDF, which are not in the repository,
     so it stays out of the package and `validation/`.
