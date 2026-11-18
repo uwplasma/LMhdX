@@ -2546,19 +2546,22 @@ def test_case_1_takes_the_specified_heat_and_flow_and_gives_every_figure():
     observables of a known flow, the inlet's profile all along with T = 305 + 2 x - 100 z (C, m) and p = 1000 - 400 x
     (Pa), are as defined: T on the axis, at the stations and as the bulk (u is even in z); u the same everywhere along;
     T_w between the cells either side and Nu finite only where heated; E_t zero; the potential odd in z, as the
-    flow's source is, interfaces included; and p on the axis. The reported comparisons take them."""
+    flow's source is, interfaces included; and p on the axis. The reported comparisons take them. Case 2's duct
+    (step 5.4f) carries its 0.01 m/s and takes 3000 W, and its observables are these under its own figures, Nu
+    with its flux."""
     import json
 
     from lmhdx.thermal import build_thermal_step
     from validation import mistrangelo
+    from validation import mistrangelo_duct as duct
 
     record = mistrangelo.spec()
     a, t_w = record["geometry"]["half_width_m"], record["geometry"]["wall_thickness_m"]
     u0, q = record["cases"]["case1"]["mean_velocity_m_per_s"], record["cases"]["case1"]["heat_flux_W_per_m2"]
     mesh = {"cells": 16, "cells_in_layer": 4, "wall_cells": 2}
     with pytest.raises(ValueError, match="faces of the axial mesh"):
-        mistrangelo.case1(**mesh, spacing=0.08)  # x = 0.3 m is 16.25 cells from x = -1 m
-    thermal, start = mistrangelo.case1(**mesh, spacing=0.05, dt=0.05)
+        duct.case1(**mesh, spacing=0.08)  # x = 0.3 m is 16.25 cells from x = -1 m
+    thermal, start = duct.case1(**mesh, spacing=0.05, dt=0.05)
     flow, wall = thermal.flow, thermal.walls[2][0]
     assert thermal.thermal_grid.shape == (54, 20, 20) and (wall.thickness, wall.cells) == (t_w, 2)
     ratio = record["properties"]["steel"]["conductivity_ratio_pinned"]
@@ -2583,9 +2586,9 @@ def test_case_1_takes_the_specified_heat_and_flow_and_gives_every_figure():
     p = np.broadcast_to(1000.0 - 400.0 * xc[:, None, None], flow.grid.shape)
     known |= {"T": 305.0 + 2.0 * tx - 100.0 * tz, "p": p}
     assert not np.any(known["v"]) and not np.any(known["w"])
-    observables = mistrangelo.case1_observables(thermal, known, record)
-    stations = {f"11 x={s}": float(s) for s in mistrangelo.CASE1_STATIONS}
-    assert set(observables) == {*mistrangelo.CASE1_GATED, 8, "38 T_w", "38 T_b", *stations}
+    observables = duct.case1_observables(thermal, known, record)
+    stations = {f"11 x={s}": float(s) for s in duct.CASE1_STATIONS}
+    assert set(observables) == {*duct.CASE1_GATED, 8, "15 z=+a", "38 T_w", "38 T_b", *stations}
     assert observables[6][1] == pytest.approx(305.0 + 2.0 * xc, abs=1e-10)
     assert observables[17][1] == pytest.approx(305.0 + 2.0 * xc, abs=1e-8)
     for key, at in {9: -0.3, 10: 0.0, **stations}.items():
@@ -2601,13 +2604,147 @@ def test_case_1_takes_the_specified_heat_and_flow_and_gives_every_figure():
     assert across == pytest.approx(-across[::-1], abs=1e-15) and across[0] == -a
     assert phi == pytest.approx(-phi[::-1], abs=1e-9 * np.max(np.abs(phi)))
     assert phi[0] == pytest.approx(np.interp(0.0, xc, observables[15][1]), rel=1e-12)
+    assert observables["15 z=+a"][1] == pytest.approx(-observables[15][1], abs=1e-9 * np.max(np.abs(phi)))
     assert observables[8][1] == pytest.approx(1000.0 - 400.0 * xc, rel=1e-14)
-    reported = mistrangelo.case1_reported(observables)
+    reported = duct.case1_reported(observables)
     assert set(reported) == {"8", "38 T_w", "38 T_b", *stations}
     assert all(np.isfinite(value) for entry in reported.values() for value in entry.values())
     band = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES.read_text())["figures"]}[8]["band"]["x"]
     covered = np.asarray(band)[(np.asarray(band) >= xc[0]) & (np.asarray(band) <= xc[-1])]
     assert reported["8"]["drop"] == pytest.approx(400.0 * (covered[-1] - covered[0]), rel=1e-12)
+    second = record["cases"]["case2"]
+    thermal2, start2 = duct.case2(**mesh, spacing=0.05, dt=0.05)
+    rate = np.sum(np.asarray(start2.velocity[0].data) * areas, axis=(1, 2))
+    assert rate == pytest.approx(second["mean_velocity_m_per_s"] * (2 * a) ** 2, rel=1e-12)
+    faces = thermal2.thermal_grid.faces
+    # q'' into the bottom surface, stored as the gradient it sets in the steel
+    outer = -np.asarray(thermal2.thermal_conditions[2].lower) * wall.thermal_conductivity
+    taken = np.sum(outer * np.outer(np.diff(np.asarray(faces[0])), np.diff(np.asarray(faces[1]))))
+    assert taken == pytest.approx(second["heat_flux_W_per_m2"] * 0.6 * (2 * a + 2 * t_w), rel=1e-12)
+    figures2 = duct.case2_observables(thermal, known, record)
+    assert set(figures2) == {*duct.CASE2_FIGURES, "38 T_w", "38 T_b"}
+    for number, same in duct.CASE2_FIGURES.items():
+        scale = second["heat_flux_W_per_m2"] / q if number == 37 else 1.0  # E_t is zero for this flow
+        np.testing.assert_allclose(figures2[number][1], scale * observables[same][1], rtol=1e-13)
+    bulk = jax.jit(
+        lambda u, temperature: duct.bulk_temperature(thermal, u, temperature)
+    )  # as a run's scan takes it
+    for found in (duct.bulk_temperature(thermal, known["u"], known["T"]), bulk(known["u"], known["T"])):
+        np.testing.assert_allclose(np.asarray(found), observables[17][1], rtol=1e-13)
+
+
+def test_case_2_s_settling_and_independence_checks_follow_the_record():
+    """Case 2's settling tolerances are 1 % of its 75.9 K bulk rise and of its 3000 W, and a window settles only when
+    both hold. Sub-batches with independent noise pass the independence check; pairs of equal ones fail it, at
+    sqrt(4/9) at every point; a steady run, whose batches do not differ, passes; an odd count is refused."""
+    import json
+
+    from validation import mistrangelo
+    from validation import mistrangelo_duct as duct
+
+    tolerance, limit = duct.case2_settling()
+    assert tolerance == pytest.approx(0.759, abs=5e-4) and limit == pytest.approx(30.0, rel=1e-12)
+    bulk = np.linspace(300.0, 375.9, 50)
+    assert duct.case2_settled(None, (bulk, 0.0)) == (False, np.inf, 0.0)
+    assert duct.case2_settled((bulk, 0.0), (bulk + 0.75, 29.0))[0]
+    assert not duct.case2_settled((bulk, 0.0), (bulk + 0.77, 0.0))[0]
+    assert not duct.case2_settled((bulk, 0.0), (bulk, -31.0))[0]
+    figures = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES_CASE2.read_text())["figures"]}
+    middle = {
+        n: (
+            np.asarray(f["band"]["x"]),
+            0.5 * (np.asarray(f["band"]["lower"]) + np.asarray(f["band"]["upper"])),
+        )
+        for n, f in figures.items()
+        if n in duct.CASE2_FIGURES
+    }
+    rng = np.random.default_rng(5)
+
+    def batch(noise):  # the band's middle times (1 + noise): positive, for the log axis
+        return {n: (x, y * (1.0 + noise * rng.standard_normal(y.size))) for n, (x, y) in middle.items()}
+
+    independent = duct.case2_independence([batch(1e-2) for _ in range(10)])
+    assert independent["independent"] and set(independent["figures"]) == set(middle)
+    assert all(0.8 < f["ratio"] < 1.3 for f in independent["figures"].values())
+    pairs = [b for b in (batch(1e-2) for _ in range(5)) for _ in range(2)]
+    correlated = duct.case2_independence(pairs)
+    assert not correlated["independent"]
+    assert all(f["ratio"] == pytest.approx(np.sqrt(4 / 9), rel=1e-9) for f in correlated["figures"].values())
+    steady = duct.case2_independence([batch(0.0) for _ in range(10)])
+    assert steady["independent"] and all(f["ratio"] is None for f in steady["figures"].values())
+    with pytest.raises(ValueError, match="even number"):
+        duct.case2_independence([batch(1e-2) for _ in range(9)])
+
+
+def test_case_2_s_reported_figures_follow_the_record():
+    """``case2_reported`` on curves made from the references, without a solve. At the band's middle every banded
+    figure lies inside at every point, Fig. 30 after its offset, and OF_KIT's Fig. 38 curves differ by nothing. One
+    point of Fig. 24 off by twice the band's range is its only failure and its largest excess. The error is the batch
+    means' standard error: sub-batches in equal pairs a step apart give the step over sqrt(2), in decades on Fig. 35's
+    log axis."""
+    import json
+
+    from validation import mistrangelo
+    from validation import mistrangelo_duct as duct
+
+    figures = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES_CASE2.read_text())["figures"]}
+    case1 = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES.read_text())["figures"]}
+
+    def middle(number):
+        x, lower, upper = (np.asarray(figures[number]["band"][k], float) for k in ("x", "lower", "upper"))
+        return x, np.sqrt(lower * upper) if figures[number]["y_scale"] == "log10" else 0.5 * (lower + upper)
+
+    centred = {n: middle(n) for n in (*duct.CASE2_BANDED, 30)}
+    centred |= {
+        f"38 {name}": tuple(np.asarray(case1[38]["curves"][f"{name} case2"][k], float) for k in ("x", "y"))
+        for name in ("T_w", "T_b")
+    }
+    x30, y30 = centred[30]
+    exact = duct.case2_reported(centred | {30: (x30, y30 + 50.0)}, [centred] * 10)
+    assert set(exact) == {*map(str, duct.CASE2_BANDED), "30", "38 T_w", "38 T_b"}
+    for number in duct.CASE2_BANDED:
+        entry = exact[str(number)]
+        assert entry["points"] == len(figures[number]["band"]["x"]), number
+        assert [entry[k] for k in ("inside", "passing", "largest_excess")] == [1, 1, 0], number
+        assert entry["error_there"] == pytest.approx(0.0, abs=1e-15), number
+    assert exact["30"]["offset"] == pytest.approx(-50.0) and exact["30"]["passing"] == 1.0
+    assert exact["38 T_w"]["largest_difference"] == 0.0 == exact["38 T_b"]["largest_difference"]
+    x24, y24 = centred[24]
+    k, band = x24.size // 2, figures[24]["band"]
+    bump = 2.0 * (max(band["upper"]) - min(band["lower"]))  # beyond the band's range, x uncertainty or not
+    off = centred | {24: (x24, y24 + bump * (np.arange(x24.size) == k))}
+    step = 1e-3
+    subs = [
+        {n: (c[0], c[1] * 10.0 ** (j * step) if n == 35 else c[1] + j * step) for n, c in off.items()}
+        for j in range(5)
+        for _ in range(2)
+    ]
+    report = duct.case2_reported(off, subs)
+    assert report["24"]["passing"] == pytest.approx(1.0 - 1.0 / x24.size) and report["24"]["inside"] < 1.0
+    assert report["24"]["where_largest"] == x24[k] and report["24"]["largest_excess"] > 0.5 * bump
+    for number in (23, 24, 35):
+        assert report[str(number)]["error_there"] == pytest.approx(step / np.sqrt(2.0), rel=1e-6), number
+
+
+def test_the_edge_study_s_faces_refine_both_ends_of_the_heated_zone():
+    """``edge_faces`` puts faces on the heated zone's ends with cells of ``fine`` either side, grows them by at most
+    the ratio up to the core's spacing, and keeps the buffers; ``case1(edge_spacing=)`` builds on them."""
+    from lmhdx.axial import axial_faces
+    from validation import mistrangelo_duct as duct
+
+    plain = axial_faces(-1.5, 1.5, (-1.0, 1.0), 0.004)
+    faces = duct.edge_faces(plain, (-1.0, 1.0), (-0.3, 0.3), 0.001)
+    widths, core = np.diff(faces), (faces[:-1] >= -1.0) & (faces[1:] <= 1.0)
+    for end in (-0.3, 0.3):
+        at = int(np.argmin(np.abs(faces - end)))
+        assert faces[at] == end and widths[at - 1] == pytest.approx(0.001) == widths[at]
+    ratios = widths[1:] / widths[:-1]
+    assert np.max(np.maximum(ratios, 1.0 / ratios)[core[1:] & core[:-1]]) <= 1.1 + 1e-12
+    assert widths[core].max() <= 0.004 + 1e-12 and np.array_equal(faces[faces < -1.0], plain[plain < -1.0])
+    with pytest.raises(ValueError, match="inside the core"):
+        duct.edge_faces(plain, (-1.0, 1.0), (-0.3, 1.2), 0.001)
+    thermal, _ = duct.case1(cells=16, cells_in_layer=3, wall_cells=2, spacing=0.05, edge_spacing=0.01)
+    assert np.min(np.diff(np.asarray(thermal.flow.grid.faces[0]))) == pytest.approx(0.01)
 
 
 def test_case_1_s_gate_and_reported_figures_follow_their_declared_rules():
@@ -2622,6 +2759,7 @@ def test_case_1_s_gate_and_reported_figures_follow_their_declared_rules():
     import json
 
     from validation import mistrangelo
+    from validation import mistrangelo_duct as duct
 
     figures = {f["figure"]: f for f in json.loads(mistrangelo.REFERENCES.read_text())["figures"]}
 
@@ -2631,15 +2769,15 @@ def test_case_1_s_gate_and_reported_figures_follow_their_declared_rules():
         return x, np.sqrt(lower * upper) if log else 0.5 * (lower + upper), 0.5 * (upper - lower)
 
     names = ("M1L1", "M2L1", "M3L1", "M1L2", "M2L2", "M1L1-dt2", "M1L1-tol")
-    centred = {number: middle(number)[:2] for number in mistrangelo.CASE1_GATED}
+    centred = {number: middle(number)[:2] for number in duct.CASE1_GATED}
 
     def runs(changed):
         return {name: {"mean": centred | changed.get(name, {}), "subs": [centred | changed.get(name, {})] * 4}
                 for name in names}  # fmt: skip
 
-    held = mistrangelo.case1_gate(runs({}))
+    held = duct.case1_gate(runs({}))
     assert all(v["holds"] and v["unresolved"] == 0 and v["uncertainty_max"] == 0.0 for v in held.values())
-    assert all(held[n]["points"] == len(figures[n]["band"]["x"]) for n in mistrangelo.CASE1_GATED)
+    assert all(held[n]["points"] == len(figures[n]["band"]["x"]) for n in duct.CASE1_GATED)
     x, y, half = middle(6)
     widened = half + figures[6]["uncertainty"]["y"]
     k = int(np.argmax(widened))
@@ -2648,32 +2786,32 @@ def test_case_1_s_gate_and_reported_figures_follow_their_declared_rules():
         return {6: (x, y + d * (np.arange(x.size) == k))}
 
     m1 = [n for n in names if n.startswith("M1")]  # the M1 mesh's runs: outlet, time step and tolerance too
-    coarse = mistrangelo.case1_gate(runs({n: off(2 * widened[k]) for n in m1}))[6]
+    coarse = duct.case1_gate(runs({n: off(2 * widened[k]) for n in m1}))[6]
     assert not coarse["holds"] and coarse["unresolved"] == 1 and coarse["dominant"] == "mesh M1-M2"
     assert coarse["uncertainty_max"] == pytest.approx(2 * widened[k], rel=1e-12)
     assert all(v["failed"] == 0 and v["passed"] == x.size - 1 for v in coarse["runs"].values())
-    missed = mistrangelo.case1_gate(runs({n: off(2 * widened[k]) for n in names}))[6]
+    missed = duct.case1_gate(runs({n: off(2 * widened[k]) for n in names}))[6]
     assert not missed["holds"] and missed["unresolved"] == 0 and missed["uncertainty_max"] == 0.0
     for v in missed["runs"].values():
         assert v["failed"] == 1 and v["worst_at"] == x[k] and 0.0 < v["worst_excess"] <= widened[k]
     noisy = runs({})
     noisy["M3L1"]["subs"][3] = centred | off(0.25 * widened[k])
-    noisy = mistrangelo.case1_gate(noisy)[6]
+    noisy = duct.case1_gate(noisy)[6]
     assert noisy["holds"] and noisy["dominant"] == "statistics"
     assert noisy["uncertainty_max"] == pytest.approx(0.5 * widened[k], rel=1e-12)
-    partial = mistrangelo.case1_gate(runs({"M1L1-tol": {6: (x[x >= 0.0], y[x >= 0.0])}}))[6]
+    partial = duct.case1_gate(runs({"M1L1-tol": {6: (x[x >= 0.0], y[x >= 0.0])}}))[6]
     assert partial["holds"] and partial["points"] == np.count_nonzero(x >= 0.0)
     x19, y19 = centred[19]
-    decades = mistrangelo.case1_gate(runs({n: {19: (x19, y19 * 10**1e-3)} for n in m1}))
+    decades = duct.case1_gate(runs({n: {19: (x19, y19 * 10**1e-3)} for n in m1}))
     assert decades[19]["holds"] and decades[19]["uncertainty_max"] == pytest.approx(1e-3, rel=1e-9)
 
     def curve(number, name):
         return tuple(np.asarray(figures[number]["curves"][name][k], float) for k in ("x", "y"))
 
     x8, y8, half8 = middle(8)
-    others = {key: curve(11, key[3:]) for key in (f"11 x={s}" for s in mistrangelo.CASE1_STATIONS)}
+    others = {key: curve(11, key[3:]) for key in (f"11 x={s}" for s in duct.CASE1_STATIONS)}
     others |= {f"38 {name}": curve(38, f"{name} case1") for name in ("T_w", "T_b")}
-    exact = mistrangelo.case1_reported({8: (x8, y8)} | others)
+    exact = duct.case1_reported({8: (x8, y8)} | others)
     assert (exact["8"]["offset"], exact["8"]["inside"], exact["8"]["passing"]) == (0.0, 1.0, 1.0)
     assert exact["8"]["points"] == x8.size and exact["8"]["drop"] == pytest.approx(exact["8"]["band_drop"])
     assert all(exact[key]["largest_difference"] == 0.0 for key in others)
@@ -2684,7 +2822,7 @@ def test_case_1_s_gate_and_reported_figures_follow_their_declared_rules():
     edge, beyond = np.flatnonzero((np.abs(cx) >= 0.28) & (np.abs(cx) <= 0.3))[0], np.argmax(np.abs(cx))
     spikes = 1.0 * (np.arange(cx.size) == edge) + 5.0 * (np.arange(cx.size) == beyond)
     shifted["38 T_w"] = (cx, cy + 0.1 + spikes)
-    report = mistrangelo.case1_reported({8: (x8, raised)} | shifted)
+    report = duct.case1_reported({8: (x8, raised)} | shifted)
     assert report["8"]["offset"] == pytest.approx(-50.0 - bump / x8.size, rel=1e-12)
     assert report["8"]["passing"] == pytest.approx(1.0 - 1.0 / x8.size)
     assert report["8"]["largest_excess"] > 0.0 and report["8"]["where_largest"] == x8[x8.size // 2]
