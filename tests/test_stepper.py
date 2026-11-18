@@ -141,7 +141,9 @@ def test_a_courant_controlled_run_holds_its_step_and_a_fixed_one_stops_at_its_la
     monkeypatch.undo()
     held = advance(problem, 40, start, viscous=viscous, scheme=RK3, dt=10.0 / scale, cfl=0.9)
     rates = jnp.max(ops.outgoing_rate(held.velocity))
-    assert np.all(held.finite) and float(held.dt[0]) == pytest.approx(0.9 * RK3.limit / scale)
+    assert np.all(held.finite) and float(held.dt[0]) == pytest.approx(
+        courant_step(start, RK3, 0.9), rel=1e-12
+    )
     assert (
         float(held.time) == pytest.approx(float(np.sum(held.dt))) and float(rates * held.dt[-1]) < RK3.limit
     )
@@ -150,6 +152,21 @@ def test_a_courant_controlled_run_holds_its_step_and_a_fixed_one_stops_at_its_la
     assert 0 < first and not np.any(blown.finite[first:]) and np.all(blown.finite[:first])
     assert all(np.all(np.isfinite(v.data)) for v in blown.velocity)
     assert float(blown.time) == pytest.approx(first * 10.0 / scale)
+
+
+def test_a_controlled_step_never_exceeds_the_courant_step_in_three_dimensions():
+    """Every component moves: the controlled step is the sum-of-axis-maxima ``courant_step``, not the cell's outflow."""
+    problem = _rk_box(viscosity=1e-12)
+    vortex = _smooth_vortex(problem)
+    z = jnp.asarray(problem.grid.faces[2])[None, None, :]
+    lift = 0.7 * jnp.cos(3.0 * z) * jnp.ones(vortex[2].data.shape)
+    start = (*vortex[:2], vortex[2].replace_data(lift))
+    viscous = problem.viscous_factorizations(RK3)
+    for cfl in (0.5, 0.9):
+        run = advance(problem, 1, start, viscous=viscous, scheme=RK3, dt=1.0e3, cfl=cfl)
+        allowed = courant_step(start, RK3, cfl)
+        assert float(run.dt[0]) <= allowed and float(run.dt[0]) == pytest.approx(allowed, rel=1e-12)
+        assert np.all(run.finite)
 
 
 def _shatrov_velocity(point, t):
