@@ -641,9 +641,9 @@ def test_the_hartmann_channel_carries_no_net_current_and_meets_the_exact_profile
         assert np.allclose(run.velocity[0].data, steady.velocity[0].data, rtol=0, atol=tolerance)
 
 
-def test_a_hartmann_channel_refuses_an_open_axis():
+def test_a_field_across_a_periodic_axis_of_an_open_duct_is_refused():
     problem = fringe_duct(10.0, upstream=2.0, downstream=2.0, spacing=1.0, cells=8, cells_in_layer=2)
-    with pytest.raises(NotImplementedError, match="periodic along its flow"):
+    with pytest.raises(NotImplementedError, match="inflow-outflow duct"):
         channel_kernel(
             problem.replace(bc=(Open(np.ones((8, 8))), "periodic", Wall(0.0)), B=Uniform(0.0, 0.0, 10.0))
         )
