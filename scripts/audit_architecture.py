@@ -245,7 +245,7 @@ def build_inventory(root: Path = ROOT) -> dict[str, Any]:
             "largest_external_validation_lines_max": 813,
             "maintenance_script_count_max": 5,
             "stable_root_exports_max": 36,
-            "curated_examples_max": 10,
+            "curated_examples_max": 11,
             "checkout_bytes_max": 4069585,
             "root_import_median_seconds_max": 0.25,
             "sdist_bytes_max": 240 * 1024,

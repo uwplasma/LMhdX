@@ -149,7 +149,8 @@ _TEST_SHARDS = {
             "test_the_wall_leaves_of_a_problem_pair_forward_and_reverse_mode",
         )
     ),
-    "anchors": ("tests/test_laminar_anchors.py",),
+    # Marked scheduled, so no gate runs it; the turbulence workflow does.
+    "anchors": ("tests/test_laminar_anchors.py", "tests/test_channel_turbulence.py"),
 }
 
 _ALL_TESTS = tuple(dict.fromkeys(path.split("::")[0] for shard in _TEST_SHARDS.values() for path in shard))
@@ -347,7 +348,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.tier:
         command.extend(("-m", _TEST_TIERS[args.tier]))
     elif not args.shard and not selected_tests:
-        command.extend(("-m", "not curated"))
+        command.extend(("-m", "not (curated or scheduled)"))
+    elif args.shard:
+        command.extend(("-m", "not scheduled"))
     command.extend(_shard_selection(tuple(args.shard)) if args.shard else selected_tests or ["tests"])
 
     environment = _test_environment()
