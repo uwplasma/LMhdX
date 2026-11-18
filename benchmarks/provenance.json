@@ -18,7 +18,7 @@
       ],
       "status": "verified-bounded",
       "tests": [
-        "tests/test_physics.py::test_small_hartmann_solution_matches_analytic_profile"
+        "tests/test_laminar_anchors.py::test_kzb_2012_table_2_laminar_columns"
       ],
       "tier": "A",
       "title": "Fully developed Hartmann duct",
@@ -46,7 +46,7 @@
       ],
       "status": "verified-bounded",
       "tests": [
-        "tests/test_physics.py::test_small_shercliff_solution_matches_bundled_reference_profiles"
+        "tests/test_laminar_anchors.py::test_shercliff_pressure_gradient_of_ni_2007"
       ],
       "tier": "A",
       "title": "Fully developed Shercliff duct",
@@ -74,7 +74,7 @@
       ],
       "status": "verified-bounded",
       "tests": [
-        "tests/test_physics.py::test_small_hunt_solution_matches_bundled_reference_profiles"
+        "tests/test_laminar_anchors.py::test_hunt_pressure_gradient_of_ni_2007"
       ],
       "tier": "A",
       "title": "Fully developed Hunt duct",

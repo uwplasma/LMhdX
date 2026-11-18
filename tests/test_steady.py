@@ -2915,3 +2915,14 @@ def test_the_digitized_case_2_curves_confirm_its_inferred_velocity_and_flux():
     # physical reason, not to pass: every sample from x = 0.35 m is within 1.2 px.
     plateau = (x > 0.5) & (x < 0.9)
     assert np.max(np.abs(upper[plateau] - 300.0 - rise)) <= figures[34]["uncertainty"]["y"]
+
+
+def test_a_float32_steady_solve_converges_at_the_default_tolerance():
+    """The default 1e-9 is below what float32 rounding allows, so the solve used to raise; None is 1e-5 there."""
+    reference = solve_steady_state(duct_problem(hartmann=20.0, cells=12, cells_in_layer=2))
+    with jax.enable_x64(False):
+        found = solve_steady_state(duct_problem(hartmann=20.0, cells=12, cells_in_layer=2))
+        assert found.velocity[0].data.dtype == jnp.float32 and float(found.residual_norm) < 1e-3
+    assert np.sum(np.asarray(found.velocity[0].data)) == pytest.approx(
+        np.sum(np.asarray(reference.velocity[0].data)), rel=1e-3
+    )

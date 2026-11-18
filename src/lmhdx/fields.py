@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - older JAX keeps it in jax.core
 from ._programs import is_traced
 from .core3d import ImposedField, fringe_field
 
-__all__ = ["Func", "Fringe", "Table", "Uniform"]
+__all__ = ["Func", "Fringe", "Table", "Uniform", "load_tabulated_field", "write_tabulated_field_npz"]
 
 
 def pytree(data: tuple[str, ...] = (), meta: tuple[str, ...] = ()):

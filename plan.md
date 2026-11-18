@@ -273,7 +273,7 @@ is reported.
 
 | Row | Anchor | Test | Order / GCI |
 |---|---|---|---|
-| 2 Hartmann | exact profile | `test_physics`, `test_fully_developed` | profile error only |
+| 2 Hartmann | exact profile | `test_laminar_anchors`, `test_steady` | profile error only |
 | 3/4/27 Shercliff, Hunt (Smolentsev 2015 Table I) | four-digit analytic column, its rounding stated | `test_table_i` (#160, #183) | order 1.96–2.02, GCI 1.8–5.4e-3, analytic value inside the band (`validation/gci.py`) |
 | 5 conducting pipe | independent spectral solve | `test_pipe` | order 2.00, GCI 7.7e-4 |
 | 7 TM-228 core flow | 0.0932 − 0.0754 = 0.0178 and Figure 10's 0.126 c^½ | `test_coreflow` | order 1.63, Richardson within 1.1e-4. *2026-10-20:* the 1/B floor is not the cause (cap 1e3 → 1e6 moves the excess by 8e-6); cross-section-only order 2.05 and axis-only 1.97 have opposite signs and cancel in the joint sequence; separable value 0.017805 |

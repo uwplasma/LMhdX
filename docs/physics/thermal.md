@@ -374,7 +374,7 @@ scale with the cells, and the ratio is what carries over.
 - Dispatch of a `ThermalProblem` through `lmhdx.solve`; a `Problem` with `thermal=Thermal(...)` and `Solver(dt=, steps=)` runs the same step there.
 
 A closed domain with net heating has no steady temperature. The state returned
-is not a `cases.MHDState` or an archive-compatible `Solution`. The final
+is not a `Solution` of an isothermal run. The final
 electric fields come from `core3d.face_currents(state.velocity, flow)`.
 
 ## Conduction through solid walls
