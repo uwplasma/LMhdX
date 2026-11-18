@@ -530,14 +530,25 @@ def _outlet_hydrostatic(buoyancy: tuple[Field, Field, Field], problem: ThermalPr
 
 
 class ThermalState(NamedTuple):
-    """What a thermal step advances: the staggered velocity, the cell temperature and the time.
+    """What a thermal step advances: the staggered velocity, the cell temperature, the time and the pressure.
 
-    Its five leaves are arrays; grids and offsets are static.
+    ``pressure`` is the momentum stage's, on the flow's cells, as :func:`lmhdx.core3d.step` returns it, and it
+    starts the next step's pressure solve as there; zero at rest, and kept as it is by a held flow. A state built
+    without one starts from zero. Its six leaves are arrays; grids and offsets are static.
     """
 
     velocity: tuple[Field, Field, Field]
     temperature: Field
     time: jnp.ndarray
+    pressure: Field | None = None
+
+
+def _with_pressure(state: ThermalState) -> ThermalState:
+    """``state``, with the pressure at rest, zero on the flow's cells, if it has none."""
+    if state.pressure is not None:
+        return state
+    grid, dtype = state.velocity[0].grid, state.velocity[0].dtype
+    return state._replace(pressure=Field(jnp.zeros(grid.shape, dtype), _CELL, grid))
 
 
 class ThermalDiagnostics(NamedTuple):
@@ -635,7 +646,7 @@ def initial_thermal_state(
     grid, dtype = problem.thermal_grid, jnp.result_type(float)
     data = jnp.broadcast_to(jnp.asarray(temperature, dtype=dtype), grid.shape)
     velocity = zero_velocity(problem.flow) if velocity is None else tuple(velocity)
-    return ThermalState(velocity, Field(data, _CELL, grid), jnp.asarray(time, dtype=dtype))
+    return _with_pressure(ThermalState(velocity, Field(data, _CELL, grid), jnp.asarray(time, dtype=dtype)))
 
 
 def validate_thermal_inputs(
@@ -679,6 +690,17 @@ def validate_thermal_inputs(
     advective_cfl_limit = _SCHEMES[problem.advection] if advective_cfl_limit is None else advective_cfl_limit
     flow, dtype = problem.flow, jnp.result_type(float)
     _check_fields(problem, state.velocity, [(state.temperature, "temperature"), (heat_source, "heat source")])
+    pressure = _with_pressure(state).pressure
+    if not (
+        isinstance(pressure, Field)
+        and pressure.grid == flow.grid
+        and pressure.offset == _CELL
+        and pressure.shape == flow.grid.shape
+        and pressure.dtype == jnp.result_type(float)
+    ):
+        raise ValueError("the pressure must be a Field on the flow's cells, of the compute dtype")
+    if not np.all(np.isfinite(np.asarray(pressure.data))):
+        raise ValueError("the pressure is not finite")
     time = jnp.asarray(state.time)
     if time.shape or time.dtype != dtype or not np.isfinite(float(time)):
         raise ValueError(f"the time must be a finite {dtype} scalar")
@@ -756,6 +778,8 @@ def build_thermal_step(
     the old temperature, the momentum takes :func:`lmhdx.core3d.step`'s predictor
     and projection with the flow's implicit viscous factorizations, and the
     temperature takes its transport by the old velocity, then implicit conduction.
+    The projection's solve starts from the state's pressure and the new state carries
+    the stage's, as :func:`lmhdx.core3d.step` takes and returns it.
 
     ``hold_flow`` keeps the state's velocity, a steady flow the heat is carried by,
     without buoyancy, and prepares no viscous inverses: for an inflow-outflow duct,
@@ -796,7 +820,7 @@ def build_thermal_step(
     if flow.open_axis is not None and buoyant and problem.gravity[flow.open_axis]:
         raise ValueError("an inflow-outflow duct takes no gravity along its open axis")
     inflow = None if hold_flow or flow.open_axis is None else with_inflow(_lift(flow), flow)
-    pressure = flow.factorization()
+    factorization = flow.factorization()
     viscous = None if hold_flow else flow.viscous_factorizations()
     if flow.conducting_walls:
         flow.potential_factorization()  # built once here, so tracing only looks it up
@@ -844,9 +868,10 @@ def build_thermal_step(
     def thermal_step(
         state: ThermalState, heat_source: Field, *, backflow_temperature: float | jnp.ndarray | None = None
     ) -> tuple[ThermalState, ThermalDiagnostics]:
-        velocity, temperature = state.velocity, state.temperature
+        state = _with_pressure(state)
+        velocity, temperature, pressure = state.velocity, state.temperature, state.pressure
         reservoir = _reservoir(problem, backflow_temperature, compute)
-        _, currents, field = face_currents(velocity, flow, pressure)
+        _, currents, field = face_currents(velocity, flow, factorization)
         joule = problem.on_thermal_grid(_joule_heating(currents, problem).data)
         if hold_flow:
             moved = velocity
@@ -863,15 +888,16 @@ def build_thermal_step(
                     if extra is None
                     else tuple(b.replace_data(b.data + f.data) for b, f in zip(extra, pushed, strict=True))
                 )
-            moved = _advance_momentum(
+            moved, pressure = _advance_momentum(
                 velocity,
                 body,
                 flow,
                 viscous,
                 extra_force=extra,
+                pressure=pressure,
                 dynamic=None if inflow is None else (dt, 1.0, inflow),
                 outlet_pressure=outlet,
-            )[0]
+            )[:2]
         carrier, entering = velocity, reservoir
         if walled:  # the walls carry nothing: the velocity is zero there, and so on their outlet faces
             carrier = tuple(Field(problem.on_thermal_grid(v.data), v.offset, grid) for v in velocity)
@@ -909,7 +935,7 @@ def build_thermal_step(
             dt * jnp.max(outgoing_rate(velocity)) if upwind else jnp.zeros((), compute),
             beta * excess,
         )
-        new = ThermalState(moved, heated, state.time + dt)
+        new = state._replace(velocity=moved, temperature=heated, time=state.time + dt, pressure=pressure)
         exchange = _outlet_exchange(velocity, reservoir, problem, compute)
         buoyant = _buoyancy_courant(temperature, problem)
         leaves = jax.tree_util.tree_leaves((new, values, exchange[:3], buoyant))
@@ -946,6 +972,7 @@ def advance_thermal(
     """
     if steps < 1 or diagnostics < 1 or steps % diagnostics:
         raise ValueError("steps must be positive, a multiple of the diagnostics stride")
+    state = _with_pressure(state)
 
     options = {} if backflow_temperature is None else {"backflow_temperature": backflow_temperature}
 

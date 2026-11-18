@@ -44,7 +44,9 @@ history stride, which only thins the history returned; a rejection reports the f
 
 A `lmhdx.thermal.ThermalProblem`, with solid walls if it has them, goes to `solve` too (Joule heating alone, at
 its flow's `dt`, from rest, the `"steady"` flow or a `ThermalState`): its records and ParaView cells are on
-`thermal_grid`, the walls' cells included, the velocity zero in a wall, and a record resumes it bit for bit.
+`thermal_grid`, the walls' cells included, the velocity and an evolving flow's pressure zero in a wall, and a
+record resumes it bit for bit. The record holds the state's pressure, which starts the next pressure solve, so a
+thermal record written before the state carried it does not resume.
 A `ThermalState` start at time $t > 0$ numbers its files from step $t/\Delta t$.
 
 Without an `Output` a run does no I/O. `write_vtk(path, grid, **cells)` writes named cell arrays directly,
