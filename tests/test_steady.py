@@ -5,6 +5,7 @@ import functools
 import os
 
 import jax
+import jax.experimental  # noqa: F401
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -3058,7 +3059,10 @@ def test_the_digitized_case_2_curves_confirm_its_inferred_velocity_and_flux():
 def test_a_float32_steady_solve_converges_at_the_default_tolerance():
     """The default 1e-9 is below what float32 rounding allows, so the solve used to raise; None is 1e-5 there."""
     reference = solve_steady_state(duct_problem(hartmann=20.0, cells=12, cells_in_layer=2))
-    with jax.enable_x64(False):
+    float32 = (
+        jax.enable_x64(False) if hasattr(jax, "enable_x64") else jax.experimental.disable_x64()
+    )  # JAX 0.7.2
+    with float32:
         found = solve_steady_state(duct_problem(hartmann=20.0, cells=12, cells_in_layer=2))
         assert found.velocity[0].data.dtype == jnp.float32 and float(found.residual_norm) < 1e-3
     assert np.sum(np.asarray(found.velocity[0].data)) == pytest.approx(
