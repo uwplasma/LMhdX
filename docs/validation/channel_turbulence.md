@@ -45,15 +45,37 @@ within the plan's 2 %: it is 8.7 % high, far outside both the statistical error 
 effect. The probable cause is the scheme, not the run: the staggered central scheme conserves kinetic
 energy and adds no numerical dissipation, and at $\Delta x^+\approx33$, $\Delta y^+\approx16$ the
 unresolved scales are not drained, so the friction is higher; the paper's scheme B is dissipative at
-$O(\Delta t\,\Delta x^2)$ and lands on the spectral value at this resolution. That reading is a
-hypothesis until the $96^3$ and $128^3$ runs (about 4 and 8 times the cells) show $Re_\tau$ falling
-toward 306.
+$O(\Delta t\,\Delta x^2)$ and lands on the spectral value at this resolution. The resolution study below tests that reading.
 
 Cost on one Mac (14 cores, shared, load average 40 to 100 during the run, float64, one XLA CPU
 process): 0.29 s per step at $\Delta t=0.025$ (16,000 steps, 1 h 18 min of the stepping for 400 time
 units); 0.22 s per step at $\Delta t=0.0125$, which restarted from the $t=200$ state with 25 time units of burn-in. The plan's estimate of "minutes to hours" holds; the
 128³ case is about 8 times the cells and twice the steps, about 20 hours at the same speed, and stays
 a GPU run.
+
+## Resolution study
+
+The same example with only `CELLS` and `OUTPUT_DIR` changed, on a GPU workstation (RTX A4000, float64,
+$\Delta t=0.025$, burn-in 200, window 200, 8,000 steps, one realization, seed 1). The error is against the
+spectral $Re_\tau$ = 306.69 and $U_{cl}$ = 1.2542. The block standard error is that of five contiguous 40-unit
+blocks of the instantaneous $Re_\tau$ in the window; the blocks are correlated, so it is if anything optimistic.
+
+| cells | $Re_\tau$ (wall shear) | error | $Re_\tau$ (mean drive) | $U_{cl}$ | error | block SE | $\Delta x^+$ | $\Delta y^+$ | first $z^+$ | s per step |
+|---|---|---|---|---|---|---|---|---|---|---|
+| $64^3$ | 334.40 | +9.03 % | 333.83 | 1.2491 | −0.41 % | 0.79 | 32.8 | 16.4 | 0.81 | 0.135 |
+| $96^3$ | 325.94 | +6.28 % | 325.74 | 1.2478 | −0.51 % | 1.14 | 21.3 | 10.7 | 0.52 | 0.589 |
+| $128^3$ | 316.38 | +3.16 % | 316.26 | 1.2541 | −0.01 % | 1.52 | 15.5 | 7.8 | 0.37 | 1.547 |
+
+Wall units use each run's own $Re_\tau$; the first $z^+$ is the first cell centre. Timings are from clean
+500-step runs on an idle card; the $128^3$ run took 6.05 h for 400 time units.
+
+$Re_\tau$ falls monotonically toward the spectral value as $\Delta x^+$ and $\Delta y^+$ shrink, while the first cell
+stays below $z^+=1$ on every grid, so the wall layer is not what moves it. This is consistent with the central
+scheme reading above. The local order is noisy (about 0.9 between $64^3$ and $96^3$, 2.4 between $96^3$ and $128^3$), so the
+data do not fix the order of convergence; $U_{cl}$ is within its gate on every grid. A second-order extrapolation
+from $96^3$ and $128^3$ lands near the spectral value, with an uncertainty of a few units of $Re_\tau$ that the order
+ambiguity alone sets. At $128^3$ the miss, +3.2 %, is about six block standard errors, so it is not a statistical
+fluctuation.
 
 ![Stationarity, mean velocity and wall units](../_static/channel_turbulence.webp)
 
