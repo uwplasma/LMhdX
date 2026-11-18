@@ -1473,9 +1473,12 @@ def friction_coefficient(statistics: dict, problem: ChannelProblem, axis: int = 
 def nusselt_number(statistics: dict, problem: ChannelProblem, axis: int = 2, diameter: float | None = None):
     """Return ``Nu = -D_h dT/dn / (T_w - T_b)`` at the walls normal to ``axis``, each wall's, from the mean ``T``.
 
-    ``T_b = <uT>/<u>`` is the bulk temperature and ``D_h`` the hydraulic diameter, by default twice the gap.
+    ``T_b = <uT>/<u>`` is the bulk temperature and ``D_h`` the hydraulic diameter, by default a channel's, twice
+    the gap; a duct walled on both cross-stream axes needs ``diameter`` (``4A/P``, half of that for a square one).
     """
     walled = [a for a, condition in enumerate(problem.conditions) if not condition.is_periodic]
+    if diameter is None and len(walled) > 1:
+        raise ValueError("a duct walled on two axes needs its hydraulic diameter 4A/P as diameter=")
     weights, along = (
         _section_weights(problem, walled),
         _section_weights(problem, [a for a in walled if a != axis]),
@@ -1663,7 +1666,9 @@ def advance(
     scheme's central-transport limit (:func:`courant_step`) the step is held at, measured cell by
     cell. Either way a step that ends non-finite is not taken, and the run holds the last finite state.
     ``statistics=True`` integrates :func:`plane_averages` over the run inside the scan; a previous
-    run's ``Trajectory.statistics`` continues the integral, so a run in chunks is the run in one.
+    run's ``Trajectory.statistics`` continues the integral, so a run in chunks is the run in one. The sums are
+    plain ``dt``-weighted sums in the state's dtype and a covariance is ``E[ab] - E[a]E[b]``, so use float64 where
+    a variance is far below its mean squared. The integral starts with the run, at its first step.
 
     The compiled run is kept per problem, ``steps``, factorizations, ``scheme``, ``checkpoint`` and
     ``cfl``: a restart in chunks compiles once, and only the state, the time and ``dt`` are

@@ -73,6 +73,9 @@ class Solver:
     (:func:`lmhdx.core3d.advance`); its ``dt`` is an argument of the compiled run, so a new one does not compile.
     ``statistics`` integrates the plane averages of a mechanical run inside its scan, through every chunk; the
     solution's ``statistics`` are then their means and covariances (:func:`lmhdx.core3d.turbulence_statistics`).
+    The sums start at the run's first step and are plain sums in the state's dtype: use float64 for variances far
+    below their mean squared, and note a record written without them cannot be resumed with them. A heated run
+    is refused.
     """
 
     method: str = "auto"
@@ -519,6 +522,10 @@ def _heated(
         validate_thermal_inputs,
     )
 
+    if solver.statistics:
+        raise NotImplementedError(
+            "statistics integrate a mechanical run's plane averages, not a heated one's"
+        )
     flow, grid = heat_problem.flow, heat_problem.thermal_grid
     if isinstance(start, ThermalState):
         state = start

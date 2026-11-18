@@ -1692,3 +1692,29 @@ def test_statistics_integrate_inside_the_scan_and_give_friction_and_nusselt():
         np.allclose(whole.statistics[k], second.statistics[k], rtol=1e-13, atol=1e-15)
         for k in whole.statistics
     )
+
+
+def test_statistics_equal_the_step_weighted_sum_of_plane_averages_and_refuse_heat():
+    """The in-scan integral is sum(dt * plane_averages(state_k)); a duct needs its diameter; a heated run is refused."""
+    from lmhdx.core3d import nusselt_number, plane_averages
+    from lmhdx.solver import Solver, solve
+
+    grid = Grid(uniform_faces(4, 0.0, 1.0), uniform_faces(4, 0.0, 1.0), uniform_faces(6, -1.0, 1.0))
+    problem = ChannelProblem(
+        grid, (PERIODIC_AXIS, WALL, WALL), viscosity=0.1, dt=0.05, forcing=(1.0, 0.0, 0.0)
+    )
+    factorization, viscous = problem.factorization(), problem.viscous_factorizations()
+    kw = {"factorization": factorization, "viscous": viscous}
+    velocity, total = zero_velocity(problem), None
+    for _ in range(4):
+        velocity = advance(problem, 1, velocity, **kw).velocity
+        step = plane_averages(velocity, problem) | {"time": 1.0}
+        total = step if total is None else jax.tree.map(lambda a, b: a + b, total, step)
+    # rest start: the states of the four single steps against the one scan
+    scan = advance(problem, 4, zero_velocity(problem), statistics=True, **kw).statistics
+    assert all(np.allclose(scan[k], 0.05 * total[k], rtol=1e-12, atol=1e-15) for k in total)
+    with pytest.raises(ValueError, match="hydraulic diameter"):
+        nusselt_number({}, problem)
+    heated = ChannelProblem(_uniform_duct(4).grid, (PERIODIC_AXIS, WALL, WALL))
+    with pytest.raises(NotImplementedError, match="mechanical"):
+        solve(_heated(heated), Solver(dt=heated.dt, steps=1, statistics=True))
