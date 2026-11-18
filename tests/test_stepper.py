@@ -440,3 +440,14 @@ def test_rk3_gives_the_derivative_standard_through_a_short_window():
         )
     slopes = np.log2(np.asarray(remainders[:-1]) / np.asarray(remainders[1:]))
     assert np.all(np.abs(slopes - 2.0) < 0.1), (remainders, slopes)
+
+
+def test_a_marched_run_refuses_an_open_axis():
+    from lmhdx import Open, Wall
+    from lmhdx.problem import channel_kernel, fringe_duct
+
+    problem = fringe_duct(10.0, upstream=2.0, downstream=2.0, spacing=1.0, cells=8, cells_in_layer=2)
+    kernel = channel_kernel(problem.replace(bc=(Open(np.ones((8, 8))), Wall(0.02), Wall(0.02))))[0]
+    for options in (dict(dt=0.01), dict(cfl=0.5)):
+        with pytest.raises(NotImplementedError, match="inflow-outflow"):
+            advance(kernel, 1, **options)

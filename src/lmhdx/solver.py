@@ -71,6 +71,8 @@ class Solver:
     none), or when the start's divergence exceeds ``divergence_tolerance``. ``cfl`` makes ``dt`` the largest
     step of a mechanical run and holds each step at that fraction of the scheme's central-transport limit
     (:func:`lmhdx.core3d.advance`); its ``dt`` is an argument of the compiled run, so a new one does not compile.
+    Only a mechanical (unheated, non-Q2D) unsteady run takes ``cfl``; the others refuse it. Under ``cfl`` the
+    log's ``end`` is the latest the run can reach, ``start + steps * dt``.
     """
 
     method: str = "auto"
@@ -320,7 +322,10 @@ def _drive(run: _Run, problem, solver: Solver, output: Output | None, record: St
         )
     if output is not None:
         info = None if record is None else {"path": record.path, "mode": record.mode, "step": first}
-        session = Session(output, identity, run.grid, solver.dt, first, steps, run.header, run.limits, info)
+        start = None if solver.cfl is None else float(state.time)
+        session = Session(
+            output, identity, run.grid, solver.dt, first, steps, run.header, run.limits, info, start
+        )
     histories, rejected = [], None
     try:
         for done in range(first, first + steps, every):
@@ -621,6 +626,10 @@ def solve(
         )
     solver = Solver() if solver is None else solver
     method = solver.resolve(problem)
+    if solver.cfl is not None and (
+        isinstance(problem, (Q2D, ThermalProblem)) or method not in ("euler", "rk3") or problem.thermal
+    ):
+        raise ValueError("Solver.cfl holds the step of an unheated unsteady projection run only")
     configure(dtype=solver.dtype)
     if isinstance(problem, ThermalProblem):
         if method != "euler" or solver.dt not in (None, problem.flow.dt):
