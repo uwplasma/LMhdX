@@ -73,6 +73,11 @@ class Solver:
     (:func:`lmhdx.core3d.advance`); its ``dt`` is an argument of the compiled run, so a new one does not compile.
     ``statistics`` integrates the plane averages of a mechanical run inside its scan, through every chunk; the
     solution's ``statistics`` are then their means and covariances (:func:`lmhdx.core3d.turbulence_statistics`).
+    The sums start at the run's first step and are plain sums in the state's dtype: use float64 for variances far
+    below their mean squared, and note a record written without them cannot be resumed with them. A heated run with
+    solid walls refuses them.
+    Only a mechanical (unheated, non-Q2D) unsteady run takes ``cfl``; the others refuse it. Under ``cfl`` the
+    log's ``end`` is the latest the run can reach, ``start + steps * dt``.
     """
 
     method: str = "auto"
@@ -323,7 +328,10 @@ def _drive(run: _Run, problem, solver: Solver, output: Output | None, record: St
         )
     if output is not None:
         info = None if record is None else {"path": record.path, "mode": record.mode, "step": first}
-        session = Session(output, identity, run.grid, solver.dt, first, steps, run.header, run.limits, info)
+        start = None if solver.cfl is None else float(state.time)
+        session = Session(
+            output, identity, run.grid, solver.dt, first, steps, run.header, run.limits, info, start
+        )
     histories, rejected = [], None
     try:
         for done in range(first, first + steps, every):
@@ -658,6 +666,10 @@ def solve(
         )
     solver = Solver() if solver is None else solver
     method = solver.resolve(problem)
+    if solver.cfl is not None and (
+        isinstance(problem, (Q2D, ThermalProblem)) or method not in ("euler", "rk3") or problem.thermal
+    ):
+        raise ValueError("Solver.cfl holds the step of an unheated unsteady projection run only")
     configure(dtype=solver.dtype)
     if isinstance(problem, ThermalProblem):
         if method != "euler" or solver.dt not in (None, problem.flow.dt):
