@@ -1179,6 +1179,62 @@ If neither holds, the stage's slowness is not what delays M1's onset, and the se
 **Exit.** Reported, not gated, as the seeded study is. Whether M2 is run again with the explicit force, and whether
 Case 2's main results are replaced, is decided after the run, in review.
 
+## Step 5.4f: the Lorentz force explicit — the results
+
+The run ran as declared, on NERSC Perlmutter: one A100, float64, the main runs' image, at commit `782e4f3`, from
+M1L1's last state at t = 1104.5 s. A first submission stopped at its start, before any step, on a relative path to
+M1L1's checkpoint; it was resubmitted unchanged but for the path. The observables are `post.py`'s at the campaign's
+`6863c42`, and the comparisons `case2_reported`'s, as for the seeded runs. The run is reported, not gated.
+
+**The run.**
+
+| Run | Δt λ | Settled after | Averaged | Simulated | s a step | Wall time | Courant max | Ledger max |
+|:--|--:|--:|--:|--:|--:|--:|--:|--:|
+| M1, explicit | 0.336 | 401 s | 450 s | 853 s | 0.035 | 33 min | 0.21 | 4.3e-13 |
+
+- It settled at its second window (0.342 K, 0.1 W), so `--average-unsettled` was not used. Its sub-batches are
+  independent. Mass stayed under 1.1e-9, the charge residual at the solver's stop (0.0019), and no flow returned
+  through the outlet.
+
+**What it found.** On M1 without a seed, beside M1L1 (implicit) and the seeded heater-4 run (implicit):
+
+| | M1L1 | M1, explicit | heater-4 |
+|:--|--:|--:|--:|
+| Rolls saturated at | 0.266 m | 0.299 m | 0.068 m |
+| RMS of w at x = 0 | 3.7e-12 m/s | 4.3e-12 m/s | 1.7e-5 m/s |
+| at x = 0.1 m | 1.3e-9 m/s | 3.9e-10 m/s | 5.0e-3 m/s |
+| at x = 0.2 m | 6.8e-6 m/s | 7.8e-7 m/s | — |
+| Nu at x = 0.2 m (band 3.55–5.13) | 2.15 | 2.15 | **4.09** |
+| T on the axis at x = 0.2 m (band 355.4–358.7 °C) | 347.9 °C | 347.9 °C | **356.0 °C** |
+| T_w at x = 0.2 m (OF_KIT 394.5 °C) | 415.8 °C | 415.8 °C | 391.8 °C |
+| Figure 24, share within the widened band | 71 % | 70 % | 100 % |
+| Figure 37 | 63 % | 63 % | 84 % |
+| Figure 38, T_w's mean offset from OF_KIT | +5.5 K | +5.5 K | +0.3 K |
+
+- Every other figure's share moved by at most 3 points (Figure 35, 81 % to 78 %). Up to x = 0.15 m the two
+  unseeded runs agree to rounding: their probes there are steady and equal.
+- The largest temperature swing is 32.5 K, against M1L1's 30.2 K and the paper's 30 K.
+
+**The hypotheses.**
+- *The rolls saturate at or before 0.236 m:* not met. They saturate 3.3 cm further downstream, at 0.299 m.
+- *Nu at x = 0.2 m rises into the band:* not met. It stays at 2.15.
+
+So, as declared, the stage's slowness is not what delays M1's onset, and the seeded study's account stands alone:
+the onset is set by the disturbance that reaches the heater.
+
+**A layer with Case 2's ingredients does not behave as the duct does.** A layer with a through-flow (Re 400, Ra
+1e5, Pr 0.02, 18 cells a wavelength) and a field along the rolls' axis at Δt λ = 0.34 (`make_showcase_figures.py
+--only buoyancy`):
+- under the implicit shift, its rolls grow 25 % too slowly and travel 19 % too slowly;
+- with the force explicit, they grow and travel as without the field, within the mesh's 1.6 %.
+
+The duct's rolls, under the explicit force, grow less over the heated zone's second half, not more: from the same
+rounding at x = 0, a 1.8e5-fold amplification to x = 0.2 m against M1L1's 1.8e6-fold. So the duct's amplification
+from rounding is set by more than a layer's linear growth: the Hartmann walls' braking, the side-layer jets beside the
+heated wall and the thermal layer still developing along the heater. Whether M1's onset converges in the time step
+would need a run at Δt/4 (Δt λ = 0.084) with either force, about 2.5 GPU hours each. Case 2's results stay those of
+the implicit runs above.
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
