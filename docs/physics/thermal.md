@@ -544,8 +544,10 @@ computed once, for either.
 
 **The gate and the independent check.** No conjugate-heat anchor other than
 Mistrangelo et al. has been found, so the exact two-material series and contact
-transient stay the CI gate, and step 5.4c's heated duct is the independent
-check.
+transient stay the CI gate, and their heated duct is the independent check:
+Case 1's heated zone on a held flow (step 5.4c), Case 1 gated with buoyancy, the
+fringe and inertia (5.4e), and Case 2 reported (5.4f), code to code
+([record](../validation/mistrangelo.md)).
 
 ## The thermally fully developed duct
 
@@ -957,9 +959,8 @@ The movie colours the side walls and the mid-plane by temperature.
 `python scripts/make_showcase_figures.py --only convection` takes about twelve
 minutes on a laptop GPU.
 
-This is a transient run in a field. It shows how the flow evolves, but it is
-not a quantitative result until the stabilised transient step keeps a fluid at
-rest in a field along $y$.
+This is a transient run in a field, shown for how the flow evolves; it is not
+compared with a reference.
 
 ```{image} ../_static/thermal_convection_3d.webp
 :alt: A liquid-metal layer heated from below, without a field and in a horizontal field

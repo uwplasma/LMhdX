@@ -1,6 +1,8 @@
 # 0009 — Step 5.4: the heated conducting duct of Mistrangelo et al. (2025)
 
-Status: proposed 2026-10-19. It restates plan step 5.4 and amends:
+Status: proposed 2026-10-19; implemented, steps 5.4a–5.4f merged (#278–#281,
+#284–#286, #309, #314, #315, #327, #330, #331); acceptance is the owner's. It
+restates plan step 5.4 and amends:
 
 - ADR 0008 D31: conjugate walls become a step;
 - ADR 0008 D31.1: an inflow-outflow duct may evolve;
@@ -104,6 +106,9 @@ the thermal open axis, and SOLVAX on the 0.34.0 floor.
   keep a pressure-balanced rest state with the field along `y`, so no moving
   thermal flow result is claimed until that step is corrected, or until a
   time-step refinement shows the effect is small for this configuration.
+  *Closed:* the momentum stage solves its saddle system exactly (#290, #297),
+  and a pressure-gradient force across a field along `y` leaves the fluid at
+  rest to 1e-13 (`tests/test_core3d.py`).
 - **Validation row 6.** The paper prints no wall property, so 5.4a uses the
   printed gradient −0.0863 to fix the wall's effective conductivity ratio.
   Row 6's 1 % on that gradient is then met by construction and is not evidence.
