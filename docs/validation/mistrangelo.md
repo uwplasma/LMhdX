@@ -6,7 +6,8 @@ PbLi duct with conducting steel walls in a fringing field. There is no
 experiment. Plan step 5.4 reproduces it in stages (ADR 0009). This page records
 step 5.4a: the frozen specification, the developed section, and both cases'
 digitized figures; step 5.4c, Case 1's reduced heated zone; step 5.4e, Case 1
-gated, with its edge study; and step 5.4f, Case 2 reported, with a seeded study of its rolls' onset.
+gated, with its edge study; and step 5.4f, Case 2 reported, with a seeded study of its rolls' onset and a
+rerun with the Lorentz force explicit.
 
 The specification is `src/lmhdx/data/benchmarks/specs/mistrangelo2025.toml`.
 Each value there is marked *printed*, *inferred* or *pinned*, with its source,
@@ -1144,6 +1145,39 @@ Each run also has its probes' means over 450 s with their batch error. heater-2 
 have instead their windows, diagnostics and probes over their last 450 s.
 - `mistrangelo2025-case2-seeded-fluctuations.npz` holds the arrays of the main record's npz for each averaged run.
 - `mistrangelo2025-case2-seeded-calibration.json` holds both calibrations.
+
+## Step 5.4f: the Lorentz force explicit (declared before the run)
+
+**Why.** The momentum stage takes the magnetic damping, rate λ = σB²/ρ, implicitly as the shift H = 1 + Δt λ, while
+the potential's share of the force comes from the old velocity. Where the two balance, as in a roll whose axis lies
+along the field, the motion evolves 1 + Δt λ times too slowly; a steady state is unaffected
+([numerics](../physics/numerics.md), "What the shift costs a transient"). Against the Chebyshev growth rate, a roll
+along the field at Pr 0.02 grows 17 % too slowly at Δt λ = 0.27, and at the field-free rate when the force is
+explicit (#337, `ChannelProblem(magnetic_damping="explicit")`). Case 2's runs had Δt λ = 0.34 on M1 (Δt 0.015 s,
+λ 22.4 s⁻¹ in the uniform field) and 0.27 on M2, and their rolls arrive later than the codes'. Case 1's gate compares
+a steady flow and is unaffected.
+
+**The run.**
+- M1 with the outlet at 1.5 m and Δt 0.015 s, as M1L1, with `magnetic_damping="explicit"` (Δt λ = 0.34, under its
+  bound of 2), and no seed.
+- It starts from M1L1's last state, at t = 1104.5 s, as the seeded runs did, and follows 5.4f's protocol counted from
+  there: a 300 s burn-in, 50 s settling windows, 450 s of averaging in ten sub-batches, extendable to 900 s.
+- If it has not settled by 1,200 s, it averages from there anyway for 450 s and is reported as unsettled, with its
+  windows' drift (`--average-unsettled`). heater-2 and M2's seeded run, which never settled, had nothing to compare.
+- The comparisons are `case2_reported`'s and the seeded study's tables: where the rolls saturate, Nu, the axis
+  temperature and T_w at x = 0.10–0.25 m, and every figure's share within the widened band, against M1L1 and the
+  seeded runs.
+- One A100 on Perlmutter, about 45 to 70 minutes, at commit `782e4f3` (the source of #337). The runner is 5.4f's
+  `case2_run.py` with `--magnetic-damping` and `--average-unsettled` added.
+
+**Hypotheses.** The explicit force lets the rolls grow at their own rate, so on M1 without a seed:
+- the rolls saturate upstream of M1L1's 0.266 m, at or before 0.236 m (3 cm, one decade of the seeds);
+- Nu at x = 0.2 m rises from M1L1's 2.15 into the band's 3.55–5.13.
+
+If neither holds, the stage's slowness is not what delays M1's onset, and the seeded study's account stands alone.
+
+**Exit.** Reported, not gated, as the seeded study is. Whether M2 is run again with the explicit force, and whether
+Case 2's main results are replaced, is decided after the run, in review.
 
 ## Sources
 
