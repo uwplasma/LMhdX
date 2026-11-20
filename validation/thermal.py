@@ -8,7 +8,9 @@ operator, mesh or solver with the package:
 - :func:`plate_nusselt`, uniformly heated Hartmann plates in closed form;
 - :func:`graetz`, the plates' thermal entrance without axial conduction, by eigen-expansion;
 - :func:`chandrasekhar_onset`, the onset of convection between rigid plates in a vertical field
-  (Chandrasekhar 1961, Ch. IV), by Chebyshev collocation, against :data:`CHANDRASEKHAR_TABLE`.
+  (Chandrasekhar 1961, Ch. IV), by Chebyshev collocation, against :data:`CHANDRASEKHAR_TABLE`;
+- :func:`convection_growth_rate`, the growth rate of a two-dimensional roll between rigid plates, at any
+  Prandtl number, in a uniform field along any axis and over a plane Poiseuille flow, by Chebyshev collocation.
 
 ``tests/test_steady.py`` checks each against a tabulated value or a limit.
 """
@@ -22,6 +24,7 @@ from validation.shercliff import _differentiation_matrix
 __all__ = [
     "CHANDRASEKHAR_TABLE",
     "chandrasekhar_onset",
+    "convection_growth_rate",
     "graetz",
     "h1_series",
     "plate_nusselt",
@@ -133,3 +136,66 @@ def chandrasekhar_onset(chandrasekhar: float) -> tuple[float, float]:
     bounds = (0.6 * guess, 1.8 * guess)
     result = minimize_scalar(marginal_rayleigh, bounds=bounds, args=(chandrasekhar,), method="bounded")
     return float(result.fun), float(result.x)
+
+
+def convection_growth_rate(
+    wavenumber: float,
+    rayleigh: float,
+    prandtl: float,
+    *,
+    chandrasekhar: float = 0.0,
+    field: str | None = None,
+    reynolds: float = 0.0,
+    count: int = 64,
+) -> complex:
+    """The eigenvalue of largest real part of a roll ``exp(i k x + sigma t)`` between rigid isothermal plates.
+
+    The layer is ``-1 <= z <= 1``, heated below by ``Delta T = 1``, with ``kappa = 1`` and ``nu = Pr``, so time is
+    in ``h^2/kappa`` of the half-height ``h``; ``Ra`` and ``Q`` are on the height ``d = 2``, ``Re`` on ``h`` and the
+    centreline speed of ``U = Re Pr (1 - z^2)`` along ``x``. The roll is invariant along ``y``, the plates insulate,
+    and the induced field is negligible:
+
+        (sigma + i k U)(D^2 - k^2) w - i k U'' w = nu (D^2 - k^2)^2 w - k^2 g beta theta + M w,
+        (sigma + i k U) theta - w / d = (D^2 - k^2) theta,      w = Dw = theta = 0 at z = +-1,
+
+    with ``M = s k^2`` for a field along ``x``, ``-s D^2`` along ``z`` and zero along ``y``, ``s = sigma B^2 / rho
+    = Q nu / d^2``: a roll's electromotive force along the field is a gradient, and drives no current. ``Ra_c``
+    1707.76 at ``k d`` 3.117, Chandrasekhar's 3757 at ``Q`` 100 and Orr and Sommerfeld's ``Re_c`` 5772.22 at
+    ``k`` 1.02056 (``Ra`` 0) are its checks.
+    """
+    from scipy.linalg import eig
+
+    derivative, nodes = _differentiation_matrix(count)
+    identity, second = np.eye(count + 1), derivative @ derivative
+    helmholtz = second - wavenumber**2 * identity
+    nu, height = prandtl, 2.0
+    buoyancy, damping = rayleigh * nu / height**3, chandrasekhar * nu / height**2
+    flow = np.diag(reynolds * nu * (1.0 - nodes**2))
+    curvature = np.diag(np.full(count + 1, -2.0 * reynolds * nu))
+    momentum = nu * helmholtz @ helmholtz - 1j * wavenumber * (flow @ helmholtz - curvature)
+    momentum = (
+        momentum
+        + {None: 0.0, "y": 0.0, "x": damping * wavenumber**2 * identity, "z": -damping * second}[field]
+    )
+    left = np.block(
+        [
+            [momentum, -(wavenumber**2) * buoyancy * identity],
+            [identity / height, helmholtz - 1j * wavenumber * flow],
+        ]
+    ).astype(complex)
+    right = np.block([[helmholtz, 0 * identity], [0 * identity, identity]]).astype(complex)
+    rows = count + 1
+    for row, condition in (
+        (0, identity[0]),
+        (1, derivative[0]),
+        (count - 1, derivative[-1]),
+        (count, identity[-1]),
+    ):
+        left[row], right[row] = 0.0, 0.0
+        left[row, :rows] = condition
+    for row in (rows, rows + count):
+        left[row], right[row] = 0.0, 0.0
+        left[row, row] = 1.0
+    values = eig(left, right, right=False)
+    values = values[np.isfinite(values) & (np.abs(values) < 1e8)]
+    return complex(values[np.argmax(values.real)])

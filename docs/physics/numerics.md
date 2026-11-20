@@ -235,6 +235,21 @@ so a caller sweeping a parameter sees the constraint instead of a silently
 clipped step. The magnetic stiffness grows as $Ha^2$ and must go; the viscous one
 depends only on the mesh and can stay until an implicit viscous solve lands.
 
+**What the shift costs a transient.** The shift is implicit, but the potential's share of the force,
+$-\sigma\nabla\phi\times\mathbf B$, is taken from the old velocity. Where the two balance the
+Lorentz force nearly vanishes: in a quasi-two-dimensional core, or in a convection roll whose axis
+lies along the field, whose electromotive force is a gradient and drives no current. There the step
+reads $(1+\Delta t\,\lambda)(\mathbf u^{n+1}-\mathbf u^n)=\Delta t\,\mathbf F(\mathbf u^n)$: the motion
+evolves $1+\Delta t\,\lambda$ times too slowly. A steady state is unaffected, a transient is not. A roll
+along the field at $Pr=0.02$, $Ra=2\times10^4$ grows 5, 9 and 17 % too slowly at
+$\Delta t\,\lambda=0.066$, 0.13 and 0.27, and two to five times too slowly at 1.5 to 5.8, against
+the Chebyshev growth rate of `validation.thermal.convection_growth_rate`.
+`ChannelProblem(magnetic_damping="explicit")` (`Solver(magnetic_damping=...)` for a run in time) drops
+the shift and takes the whole Lorentz force from the old velocity: exact for the balanced motion,
+first order for the damped, and stable, by the forward-Euler bound on a damping, while
+$\Delta t\,\lambda<2$, which it checks. The same roll then grows at the field-free rate to $10^{-6}$
+(`tests/test_core3d.py`). Steady solves and the open-duct march keep the shift.
+
 Two constraints are imposed before any divergence is taken: a wall-normal
 velocity is zero on its wall faces, and on a periodic axis the duplicated first
 and last face are made equal. Without either the discrete divergence carries a

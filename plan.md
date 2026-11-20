@@ -1363,6 +1363,7 @@ The loan ledger (ADR 0012 DC6), with every open loan, its size and its repayment
 | H4.4 | +125 at #303 | #303 | H4.7 | open |
 | H4.4 follow-up | +5 | #318 | not named in #318 | open |
 | H4.5 | +71 | #323 | H4.7, which deletes every marked name with its module | open |
+| Explicit Lorentz force (`magnetic_damping`) | +35 | #337 | H4.7 | open |
 
 HC1–HC3 (#324–#326, −602 lines: −19, −54, −529) repaid open loans oldest first. Each PR sets the audit
 targets it moves to the measured values; a fall is a repayment and a rise is a

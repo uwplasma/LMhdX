@@ -1482,6 +1482,83 @@ def test_benard_convection_sets_in_at_the_critical_rayleigh_number():
     )
 
 
+def _roll_growth(field: str | None, chandrasekhar: float, damping: str, dt: float = 5e-3) -> float:
+    """Growth rate of the critical roll, Pr 0.02 and Ra 2e4 (``kappa = h = 1``, ``Delta T = 1``), by power iteration.
+
+    One wavelength along ``x`` (16 cells), two cells along ``y``, 16 across ``-1 <= z <= 1``; the disturbance is
+    the run's departure from the conduction state at rest, rescaled to 1e-7 every interval, and its rate the
+    velocity's over the last of 24 intervals of 0.13 (still converging by under 1e-4).
+    """
+    from lmhdx.thermal import (
+        ThermalProblem,
+        advance_thermal,
+        build_thermal_step,
+        initial_thermal_state,
+        thermal_boundary,
+    )
+
+    nu, k, s = 0.02, 3.117 / 2.0, chandrasekhar * 0.02 / 4.0
+    grid = Grid(
+        uniform_faces(16, 0.0, 2.0 * np.pi / k), uniform_faces(2, 0.0, 1.0), uniform_faces(16, -1.0, 1.0)
+    )
+    axis = {None: 0, "x": 0, "y": 1, "z": 2}[field]
+    magnetic = tuple(float(np.sqrt(s)) if field and index == axis else 0.0 for index in range(3))
+    flow = ChannelProblem(
+        grid, (PERIODIC_X, PERIODIC_X, WALL), viscosity=nu, magnetic_field=magnetic, dt=dt, advection="limited",
+        magnetic_damping=damping,
+    )  # fmt: skip
+    thermal = ThermalProblem(
+        flow, (PERIODIC_X, PERIODIC_X, thermal_boundary("temperature", 1.0, 0.0)), 1.0, 1.0, 0.5,
+        joule_heating=False, expansion_coefficient=2e4 * nu / 8.0, gravity=(0.0, 0.0, -1.0), advection="van_leer",
+    )  # fmt: skip
+    x, z = np.asarray(grid.centers[0])[:, None, None], np.asarray(grid.centers[2])[None, None, :]
+    conduction = np.broadcast_to(0.5 - 0.5 * z, grid.shape)
+    base = initial_thermal_state(thermal, conduction, zero_velocity(flow))
+    state = initial_thermal_state(thermal, conduction + 1e-7 * np.cos(k * x) * np.cos(np.pi * z / 2))
+    step, heat = (
+        build_thermal_step(thermal, dtype=jnp.float64),
+        Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid),
+    )
+    run = jax.jit(lambda start: advance_thermal(step, start, heat, 26, checkpoint=False)[0])
+    rescale = jax.jit(lambda a, b, f: jax.tree_util.tree_map(lambda u, v: u + (v - u) * f, a, b))
+    rate, reference = 0.0, 1e-14
+    for interval in range(25):
+        base, state = run(base), run(state)
+        energy = float(sum(jnp.sum((v.data - u.data) ** 2) for u, v in zip(base.velocity, state.velocity)))
+        if interval:
+            rate = 0.5 * np.log(energy / reference) / (26 * dt)
+        state, reference = rescale(base, state, 1e-7 / np.sqrt(energy)), 1e-14
+    return rate
+
+
+def test_a_roll_along_the_field_grows_as_without_it_when_the_lorentz_force_is_explicit():
+    """A roll invariant along the field drives no current: its growth is the field-free rate.
+
+    The Chebyshev reference (:func:`validation.thermal.convection_growth_rate`) gives 1.58004 at ``Pr`` 0.02, ``Ra``
+    2e4, ``k d`` 3.117, with or without a field along the roll's axis; LMhdX's 16 x 16 layer gives 1.58247 (+0.15 %).
+    At ``Q`` 1e4, ``dt sigma B^2/rho`` 0.25, ``magnetic_damping="explicit"`` gives the field-free rate to 1e-6, and
+    the default implicit shift, whose balancing potential force lags a step, 1.32855: 16 % slower. Mistrangelo et
+    al.'s Case 2 ran (step 5.4f) at 0.27 and 0.34.
+    """
+    from validation.thermal import convection_growth_rate
+
+    reference = convection_growth_rate(3.117 / 2.0, 2e4, 0.02).real
+    free = _roll_growth(None, 0.0, "implicit")
+    explicit = _roll_growth("y", 1e4, "explicit")
+    implicit = _roll_growth("y", 1e4, "implicit")
+    assert reference == pytest.approx(
+        convection_growth_rate(3.117 / 2.0, 2e4, 0.02, chandrasekhar=1e4, field="y").real
+    )
+    assert free == pytest.approx(reference, rel=2e-3)
+    assert explicit == pytest.approx(free, rel=1e-5)  # round-off: the power iteration starts at 1e-7
+    assert 0.80 < implicit / free < 0.90
+    with pytest.raises(ValueError, match="under 2"):
+        ChannelProblem(
+            Grid(uniform_faces(4, 0.0, 1.0), uniform_faces(2, 0.0, 1.0), uniform_faces(4, -1.0, 1.0)),
+            (PERIODIC_X, PERIODIC_X, WALL), magnetic_field=(0.0, 2.0, 0.0), dt=0.5, magnetic_damping="explicit",
+        )  # fmt: skip
+
+
 # The coupled thermal step's accuracy (plan step 5.1f).
 
 

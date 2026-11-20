@@ -22,6 +22,11 @@ matched Schur operator ``D H^-1 G``, exactly, by SOLVAX's constrained solve. The
 correction vanishes when the right-hand side does, and the conservative force keeps
 its own discretization.
 
+The potential's share of the force comes from the old velocity, so where the two
+balance (a quasi-two-dimensional core, a roll along the field) a transient runs
+``1 + dt * lambda`` times too slowly; a steady state is exact. ``magnetic_damping=
+"explicit"`` takes the whole force explicitly: time-accurate while ``dt * lambda < 2``.
+
 *Consistency.* The force comes from the same face currents the potential equation
 is built on, never from a separately differenced potential. In the core the
 balance is :math:`-\\nabla p + \\mathbf J\\times\\mathbf B = 0` to
@@ -414,6 +419,10 @@ class ChannelProblem:
     axis 0, an inflow-outflow axis among them; velocity and pressure stay on
     ``grid``. They take no thin or resolved wall beside them.
 
+    ``magnetic_damping`` is ``"implicit"`` (the shift, any step) or ``"explicit"`` (the
+    whole Lorentz force from the old velocity: time-accurate, refused unless ``dt`` times
+    the largest damping rate is under 2). Steady solves keep the shift.
+
     The wall fields are the static pattern and the values the host factorization is built from. A
     wall parameter under a derivative rides as an argument instead: :meth:`with_walls` attaches the
     factorization built from it in the trace as ``potential_walls``, which is neither hashed nor
@@ -433,6 +442,7 @@ class ChannelProblem:
     precision: str = "state"
     wall_layers: tuple = (None, None, None)
     solid_walls: tuple = ((None, None), (None, None), (None, None))
+    magnetic_damping: str = "implicit"
     potential_walls: object = dataclasses.field(default=None, compare=False, hash=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -451,6 +461,8 @@ class ChannelProblem:
             raise ValueError("wall conductance must not be negative")
         if self.precision not in ("state", "mixed"):
             raise ValueError(f"precision must be 'state' or 'mixed', got {self.precision!r}")
+        if self.magnetic_damping not in ("implicit", "explicit"):
+            raise ValueError(f"magnetic_damping is 'implicit' or 'explicit', not {self.magnetic_damping!r}")
         self._freeze_wall_layers()
         self._check_open_axis()
         self._check_solid_walls()
@@ -468,6 +480,10 @@ class ChannelProblem:
                 raise ValueError("the magnetic field must be finite")
         if isinstance(field, ImposedField) and field.grid != self.grid:
             raise ValueError("the imposed field is sampled on a different grid")
+        if self.magnetic_damping == "explicit" and (product := float(self.dt) * max(self.damping_rates)) >= 2:
+            raise ValueError(
+                f"an explicit Lorentz force needs dt * sigma B^2 / rho under 2, got {product:.3g}"
+            )
         # True float32 contractions unless the user chose a precision; see lmhdx.enable_x64.
         _pin_matmul_precision()
 
@@ -596,13 +612,19 @@ class ChannelProblem:
         )
 
     @property
+    def implicit_damping_rates(self) -> tuple[float, float, float]:
+        """Return the damping rates the stage takes implicitly: :attr:`damping_rates`, or zeros when explicit."""
+        return (0.0, 0.0, 0.0) if self.magnetic_damping == "explicit" else self.damping_rates
+
+    @property
     def diffusive_step_limit(self) -> float:
         """Return the largest stable step for the explicit viscous term.
 
         The usual bound for an explicit centred Laplacian,
         ``dt <= 1 / (2 * nu * sum(1 / dx**2))``, evaluated on the finest cell of
-        each axis. The magnetic damping imposes no such limit here because it is
-        treated implicitly, so this is normally the binding constraint.
+        each axis. The magnetic damping imposes no such limit here when it is
+        treated implicitly, so this is normally the binding constraint;
+        ``magnetic_damping="explicit"`` adds ``dt < 2 / max(damping_rates)``.
         """
         inverse = sum(1.0 / float(np.min(widths)) ** 2 for widths in self.grid.widths)
         return 1.0 / (2.0 * float(self.viscosity) * inverse)
@@ -623,7 +645,7 @@ class ChannelProblem:
                     self.grid,
                     velocity_offset(component),
                     conditions,
-                    shift=1.0 + weight * float(self.dt) * self.damping_rates[component],
+                    shift=1.0 + weight * float(self.dt) * self.implicit_damping_rates[component],
                     coefficient=weight * float(self.dt) * float(self.viscosity),
                     precision=self.precision,
                 )
@@ -1159,7 +1181,7 @@ def _advance_momentum(
     if outlet_pressure is not None and problem.open_axis is None:
         raise ValueError("an outlet pressure needs an inflow-outflow axis")
     dt, scale, lift = (float(problem.dt), 1.0, None) if dynamic is None else dynamic
-    rates = tuple(rate * scale**2 for rate in problem.damping_rates)
+    rates = tuple(rate * scale**2 for rate in problem.implicit_damping_rates)
     shifts = tuple(1.0 + implicit * dt * rate for rate in rates)
     coefficient = implicit * dt * float(problem.viscosity) * (viscous is not None)
     if dynamic is not None and viscous is not None:
