@@ -330,7 +330,7 @@ def test_the_heated_duct_run_is_the_older_thermal_run_bit_for_bit():
         jax.grad(lambda q: jnp.sum(lmhdx.solve(q, solver).temperature.data))(new)
 
 
-def test_the_unsteady_duct_is_the_older_projection_run_bit_for_bit():
+def test_the_unsteady_duct_is_the_older_projection_run_bit_for_bit(tmp_path):
     problem = duct(5, 12, cells_in_layer=3)
     run = lmhdx.solve(problem, Solver(dt=0.01, steps=8))
     kernel = ChannelProblem(
@@ -347,6 +347,15 @@ def test_the_unsteady_duct_is_the_older_projection_run_bit_for_bit():
     stages = advance(kernel, 8, viscous=kernel.viscous_factorizations(scheme), scheme=scheme)
     three = lmhdx.solve(problem, Solver(method="rk3", dt=0.01, steps=8))
     assert _same(three.velocity, stages.velocity) and not _same(three.velocity, run.velocity)
+    # The explicit Lorentz force reaches the kernel, and survives the TOML round trip.
+    explicit = dataclasses.replace(kernel, magnetic_damping="explicit")
+    from lmhdx.config import dumps, load
+
+    path = tmp_path / "explicit.toml"
+    path.write_text(dumps(problem, Solver(dt=0.01, steps=8, magnetic_damping="explicit")))
+    found = lmhdx.solve(problem, load(path).solver)
+    expected = advance(explicit, 8, viscous=explicit.viscous_factorizations())
+    assert _same(found.velocity, expected.velocity) and not _same(found.velocity, run.velocity)
     with pytest.raises(ValueError, match="heated run"):
         lmhdx.solve(_heated_duct()[0], Solver(method="rk3", dt=2.0e-3, steps=2))
 

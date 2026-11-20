@@ -372,6 +372,8 @@ def _steady_root(
     by :func:`solvax.root_solve` on the fixed point of one step, which carries the derivatives.
     """
     check, cfl, max_steps = controls
+    if problem.magnetic_damping != "implicit":  # a march's steps outrun an explicit damping
+        problem = dataclasses.replace(problem, magnetic_damping="implicit")
     lift, viscous = with_inflow(_lift(problem), problem), problem.viscous_factorizations(RK3)
     flat, unravel = ravel_pytree(jax.lax.stop_gradient(velocity))
     fixed, zero = jax.lax.stop_gradient(field_scale), (0.0, 0.0, 0.0)
