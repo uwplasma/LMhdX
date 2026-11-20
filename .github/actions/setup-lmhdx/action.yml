@@ -63,7 +63,7 @@ runs:
       env:
         UV_PYTHON: ${{ inputs.python-version }}
       run: |
-        uv venv --python "${{ inputs.python-version }}" .venv
+        uv venv --python "${{ inputs.python-version }}" "$RUNNER_TEMP/venv"
         requirements=(-e .)
         if [[ -n "${{ inputs.extras }}" ]]; then
           requirements=(-e ".[${{ inputs.extras }}]")
@@ -74,5 +74,5 @@ runs:
         if [[ -n "${{ inputs.jax-version }}" ]]; then
           requirements+=("jax==${{ inputs.jax-version }}" "jaxlib==${{ inputs.jax-version }}")
         fi
-        uv pip install --python .venv/bin/python "${requirements[@]}"
-        echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+        uv pip install --python "$RUNNER_TEMP/venv/bin/python" "${requirements[@]}"
+        echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
