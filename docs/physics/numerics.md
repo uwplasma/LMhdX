@@ -242,7 +242,7 @@ lies along the field, whose electromotive force is a gradient and drives no curr
 reads $(1+\Delta t\,\lambda)(\mathbf u^{n+1}-\mathbf u^n)=\Delta t\,\mathbf F(\mathbf u^n)$: the motion
 evolves $1+\Delta t\,\lambda$ times too slowly. A steady state is unaffected, a transient is not. A roll
 along the field at $Pr=0.02$, $Ra=2\times10^4$ grows 5, 9 and 17 % too slowly at
-$\Delta t\,\lambda=0.066$, 0.13 and 0.27, and two to five times too slowly at 1.5 to 5.8, against
+$\Delta t\,\lambda=0.066$, 0.13 and 0.27, and 34, 50 and 66 % too slowly at 0.66, 1.3 and 2.7, against
 the Chebyshev growth rate of `validation.thermal.convection_growth_rate`.
 `ChannelProblem(magnetic_damping="explicit")` (`Solver(magnetic_damping=...)` for a run in time) drops
 the shift and takes the whole Lorentz force from the old velocity: exact for the balanced motion,
