@@ -962,7 +962,10 @@ the critical roll at $Pr=0.02$ (PbLi's) and $Ra=2\times10^4$:
   derives, 17 % at $\Delta t\,\sigma B^2/\rho=0.27$ (16 cells, $Q=10^4$);
 - carried by a plane Poiseuille flow (Re 400 on the half-height, $Ra=10^5$), within +1.7 to +3.3 %
   with limited momentum and van Leer heat transport on 18 to 48 cells a wavelength, the rolls
-  travelling 2 to 5 % slow; upwind heat transport, not in the record, was 13 % slow on 18 cells.
+  travelling 2 to 5 % slow; upwind heat transport, not in the record, was 13 % slow on 18 cells;
+- with Case 2's ingredients at its $\Delta t\,\sigma B^2/\rho=0.34$: carried by that flow in a field along the
+  roll's axis (18 cells, $Q=8100$), 24.6 % slow under the implicit shift and +1.65 % explicit, the field-free
+  run's error; in a field across the axis ($Q=10^4$, $Ra=4\times10^5$), 6.0 % and 2.5 % slow.
 
 A differentially heated square cavity (de Vahl Davis 1983, $Pr=0.71$) checks the steady nonlinear
 flow: the peak velocities and the hot wall's mean Nusselt number are within 0.1 % at $Ra=10^3$ on 64

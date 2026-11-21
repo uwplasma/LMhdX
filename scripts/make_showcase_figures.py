@@ -644,7 +644,9 @@ def thermal_onset(chandrasekhar_numbers: tuple[float, ...] = (0.0, 10.0, 100.0, 
 
 def _roll_rate(cells, layer, *, field=None, q=0.0, re=0.0, ra=2e4, pr=0.02, courant=0.3, damping="implicit"):
     """A roll's growth rate and phase speed in LMhdX's thermal step, by power iteration (the setting of
-    :func:`validation.thermal.convection_growth_rate`, one wavelength at ``k d`` 3.117, two cells along ``y``)."""
+    :func:`validation.thermal.convection_growth_rate`, one wavelength at ``k d`` 3.117, two cells along ``y``). The
+    disturbance is averaged along ``y`` at each rescaling: a roll along ``x`` on the two cells, which a field along
+    ``x`` leaves undamped, would otherwise overtake the 2-D roll the reference describes."""
     from validation.thermal import convection_growth_rate
 
     k, nu = 3.117 / 2.0, pr
@@ -689,7 +691,11 @@ def _roll_rate(cells, layer, *, field=None, q=0.0, re=0.0, ra=2e4, pr=0.02, cour
             np.sum(np.asarray(b.velocity[2].data - a.velocity[2].data)[:, 0, centre] * wave)
         )
 
-    rescale = jax.jit(lambda a, b, f: jax.tree_util.tree_map(lambda u, v: u + (v - u) * f, a, b))
+    # the disturbance averaged over the two cells along y; a periodic face array stores three
+    def flat(u, v, f):
+        return u + (jnp.mean((v - u)[:, :2], axis=1, keepdims=True) if jnp.ndim(u) == 3 else v - u) * f
+
+    rescale = jax.jit(lambda a, b, f: jax.tree_util.tree_map(lambda u, v: flat(u, v, f), a, b))
     base, state = run(base, state)
     energy, _ = measure(base, state)
     state = rescale(base, state, 1e-7 / np.sqrt(energy))
@@ -765,6 +771,10 @@ def thermal_buoyancy() -> None:
                 for d in ("implicit", "explicit")[: 1 + stable(q, n)]
             ]
     cases += [dict(cells=n, layer=32, re=400.0, ra=1e5, damping="implicit") for n in (18, 24, 48)]
+    # Case 2's ingredients at its dt sigma B^2/rho of 0.34: a through-flow and a field along the roll; a field across it.
+    for damping in ("implicit", "explicit"):
+        cases.append(dict(cells=18, layer=32, re=400.0, ra=1e5, field="y", q=8100.0, damping=damping))
+        cases.append(dict(cells=16, layer=16, ra=4e5, field="x", q=1e4, courant=1.72, damping=damping))
     for case in cases:
         rate, phase, exact, travel, product = _roll_rate(**case)
         rolls.append(
