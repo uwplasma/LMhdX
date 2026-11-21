@@ -6,16 +6,16 @@
    "layer": 8,
    "rate": 1.57458,
    "exact": 1.58004,
-   "speed": 4.79642e-07,
+   "speed": 5.64305e-07,
    "exact_speed": 0.0,
    "dt_sigma_B2": 0.0
   },
   {
    "cells": 16,
    "layer": 16,
-   "rate": 1.58148,
+   "rate": 1.58149,
    "exact": 1.58004,
-   "speed": -1.3531e-07,
+   "speed": -1.9001e-07,
    "exact_speed": 0.0,
    "dt_sigma_B2": 0.0
   },
@@ -58,7 +58,7 @@
    "damping": "implicit",
    "rate": 1.54982,
    "exact": 1.58004,
-   "speed": -3.71634e-08,
+   "speed": -3.92395e-07,
    "exact_speed": 0.0,
    "dt_sigma_B2": 0.0265165
   },
@@ -70,7 +70,7 @@
    "damping": "explicit",
    "rate": 1.58149,
    "exact": 1.58004,
-   "speed": 2.45899e-07,
+   "speed": 3.01091e-07,
    "exact_speed": 0.0,
    "dt_sigma_B2": 0.0265165
   },
@@ -130,7 +130,7 @@
    "damping": "implicit",
    "rate": 1.31514,
    "exact": 1.58004,
-   "speed": 4.14792e-08,
+   "speed": 1.25471e-07,
    "exact_speed": 0.0,
    "dt_sigma_B2": 0.265165
   },
@@ -142,7 +142,7 @@
    "damping": "explicit",
    "rate": 1.58149,
    "exact": 1.58004,
-   "speed": -6.09242e-08,
+   "speed": -1.54864e-07,
    "exact_speed": 0.0,
    "dt_sigma_B2": 0.265165
   },
@@ -202,7 +202,7 @@
    "damping": "implicit",
    "rate": 0.534906,
    "exact": 1.58004,
-   "speed": -3.83163e-08,
+   "speed": -1.15738e-08,
    "exact_speed": 0.0,
    "dt_sigma_B2": 2.65165
   },
@@ -289,6 +289,62 @@
    "speed": 4.95072,
    "exact_speed": 5.06877,
    "dt_sigma_B2": 0.0
+  },
+  {
+   "cells": 18,
+   "layer": 32,
+   "re": 400.0,
+   "ra": 100000.0,
+   "field": "y",
+   "q": 8100.0,
+   "damping": "implicit",
+   "rate": 3.64032,
+   "exact": 4.82994,
+   "speed": 4.12019,
+   "exact_speed": 5.06877,
+   "dt_sigma_B2": 0.340163
+  },
+  {
+   "cells": 16,
+   "layer": 16,
+   "ra": 400000.0,
+   "field": "x",
+   "q": 10000.0,
+   "courant": 1.72,
+   "damping": "implicit",
+   "rate": 3.45118,
+   "exact": 3.67229,
+   "speed": -6.57899e-07,
+   "exact_speed": -2.866e-08,
+   "dt_sigma_B2": 0.339945
+  },
+  {
+   "cells": 18,
+   "layer": 32,
+   "re": 400.0,
+   "ra": 100000.0,
+   "field": "y",
+   "q": 8100.0,
+   "damping": "explicit",
+   "rate": 4.90945,
+   "exact": 4.82994,
+   "speed": 4.81242,
+   "exact_speed": 5.06877,
+   "dt_sigma_B2": 0.340163
+  },
+  {
+   "cells": 16,
+   "layer": 16,
+   "ra": 400000.0,
+   "field": "x",
+   "q": 10000.0,
+   "courant": 1.72,
+   "damping": "explicit",
+   "rate": 3.57901,
+   "exact": 3.67229,
+   "speed": -2.08239e-08,
+   "exact_speed": -2.866e-08,
+   "dt_sigma_B2": 0.339945
   }
  ],
  "cavity": [
