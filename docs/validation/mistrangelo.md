@@ -1362,8 +1362,8 @@ A's protocol allows; 72 and 64 minutes on one A100.
 - Against the codes: their hot fluid reaches the axis between x = 0.05 and 0.1 m, and LMhdX's at Δt 0.015 s between
   0.25 and 0.35 m. A smaller step moves LMhdX's rolls further from theirs, not nearer. One code, CFX, reports a
   steady flow (p. 12).
-- Run B, the axial spacing halved, is still queued. It runs at Δt 0.015 s and is compared with the explicit run at
-  the same step, so it isolates the axial spacing at that step only.
+- Run B, the axial spacing halved, ran at Δt 0.015 s against the explicit run at the same step, so it isolates the
+  axial spacing at that step only (its result below).
 
 ## Step 5.4f: the step's time error on Case 2's rolls (declared before the runs)
 
@@ -1410,7 +1410,24 @@ the axis over x = 0.05–0.25 m.
   braking weak, and the layer at 8 cells is not the model.
 
 Run on the laptop GPU (float64) with the study's script outside the repository, which joins the campaign scripts
-when #336 is settled. Reported, not gated. Run B continues on Perlmutter.
+when #336 is settled. Reported, not gated.
+
+## Step 5.4f: Run B, the axial spacing halved — the result
+
+Run B (Perlmutter job 61761222) ran from the inlet's developed flow, with 2.5 mm along the core (874 axial cells), the
+explicit force and Δt 0.015 s. It settled after 652 s and averaged 450 s in ten independent sub-batches; 1 h 45 min on
+one A100. Against the explicit run at 5 mm:
+- *Growth per metre over x = 0.10–0.25 m at least 5 % above 76 /m:* not met. It is 75.6 /m (76.1 at 5 mm).
+- *Saturation at least 1 cm upstream of 0.299 m:* met. The rolls saturate at 0.278 m, 2.1 cm upstream.
+- *Nu at x = 0.2 m above 2.15:* not met. It is 2.152, as at 5 mm, and T on the axis agrees within 0.02 K over
+  x = 0.1–0.25 m.
+- The extra amplitude arises upstream of x = 0.1 m. From the same rounding at x = 0 (5e-12 m/s), the RMS of w at
+  x = 0.2 m is 4.8 times the 5 mm run's; over x = 0.05–0.10 m it grows 69 /m against 62.
+- Figures 24 and 37 lie within the widened band at 67 and 63 % (70 and 63 % at 5 mm). T_w's mean offset from OF_KIT
+  is +5.5 K at both.
+- So one of the three holds. At Δt 0.015 s, halving the axial spacing moves the saturation 2 cm upstream and leaves
+  the heated zone's figures where they were. The codes' hot fluid reaches the axis between x = 0.05 and 0.1 m, so the
+  axial spacing accounts for a small part of the gap, and that at Δt 0.015 s.
 
 ## Sources
 
