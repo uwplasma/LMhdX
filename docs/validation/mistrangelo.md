@@ -1624,6 +1624,48 @@ grows 1e5-fold; Run C at Δt/4, 2-fold.
 On one A100 each at commit `782e4f3`, with the explicit rerun's runner (`--solve-substeps 4 --solve
 conduction|viscous`).
 
+## Step 5.4f: a disturbance's growth and drift over the heater (declared before the runs)
+
+The spatial growth over the heater is a disturbance's growth in time over its drift speed. The layer measured both
+and found the step changes neither, but only the duct has the heated wall's thermal layer and its jet. The runs ask
+which of the two the step changes in the duct.
+
+**The runs.** `packet.py`, beside the runner, takes a steady state of Case 2: L-b's last, at 3,019 s. That state is
+a fixed point of the step at any Δt, since there every term is taken at the same state; each run re-imposes its own
+inlet.
+- **The packet:** a temperature disturbance of 0.01 K, centred at x = 0.03 m, with the rolls' 4 cm wavelength
+  under a 1.5 cm Gaussian, across the fluid's height and uniform along the field.
+- **The march:** the base and the disturbed state are marched together. Every 0.3 s the difference is measured and
+  rescaled to its first size: a power iteration on the linearised step that follows the packet.
+- Each interval records:
+  - the growth of the difference's norms in w and T;
+  - the centroid along x of w'²;
+  - the packet's largest w' over x ≤ 0.35 m;
+  - the base's own departure from its start there.
+- **The steps:** Δt 0.015, 0.0075 and 0.00375 s, each up to 150 s, stopping when the centroid passes 0.4 m.
+- **Checked:** on mesh S the march, the measures and the rescaling run as described.
+
+**The measures**, over the centroid's passage from x = 0.05 to 0.30 m, between the times $t_1$ and $t_2$ when it
+passes them:
+- the growth in time, $\sigma = \Delta \ln \lVert w' \rVert / (t_2 - t_1)$;
+- the drift, $c = 0.25\ \mathrm{m} / (t_2 - t_1)$;
+- their ratio, $\kappa = \sigma / c$, the growth per metre.
+
+If the centroid does not reach 0.30 m within 150 s, they are taken over the stretch it covers.
+
+**The control.** κ at Δt lies within a factor of two of the duct's 75 /m, and κ at Δt/4 is under 25 /m. If not, the
+packet does not carry the duct's growth, and the readings below are reported without being taken as the answer.
+
+**Readings**, Δt against Δt/4:
+- *The growth:* the drift is unchanged, within 25 %, and the growth in time accounts for the change.
+- *The drift:* the growth in time is unchanged, $|\sigma(Δt) - \sigma(Δt/4)|$ within 25 % of the larger of the two,
+  and the drift at Δt is under 0.8 times that at Δt/4.
+- *Both:* each changes by more than those bounds.
+- A reading holds only while the base's own departure stays under a tenth of the packet's largest w'.
+- Δt/2 gives the trend.
+
+On one A100 each at commit `782e4f3` (`packet.py`, the explicit force).
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
