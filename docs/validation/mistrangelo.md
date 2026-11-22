@@ -1290,7 +1290,8 @@ window. Neither declared outcome held:
 - *Period 4.0–4.2 s:* met. The axis probes give 4.19 s, against M1L1's 4.52 s and the explicit run's 4.00 s.
 - *Growth per metre 76–80 /m over x = 0.10–0.25 m:* not met, and not M1L1's 85 /m either. The disturbance stays at
   its rounding to x = 0.2 m (RMS of w 5e-12 m/s at x = 0, 0.1 and 0.2 m), then grows about 70 /m from 0.2 to 0.4 m. The
-  rolls saturate (RMS of u 1e-3 m/s) at 0.88 m, against 0.26 m.
+  rolls saturate (RMS of u 1e-3 m/s) at 0.90 m, against 0.27 m. (First reported as 0.88 m, read from the RMS of w by
+  mistake; corrected with Runs C and D.)
 
 At Δt 0.015 s both forces grow from x ≈ 0, so on M1 the rolls' onset is not converged in the time step, and not only
 through the Lorentz split. Buoyancy is taken from the old temperature, a first-order partitioned coupling. Its buoyancy
@@ -1329,14 +1330,15 @@ A's protocol allows; 72 and 64 minutes on one A100.
 - As declared, Run A's window was a transient, and is reported as one. At Δt/4 with the implicit force, Case 2's
   flow on M1 is steady.
 
-**Run C: the explicit force at Δt/4.** Not met as declared: the first clause holds, the second does not.
+**Run C: the explicit force at Δt/4.** Met: both clauses hold.
 - *The RMS of w at x = 0.2 m within ten times its value at x = 0:* met. It is 1.4e-11 m/s against 7.3e-12, twice
   that value; at Δt 0.015 s the explicit run grew 1e5-fold there.
-- *Saturation downstream of 0.5 m:* not met. Over the window the rolls saturate at 0.47 m. In the six 30 s
-  sub-batches they saturate at 0.42 m in the first and at 0.78–0.88 m in the other five: the first sub-batch's burst
-  sets the window's figure.
+- *Saturation downstream of 0.5 m:* met. Over the window the rolls saturate at 0.81 m. In the six 30 s sub-batches
+  they saturate at 0.43 m in the first and at 0.79–0.90 m in the other five.
+- This was first reported as not met, at 0.47 m: that figure read the RMS of w against 1e-3 m/s, not the RMS of u
+  that defines saturation here. Run A's 0.88 m had the same error; it is 0.90 m.
 - *The alternative:* neither clause. The growth over x = 0.10–0.25 m is 34 /m, not 60 or more, and the saturation
-  lies 12 cm downstream of 0.35 m.
+  lies 46 cm downstream of 0.35 m.
 - So at Δt/4 the growth over the heater vanishes with the force explicit, as with it implicit. Neither the shift nor
   Run A's start removed it.
 
@@ -1346,8 +1348,8 @@ A's protocol allows; 72 and 64 minutes on one A100.
 |:--|:--|--:|--:|--:|:--|
 | M1L1 | implicit | 0.015 | 1.2e6 | 86 /m | 0.266 m |
 | Explicit rerun | explicit | 0.015 | 1.0e5 | 76 /m | 0.299 m |
-| Run A | implicit | 0.00375 | 1.2 | 24 /m | 0.88 m |
-| Run C | explicit | 0.00375 | 2.0 | 34 /m | 0.47 m (sub-batches: 0.42, then 0.78–0.88 m) |
+| Run A | implicit | 0.00375 | 1.2 | 24 /m | 0.90 m |
+| Run C | explicit | 0.00375 | 2.0 | 34 /m | 0.81 m (sub-batches: 0.43, then 0.79–0.90 m) |
 | Run D | implicit | 0.00375 | 1.2 | 1 /m | none: steady |
 
 - At Δt 0.015 s, with either force, the disturbance grows from x ≈ 0 and the rolls saturate over the heater. At
