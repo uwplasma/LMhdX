@@ -1582,6 +1582,39 @@ transports and the solvers' tolerances as excluded. Still untested: the terms ea
 These are the conjugate wall's backward-Euler conduction, the viscous and Lorentz stages, and the projection with
 the open boundaries. Each can be tested as the transports were: sub-stepped within Δt 0.015 s from Run C's state.
 
+## Step 5.4f: the conjugate wall's conduction and the viscous stage (declared before the runs)
+
+Each of the step's implicit solves is backward Euler over Δt. The conduction solve, PCG through the steel walls'
+cells, carries the heated wall's heat into the fluid. The viscous solve, with the damping explicit in these runs,
+gives the predictor, and the projection takes the same operator: it solves the saddle point $H u + G q = b$,
+$D u = 0$, to its PCG's tolerance, so the pressure carries no splitting error of its own.
+
+**The runs.** A study patch (`solve_patch.py`, beside the runner) takes one solve in n backward-Euler sub-steps of
+Δt/n, with all else at Δt.
+- S-c, conduction in 4 sub-steps. Each sub-step solves $c\,d_m - h \nabla\cdot(k \nabla d_m) = h(q - C
+  \nabla\cdot(uT) + \nabla\cdot(k \nabla T_m))$, with $h = Δt/4$, the sources and the transport held at the
+  step's, and $T_m$ the temperature after the sub-steps before. The heat ledger then closes only to the sub-steps'
+  difference: it takes the wall flux at the step's end.
+- S-v, the viscous solve in 4 sub-steps, $v_{m+1} = H_h^{-1}(v_m + h f)$, with every force $f$ held through them. The
+  pressure force is held too, so the projection takes $W = \tfrac{1}{n}\sum_{j=1}^{n} H_h^{-j}$ where the step
+  takes $H^{-1}$. Its PCG is preconditioned as at Δt.
+- Each on M1 with the explicit force, at Δt 0.015 s, from Run C's last state at 2,488.4 s, with P0's protocol: 300 s
+  burn-in, then 150 s averaged in five sub-batches, settled or not.
+- The checks, on mesh S:
+  - At n = 1 each patch gives back the step: conduction bit for bit, the viscous stage to 8e-16 m/s after 20
+    steps, rounding.
+  - Conduction's four sub-steps equal four solves at Δt/4 to 1e-13 K, against 3e-3 K for one solve at Δt.
+  - With the viscous solve sub-stepped, the velocity stays divergence-free (4e-11 /s).
+
+**The measure** is the RMS of w at x = 0.2 m over its value at x = 0. The brackets, from the same state: P0 at Δt
+grows 1e5-fold; Run C at Δt/4, 2-fold.
+- *Hypothesis (that solve's time error causes the growth over the heater):* its run stays within ten.
+- *Alternative:* its run grows at least 1e3-fold. Then that solve's time error is not the cause.
+- Between ten and 1e3, a partial account.
+
+On one A100 each at commit `782e4f3`, with the explicit rerun's runner (`--solve-substeps 4 --solve
+conduction|viscous`).
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
