@@ -1363,6 +1363,53 @@ A's protocol allows; 72 and 64 minutes on one A100.
 - Run B, the axial spacing halved, is still queued. It runs at Δt 0.015 s and is compared with the explicit run at
   the same step, so it isolates the axial spacing at that step only.
 
+## Step 5.4f: the step's time error on Case 2's rolls (declared before the runs)
+
+Runs A, C and D leave a time error, outside the Lorentz split, that grows the rolls over the heater at Δt 0.015 s and
+not at Δt/4. Its suspect is the partitioned buoyancy. In the field-free Bénard onset the step's critical Rayleigh
+number is flat in the step ([thermal](../physics/thermal.md)), but a first-order error vanishes at the onset of a
+stationary mode. Case 2's rolls drift past the grid and are braked by their walls, so the test puts them in that
+regime, with the step's products matched to Case 2's.
+
+**The layer.** Rolls between Case 2's Hartmann walls, in units of the duct's half-width $a$ and $a^2/\kappa$:
+- rigid isothermal plates at z = ±1, heated below, gravity along −z;
+- Case 2's steel walls at y = ±1 (Ha 235; M1's 48 cells across, 6 in each Hartmann layer and 6 in each wall);
+- Pr 0.0196, and the field along y;
+- x periodic over one wavelength at $ka = 3.8$, the rolls' 3.8 cm over $a$ = 2.3 cm, on M1's 8 cells; 32 cells
+  along z.
+- The walls brake the rolls at $f = 0.065\,\sigma B^2/\rho$ (`vortex_decay_rate`), so $f\Delta t$ = 0.022 at
+  $\Delta t\,\sigma B^2/\rho = 0.34$, as in Case 2 on M1 (0.021).
+
+**The runs.**
+- Two Rayleigh numbers: 1.1 Ra_c, near the onset (σ = 0.019 f), and 3 Ra_c, growing as Case 2's rolls do at Δt
+  0.015 s (σ = 0.31 f). Ra_c is 1.15e6 with the walls' friction.
+- Two flows: at rest, and a Poiseuille through-flow (centreline 18.2 κ/a) whose rolls drift 0.024 cells a step at
+  0.34, as Case 2's do on M1 (0.028). The flow is driven by a force matched to the walls' braking.
+- At each, $\Delta t\,\sigma B^2/\rho$ = 0.34, 0.17, 0.084 and 0.042 (Case 2's Δt, Δt/2, Δt/4 and Δt/8), with the
+  force explicit and implicit.
+- The growth rate is measured by power iteration on the thermal step, the buoyancy record's method. The buoyancy
+  Courant number is 0.012–0.020.
+- The reference is each case's rate at Δt → 0, extrapolated at first order from 0.084 and 0.042. Sommeria and
+  Moreau's model (`convection_growth_rate` with the walls' friction and the through-flow) is a check.
+
+**The measure** is the fall in the growth rate from 0.34 to 0.084, in units of f, with the force explicit. Case 2's
+rolls lose 0.5–0.7 s⁻¹ over the heater between those steps, 0.34–0.48 f at its 1.46 s⁻¹.
+- *Hypothesis (the step's time error on the rolls explains Case 2):* the drifting rolls' rate falls by at least
+  0.17 f, half of Case 2's smaller figure, at either Rayleigh number.
+- *Alternative:* it falls by under 0.034 f, a tenth, at both. Then the step's error on the rolls themselves does not
+  explain Case 2. The cause lies in the duct's base flow (the heated wall's layer, the side layers), or in what grows.
+- Anything between is reported as a partial account.
+
+**What grows over the heater.** The explicit Δt 0.015 s run's last state, less its window's mean, gives w along x on
+the axis over x = 0.05–0.25 m.
+- *Hypothesis (the rolls grow from rounding):* its dominant wavelength is 3.2–4.4 cm, the saturated rolls' within
+  10 %, so the layer's $ka$ applies.
+- *Alternative:* under 2 cm, four cells or fewer. Then the grid scale grows, where the averaging leaves the Lorentz
+  braking weak, and the layer at 8 cells is not the model.
+
+Run on the laptop GPU (float64) with the study's script outside the repository, which joins the campaign scripts
+when #336 is settled. Reported, not gated. Run B continues on Perlmutter.
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
