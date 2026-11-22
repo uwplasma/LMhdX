@@ -1283,6 +1283,38 @@ Both on one A100 on Perlmutter at commit `782e4f3`. The runner is the explicit r
 re-imposes the inlet profile and face constraints on a loaded state: another Δt rebuilds the inlet profile, equal to
 the start's only to its solve's tolerance.
 
+## Step 5.4f: Run A, the implicit force at Δt/4 — the result
+
+Run A (Perlmutter job 61761121) ran 300 s from M1L1's last state and averaged 1,455–1,635 s, unsettled after one
+window. Neither declared outcome held:
+- *Period 4.0–4.2 s:* met. The axis probes give 4.19 s, against M1L1's 4.52 s and the explicit run's 4.00 s.
+- *Growth per metre 76–80 /m over x = 0.10–0.25 m:* not met, and not M1L1's 85 /m either. The disturbance stays at
+  its rounding to x = 0.2 m (RMS of w 5e-12 m/s at x = 0, 0.1 and 0.2 m), then grows about 70 /m from 0.2 to 0.4 m. The
+  rolls saturate (RMS of u 1e-3 m/s) at 0.88 m, against 0.26 m.
+
+At Δt 0.015 s both forces grow from x ≈ 0, so on M1 the rolls' onset is not converged in the time step, and not only
+through the Lorentz split. Buoyancy is taken from the old temperature, a first-order partitioned coupling. Its buoyancy
+Courant number at Δt 0.015 s is 0.04–0.05 in both runs, where the calibration of `build_thermal_step` puts the
+critical Rayleigh number under 3 % low at 0.025 and about 15 % low at 0.2. Whether that, or Run A's start, accounts
+for the change is what Runs C and D test.
+
+## Step 5.4f: Runs C and D (declared before the runs)
+
+**Run C: the explicit force at Δt/4.** M1 at Δt 0.00375 s with the force explicit, from the explicit run's last state
+at 1,957.7 s, with Run A's protocol: 300 s burn-in, then 150 s averaged in five sub-batches, settled or not.
+- *Hypothesis (a time error other than the Lorentz split removes the growth over the heater):* the RMS of w at
+  x = 0.2 m stays within ten times its value at x = 0, and the rolls saturate downstream of 0.5 m.
+- If instead it grows at 60 /m or more over x = 0.10–0.25 m and saturates upstream of 0.35 m, the difference between
+  Run A and the Δt 0.015 s runs lies in the implicit shift at Δt/4 or in Run A's start.
+
+**Run D: Run A continued.** From Run A's last state at 1,635.2 s, with the same settings: another 300 s burn-in and
+150 s averaged.
+- *Hypothesis (Run A had settled):* the rolls saturate within 5 cm of Run A's 0.88 m, and the RMS of w at x = 0.3 m
+  stays within a factor of three of Run A's 6e-9 m/s.
+- If the saturation moves on by more than 5 cm, Run A's window was a transient and is reported as one.
+
+Both reported, not gated, on one A100 at commit `782e4f3` with the explicit rerun's runner.
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
