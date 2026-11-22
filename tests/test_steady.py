@@ -1312,6 +1312,19 @@ def test_the_figure_references_meet_their_tables_and_limits():
 
     assert abs(convection_growth_rate(3.117 / 2.0, 1707.76, 1.0)) < 1e-5
     assert abs(convection_growth_rate(1.02056, 0.0, 1.0 / 5772.22, reynolds=5772.22, count=80).real) < 1e-7
+    # A friction on the roll shifts a slow viscous mode by itself. A vortex between insulating Hartmann walls decays at
+    # Sommeria and Moreau's 1/Ha + K^2/Ha^2; with resolved walls of conductance ratio c it tends, as K t vanishes, to
+    # the thin wall's c/(1 + c) + 1/Ha (Case 2's steel, c = 0.108).
+    free = convection_growth_rate(1.5585, 0.0, 0.02).real
+    assert free - convection_growth_rate(1.5585, 0.0, 0.02, friction=0.7).real == pytest.approx(0.7, rel=1e-8)
+    from validation.shercliff import vortex_decay_rate
+
+    assert vortex_decay_rate(np.pi / 2, 235.0) == pytest.approx(-1.0 / 235.0 - (np.pi / 470.0) ** 2, rel=2e-3)
+    ratio, thickness = 1.24571, 0.002 / 0.023
+    thin = ratio * thickness / (1.0 + ratio * thickness) + 1.0 / 235.0
+    assert -vortex_decay_rate(0.01, 235.0, wall_ratio=ratio, wall_thickness=thickness) == pytest.approx(
+        thin, rel=3e-3
+    )
 
 
 def _plates(cells: int, hartmann: float):
@@ -2435,6 +2448,60 @@ def test_a_coupled_manufactured_open_duct_converges_at_its_order(momentum, heat,
     orders = np.log2(errors[1] / errors[2])
     assert 0.8 * order < orders[0] < 1.2 * order, orders
     assert np.all((orders[1:] > 1.7) & (orders[1:] < 2.3)), orders
+
+
+def test_the_thermal_step_in_a_field_is_first_order_in_time_and_its_explicit_force_does_not_grow_with_the_field():
+    """The manufactured flow of :func:`validation.transient.manufactured_run`, every term of the thermal step on, on
+    16 cells to t = 0.3; the difference between runs at dt and dt/2 is the time error. With the explicit Lorentz
+    force it is first order (1.04 at sigma B^2/rho = 30) and does not grow with the field: 0.0076 at 10 and 0.0058 at
+    30 between dt 0.02 and 0.01, the stronger field damping its damped part's error. Under the implicit shift it is
+    0.083 at 30, the transient error of the shift (docs/physics/numerics.md)."""
+    from validation.transient import manufactured_run
+
+    def time_error(rate, damping="explicit", steps=(0.02, 0.01)):
+        runs = [manufactured_run(16, rate=rate, damping=damping, final=0.3, dt=dt)["fields"] for dt in steps]
+        return [max(np.max(np.abs(a - b)) for a, b in zip(c[:3], f[:3])) for c, f in zip(runs, runs[1:])]
+
+    strong, weak = time_error(30.0, steps=(0.02, 0.01, 0.005)), time_error(10.0)
+    implicit = time_error(30.0, "implicit")
+    assert 0.9 < np.log2(strong[0] / strong[1]) < 1.15, strong
+    assert strong[0] < weak[0], (weak, strong)
+    assert implicit[0] > 2.0 * strong[0], (implicit, strong)
+
+
+def test_the_thermal_step_in_a_field_converges_in_space_with_conducting_walls():
+    """The same flow with conducting walls (sigma_w = 2 sigma, carrying no current), sigma B^2/rho = 10 and the
+    explicit force, at dt 0.0025 to t = 0.2 on 16 and 32 cells: the RMS errors of u_x, u_y, u_z and T fall 3.7, 3.3,
+    2.9 and 4.4 times (1.6 to 2.3 on to 64 cells, in the record of scripts/make_showcase_figures.py)."""
+    from validation.transient import manufactured_run
+
+    coarse, fine = (
+        manufactured_run(cells, rate=10.0, dt=0.0025, final=0.2, wall=(cells // 8, 2.0))["rms"]
+        for cells in (16, 32)
+    )
+    orders = np.log2(np.array(coarse) / np.array(fine))
+    assert np.all(orders > 1.45), orders
+
+
+def test_a_vortex_along_the_field_decays_between_case_2s_steel_walls_at_the_exact_rate():
+    """u_z = U(y) cos(k x), k = pi/2, between Case 2's steel Hartmann walls at Ha 235, on its M1 cross-section (48
+    cells, 6 in each Hartmann layer, 6 in each wall), against validation.shercliff.vortex_decay_rate (-0.0933
+    sigma B^2/rho, 22 times the insulating walls' braking). Along x the braking is 14.1 and 3.7 % weak on 8 and 16
+    cells a wavelength, about 1 - cos^2(pi/n): the current and its force are each averaged once between the
+    staggered faces. At Case 2's dt sigma B^2/rho = 0.34 the explicit force keeps the rate (1.4 % above its value at
+    0.02) and the implicit shift slows it by 1 + 0.34, to 0.4 %."""
+    from validation.transient import vortex_decay
+
+    errors = []
+    for cells in (8, 16):
+        small, exact = vortex_decay(cells)
+        errors.append(1.0 - small / exact)
+        assert abs(errors[-1] - np.sin(np.pi / cells) ** 2) < 0.01, (cells, errors)
+    assert 1.8 < np.log2(errors[0] / errors[1]) < 2.2, errors
+    explicit, _ = vortex_decay(16, step_rate=0.34)
+    implicit, _ = vortex_decay(16, step_rate=0.34, damping="implicit")
+    assert abs(explicit / small - 1.0) < 0.02, (explicit, small)
+    assert abs(implicit * 1.34 / explicit - 1.0) < 0.01, (implicit, explicit)
 
 
 # Mistrangelo et al. 2025, the heated conducting duct (plan step 5.4a, ADR 0009).

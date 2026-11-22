@@ -44,6 +44,7 @@ __all__ = [
     "flow_rate",
     "hartmann_wall_current",
     "quadrant_flow_rate",
+    "vortex_decay_rate",
 ]
 
 
@@ -278,3 +279,48 @@ def quadrant_flow_rate(
         solution += scipy.linalg.lu_solve(factors, (source - operator @ solution) * scale, check_finite=False)
     weights = 0.5 * chebyshev_weights(points) * beta * np.cosh(beta * (1.0 - t)) / np.sinh(beta)
     return float(weights @ solution[:size].reshape(count, count) @ weights)
+
+
+def vortex_decay_rate(
+    wavenumber: float,
+    hartmann: float,
+    points: int = 120,
+    *,
+    wall_ratio: float = 0.0,
+    wall_thickness: float = 0.0,
+) -> float:
+    """Return the decay rate, in ``sigma B^2 / rho``, of a vortex invariant along the field between Hartmann walls.
+
+    The walls are ``y = -1, 1`` and ``B = B y``. The mode ``u = U(y) e exp(i K.x)``, with ``e`` normal to ``y`` and
+    to the in-plane wavevector ``K``, has no ``u_y`` and no pressure. With the potential ``phi = i B G`` and time in
+    ``rho / (sigma B^2)``:
+
+    .. math::
+       s U = (U'' - K^2 U)/Ha^2 + K G - U, \\qquad G'' - K^2 G = -K U,
+
+    with ``U = 0`` at the walls and their charge balance ``G'(+-1) = -+ (sigma_w/sigma) K tanh(K t) G``: a wall of
+    conductivity ratio ``wall_ratio`` and thickness ``wall_thickness`` (in the half-width), insulated outside, or
+    ``G' = 0`` insulating. The leading eigenvalue by Chebyshev collocation, converged to eight digits by 120 points
+    at Ha 235. Insulating, it tends to Sommeria and Moreau's (1982) ``-1/Ha - K^2/Ha^2``: within 0.2 % at
+    ``K = pi/2``.
+    """
+    from scipy.linalg import eig
+
+    derivative, _ = _differentiation_matrix(points)
+    size, identity = points + 1, np.eye(points + 1)
+    helmholtz = derivative @ derivative - wavenumber**2 * identity
+    left = np.block(
+        [[helmholtz / hartmann**2 - identity, wavenumber * identity], [wavenumber * identity, helmholtz]]
+    )
+    right = np.zeros_like(left)
+    right[:size, :size] = identity
+    exchange = wall_ratio * wavenumber * np.tanh(wavenumber * wall_thickness)
+    for row, sign in ((0, 1.0), (points, -1.0)):  # y = 1, then y = -1
+        left[row], right[row] = 0.0, 0.0
+        left[row, row] = 1.0
+        left[size + row] = 0.0
+        left[size + row, size:] = derivative[row]
+        left[size + row, size + row] += sign * exchange
+    values = eig(left, right, right=False)
+    values = values[np.isfinite(values) & (np.abs(values) < 1e8)]
+    return float(values[np.argmax(values.real)].real)

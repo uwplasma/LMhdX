@@ -805,6 +805,67 @@ def thermal_buoyancy() -> None:
     path.write_text(json.dumps(_compact(record), indent=1) + "\n")
 
 
+def thermal_transient() -> None:
+    """The transient checks of the thermal step with the field on in docs/physics/numerics.md (validation/transient.py):
+    the manufactured solution in space and time, a vortex braked by Hartmann walls against its exact decay, and rolls
+    between insulating Hartmann walls against Sommeria and Moreau's model. Data only, about 25 minutes on a laptop GPU."""
+    from validation.transient import hartmann_roll_growth, manufactured_run, vortex_decay
+
+    lmhdx.enable_x64()
+    space, timed, decay, rolls = [], [], [], []
+    for options in (
+        dict(rate=0.0),
+        dict(rate=10.0),
+        dict(rate=10.0, damping="implicit"),
+        dict(rate=10.0, wall=1),
+    ):
+        for n in (16, 32, 64):
+            case = {**options, "wall": (n // 8, 2.0)} if "wall" in options else options
+            found = manufactured_run(n, dt=0.0025, final=0.2, **case)
+            space.append({**case, "cells": n, "max": found["max"], "rms": found["rms"]})
+            print(f"space {case} on {n}: rms {np.array(found['rms'])}")
+    steps = (0.02, 0.01, 0.005, 0.0025)
+    for case in (dict(rate=0.0), dict(rate=10.0), dict(rate=10.0, damping="implicit"), dict(rate=30.0),
+                 dict(rate=30.0, damping="implicit"), dict(rate=10.0, wall=(4, 2.0))):  # fmt: skip
+        runs = [manufactured_run(32, dt=dt, final=1.0, **case) for dt in steps]
+        differences = [
+            [float(np.max(np.abs(a - b))) for a, b in zip(c["fields"], f["fields"], strict=True)]
+            for c, f in zip(runs, runs[1:])
+        ]
+        timed.append(
+            {**case, "cells": 32, "dt": steps, "max": [r["max"] for r in runs], "differences": differences}
+        )
+        print(f"time {case}: differences {np.array(differences)[:, 0]}")
+    cases = [dict(cells_along=n) for n in (8, 16, 18, 32, 64)]
+    cases += [
+        dict(cells_along=32, step_rate=r, damping=d) for r in (0.34, 0.17, 0.085, 0.0425) for d in DAMPINGS
+    ]
+    cases += [dict(cells_along=18, step_rate=r, damping=d) for r in (0.34, 0.27) for d in DAMPINGS]
+    cases += [dict(cells_along=n, steel=False) for n in (8, 16, 32)]
+    cases += [dict(cells_along=32, steel=False, step_rate=0.34, damping=d) for d in DAMPINGS]
+    cases += [dict(cells_along=n, wavenumber=np.pi) for n in (32, 64)]
+    for case in cases:
+        rate, exact = vortex_decay(**case)
+        decay.append({**case, "rate": rate, "exact": exact})
+        print(f"vortex {case}: {rate:.5f} against {exact:.5f} ({100 * (rate / exact - 1):+.2f} %)")
+    for case in (dict(), dict(damping="implicit"), dict(step_rate=0.085),
+                 dict(cells_along=64, cells=96, cells_in_layer=12, layer=64)):  # fmt: skip
+        rate, model = hartmann_roll_growth(**case)
+        rolls.append({**case, "rate": rate, "model": model})
+        print(f"rolls {case}: {rate:.4f} against {model:.4f} ({100 * (rate / model - 1):+.2f} %)")
+    record = {
+        "command": "python scripts/make_showcase_figures.py --only transient",
+        "manufactured_space": space,
+        "manufactured_time": timed,
+        "vortex_decay": decay,
+        "hartmann_rolls": rolls,
+    }
+    (STATIC / "data" / "thermal_transient.json").write_text(json.dumps(_compact(record), indent=1) + "\n")
+
+
+DAMPINGS = ("implicit", "explicit")
+
+
 def thermal_convection(rayleigh: float = 1.0e4, prandtl: float = 0.1, chandrasekhar: float = 1000.0) -> None:
     """A liquid-metal layer heated from below: cells without a field, rolls along a horizontal one.
 
@@ -1349,6 +1410,7 @@ THERMAL = {
     "entrance": thermal_entrance,
     "onset": thermal_onset,
     "buoyancy": thermal_buoyancy,
+    "transient": thermal_transient,
     "convection": thermal_convection,
     "heated-duct": thermal_heated_duct,
 }
