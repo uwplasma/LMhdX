@@ -1666,6 +1666,48 @@ packet does not carry the duct's growth, and the readings below are reported wit
 
 On one A100 each at commit `782e4f3` (`packet.py`, the explicit force).
 
+## Step 5.4f: a disturbance's growth and drift over the heater — the results
+
+The three runs (Perlmutter jobs 61793822, 61793824 and 61793826) took 4–11 minutes. Each packet's centroid passed
+0.4 m by 44–45 s.
+
+| Step | Growth in time σ | Drift c | κ = σ/c, centroid 0.05–0.30 m |
+|:--|--:|--:|--:|
+| Δt 0.015 s | 0.543 /s | 9.45 mm/s | 57.5 /m |
+| Δt/2 | 0.538 /s | 9.54 mm/s | 56.4 /m |
+| Δt/4 | 0.535 /s | 9.58 mm/s | 55.9 /m |
+
+- *The control:* met at Δt (57.5 /m, within a factor of two of 75 /m), not met at Δt/4 (55.9 /m, against under
+  25 /m). So the readings are reported, not taken as the answer, as declared.
+- *The readings:* between Δt and Δt/4 the drift changes by 1.3 % and the growth in time by 1.5 %. Neither the growth,
+  the drift nor both holds: the step changes neither.
+- In every 5 cm of the passage, σ, c and κ agree between the steps within 4 %. κ rises from 52 /m at 0.05–0.10 m to
+  60 /m at 0.25–0.30 m, and is 75–78 /m over 0.30–0.35 m.
+- The measure is clean: over the passage the base's own departure stayed under 7e-4 of the packet's largest w' at
+  Δt, and under 3e-7 at Δt/4.
+
+**Why the control failed.** It took the duct's runs at Δt/4 to mean no growth there. The packet shows that the steady
+flow at Δt/4 is convectively unstable, at the same 56 /m. The duct runs' measure cannot see a disturbance under its
+floor (above, the RMS's floor), so at Δt/4 disturbances grow at this rate unseen, from far below it. So the step does
+not change the instability. It changes the disturbances that feed it.
+- At about 56 /m from x = 0, P0's 5e-7 m/s at x = 0.2 m comes from about 7e-12 m/s at x = 0.
+- In the lag runs at Δt/4, w at x = 0.3 m stays at the floor. That bounds w at x = 0 under about 1e-18 m/s, near the
+  round-off of w there.
+- So the disturbances reaching the heated zone at Δt are some 1e7 times larger than at Δt/4.
+
+**The base, undisturbed.** From L-b's steady state, the base departs from about 20 s at Δt and Δt/2, growing at
+0.35–0.5 /s, to 5e-6 and 2e-7 m/s by 45 s. At Δt/4 it stays under 2e-12 m/s and decays. The runs at Δt and Δt/2
+re-imposed their own inlet, rebuilt at their step, which differs from L-b's by 6e-15 m/s; the run at Δt/4 changed it
+by nothing. So whether that change, or the step itself, starts the growth is not yet separated.
+
+**What remains** is what feeds the instability at Δt. The candidates:
+- a disturbance source in the step that grows with Δt;
+- for the studies started from another step's state, the inlet's change on restart, 6e-15 m/s;
+- the saturated rolls feeding disturbances upstream, which the roll-free state at Δt/4 lacks.
+
+A run at Δt from L-b's steady state with L-b's own inlet would separate them: the first grows, the other two stay
+steady.
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
