@@ -316,11 +316,15 @@ def vortex_decay_rate(
     right[:size, :size] = identity
     exchange = wall_ratio * wavenumber * np.tanh(wavenumber * wall_thickness)
     for row, sign in ((0, 1.0), (points, -1.0)):  # y = 1, then y = -1
-        left[row], right[row] = 0.0, 0.0
+        left[row] = 0.0
         left[row, row] = 1.0
+        right[row] = left[row] / -1.0e6
         left[size + row] = 0.0
         left[size + row, size:] = derivative[row]
         left[size + row, size + row] += sign * exchange
+    # The boundary and potential rows' eigenvalues at -1e6, not infinity: a singular right-hand side leaves the rest
+    # to the LAPACK build.
+    right[size:] = left[size:] / -1.0e6
     values = eig(left, right, right=False)
-    values = values[np.isfinite(values) & (np.abs(values) < 1e8)]
+    values = values[np.isfinite(values) & (np.abs(values) < 1e5)]
     return float(values[np.argmax(values.real)].real)
