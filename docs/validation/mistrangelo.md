@@ -1755,6 +1755,42 @@ The step's time error is now excluded term by term: the Lorentz split, the trans
 conduction and the viscous solve. The packet shows why: the instability is the same at every step. What remains is
 what feeds it, which Run K tests.
 
+## Step 5.4f: the step at Δt from a steady state — the result
+
+Run K (Perlmutter job 61794572) took 21 minutes. It averaged 3,370–3,551 s, unsettled after one window, as declared.
+Its inlet was kept: the rebuilt one would have differed by 6.2e-15 m/s, and re-imposing the kept one changed
+nothing.
+
+| Run | Step | Start | RMS of w, x = 0.2 m over x = 0 | Growth, x = 0.10–0.25 m | Rolls saturate at | Probes' swing |
+|:--|:--|:--|--:|--:|--:|--:|
+| P0 | Δt | Run C's state, inlet rebuilt | 1.0e5 | 74.8 /m | 0.301 m | 32.8 K |
+| L-b | Δt/4 | Run C's state | 1.1 | — | none: steady | 1e-12 K |
+| Run K | Δt | L-b's steady state, its own inlet | 9.9e4 | 76.1 /m | 0.299 m | 31.4 K |
+
+- *Hypothesis (the step at Δt feeds the instability itself):* met. *Alternative:* not met. The step at Δt starts the
+  rolls and keeps them on its own, with no inlet change and no rolls in its start.
+- **How they start.** In the first 10 s the probes depart from the steady start by 1e-11 to 4e-11 K. So L-b's steady
+  state, a fixed point of the step at Δt/4, is one at Δt only to that level. At x = 0.33 m the departure then grows at
+  0.49 /s, the packet's rate: 5.5e-7 K at 20 s, 1.7e-3 K at 40 s. There the rolls saturate by 60 s.
+- **How they last.** Once the rolls saturate, the departure upstream rises and holds: at x = 0 from 4e-11 to 7e-10 K,
+  and at x = 0.15 m to about 2e-6 K. Over the window the probes at x = 0 swing by 3e-10 K on the heated interface, as
+  in P0, against 6e-13 K in L-b.
+
+**What it means.**
+- A disturbance of 1e-11 K is enough to start the rolls at Δt, and the steady state's mismatch supplies it.
+- Once saturated, the rolls at Δt keep a disturbance at the heater's start some 500 times L-b's, and it keeps them.
+  At Δt/4 the rolls in Runs A's and C's starting states moved downstream and died out.
+- The local growth is the same at both steps within 3 % (the packet). So the difference lies in what reaches the
+  heater's start. A candidate is a loop: the saturated rolls feed disturbances back upstream, and those grow into
+  rolls again. The small difference in growth, compounded over the heater, could tip such a loop. That is not yet
+  shown.
+
+**What remains.**
+- Does the loop hold between the two steps? Run K's rolled state continued at Δt/2 would show whether the rolls last
+  there.
+- Does the onset follow a steady disturbance source at either step? A seed before the heater at Δt/4, as heater-4's
+  at Δt, would show whether the rolls then sit where Δt's seeded ones do.
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
