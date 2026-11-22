@@ -1821,6 +1821,42 @@ their initial conditions and disturbances, and the owner's call on how Case 2 is
 
 On one A100 at commit `782e4f3`, with the explicit rerun's runner (its `--seed` options are 5.4f's).
 
+## Step 5.4f: the seeded onset at Δt/4 — the result
+
+Run S4 (Perlmutter job 61796073) took 76 minutes. It averaged 1,455–1,635 s, unsettled after one window, as
+declared. Its inlet and face constraints, re-imposed on the start, changed the velocity by at most 6.2e-15 m/s.
+
+| Run | Step | Seed's level, w at x = −0.35 m | w at x = 0 | w at x = 0.1 m | Rolls saturate at |
+|:--|:--|--:|--:|--:|--:|
+| heater-4 | Δt | 1.24e-6 m/s | 1.5e-5 m/s | 4.6e-3 m/s | 0.068 m |
+| S4 | Δt/4 | 1.23e-6 m/s | 8.8e-6 m/s | 2.4e-3 m/s | 0.082 m |
+
+The levels are the largest RMS of w across z on y = 0, by one script for both runs. The record quoted heater-4's
+seed level as 1.1e-6 m/s; either way S4's lies well within the declared factor of two.
+
+- *Hypothesis (the onset follows the disturbance, not the step):* met. S4 saturates 1.5 cm downstream of heater-4,
+  within the declared 2 cm. *Alternative:* not met.
+- **Where the 1.5 cm comes from.** The seed reaches the heater's start at the same level in both runs: w at
+  x = −0.3 m is 2.2e-7 and 2.3e-7 m/s. Over the heater the disturbance grows a little more slowly at Δt/4, by 1.4
+  to 2.0 /m: 14.0 against 12.1 /m from x = −0.3 to 0, and 57.5 against 56.1 /m from 0 to 0.1 m. The packet measured
+  1.6 /m between the two steps (57.5 and 55.9 /m). Over 0.4 m of heater that halves the amplitude, and at 56 /m a
+  factor two is 1.2 cm of onset.
+- **The limit.** The packet's rate falls by 1.1 and then 0.5 /m per halving of the step, so the difference is first
+  order. Then Δt/4 has covered three quarters of the way from Δt to the converged onset, which lies near 0.087 m.
+- **The window.** At x = 0 the probes' w varies by 8.7e-6 m/s in the window's first half and 6.4e-6 m/s in its
+  second; in heater-4 by 1.3e-5 and 1.2e-5. If S4's level kept falling at that rate its onset would move downstream
+  by about 0.5 cm per 90 s. That is within the 2 cm, but S4 is not fully settled.
+
+**What it means.**
+- With a steady disturbance before the heater, the onset is converged in Δt to within 2 cm, and in the codes' range
+  (0.05–0.1 m) at both steps. LMhdX's seeded Case 2 results do not depend on the step.
+- Without a seed the onset depends on how large a disturbance reaches the heater, and that is not a converged
+  quantity. At Δt the step itself supplies one of about 1e-11 K and the saturated rolls keep it (Run K); at Δt/4 it
+  is smaller and dies out. The codes' own disturbance levels, from their initial states and solver tolerances, are
+  not given in the paper.
+- The time-step question is closed, as declared. What is left for Case 2 is the authors' answer on their initial
+  conditions and disturbances, and the owner's call on how Case 2 is reported.
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
