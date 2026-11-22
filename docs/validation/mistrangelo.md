@@ -1315,6 +1315,54 @@ at 1,957.7 s, with Run A's protocol: 300 s burn-in, then 150 s averaged in five 
 
 Both reported, not gated, on one A100 at commit `782e4f3` with the explicit rerun's runner.
 
+## Step 5.4f: Runs C and D — the results
+
+Run C (Perlmutter job 61763837) ran 300 s from the explicit run's last state and averaged 2,308–2,488 s. Run D (job
+61763839) ran 300 s from Run A's last state and averaged 1,986–2,166 s. Both were unsettled after one window, as Run
+A's protocol allows; 72 and 64 minutes on one A100.
+
+**Run D: Run A had not settled.** Neither clause held:
+- The rolls died out. Over Run D's window the flow is steady: its probes move by 4e-12 K, and the heat stored
+  changes by under 1e-7 W.
+- The RMS of w is at its rounding along the whole duct, at most 1.8e-10 m/s (at x = 1.1 m). At x = 0.3 m it is
+  5e-12 m/s, against Run A's 6e-9.
+- As declared, Run A's window was a transient, and is reported as one. At Δt/4 with the implicit force, Case 2's
+  flow on M1 is steady.
+
+**Run C: the explicit force at Δt/4.** Not met as declared: the first clause holds, the second does not.
+- *The RMS of w at x = 0.2 m within ten times its value at x = 0:* met. It is 1.4e-11 m/s against 7.3e-12, twice
+  that value; at Δt 0.015 s the explicit run grew 1e5-fold there.
+- *Saturation downstream of 0.5 m:* not met. Over the window the rolls saturate at 0.47 m. In the six 30 s
+  sub-batches they saturate at 0.42 m in the first and at 0.78–0.88 m in the other five: the first sub-batch's burst
+  sets the window's figure.
+- *The alternative:* neither clause. The growth over x = 0.10–0.25 m is 34 /m, not 60 or more, and the saturation
+  lies 12 cm downstream of 0.35 m.
+- So at Δt/4 the growth over the heater vanishes with the force explicit, as with it implicit. Neither the shift nor
+  Run A's start removed it.
+
+**The time step, not the Lorentz split.**
+
+| Run | Force | Δt (s) | RMS of w, x = 0.2 m over x = 0 | Growth, x = 0.10–0.25 m | Saturated at |
+|:--|:--|--:|--:|--:|:--|
+| M1L1 | implicit | 0.015 | 1.2e6 | 86 /m | 0.266 m |
+| Explicit rerun | explicit | 0.015 | 1.0e5 | 76 /m | 0.299 m |
+| Run A | implicit | 0.00375 | 1.2 | 24 /m | 0.88 m |
+| Run C | explicit | 0.00375 | 2.0 | 34 /m | 0.47 m (sub-batches: 0.42, then 0.78–0.88 m) |
+| Run D | implicit | 0.00375 | 1.2 | 1 /m | none: steady |
+
+- At Δt 0.015 s, with either force, the disturbance grows from x ≈ 0 and the rolls saturate over the heater. At
+  Δt/4, with either force, it stays at its rounding to x = 0.2 m. The rolls that remain lie beyond 0.4 m, and with
+  the implicit force they die out within 1,000 s. Whether Run C's would too is not known: it was not continued.
+- So on M1 Case 2's rolls are not converged in the time step, and the Lorentz split is not the cause. Case 2's
+  reported runs (5.4f; Δt 0.015 s on M1, 0.012 s on M2) carry this.
+- The suspect is the partitioned buoyancy, taken from the old temperature. Its Courant number is 0.04–0.05 at
+  Δt 0.015 s and 0.0095–0.0098 at Δt/4. It is not yet tested on Case 2's rolls.
+- Against the codes: their hot fluid reaches the axis between x = 0.05 and 0.1 m, and LMhdX's at Δt 0.015 s between
+  0.25 and 0.35 m. A smaller step moves LMhdX's rolls further from theirs, not nearer. One code, CFX, reports a
+  steady flow (p. 12).
+- Run B, the axial spacing halved, is still queued. It runs at Δt 0.015 s and is compared with the explicit run at
+  the same step, so it isolates the axial spacing at that step only.
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
