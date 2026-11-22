@@ -1469,6 +1469,65 @@ and the ledger closes. Every other term stays at Δt. With n = 1 it reproduces t
 
 On one A100 each at commit `782e4f3`, with the explicit rerun's runner (`--transport-substeps 4 --substep ...`).
 
+## Step 5.4f: the step's time error on Case 2's rolls — the results
+
+The 32 cases ran on the laptop GPU (float64), 14–270 s each. Each rate is the mean over the last 20 of 40 intervals:
+a drifting roll meets the limiter at a different phase in each interval, and the intervals scatter by at most 0.008 f.
+The growth rates, with $f$ = 70.7 in $\kappa/a^2$:
+
+| Rolls | Force | 0.34 | 0.17 | 0.084 | 0.042 | Fall, 0.34 to 0.084 | Model |
+|:--|:--|--:|--:|--:|--:|--:|--:|
+| 1.1 Ra_c, drifting | explicit | −6.67 | −6.95 | −7.11 | −7.18 | +0.006 f | −2.08 |
+| 3 Ra_c, drifting | explicit | 15.38 | 15.17 | 15.07 | 15.02 | +0.004 f | 18.84 |
+| 1.1 Ra_c, at rest | explicit | 4.43 | 4.44 | 4.45 | 4.46 | −0.000 f | 1.35 |
+| 3 Ra_c, at rest | explicit | 25.70 | 25.80 | 25.85 | 25.87 | −0.002 f | 21.89 |
+| 1.1 Ra_c, drifting | implicit | −6.79 | −6.89 | −7.00 | −7.10 | +0.003 f | −2.08 |
+| 3 Ra_c, drifting | implicit | 13.32 | 14.19 | 14.58 | 14.77 | −0.018 f | 18.84 |
+
+- *The hypothesis (a fall of at least 0.17 f):* not met. *The alternative (under 0.034 f at both):* met, at +0.006 and
+  +0.004 f. So the step's time error on the rolls themselves does not explain Case 2.
+- Under the implicit shift the rolls grow more slowly at the larger step, as the shift's account predicts. That moves
+  the onset downstream, not upstream.
+- The rolls drift at 0.024 cells a step at 0.34, against Case 2's 0.028, and at 15.7 against the model's 16.0.
+- Beside the measure, the 8 cells' spatial error is larger than the time error, 0.04–0.07 f against the model. It
+  slows the drifting rolls and speeds the resting ones; in neither case is it the 0.34 f Case 2 needs.
+- *What grows over the heater:* the hypothesis is met. In the explicit Δt 0.015 s run's last state, less its
+  window's mean, w on the axis has a dominant wavelength of 3.5–4.2 cm (7–8 cells) over every stretch from x = 0 to
+  0.32 m. It is the rolls that grow from rounding, not the grid scale.
+
+## Step 5.4f: the transports' time error — the results
+
+The four runs (Perlmutter jobs 61783573–61783577) took 22–23 minutes each and averaged 2,839–3,020 s, unsettled
+after one window, as declared.
+
+| Run | Transports | RMS of w, x = 0.2 m over x = 0 | Growth, x = 0.10–0.25 m | Rolls saturate at |
+|:--|:--|--:|--:|--:|
+| P0, the control | the step | 1.0e5 | 74.8 /m | 0.301 m |
+| P4 | both in 4 sub-steps | 4.6e4 | 74.9 /m | 0.308 m |
+| P4m | momentum in 4 sub-steps | 9.1e4 | 76.3 /m | 0.300 m |
+| P4h | heat in 4 sub-steps | 5.0e4 | 74.7 /m | 0.307 m |
+| Run C (Δt/4, for reference) | the step | 2.0 | 34 /m | 0.81 m |
+
+- *Control:* met. From Run C's state, Δt 0.015 s brings back the growth over the heater, 1e5-fold to x = 0.2 m.
+  Run C's state does not carry the change; the step does.
+- *Hypothesis (P4 within ten):* not met. *Alternative (P4 at least 1e3):* met, at 4.6e4. Neither P4m nor P4h stays
+  within ten. Sub-stepping the heat transport halves the amplitude at x = 0.2 m and moves the saturation 0.7 cm
+  downstream: a small part, not the cause.
+- The solvers are not it either. Over the last 150 s the charge residual (1.65e-3 against 1.72e-3), the mass residual
+  (about 1e-9) and the conduction's PCG iterations (14 against 13) are the same at both steps.
+
+**What remains.** The growth over the heater at Δt 0.015 s comes from a time error that is in none of:
+- the Lorentz split (Runs A and C);
+- the step's error on braked, drifting rolls in a layer (above);
+- the transports, the jet's included (P4);
+- the solvers' tolerances.
+
+The layer had every term of the step. What the duct adds is the heated steel wall, conducting and storing heat under
+its flux, with the thermal layer above it, where the buoyancy Courant number is 0.04 at Δt 0.015 s, against 0.0095
+at Δt/4 and 0.012–0.020 in the layer. It also adds the open inlet and outlet. The suspects left are the partitioned
+buoyancy in that thermal layer and the backward-Euler conduction of the conjugate wall. Neither is yet tested on its
+own in the duct.
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
