@@ -1,0 +1,58 @@
+{
+ "command": "python scripts/make_showcase_figures.py --only verification",
+ "terms": [
+  {"term": "advection", "field": "u_x", "cells": [8, 16, 32, 64], "dt_at_coarsest": 0.01, "time": 0.2, "max": [0.575839, 0.248923, 0.0809724, 0.0238464], "rms": [0.246368, 0.0731805, 0.0194315, 0.00461776], "order_max": 1.76366, "order_rms": 2.07313},
+  {"term": "viscosity", "field": "u_x", "cells": [8, 16, 32, 64], "dt_at_coarsest": 0.01, "time": 0.2, "max": [0.104589, 0.0565583, 0.0184539, 0.0051317], "rms": [0.0269541, 0.0104887, 0.00291045, 0.000747927], "order_max": 1.84642, "order_rms": 1.96027},
+  {"term": "pressure", "field": "p", "cells": [8, 16, 32, 64], "dt_at_coarsest": 0.01, "time": 0.2, "max": [0.0949858, 0.0306407, 0.00813506, 0.00209775], "rms": [0.0347143, 0.00943054, 0.00233895, 0.000584491], "order_max": 1.95531, "order_rms": 2.00061},
+  {"term": "lorentz_balanced", "field": "u_x", "cells": [8, 16, 32, 64, 128], "dt_at_coarsest": 0.01, "time": 0.2, "max": [0.0734876, 0.0381348, 0.0123172, 0.0034187, 0.000896957], "rms": [0.024577, 0.00974976, 0.00271191, 0.000697202, 0.000175845], "order_max": 1.93034, "order_rms": 1.98727},
+  {"term": "lorentz_damped", "field": "u_x", "cells": [8, 16, 32, 64], "dt_at_coarsest": 0.01, "time": 0.2, "max": [0.0847285, 0.0285042, 0.00764505, 0.00194462], "rms": [0.0353315, 0.00966519, 0.00250774, 0.000636173], "order_max": 1.97504, "order_rms": 1.9789},
+  {"term": "lorentz_conducting", "field": "u_x", "cells": [8, 16, 32, 64], "dt_at_coarsest": 0.01, "time": 0.2, "max": [0.0869325, 0.0453196, 0.0139034, 0.00365081], "rms": [0.0370283, 0.0121206, 0.00345838, 0.000901151], "order_max": 1.92915, "order_rms": 1.94026},
+  {"term": "hartmann", "field": "u_z", "cells": [8, 16, 32, 64], "dt_at_coarsest": 0.02, "time": 5.0, "max": [0.0390401, 0.0111017, 0.00345037, 0.00149554], "rms": [0.0223515, 0.00560286, 0.0013426, 0.000322458], "order_max": 1.20608, "order_rms": 2.05785},
+  {"term": "buoyancy", "field": "u_z", "cells": [8, 16, 32, 64], "dt_at_coarsest": 0.01, "time": 0.2, "max": [0.000623397, 0.000171419, 4.46215e-05, 1.12641e-05], "rms": [0.000185542, 4.73479e-05, 1.19651e-05, 3.01009e-06], "order_max": 1.986, "order_rms": 1.99095},
+  {"term": "conduction", "field": "T", "cells": [8, 16, 32, 64], "dt_at_coarsest": 0.01, "time": 0.2, "max": [0.0115626, 0.00630466, 0.00210355, 0.000589125], "rms": [0.00350261, 0.0012874, 0.000350613, 8.9362e-05], "order_max": 1.83618, "order_rms": 1.97215},
+  {"term": "heat_advection", "field": "T", "cells": [8, 16, 32, 64], "dt_at_coarsest": 0.01, "time": 0.2, "max": [0.355918, 0.0978887, 0.0336152, 0.0131015], "rms": [0.101246, 0.0266028, 0.00696684, 0.00164316], "order_max": 1.35939, "order_rms": 2.08403},
+  {"term": "joule", "field": "T", "cells": [8, 16, 32, 64], "dt_at_coarsest": 0.01, "time": 0.2, "max": [2.31963, 1.30278, 0.385102, 0.101034], "rms": [1.07045, 0.362924, 0.0935765, 0.0235757], "order_max": 1.9304, "order_rms": 1.98884},
+  {"term": "conjugate", "field": "T", "cells": [8, 16, 32, 64, 128], "dt_at_coarsest": 0.01, "time": 0.2, "max": [0.00506595, 0.00232175, 0.000723111, 0.0001981, 5.16591e-05], "rms": [0.00199347, 0.000643843, 0.000170365, 4.31551e-05, 1.08238e-05], "order_max": 1.93913, "order_rms": 1.99532},
+  {"term": "coupled", "field": "u_x", "cells": [8, 16, 32, 64], "dt_at_coarsest": 0.01, "time": 0.2, "max": [0.0872172, 0.0431993, 0.013944, 0.00366484], "rms": [0.0308357, 0.0103111, 0.00281024, 0.0006998], "order_max": 1.92782, "order_rms": 2.00568}
+ ],
+ "coupled_in_time": [
+  {"rate": 0.0, "cells": 32, "dt": [0.02, 0.01, 0.005, 0.0025], "differences": [[0.0220781, 0.0153224, 0.018653, 0.00932983], [0.0110163, 0.00739108, 0.00923817, 0.0045578], [0.00550344, 0.00367436, 0.00459763, 0.002255]]},
+  {"rate": 10.0, "cells": 32, "dt": [0.02, 0.01, 0.005, 0.0025], "differences": [[0.0212796, 0.00893354, 0.01229, 0.017851], [0.0106776, 0.00443175, 0.00610421, 0.0084788], [0.00534696, 0.00221562, 0.00304245, 0.00414176]]},
+  {"rate": 10.0, "damping": "implicit", "cells": 32, "dt": [0.02, 0.01, 0.005, 0.0025], "differences": [[0.0285584, 0.0299063, 0.0374266, 0.0338097], [0.0166209, 0.0141308, 0.0214003, 0.0163114], [0.00894326, 0.00682648, 0.011498, 0.0079653]]},
+  {"rate": 30.0, "cells": 32, "dt": [0.02, 0.01, 0.005, 0.0025], "differences": [[0.0211465, 0.00493438, 0.0139111, 0.0267572], [0.0106093, 0.00246004, 0.00691634, 0.0125856], [0.00531244, 0.00122846, 0.00345008, 0.00611682]]},
+  {"rate": 30.0, "damping": "implicit", "cells": 32, "dt": [0.02, 0.01, 0.005, 0.0025], "differences": [[0.0363216, 0.0351482, 0.039306, 0.130971], [0.0298951, 0.0164383, 0.0321722, 0.0687398], [0.0192349, 0.0076233, 0.0213715, 0.0351577]]},
+  {"rate": 10.0, "wall": [4, 2.0], "cells": 32, "dt": [0.02, 0.01, 0.005, 0.0025], "differences": [[0.0209688, 0.00882041, 0.012328, 0.018538], [0.0105234, 0.00436635, 0.00611731, 0.00880044], [0.00527013, 0.00217228, 0.00304773, 0.00429389]]}
+ ],
+ "vortex_decay": [
+  {"cells_along": 8, "rate": -0.0802074, "exact": -0.0933448},
+  {"cells_along": 16, "rate": -0.0898999, "exact": -0.0933448},
+  {"cells_along": 18, "rate": -0.0906047, "exact": -0.0933448},
+  {"cells_along": 32, "rate": -0.0924349, "exact": -0.0933448},
+  {"cells_along": 64, "rate": -0.0930757, "exact": -0.0933448},
+  {"cells_along": 32, "step_rate": 0.34, "damping": "implicit", "rate": -0.0697091, "exact": -0.0933448},
+  {"cells_along": 32, "step_rate": 0.34, "damping": "explicit", "rate": -0.0937771, "exact": -0.0933448},
+  {"cells_along": 32, "step_rate": 0.17, "damping": "implicit", "rate": -0.0794481, "exact": -0.0933448},
+  {"cells_along": 32, "step_rate": 0.17, "damping": "explicit", "rate": -0.0930576, "exact": -0.0933448},
+  {"cells_along": 32, "step_rate": 0.085, "damping": "implicit", "rate": -0.0854154, "exact": -0.0933448},
+  {"cells_along": 32, "step_rate": 0.085, "damping": "explicit", "rate": -0.0927034, "exact": -0.0933448},
+  {"cells_along": 32, "step_rate": 0.0425, "damping": "implicit", "rate": -0.0887486, "exact": -0.0933448},
+  {"cells_along": 32, "step_rate": 0.0425, "damping": "explicit", "rate": -0.0925276, "exact": -0.0933448},
+  {"cells_along": 18, "step_rate": 0.34, "damping": "implicit", "rate": -0.0683142, "exact": -0.0933448},
+  {"cells_along": 18, "step_rate": 0.34, "damping": "explicit", "rate": -0.0918933, "exact": -0.0933448},
+  {"cells_along": 18, "step_rate": 0.27, "damping": "implicit", "rate": -0.0719484, "exact": -0.0933448},
+  {"cells_along": 18, "step_rate": 0.27, "damping": "explicit", "rate": -0.0916072, "exact": -0.0933448},
+  {"cells_along": 8, "steel": false, "rate": -0.00393834, "exact": -0.00429438},
+  {"cells_along": 16, "steel": false, "rate": -0.004179, "exact": -0.00429438},
+  {"cells_along": 32, "steel": false, "rate": -0.00423988, "exact": -0.00429438},
+  {"cells_along": 32, "steel": false, "step_rate": 0.34, "damping": "implicit", "rate": -0.00316407, "exact": -0.00429438},
+  {"cells_along": 32, "steel": false, "step_rate": 0.34, "damping": "explicit", "rate": -0.00423985, "exact": -0.00429438},
+  {"cells_along": 32, "wavenumber": 3.14159, "rate": -0.0732234, "exact": -0.0741233},
+  {"cells_along": 64, "wavenumber": 3.14159, "rate": -0.0736967, "exact": -0.0741233}
+ ],
+ "hartmann_rolls": [
+  {"rate": 2.88049, "model": 2.78334},
+  {"damping": "implicit", "rate": 2.47029, "model": 2.78334},
+  {"step_rate": 0.085, "rate": 2.88394, "model": 2.78334},
+  {"cells_along": 64, "cells": 96, "cells_in_layer": 12, "layer": 64, "rate": 2.82628, "model": 2.78334}
+ ]
+}

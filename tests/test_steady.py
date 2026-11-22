@@ -2451,15 +2451,18 @@ def test_a_coupled_manufactured_open_duct_converges_at_its_order(momentum, heat,
 
 
 def test_the_thermal_step_in_a_field_is_first_order_in_time_and_its_explicit_force_does_not_grow_with_the_field():
-    """The manufactured flow of :func:`validation.transient.manufactured_run`, every term of the thermal step on, on
+    """The coupled manufactured flow of :func:`validation.verification.manufactured_run`, every term of the step on, on
     16 cells to t = 0.3; the difference between runs at dt and dt/2 is the time error. With the explicit Lorentz
     force it is first order (1.04 at sigma B^2/rho = 30) and does not grow with the field: 0.0076 at 10 and 0.0058 at
     30 between dt 0.02 and 0.01, the stronger field damping its damped part's error. Under the implicit shift it is
     0.083 at 30, the transient error of the shift (docs/physics/numerics.md)."""
-    from validation.transient import manufactured_run
+    from validation.verification import manufactured_run
 
     def time_error(rate, damping="explicit", steps=(0.02, 0.01)):
-        runs = [manufactured_run(16, rate=rate, damping=damping, final=0.3, dt=dt)["fields"] for dt in steps]
+        runs = [
+            manufactured_run("coupled", 16, rate=rate, damping=damping, final=0.3, dt=dt)["fields"]
+            for dt in steps
+        ]
         return [max(np.max(np.abs(a - b)) for a, b in zip(c[:3], f[:3])) for c, f in zip(runs, runs[1:])]
 
     strong, weak = time_error(30.0, steps=(0.02, 0.01, 0.005)), time_error(10.0)
@@ -2473,14 +2476,29 @@ def test_the_thermal_step_in_a_field_converges_in_space_with_conducting_walls():
     """The same flow with conducting walls (sigma_w = 2 sigma, carrying no current), sigma B^2/rho = 10 and the
     explicit force, at dt 0.0025 to t = 0.2 on 16 and 32 cells: the RMS errors of u_x, u_y, u_z and T fall 3.7, 3.3,
     2.9 and 4.4 times (1.6 to 2.3 on to 64 cells, in the record of scripts/make_showcase_figures.py)."""
-    from validation.transient import manufactured_run
+    from validation.verification import manufactured_run
 
     coarse, fine = (
-        manufactured_run(cells, rate=10.0, dt=0.0025, final=0.2, wall=(cells // 8, 2.0))["rms"]
+        manufactured_run("coupled", cells, rate=10.0, dt=0.0025, final=0.2, wall=(cells // 8, 2.0))["rms"]
         for cells in (16, 32)
     )
-    orders = np.log2(np.array(coarse) / np.array(fine))
+    orders = np.log2(np.array([coarse[k] / fine[k] for k in ("u_x", "u_y", "u_z", "T")]))
     assert np.all(orders > 1.45), orders
+
+
+@pytest.mark.parametrize(
+    ("term", "measured"), [("conjugate", 1.92), ("joule", 1.96), ("lorentz_balanced", 1.85)]
+)
+def test_a_term_of_the_thermal_step_on_its_own_converges_at_second_order(term, measured):
+    """Three terms of :data:`validation.verification.TERMS` that the coupled flow leaves out or cannot reach: conduction
+    through walls of another conductivity and capacity, the Joule heat of a held flow's current, and a flow the field
+    leaves balanced. On 16 and 32 cells, dt ~ h^2, the RMS error of the term's field falls at second order (measured as
+    given; every term to 64 or 128 cells in the record of scripts/make_showcase_figures.py --only verification)."""
+    from validation.verification import TERMS, manufactured_run
+
+    field = TERMS[term]["show"][0]
+    coarse, fine = (manufactured_run(term, cells)["rms"][field] for cells in (16, 32))
+    assert abs(np.log2(coarse / fine) - measured) < 0.05, (coarse, fine)
 
 
 def test_a_vortex_along_the_field_decays_between_case_2s_steel_walls_at_the_exact_rate():
@@ -2490,7 +2508,7 @@ def test_a_vortex_along_the_field_decays_between_case_2s_steel_walls_at_the_exac
     cells a wavelength, about 1 - cos^2(pi/n): the current and its force are each averaged once between the
     staggered faces. At Case 2's dt sigma B^2/rho = 0.34 the explicit force keeps the rate (1.4 % above its value at
     0.02) and the implicit shift slows it by 1 + 0.34, to 0.4 %."""
-    from validation.transient import vortex_decay
+    from validation.verification import vortex_decay
 
     errors = []
     for cells in (8, 16):

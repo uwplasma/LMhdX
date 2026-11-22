@@ -1,0 +1,100 @@
+# Code verification
+
+Verification asks whether the discrete equations converge to the continuous ones at the scheme's design order;
+validation, on the other pages, asks whether those equations describe the flow. This page verifies the thermal step,
+the path every run in time takes (`lmhdx.thermal.build_thermal_step`), against references that share none of its
+operators: manufactured solutions, one per term and all at once, and exact solutions with the Lorentz force.
+`validation/verification.py` holds them. `tests/test_steady.py` runs the coupled case, three single terms and the
+decay at small size. `python scripts/make_showcase_figures.py --only verification` reruns them all, in about 40
+minutes on a laptop GPU, and writes `docs/_static/data/verification.json` and the figures below.
+
+## Each term on its own
+
+**Method.**
+- Each manufactured solution is a smooth velocity, temperature and, where tested, pressure.
+- Its source is the residual of the continuous equations, taken at the step's old time, as the step takes its
+  forcing. Only the term under test is on, besides the time derivative and the incompressibility the step always
+  enforces.
+- The meshes have $N$ = 8, 16, 32 and 64 cells along $x$ and $z$ (128 for the cases with two cells along $y$), and
+  half as many along $y$.
+- The time step falls as $h^2$ from 0.01 at $N=8$, so that a first-order time error falls with the mesh too.
+- The errors, exact less computed, are taken at $t=0.2$ on every velocity face or cell, in $L_\infty$ and RMS.
+
+The field lies along $y$. A flow invariant along it has the electromotive force $B\nabla\psi$, which the potential
+$B\psi$ cancels: it carries no current. A flow with no vorticity along it carries $\sigma\mathbf u\times\mathbf B$.
+Both vanish with their normal derivatives at the walls $z=\pm1$, so the potential and current are exact, conducting
+walls included.
+
+The observed orders on the finest pair of meshes:
+
+| Term | Tested | Field | $L_\infty$ | $L_2$ |
+|:--|:--|:-:|--:|--:|
+| Momentum advection | $(\mathbf u\cdot\nabla)\mathbf u$, limited, triply periodic | $u_x$ | 1.76 | 2.07 |
+| Viscous diffusion | $\nu\nabla^2\mathbf u$, no-slip walls | $u_x$ | 1.85 | 1.96 |
+| Pressure gradient | $-\nabla p/\rho$, a manufactured pressure | $p$ | 1.96 | 2.00 |
+| Lorentz force, balanced part | $\mathbf j=\sigma(-\nabla\phi+\mathbf u\times\mathbf B)=\mathbf 0$ | $u_x$ | 1.93 | 1.99 |
+| Lorentz force, damped part | $\mathbf j\times\mathbf B/\rho=-(\sigma B^2/\rho)\,\mathbf u_\perp$ | $u_x$ | 1.98 | 1.98 |
+| Lorentz force with conducting walls | $\nabla\cdot(\sigma\nabla\phi)=\nabla\cdot(\sigma\,\mathbf u\times\mathbf B)$ | $u_x$ | 1.93 | 1.94 |
+| Braking by Hartmann walls | the exact eigenmode $u_z=U(y)\cos(kx)\,e^{st}$ | $u_z$ | 1.21 | 2.06 |
+| Buoyancy | $-\beta\,(T-T_{\mathrm r})\,\mathbf g$, the exact velocity zero | $u_z$ | 1.99 | 1.99 |
+| Heat conduction | $\kappa\nabla^2T$, isothermal walls | $T$ | 1.84 | 1.97 |
+| Heat advection | $\mathbf u\cdot\nabla T$, van Leer, triply periodic | $T$ | 1.36 | 2.08 |
+| Joule heating | $\lvert\mathbf j\rvert^2/(\sigma\rho c_p)$ of a held flow | $T$ | 1.93 | 1.99 |
+| Conjugate conduction | $\nabla\cdot(k\nabla T)$, $[T]=[k\,\partial_zT]=0$ at the walls | $T$ | 1.94 | 2.00 |
+| All terms together | conducting walls | $u_x$ | 1.93 | 2.01 |
+
+```{image} ../_static/verification_orders.webp
+:alt: The observed order of accuracy of each term of the thermal step, L-infinity and RMS, near two for every term
+:align: center
+```
+
+- Every term converges at second order in RMS. Two $L_\infty$ orders are lower, for known reasons:
+  - Heat advection's 1.36 is the van Leer limiter clipping extrema.
+  - The Hartmann-wall case refines only along $x$. The 48 cells across M1's walls are fixed, and their error is the
+    floor that the $L_\infty$ error meets at $N=64$.
+- The conjugate case has walls 0.25 thick, with four times the fluid's conductivity and twice its heat capacity. The
+  temperature and heat flux are continuous across them, and its errors include the wall cells.
+- Each term's figure has two panels. Panel (a) is the error along a line, scaled by $(N/8)^2$, so curves that collapse
+  are second order. Panel (b) is the errors against the relative grid spacing $h/h_8$, with $N$ along the top. The
+  script writes them as PDFs to `docs/_static/generated/`, which is not tracked; where a published copy belongs is
+  part of the question of where large results live ([#336](https://github.com/uwplasma/LMhdX/issues/336)).
+
+## In time, with the field on
+
+**The coupled case in time.** On 32 cells to $t=1$, the differences between successive halvings of $\Delta t$ fall at
+first order.
+- With the explicit Lorentz force, their constant on $u_x$ does not grow with the field: 2.20 with none, 2.14 at
+  $\sigma B^2/\rho=10$ and 2.12 at 30.
+- Under the implicit damping shift it is 3.6 and 7.7: the shift's transient error
+  ([numerics](../physics/numerics.md), "What the shift costs a transient").
+- At a small step, the shift's error is the floor at which spatial refinement stops.
+
+**Braking by Hartmann walls.** A vortex invariant along the field, between the walls the field crosses, is braked by
+their Hartmann layers and by the current that closes through them. `validation.shercliff.vortex_decay_rate` solves its
+decay exactly, by Chebyshev collocation across the walls, with the resolved wall as a Robin condition on the potential.
+For Case 2's steel (conductivity ratio 1.246, $t_w/a=0.087$) at Ha 235 it is $0.0933\,\sigma B^2/\rho$ at $k=\pi/2$,
+22 times the insulating walls' $1/Ha$. `validation.verification.vortex_decay` runs the vortex on Case 2's M1
+cross-section, with 48 cells, 6 in each Hartmann layer and 6 in each wall:
+- Doubling the cells across the duct, in the layers or in the walls changes the rate by under 0.1 %.
+- Along the vortex's wavelength, the braking is weak by about $\sin^2(\pi/n)$ on $n$ cells: 14.1, 3.7, 0.97 and
+  0.29 % on 8, 16, 32 and 64. Case 2's rolls, 3.6–4.0 cm long on M1's 5 mm axial cells, have 7–8 cells a wavelength.
+  - The cause: the electromotive force is averaged onto the current's faces, and the current back onto the velocity's.
+    Each average multiplies a wave by $\cos(k\Delta x/2)$, so a grid-scale wave across the field is not braked by the
+    Lorentz force at all.
+  - The collocated current-conservative schemes do the same (Ni et al. 2007; as restated by Gelfgat and Zikanov 2018):
+    they interpolate $\mathbf u\times\mathbf B$ to the faces and the currents back to the cells.
+- At Case 2's $\Delta t\,\sigma B^2/\rho$ of 0.34 (M1) and 0.27 (M2), the shift weakens the braking by 27 and 23 %,
+  the factor $1+\Delta t\,\lambda$. The explicit force is within 1.9 %. Insulating walls are within 2.7 % on 16 cells
+  and 1.3 % on 32.
+
+Rolls between Hartmann walls, heated, are compared with Sommeria and Moreau's model on the
+[thermal](../physics/thermal.md) page ("Growth rates").
+
+## Sources
+
+- M.-J. Ni, R. Munipalli, N. B. Morley, P. Huang and M. A. Abdou, J. Comput. Phys. 227 (2007) 174–204 and
+  205–228, doi:10.1016/j.jcp.2007.07.025 and 10.1016/j.jcp.2007.07.023.
+- A. Yu. Gelfgat and O. Zikanov, *Computational modeling of magnetoconvection: effects of discretization method, grid
+  refinement and grid stretching*, arXiv:1805.04710 (2018).
+- J. Sommeria and R. Moreau, J. Fluid Mech. 118 (1982) 507–518.
+- C. J. Roy, J. Comput. Phys. 205 (2005) 131–156: order-of-accuracy verification with manufactured solutions.

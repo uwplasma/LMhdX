@@ -255,39 +255,8 @@ Poiseuille flow in a field along its axis at $\Delta t\,\lambda=0.34$, against t
 same 18 cells a wavelength, a roll grows 26 % and drifts 14 % slower under the shift
 (`docs/_static/data/thermal_buoyancy.json`), so its growth per unit length falls about 13 %.
 
-**Checked in time with the field on.** `validation.transient.manufactured_run` marches a manufactured
-solution through the thermal step with every term on: limited momentum transport, viscosity, the
-Lorentz force, buoyancy, van Leer heat transport, conduction and Joule heat, between insulating or
-conducting walls. The field lies along $y$. The velocity has a part invariant along it, whose
-electromotive force is $B\nabla\psi$ and drives no current (the motion the shift slows), and a part
-with no vorticity along it, whose current is $\sigma\mathbf u\times\mathbf B$; both vanish with their
-normal derivatives at the walls, so the potential and current are exact with conducting walls too.
-- In space, at a small step on 16, 32 and 64 cells, the RMS errors of the three velocity components
-  and the temperature fall at orders 1.6 to 2.3, with insulating or conducting walls.
-- In time, on 32 cells to $t=1$, the differences between successive halvings of $\Delta t$ fall at
-  first order. With the explicit force their constant does not grow with the field (2.20 with none,
-  2.14 at $\sigma B^2/\rho=10$, 2.12 at 30, on $u_x$); under the shift it is 3.6 and 7.7, and at a
-  small step the shift's error is the floor at which spatial refinement stops.
-
-**Braking by Hartmann walls.** A vortex invariant along the field, between the walls the field
-crosses, is braked by their Hartmann layers and by the current that closes through them.
-`validation.shercliff.vortex_decay_rate` solves its decay exactly, by Chebyshev collocation across the
-walls with the resolved wall as a Robin condition on the potential. For Case 2's steel (conductivity
-ratio 1.246, $t_w/a=0.087$) at Ha 235 it is $0.0933\,\sigma B^2/\rho$ at $k=\pi/2$, 22 times the
-insulating walls' $1/Ha$. `validation.transient.vortex_decay` runs the vortex on Case 2's M1
-cross-section (48 cells, 6 in each Hartmann layer, 6 in each wall):
-- doubling the cells across, in the layers or in the walls changes the rate by under 0.1 %;
-- along the vortex's wavelength the braking is weak by about $\sin^2(\pi/n)$ on $n$ cells: 14.1, 3.7,
-  0.97 and 0.29 % on 8, 16, 32 and 64, and 2.9 % on Case 2's 18. The electromotive force is averaged
-  onto the current's faces and the current back onto the velocity's, each average multiplying a wave
-  by $\cos(k\Delta x/2)$, so a grid-scale wave across the field is not braked by the Lorentz force;
-- at Case 2's $\Delta t\,\sigma B^2/\rho$ of 0.34 (M1) and 0.27 (M2) the shift weakens the braking by
-  27 and 23 %, the factor $1+\Delta t\,\lambda$, and the explicit force is within 1.9 %; insulating
-  walls are within 2.7 % on 16 cells and 1.3 % on 32.
-
-`tests/test_steady.py` runs both at small size; `python scripts/make_showcase_figures.py --only
-transient` records them, with rolls between Hartmann walls ([thermal](thermal.md)), in
-`docs/_static/data/thermal_transient.json`, about 25 minutes on a laptop GPU.
+Its time accuracy with the field on, every term's spatial order and the braking by Hartmann walls are verified
+on the [code verification](../validation/verification.md) page.
 
 Two constraints are imposed before any divergence is taken: a wall-normal
 velocity is zero on its wall faces, and on a periodic axis the duplicated first

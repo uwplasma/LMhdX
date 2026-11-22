@@ -288,7 +288,8 @@ def vortex_decay_rate(
     *,
     wall_ratio: float = 0.0,
     wall_thickness: float = 0.0,
-) -> float:
+    mode: bool = False,
+) -> float | tuple[float, np.ndarray, np.ndarray]:
     """Return the decay rate, in ``sigma B^2 / rho``, of a vortex invariant along the field between Hartmann walls.
 
     The walls are ``y = -1, 1`` and ``B = B y``. The mode ``u = U(y) e exp(i K.x)``, with ``e`` normal to ``y`` and
@@ -302,7 +303,7 @@ def vortex_decay_rate(
     conductivity ratio ``wall_ratio`` and thickness ``wall_thickness`` (in the half-width), insulated outside, or
     ``G' = 0`` insulating. The leading eigenvalue by Chebyshev collocation, converged to eight digits by 120 points
     at Ha 235. Insulating, it tends to Sommeria and Moreau's (1982) ``-1/Ha - K^2/Ha^2``: within 0.2 % at
-    ``K = pi/2``.
+    ``K = pi/2``. ``mode=True`` also returns the Chebyshev nodes and ``U`` on them, one at ``y = 0``.
     """
     from scipy.linalg import eig
 
@@ -325,6 +326,12 @@ def vortex_decay_rate(
     # The boundary and potential rows' eigenvalues at -1e6, not infinity: a singular right-hand side leaves the rest
     # to the LAPACK build.
     right[size:] = left[size:] / -1.0e6
-    values = eig(left, right, right=False)
-    values = values[np.isfinite(values) & (np.abs(values) < 1e5)]
-    return float(values[np.argmax(values.real)].real)
+    values, vectors = eig(left, right)
+    finite = np.flatnonzero(np.isfinite(values) & (np.abs(values) < 1e5))
+    leading = finite[np.argmax(values[finite].real)]
+    rate = float(values[leading].real)
+    if not mode:
+        return rate
+    nodes = np.cos(np.pi * np.arange(points + 1) / points)
+    shape = vectors[:size, leading]
+    return rate, nodes, np.real(shape / shape[points // 2])

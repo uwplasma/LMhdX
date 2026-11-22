@@ -970,7 +970,7 @@ the critical roll at $Pr=0.02$ (PbLi's) and $Ra=2\times10^4$:
   the walls), against Sommeria and Moreau's model with the exact friction of the [numerics](numerics.md)
   page, which halves the field-free rate: +3.5 % on 32 × 48 × 32 cells at $\Delta t\,\sigma B^2/\rho=0.34$,
   +1.5 % refined to 64 × 96 × 64; under the implicit shift 11 % slow
-  (`validation.transient.hartmann_roll_growth`).
+  (`validation.verification.hartmann_roll_growth`).
 
 A differentially heated square cavity (de Vahl Davis 1983, $Pr=0.71$) checks the steady nonlinear
 flow: the peak velocities and the hot wall's mean Nusselt number are within 0.1 % at $Ra=10^3$ on 64
