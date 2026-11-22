@@ -1528,6 +1528,33 @@ at Δt/4 and 0.012–0.020 in the layer. It also adds the open inlet and outlet.
 buoyancy in that thermal layer and the backward-Euler conduction of the conjugate wall. Neither is yet tested on its
 own in the duct.
 
+## Step 5.4f: the coupling's lag (declared before the runs)
+
+The step is partitioned. Buoyancy comes from the old temperature, and the heat is carried by the old velocity, so each
+coupling term is held at the interval's start: a lag of Δt/2 behind its midpoint. At Δt 0.015 s that is 7.5 ms.
+The layer took the same coupling and showed no error that matters, but the layer had no heated wall: in the duct's
+thermal layer above it the buoyancy Courant number is 0.04, against 0.012–0.020 in the layer.
+
+**The runs.** A study patch (`lag_patch.py`, beside the runner) gives a step of Δt/4 the coupling lag of a step of
+Δt. It takes the coupling terms 1.5 steps lagged, from the mean of the states one and two steps back. A steady state
+is unchanged by it: the first step from a steady history reproduces the step bit for bit.
+- L-b: buoyancy lagged.
+- L-bt: buoyancy and the heat transport's velocity both lagged.
+- Each on M1, explicit force, at Δt 0.00375 s, from Run C's last state at 2,488.4 s, with Run C's protocol: 300 s
+  burn-in, then 150 s averaged in five sub-batches, settled or not.
+- The brackets, from the same state: P0 at Δt 0.015 s grows 1e5-fold to x = 0.2 m; Run C at Δt/4, its own
+  continuation, 2-fold.
+
+**The measure** is the RMS of w at x = 0.2 m over its value at x = 0.
+- *Hypothesis (the coupling's lag causes the growth over the heater):* L-bt's grows at least 1e3-fold. If L-b's does
+  too, the buoyancy's lag alone suffices.
+- *Alternative:* both stay within ten. Then the coupling's lag is not the cause. The remaining time error lies in the
+  terms each field takes on its own at Δt: the conjugate wall's backward-Euler conduction, the viscous and Lorentz
+  stages, and the projection with the open boundaries.
+- Between ten and 1e3, the lag is a partial account.
+
+On one A100 each at commit `782e4f3`, with the explicit rerun's runner (`--lag buoyancy|both`).
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
