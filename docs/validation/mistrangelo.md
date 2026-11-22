@@ -1708,6 +1708,32 @@ by nothing. So whether that change, or the step itself, starts the growth is not
 A run at Δt from L-b's steady state with L-b's own inlet would separate them: the first grows, the other two stay
 steady.
 
+## Step 5.4f: the step at Δt from a steady state, with that state's inlet (declared before the run)
+
+**The run.** Run K: M1 at Δt 0.015 s with the explicit force, from L-b's last state, steady at 3,019.1 s, keeping
+L-b's inlet profile. The runner's `--keep-inlet` takes the start's profile instead of rebuilding it at this step;
+the rebuilt one differs by 6.2e-15 m/s. With it, L-b's steady state is a fixed point of the step at Δt, to the
+solvers' tolerance, so nothing but the step acts on it.
+- P0's protocol: 300 s burn-in, then 150 s averaged in five sub-batches, settled or not.
+- Checked on mesh S: restarting at another step changes the inlet by 8e-14 m/s, and with `--keep-inlet` by
+  nothing.
+
+**The measures**, as for P0:
+- the RMS of w at x = 0.2 m over its value at x = 0, which the RMS's floor bounds from below;
+- where the rolls saturate;
+- the probes' largest swing over the window, read at every step with no floor.
+
+**The readings:**
+- *Hypothesis (the step at Δt feeds the instability itself):* the rolls regrow, as in P0. The RMS of w at
+  x = 0.2 m is at least 1e3 times its value at x = 0, and the probes swing by more than 1 K.
+- *Alternative (the step does not):* the flow stays steady. The ratio is within ten, and the probes swing by under
+  1e-6 K. The growth in the earlier studies was then fed by their restarts' inlet change, or by rolls already in
+  their starting states feeding disturbances upstream.
+- Anything between is a partial account: for example, a disturbance that grows over the window but does not
+  saturate.
+
+On one A100 at commit `782e4f3`, with the explicit rerun's runner (`--keep-inlet`).
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
