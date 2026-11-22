@@ -1555,6 +1555,33 @@ is unchanged by it: the first step from a steady history reproduces the step bit
 
 On one A100 each at commit `782e4f3`, with the explicit rerun's runner (`--lag buoyancy|both`).
 
+## Step 5.4f: the coupling's lag — the results
+
+The two runs (Perlmutter jobs 61786155 and 61786157) took 65–66 minutes each and averaged 2,839–3,019 s, unsettled
+after one window, as declared.
+
+| Run | Coupling | RMS of w, x = 0.2 m over x = 0 | Growth, x = 0.10–0.25 m | Rolls saturate at |
+|:--|:--|--:|--:|--:|
+| P0 (Δt 0.015 s, for reference) | the step's | 1.0e5 | 74.8 /m | 0.301 m |
+| L-b | buoyancy lagged | 1.1 | 3.7 /m | not reached |
+| L-bt | buoyancy and the heat carrier lagged | 1.0 | 1.4 /m | not reached |
+| Run C (Δt/4, for reference) | the step's | 2.0 | 34 /m | 0.81 m |
+
+- *Hypothesis (L-bt at least 1e3):* not met. *Alternative (both within ten):* met, at 1.1 and 1.0. So the coupling's
+  lag is not the cause. In both runs w stays at its rounding, about 6e-12 m/s, from x = 0 to the outlet, so their
+  growth figures are noise.
+- The patch acted. L-b and L-bt agree after the first step and part from the second, by 5e-7 at the probes after it
+  and 3e-4 after 1,000 steps. On mesh S the runner with `--lag buoyancy` matches the runner without it after the
+  first step, bit for bit, and parts from the second, as the patch should.
+- Both runs went steady. No RMS of u reaches 1e-3 m/s before the outlet, and the probes swing by about 1e-12 K over
+  the window, against Run C's 4.9 K. Run D went steady at Δt/4 too. Whether Run C's own continuation goes steady was
+  not run. The patch leaves a steady state unchanged, so the steady state both reach is the step's own at Δt/4.
+
+**What remains.** The coupling's lag joins the Lorentz split, the step's error on the rolls in a layer, the
+transports and the solvers' tolerances as excluded. Still untested: the terms each field takes on its own at Δt.
+These are the conjugate wall's backward-Euler conduction, the viscous and Lorentz stages, and the projection with
+the open boundaries. Each can be tested as the transports were: sub-stepped within Δt 0.015 s from Run C's state.
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
