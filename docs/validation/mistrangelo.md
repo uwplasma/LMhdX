@@ -1429,6 +1429,46 @@ one A100. Against the explicit run at 5 mm:
   the heated zone's figures where they were. The codes' hot fluid reaches the axis between x = 0.05 and 0.1 m, so the
   axial spacing accounts for a small part of the gap, and that at Δt 0.015 s.
 
+## Step 5.4f: the duct's base flow and the transports' time error (declared before the runs)
+
+**What the averaged fields show, without a new run.**
+- *The base flow over the heater is the same at both steps.* Over x = 0–0.25 m, the explicit run at Δt 0.015 s and
+  Run C at Δt/4 differ by at most 2e-6 m/s in velocity (2e-4 u0) and 0.003 K in temperature. So the step changes how
+  disturbances evolve on the base flow, not the base flow.
+- *The heated wall carries a jet.* It is a wall parallel to the field. At x = 0.15 m, y = 0, its side layer peaks at
+  0.035 m/s (3.5 u0) 1.3 mm from the wall, against 0.008 m/s in the core.
+- *The step's Courant number peaks in that jet:* u Δt/Δx = 0.106 at Δt 0.015 s, against 0.025 in the core and 0.023
+  in the layer above.
+- *The rolls reach into it.* The RMS of w peaks 16 mm above the heated wall, in the lower core, but the RMS of u
+  peaks inside the jet at x = 0.1 m.
+
+**The suspect.** Both transports are forward Euler on a semi-discrete operator: van Leer face values for heat, the
+limited advection for momentum. Forward Euler's leading time error is an axial anti-diffusion of about u²Δt/2. In
+the jet at Δt 0.015 s that is 9e-6 m²/s, beside κ's 8e-6 and 80 times ν. For a 7.5-cell wave it cancels most of the
+limited scheme's own damping near a Courant number of 0.1. In the core, at 0.025, it is a quarter as large relative
+to that damping, which is consistent with the layer's small error. The layer had no jet.
+
+**The runs.** A study patch (`substep_patch.py`, beside the runner) replaces each transport by the mean of n
+forward-Euler sub-steps of Δt/n. The heat fluxes are averaged, so the divergence is exactly the sub-stepped update
+and the ledger closes. Every other term stays at Δt. With n = 1 it reproduces the step bit for bit.
+- Four runs on M1, the force explicit, Δt 0.015 s, each from Run C's last state at 2,488.4 s with Run C's protocol:
+  300 s burn-in, then 150 s averaged in five sub-batches, settled or not.
+  - P0, the control: the step as it is.
+  - P4: both transports in 4 sub-steps.
+  - P4m: the momentum transport alone in 4 sub-steps.
+  - P4h: the heat transport alone in 4 sub-steps.
+- *Control:* P0's RMS of w at x = 0.2 m is at least 1e3 times its value at x = 0, as the Δt 0.015 s runs' 1e5 and
+  1e6. If not, Run C's state carries the change, and that is reported instead.
+- *Hypothesis (the transports' time error causes the growth over the heater):* P4's RMS of w at x = 0.2 m stays
+  within ten times its value at x = 0, as Run C's (twice), while P0's grows at least 1e3-fold.
+- *Alternative:* P4 grows at least 1e3-fold as well. Then the transports' time error is not the cause, and the
+  remaining terms at Δt in the duct's own layers are: buoyancy, conduction, the Lorentz force, the projection.
+- Between ten and 1e3, the transports are a partial account.
+- P4m and P4h: whichever alone stays within ten names the transport. If neither alone does and P4 does, the two act
+  together. Reported, not gated.
+
+On one A100 each at commit `782e4f3`, with the explicit rerun's runner (`--transport-substeps 4 --substep ...`).
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
