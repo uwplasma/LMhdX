@@ -1235,6 +1235,53 @@ heated wall and the thermal layer still developing along the heater. Whether M1'
 would need a run at Δt/4 (Δt λ = 0.084) with either force, about 2.5 GPU hours each. Case 2's results stay those of
 the implicit runs above.
 
+## Step 5.4f: why the explicit run grows less, and two more runs (declared before the runs)
+
+**What the two M1 runs show.** Both carry the same rounding upstream of the heater. Over its second half the
+explicit run's disturbance grows less per metre:
+
+| x | 0.05–0.10 m | 0.10–0.15 m | 0.15–0.20 m | 0.20–0.25 m |
+|:--|--:|--:|--:|--:|
+| M1L1 (implicit) | 77 /m | 86 /m | 86 /m | 84 /m |
+| explicit | 69 /m | 74 /m | 78 /m | 76 /m |
+
+- The rolls' axial wavelength is the same in both, 3.6–4.0 cm, from the saved velocity at 0.24–0.48 m.
+- On the axis probes, the period is 4.52 s implicit and 4.00 s explicit, and the u signal at 0.33 m lags the one at
+  0.15 m by four periods and 4.20 s or 3.78 s. So the rolls drift at 0.82 u₀ implicit and 0.92 u₀ explicit.
+- Growth per metre times drift is the temporal growth: 0.68 and 0.69 s⁻¹ over 0.10–0.25 m. The shift leaves the
+  rolls' growth in time unchanged; it slows their drift by 11 %, and so raises their growth per metre.
+- The steel Hartmann walls brake these rolls at about 1.7 s⁻¹ (the numerics page). Their velocity therefore follows
+  the buoyancy nearly quasi-statically, and the shift, which slows the velocity's response by 1 + Δt λ, shifts its
+  phase more than its amplitude. The layer above has no such braking, which is why it behaves differently.
+
+The explicit run is the time-accurate one (`validation.transient`), so on M1 the implicit runs' earlier onset owes
+part of its position to the shift.
+
+**Run A: the implicit force at Δt/4.** M1 at Δt 0.00375 s (Δt λ = 0.084), implicit, from M1L1's last state:
+300 s burn-in, then 150 s averaged in five sub-batches, settled or not. A diagnostic, reported, not gated.
+- *Hypothesis:* it moves toward the explicit run, with a period of 4.0–4.2 s on the per-step axis probes and a growth
+  per metre of 76–80 /m over x = 0.10–0.25 m.
+- If it stays at M1L1's 4.5 s and 85 /m, the shift is not what separates the two runs.
+
+**Run B: the axial spacing halved.** At 5 mm, the rolls have 7–8 cells a wavelength along the duct. In the
+buoyancy record's through-flow layer, limited momentum and van Leer heat transport at 8 cells a wavelength slow an
+advected roll's growth by 23 % and its growth per metre by 13 % (6 % at 10 cells, 3 % at 12). Over Case 2's heater,
+though, the base temperature varies along x, which may keep the limiter in its smooth range for so small a
+disturbance. M2 (4 mm, 9.5 cells) saturated at 0.274 m against M1's 0.266 m, at a smaller Δt λ.
+- The run: M1's cross-section with 2.5 mm along the core (874 axial cells against 450), the explicit force, and
+  Δt 0.015 s, from the inlet's developed flow. It follows 5.4f's protocol: 300 s burn-in, 50 s settling windows,
+  450 s of averaging in ten sub-batches, extendable to 900 s, and averaged from 1,200 s if unsettled. It is compared
+  with the explicit run at 5 mm.
+- *Hypotheses (if under-resolved transport delays the onset):*
+  - the growth per metre over x = 0.10–0.25 m exceeds the explicit 5 mm run's 76 /m by at least 5 %;
+  - the rolls saturate at least 1 cm upstream of its 0.299 m;
+  - Nu at x = 0.2 m rises above its 2.15.
+- If none holds, the axial spacing is not what delays M1's onset. Reported, not gated.
+
+Both on one A100 on Perlmutter at commit `782e4f3`. The runner is the explicit rerun's `case2_run.py`, which now
+re-imposes the inlet profile and face constraints on a loaded state: another Δt rebuilds the inlet profile, equal to
+the start's only to its solve's tolerance.
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
