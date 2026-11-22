@@ -1734,6 +1734,27 @@ solvers' tolerance, so nothing but the step acts on it.
 
 On one A100 at commit `782e4f3`, with the explicit rerun's runner (`--keep-inlet`).
 
+## Step 5.4f: the conjugate wall's conduction and the viscous stage — the results
+
+The two runs (Perlmutter jobs 61793558 and 61793559) took 38 and 44 minutes, at 0.064 and 0.073 s a step against
+P0's 0.037. Each averaged 2,839–3,020 s, unsettled after one window, as declared.
+
+| Run | Solve in 4 sub-steps | RMS of w, x = 0.2 m over x = 0 | Growth, x = 0.10–0.25 m | Rolls saturate at | Probes' swing |
+|:--|:--|--:|--:|--:|--:|
+| P0, the control | none | 1.0e5 | 74.8 /m | 0.301 m | 32.8 K |
+| S-c | conduction | 8.5e4 | 75.9 /m | 0.300 m | 31.5 K |
+| S-v | viscous | 3.9e5 | 75.7 /m | 0.281 m | 35.2 K |
+
+- *Hypothesis (within ten):* not met by either. *Alternative (at least 1e3):* met by both. So neither the
+  conduction's nor the viscous solve's time error is the cause.
+- The growth per metre is P0's in both, to 1.5 %, as the packet found at every step.
+- With the viscous solve sub-stepped, w at x = 0.2 m is 4.5 times P0's, and the rolls saturate 2 cm upstream. The
+  growth along the heater is the same, so it is the disturbance entering the heated zone that is larger.
+
+The step's time error is now excluded term by term: the Lorentz split, the transports, the coupling's lag, the
+conduction and the viscous solve. The packet shows why: the instability is the same at every step. What remains is
+what feeds it, which Run K tests.
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
