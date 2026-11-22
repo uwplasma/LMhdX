@@ -1791,6 +1791,36 @@ nothing.
 - Does the onset follow a steady disturbance source at either step? A seed before the heater at Δt/4, as heater-4's
   at Δt, would show whether the rolls then sit where Δt's seeded ones do.
 
+## Step 5.4f: the seeded onset at Δt/4 (declared before the run)
+
+The packet shows the instability is the same at Δt and Δt/4. The seeded study showed that at Δt a steady
+disturbance before the heater moves the onset to where the codes have it. One run asks the question that decides how
+Case 2 is reported: with a disturbance source present, is the onset converged in Δt? Whether a loop through the
+saturated rolls holds between the two steps is left open. It explains the unseeded flow's behaviour, but neither
+answer would change this conclusion.
+
+**The run.** Run S4: heater-4 again, with only the step changed.
+- M1 at Δt 0.00375 s with the implicit force, from M1L1's last state at 1,104.5 s, as heater-4.
+- heater-4's seed: 3.194e-5 m/s² over x = −0.5 to −0.35 m, knots every 2 s, three modes, key 5. The seed is a force,
+  so what it puts in per unit time does not depend on the step.
+- The quarter-step runs' protocol: 300 s burn-in, then 150 s averaged in five sub-batches, settled or not.
+
+**The measure:** where the rolls saturate, the record's first x where the RMS of u on y = 0 reaches 1e-3 m/s.
+heater-4 saturated at 0.068 m. The seed's level is the RMS of w at the slab's downstream end, 1.1e-6 m/s in
+heater-4. The comparison holds only if S4's lies within a factor of two of it.
+
+**The readings.** For scale, a tenfold larger seed moved heater-4's saturation 3.6 cm upstream.
+- *Hypothesis (the onset follows the disturbance, not the step):* S4 saturates within 2 cm of 0.068 m. Then
+  LMhdX's seeded results, the ones that match the codes, are converged in Δt.
+- *Alternative (the step moves the onset even with a disturbance):* S4 saturates more than 5 cm downstream, beyond
+  0.118 m.
+- Between, a partial account.
+
+With this run the time-step question is closed whatever it shows. What is left for Case 2 is the authors' answer on
+their initial conditions and disturbances, and the owner's call on how Case 2 is reported.
+
+On one A100 at commit `782e4f3`, with the explicit rerun's runner (its `--seed` options are 5.4f's).
+
 ## Sources
 
 - C. Mistrangelo et al., Nucl. Fusion 65 (2025) 116006,
