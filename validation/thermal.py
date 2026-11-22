@@ -31,6 +31,7 @@ __all__ = [
     "shah_london_h1",
 ]
 
+_SPURIOUS = -1.0e6  # where the growth-rate solve puts its boundary rows' eigenvalues
 # Chandrasekhar (1961), rigid plates, as tabulated by Basak & Kumar (2015), Table I: (Q, Ra_c).
 CHANDRASEKHAR_TABLE = ((0.0, 1707.8), (10.0, 1945.9), (50.0, 2802.1), (100.0, 3757.4))
 
@@ -185,17 +186,21 @@ def convection_growth_rate(
     ).astype(complex)
     right = np.block([[helmholtz, 0 * identity], [0 * identity, identity]]).astype(complex)
     rows = count + 1
+    # Each boundary row's eigenvalue is put at -1e6 rather than at infinity: a singular right-hand side leaves the
+    # pencil's other eigenvalues to the LAPACK build (2.18 for 1.58 on one).
     for row, condition in (
         (0, identity[0]),
         (1, derivative[0]),
         (count - 1, derivative[-1]),
         (count, identity[-1]),
     ):
-        left[row], right[row] = 0.0, 0.0
+        left[row] = 0.0
         left[row, :rows] = condition
+        right[row] = left[row] / _SPURIOUS
     for row in (rows, rows + count):
-        left[row], right[row] = 0.0, 0.0
+        left[row] = 0.0
         left[row, row] = 1.0
+        right[row] = left[row] / _SPURIOUS
     values = eig(left, right, right=False)
-    values = values[np.isfinite(values) & (np.abs(values) < 1e8)]
+    values = values[np.isfinite(values) & (np.abs(values) < 1e5)]
     return complex(values[np.argmax(values.real)])
