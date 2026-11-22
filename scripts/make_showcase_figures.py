@@ -802,7 +802,7 @@ def thermal_buoyancy() -> None:
         "rolls": rolls,
         "cavity": cavity,
     }
-    path.write_text(json.dumps(_compact(record), indent=1) + "\n")
+    _write_record(path, record)
 
 
 def thermal_transient() -> None:
@@ -1363,6 +1363,24 @@ def benchmark_scaling() -> None:
     axes[2].set_title("Targets: 10x (3-D core), 20x (Q2D)", fontsize=11)
     axes[2].legend(frameon=False, fontsize=8)
     _save_webp(fig, STATIC / "device_scaling.webp", dpi=100)
+
+
+def _write_record(path: Path, record: dict) -> None:
+    """Write a record to six digits, one entry of each list per line: small diffs when a rerun changes a case."""
+    record, lines = _compact(record), ["{"]
+    for i, (key, value) in enumerate(record.items()):
+        end = "," if i < len(record) - 1 else ""
+        if isinstance(value, list) and value and isinstance(value[0], dict):
+            entries = [json.dumps(entry, separators=(", ", ": ")) for entry in value]
+            lines += [
+                f" {json.dumps(key)}: [",
+                *(f"  {e}," for e in entries[:-1]),
+                f"  {entries[-1]}",
+                f" ]{end}",
+            ]
+        else:
+            lines.append(f" {json.dumps(key)}: {json.dumps(value)}{end}")
+    path.write_text("\n".join([*lines, "}"]) + "\n")
 
 
 def _compact(value):
