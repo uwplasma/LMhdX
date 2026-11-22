@@ -1248,8 +1248,9 @@ explicit run's disturbance grows less per metre:
 - The rolls' axial wavelength is the same in both, 3.6–4.0 cm, from the saved velocity at 0.24–0.48 m.
 - On the axis probes, the period is 4.52 s implicit and 4.00 s explicit, and the u signal at 0.33 m lags the one at
   0.15 m by four periods and 4.20 s or 3.78 s. So the rolls drift at 0.82 u₀ implicit and 0.92 u₀ explicit.
-- Growth per metre times drift is the temporal growth: 0.68 and 0.69 s⁻¹ over 0.10–0.25 m. The shift leaves the
-  rolls' growth in time unchanged; it slows their drift by 11 %, and so raises their growth per metre.
+- Growth per metre times drift is the temporal growth: 85.8 /m × 0.815 u₀ and 76.1 /m × 0.917 u₀, 0.699 and
+  0.698 s⁻¹, over 0.10–0.25 m. The shift leaves the rolls' growth in time unchanged; it slows their drift by 11 %, and
+  so raises their growth per metre.
 - The steel Hartmann walls brake these rolls at about 1.7 s⁻¹ (the numerics page). Their velocity therefore follows
   the buoyancy nearly quasi-statically, and the shift, which slows the velocity's response by 1 + Δt λ, shifts its
   phase more than its amplitude. The layer above has no such braking, which is why it behaves differently.
