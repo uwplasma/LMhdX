@@ -1582,6 +1582,15 @@ transports and the solvers' tolerances as excluded. Still untested: the terms ea
 These are the conjugate wall's backward-Euler conduction, the viscous and Lorentz stages, and the projection with
 the open boundaries. Each can be tested as the transports were: sub-stepped within Δt 0.015 s from Run C's state.
 
+**The RMS's floor.** The runner forms the RMS of w as $\sqrt{\langle w^2\rangle - \langle w\rangle^2}$ from sums
+over the window. Over the base flow's mean w on the two rows above the heater, 1–3e-4 m/s, that difference has a
+floor of $\sqrt{\epsilon \langle w^2\rangle}$, 2–5e-12 m/s in float64. The "rounding" of w quoted in this record,
+5–7e-12 m/s, is under twice that floor, at x = 0 in every run and to x = 0.2 m and beyond in the runs that do not
+grow. The disturbance there may be smaller. So a ratio within ten reads as no disturbance above about 5e-11 m/s at
+x = 0.2 m, not as no growth at all. No verdict changes:
+- at Δt the disturbance at x = 0.2 m is 1e5 times the floor;
+- the steady verdicts rest on the probes, read at every step with no subtraction.
+
 ## Step 5.4f: the conjugate wall's conduction and the viscous stage (declared before the runs)
 
 Each of the step's implicit solves is backward Euler over Δt. The conduction solve, PCG through the steel walls'
