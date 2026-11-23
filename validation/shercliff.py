@@ -150,8 +150,8 @@ def developed_nusselt(hartmann: float, points: int = 48, *, heating: str = "H1")
     ``f = u/u_mean``, no Joule heat and a uniform axial heat input. ``heating="H1"`` holds the wall at one
     temperature (``theta = 0``, ``c = 1``), and ``Nu = 1/|<f theta>|``. ``heating="H2"`` takes in a uniform flux
     (``d theta/dn = 1``, ``c = P/A = 2``, a corner taking the mean of its two normals, zero mean), and
-    ``Nu = 2/(theta_w - <f theta>)`` with ``theta_w`` the perimeter mean. At Ha 0 these are the double-sine
-    series 3.60795 and 3.08738. ``heating="T"`` holds the wall at one temperature with no axial heat input: the
+    ``Nu = 2/(theta_w - <f theta>)`` with ``theta_w`` the perimeter mean. At Ha 0 these are the series
+    3.60795 and 3.08738 of ``validation.thermal``. ``heating="T"`` holds the wall at one temperature with no axial heat input: the
     smallest eigenvalue of ``-laplacian(theta) = Lambda f theta``, ``theta = 0`` on the wall, by inverse iteration,
     and ``Nu = Lambda D_h A/P = Lambda``; 2.97753 at Ha 0 (Shah & London list 2.976).
     """

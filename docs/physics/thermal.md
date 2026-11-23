@@ -612,24 +612,29 @@ of `steady.solve_steady_state` in a field scale or a drive. It also
 differentiates through the heat source and $\gamma$, but not through the
 geometry.
 
-The H1 Nusselt number is checked against its exact double-sine series, which
-involves no discrete operator. The flow is the package's own steady solve, or a
-uniform slug:
+The H1 and H2 Nusselt numbers are checked against exact series, which involve
+no discrete operator. The flow is the package's own steady solve, or a uniform
+slug:
 
 | Duct | Exact | 16 / 32 / 64 cells | Order |
 |:--|--:|:--|:--|
 | square | 3.60795 | +1.35 % / +0.35 % / +0.087 % | 1.97, 1.99 |
 | aspect ratio 0.5 | 4.12330 | +2.7 % / +0.73 % / +0.18 % | 1.92, 1.98 |
 | square, slug flow | 7.11354 | −1.5 % / −0.38 % / −0.094 % | 1.98, 1.99 |
-| square, H2 (uniform flux on every wall) | 3.091 | +1.3 % / +0.24 % / −0.027 % | 1.97 |
+| square, H2 (uniform flux on every wall) | 3.08738 | +1.41 % / +0.36 % / +0.090 % | 1.98, 1.99 |
 
-The H2 case tests the heat-flux path that the design workflow uses. Its 3.091
-is Shah & London's (1978) value, as cited in the review of #240; Richardson
-extrapolation gives 3.0873, 0.12 % below it. The H1 values lie on Shah &
+The H2 case tests the heat-flux path that the design workflow uses. Its
+reference, `validation.thermal.h2_series`, takes the velocity in sines and the
+temperature as a lift plus cosines, with Nu on the perimeter mean of the wall
+temperature. The spectral solve of the MHD Nusselt campaign
+(`validation.shercliff.developed_nusselt`) agrees with it to 1e-8, and the
+package's Richardson value, 3.08733, to 2e-5. Shah & London's (1978) 3.091,
+cited in the review of #240 and the reference until then, is 0.12 % above all
+three; Bluck et al. (2015) tabulate 3.0871. The H1 values lie on Shah &
 London's polynomial fit for rectangular ducts, with the coefficients taken from
-the `ht` library; they have not yet been checked against the book's own tables.
-The tests check the aspect-0.5 duct at 64 cells only, and the refinement study
-uses the square ducts.
+the `ht` library. The fit is compared, never gated, and the book's own tables
+are not inspected. The tests check the aspect-0.5 duct at 64 cells only, and
+the refinement study uses the square ducts.
 
 A transverse field flattens the core. On 32 cells with Joule heat off, the H1
 Nusselt number of the square duct rises from 3.62 at Ha 0 to 4.56 at Ha 10 and
