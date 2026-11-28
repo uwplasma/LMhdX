@@ -301,8 +301,8 @@ def test_the_open_pipe_balances_mass_and_its_drop_adjoint_matches_central_differ
         centres, means = pipe_station_pressure(pipe, solve_open_pipe(pipe, field_scale=scale).pressure)
         return jnp.interp(-3.0, centres, means) - jnp.interp(3.0, centres, means)
 
-    gradient = float(jax.grad(drop)(1.0))
-    central = (float(drop(1.0 + 1e-4)) - float(drop(1.0 - 1e-4))) / 2e-4
+    gradient, compiled = float(jax.jit(jax.grad(drop))(1.0)), jax.jit(drop)  # traced once, not per call
+    central = (float(compiled(1.0 + 1e-4)) - float(compiled(1.0 - 1e-4))) / 2e-4
     assert gradient == pytest.approx(central, rel=1e-6)
 
 

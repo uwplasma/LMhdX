@@ -63,6 +63,7 @@ def test_li_aln_wall_stack_example_runs_explicit_models(tmp_path: Path):
     assert (summary_path.parent / "li_aln_wall_stack.png").is_file()
 
 
+@pytest.mark.curated
 def test_fringe_duct_example_conserves_and_checks_its_gradient(tmp_path: Path):
     script = Path(__file__).resolve().parents[1] / "examples/fringe_duct_example.py"
     subprocess.run([sys.executable, script], cwd=tmp_path, timeout=180, check=True)
@@ -76,6 +77,7 @@ def test_fringe_duct_example_conserves_and_checks_its_gradient(tmp_path: Path):
     assert summary["derivative_relative_error"] < 1e-6
 
 
+@pytest.mark.curated
 def test_open_duct_inertia_example_reports_a_small_positive_share(tmp_path: Path):
     script = Path(__file__).resolve().parents[1] / "examples/open_duct_inertia_example.py"
     subprocess.run([sys.executable, script], cwd=tmp_path, timeout=180, check=True)
@@ -86,6 +88,7 @@ def test_open_duct_inertia_example_reports_a_small_positive_share(tmp_path: Path
     assert all(row["relative_residual"] <= 1e-9 and row["status"] == 0 for row in summary["rows"])
 
 
+@pytest.mark.curated
 def test_duct_design_law_example_finds_the_studys_optima(tmp_path: Path):
     script = Path(__file__).resolve().parents[1] / "examples/duct_design_law.py"
     subprocess.run([sys.executable, script], cwd=tmp_path, timeout=180, check=True)

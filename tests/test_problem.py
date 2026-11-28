@@ -687,13 +687,14 @@ def test_the_wall_conductance_derivative_meets_the_derivative_standard():
     def drive(c):
         return _drive(_hunt(Wall(c, conducting=True)))
 
-    value, slope = jax.value_and_grad(drive)(0.05)
+    value, slope = jax.jit(jax.value_and_grad(drive))(0.05)
+    compiled = jax.jit(drive)  # the differences and remainders trace once, not per call
     assert float(value) == pytest.approx(float(_drive(_hunt(Wall(0.05)))), rel=1e-9)
     for step in (1e-3, 1e-4):
-        assert float(slope) == pytest.approx(float(_central(drive, 0.05, step)), rel=1e-6)
+        assert float(slope) == pytest.approx(float(_central(compiled, 0.05, step)), rel=1e-6)
     assert float(jax.jvp(drive, (0.05,), (1.0,))[1]) == pytest.approx(float(slope), rel=1e-9)
     remainders = [
-        abs(float(drive(0.05 + eps)) - float(value) - eps * float(slope)) for eps in (0.016, 0.008, 0.004)
+        abs(float(compiled(0.05 + eps)) - float(value) - eps * float(slope)) for eps in (0.016, 0.008, 0.004)
     ]
     assert 3.6 < remainders[0] / remainders[1] < 4.4 and 3.6 < remainders[1] / remainders[2] < 4.4
     # A new conductance is a new argument of the same compiled program: no retrace, no recompile.
@@ -750,10 +751,10 @@ def test_resolved_layers_differentiate_in_conductivity_and_thickness_as_the_thin
     def drive(k, t):
         return _drive(_hunt(Wall(layers=(WallLayer("steel", k, t, 6),)), cells=32))
 
-    k, t = 1.0, 0.05
-    d_k, d_t = jax.grad(drive, argnums=(0, 1))(k, t)
-    assert float(d_k) == pytest.approx(float(_central(lambda x: drive(x, t), k, 1e-3)), rel=1e-6)
-    assert float(d_t) == pytest.approx(float(_central(lambda x: drive(k, x), t, 1e-3)), rel=1e-6)
+    k, t, compiled = 1.0, 0.05, jax.jit(drive)  # the differences trace once, not per call
+    d_k, d_t = jax.jit(jax.grad(drive, argnums=(0, 1)))(k, t)
+    assert float(d_k) == pytest.approx(float(_central(lambda x: compiled(x, t), k, 1e-3)), rel=1e-6)
+    assert float(d_t) == pytest.approx(float(_central(lambda x: compiled(k, x), t, 1e-3)), rel=1e-6)
     thin = jax.grad(lambda x: _drive(_hunt(Wall(conductivity=k, thickness=x), cells=32)))(t)
     assert float(d_t) == pytest.approx(float(thin), rel=1e-2) and float(d_t) != float(thin)
     # Measured 0.76 % and 0.55 %: Hunt's wall depends on the product, to the percent by which a resolved wall differs from a thin one.
