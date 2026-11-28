@@ -1,16 +1,30 @@
 # LMhdX
 
-LMhdX solves inductionless liquid-metal MHD with JAX. It provides
-analytical-reference fully developed flows, three-dimensional ducts and pipes
-on a staggered core, ducts with an inlet and an outlet through a field that
-varies along them, and periodic Q2D flow
-with Hartmann-layer damping. LMhdX builds the physics;
-[SOLVAX](https://github.com/uwplasma/SOLVAX) supplies reusable numerical solvers.
+LMhdX simulates liquid metal flowing through strong magnetic fields, the
+physics of fusion blanket channels. It solves fully developed ducts and pipes
+and checks them against analytical references. It also solves
+three-dimensional ducts and pipes, ducts with an inlet and an outlet in a field
+that changes along them, heat transfer, and a depth-averaged (Q2D) model with
+Hartmann-layer damping. LMhdX is written in JAX, so you can differentiate its
+solutions and run them on a CPU or a GPU. LMhdX builds the physics, and
+[SOLVAX](https://github.com/uwplasma/SOLVAX) supplies the numerical solvers.
 
 ```{image} _static/validation_ladder.webp
 :alt: Hartmann-layer collapse, flow-rate error against a spectral reference, and mesh convergence
 :align: center
 ```
+
+After `python -m pip install lmhdx`, a first duct takes three lines:
+
+```python
+import lmhdx
+
+solution = lmhdx.solve(lmhdx.duct(20.0, 24))   # Hartmann number 20, 24 x 24 cells
+print(float(solution.flow_rate))               # 0.15614...
+```
+
+The model is inductionless, which means the flow does not change the applied
+field.
 
 ## Start here
 
@@ -75,6 +89,7 @@ tutorials/q2d
 :caption: How-to guides
 
 how_to/restart_and_output
+how_to/heated_duct
 ```
 
 ```{toctree}
@@ -82,8 +97,11 @@ how_to/restart_and_output
 :caption: Physics and numerics
 
 physics/equations
-physics/numerics
+physics/open_ducts
+physics/q2d
+physics/coreflow
 physics/thermal
+physics/numerics
 ```
 
 ```{toctree}
@@ -96,6 +114,8 @@ validation/q2d
 validation/freemhd
 validation/mistrangelo
 validation/mhd_nusselt
+validation/developed_heat
+validation/open_ducts
 validation/channel_turbulence
 ```
 

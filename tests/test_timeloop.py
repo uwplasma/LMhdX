@@ -729,10 +729,10 @@ def test_thermal_gradients_match_central_differences(target, advection):
 
 
 def test_the_thermal_page_workflow_runs_as_written():
-    """The worked example of docs/physics/thermal.md, executed from the page (plan step 5.1h)."""
+    """The worked example of docs/how_to/heated_duct.md, executed from the page (plan step 5.1h)."""
     from pathlib import Path
 
-    page = Path(__file__).resolve().parents[1] / "docs" / "physics" / "thermal.md"
+    page = Path(__file__).resolve().parents[1] / "docs" / "how_to" / "heated_duct.md"
     section = page.read_text().split("## A worked example", 1)[1]
     code = section.split("```python\n", 1)[1].split("```", 1)[0]
     namespace = {"__name__": "thermal_page"}
@@ -1406,13 +1406,13 @@ def _walled_duct(material=(0.18, 2.3), cells: int = 6, axial: int = 8, inlet: fl
 
 
 def test_the_walled_duct_snippet_runs_as_written():
-    """The walled-duct snippet of docs/physics/thermal.md: its PCG iterations and its ledger."""
+    """The walled-duct snippet of docs/physics/thermal/walls.md: its PCG iterations and its ledger."""
     from pathlib import Path
 
-    page = (Path(__file__).resolve().parents[1] / "docs/physics/thermal.md").read_text()
+    page = (Path(__file__).resolve().parents[1] / "docs/physics/thermal/walls.md").read_text()
     code = page.split("as the ledger test runs it:", 1)[1].split("```python\n", 1)[1].split("```", 1)[0]
     namespace = {"__name__": "walled_duct"}
-    exec(compile(code, "thermal.md", "exec"), namespace)
+    exec(compile(code, "walls.md", "exec"), namespace)
     history = namespace["history"]
     assert int(history.conduction_iterations.max()) <= 20
     assert float(np.max(np.abs(history.heat_balance_residual))) < 1e-6

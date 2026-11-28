@@ -534,7 +534,7 @@ def wall_pressure_gradient(grid: Grid, pressure, angle: float | None = None, har
     pressure is that of the outermost cell at the azimuth nearest ``angle`` (radians from the field
     direction; ``None`` averages the ring). Behind a fringe the pressure is not uniform across the
     section, so a wall tap and the area mean differ: the tap on the wall parallel to the field
-    (``angle = pi/2``) reproduces ALEX B1, the mean does not (docs/physics/numerics.md, row 6).
+    (``angle = pi/2``) reproduces ALEX B1, the mean does not (docs/validation/open_ducts.md, row 6).
     """
     ring = np.asarray(pressure)[-1]
     if angle is None:

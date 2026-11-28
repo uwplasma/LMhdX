@@ -663,7 +663,7 @@ Status at b97ad3a: Phase 5 is done; step 5.4 is integrated (#334), and ADR 0009'
 | 5.3 | Heated Hunt duct, open duct on a held flow | done | #241 |
 | 5.4a | Mistrangelo et al. 2025: specification frozen, data digitized | done | #278–#281 |
 | 5.4b | Walls as cells of an extended grid (D36): conduction, thermal step, electric solve | done | #284 #285 #286 |
-| 5.4c | Reduced Case 1, reported not gated: heated zone, held MHD flow, conjugate walls, no buoyancy. Exit: wall temperatures, bulk temperature and Nu compared with Figures 9, 10, 17, 18, 38 | done (compared, reported not gated; `validation/mistrangelo.py`, `tests/test_steady.py:2000`) | #309 |
+| 5.4c | Reduced Case 1, reported not gated: heated zone, held MHD flow, conjugate walls, no buoyancy. Exit: wall temperatures, bulk temperature and Nu compared with Figures 9, 10, 17, 18, 38 | done (compared, reported not gated; `validation/mistrangelo.py`, `tests/test_steady.py::test_the_heated_zone_takes_the_specified_heat_and_flow_and_is_compared_with_its_figures`) | #309 |
 | 5.4d | Evolving open duct (D37): inlet lift, pressure and outlet conventions qualified in time, then temperature, then buoyancy. SOLVAX 0.36.2 has the mixed axis ends it needed (SOLVAX#200), and the RK3 stage takes an inflow-outflow axis (#302, #312). Exit: steady limit matches `axial.solve_open_duct` (Stokes; Re 10 at Ha 100); mass, charge and heat ledger close; buoyant onset and decay checked | done (#314, #315); D37's advective outlet dropped (#327) | |
 | 5.4e | Case 1 gated (D35): full 3-D duct with fringe, thick walls, inertia, buoyancy, heat; campaign recorded per D12. Exit: observables within the band declared before the run, on two meshes and two outlet lengths; reported as code-to-code agreement | done (run as drafted; the gate holds on Figures 6, 7, 10, 15, 16 and 17 and not on 9, 12, 13, 18 and 19, every miss explained; [record](docs/validation/mistrangelo.md), `validation/mistrangelo_duct.py`); its edge study, run with 5.4f, refines the heater's ends: Figure 9's unresolved points converge into the band, and Figure 18's first point is a resolved miss | #327 #331 |
 | 5.4f | Case 2 reported (D35), averaging window and start-up removal fixed before the run. Exit: every 5.4a observable compared against the codes' spread, with fluctuation statistics kept | done (run as drafted on three runs; every figure compared with its statistical error and the fluctuations kept; the flow is steady over the heater's first half and time-dependent behind it, its rolls arriving later than the codes', so Nu over the heater's second half is about half theirs; [record](docs/validation/mistrangelo.md)); a seeded study, declared before its runs, finds the onset set by the disturbance reaching the heater: 1e-4 u₀ just before it moves the saturation from 0.27 to 0.07 m on M1 and brings Nu, the axis temperature and T_w into the codes' band, and M2 moves alike at its probes; 5.4e's edge study reported with it. The time step, studied after it (#338): unseeded, the onset on M1 is not converged in Δt, since at Δt/4 the flow goes steady, though the instability is (a linearised packet grows and drifts alike at Δt, Δt/2 and Δt/4); seeded, it is converged to 1.5 cm (0.068 m at Δt, 0.082 m at Δt/4). Case 2 is reported from the seeded runs, on the assumption that the codes carry disturbances of that order (the authors asked, 2026-11-23), and the page is condensed to its results, the records kept at their commits | #331 #338 |
@@ -879,10 +879,10 @@ which H7.2r needs.
 
 | Step | Action and place | Exit | Tests | Status |
 |---|---|---|---|---|
-| H3.1 | The march: the `"march"` branch of `axial._steady_root`, called by `solve_open_duct` when advection is on, marching the Stokes-limit solution to the fixed point of the RK3-CN step with central transport (`solvax.fixed_point_iteration`); `Solver(method="march")`; `method="auto"` picks the march or Newton by `axial.method_for` | the central-flux march reproduces the Newton root to 1e-6 relative in total pressure drop at Ha 20, Re 10–40 and Ha 100, Re 20; the limited-flux bias (1.3e-4, 3.6e-4) disappears | root comparison; `tests/test_axial.py:267` | done, #302 |
+| H3.1 | The march: the `"march"` branch of `axial._steady_root`, called by `solve_open_duct` when advection is on, marching the Stokes-limit solution to the fixed point of the RK3-CN step with central transport (`solvax.fixed_point_iteration`); `Solver(method="march")`; `method="auto"` picks the march or Newton by `axial.method_for` | the central-flux march reproduces the Newton root to 1e-6 relative in total pressure drop at Ha 20, Re 10–40 and Ha 100, Re 20; the limited-flux bias (1.3e-4, 3.6e-4) disappears | root comparison; `tests/test_axial.py::test_the_inertial_fringe_is_solved_balanced_and_differentiated_by_newton_and_by_the_march` | done, #302 |
 | H3.2 | Anchors the march must pass and Newton cannot at Re 40 and above: invariance of dp times Re in a 3-D Hunt duct, and a very high Ha | T4: Hunt, Ha 300, c_w 0.05, Re 10 / 100 / 500 / 1,000: dp/dx 374.897 / 37.490 / 7.498 / 3.749, c_w 0.1: 585.43 / 58.54 / 11.71 / 5.854; Ha 500, c_w 0.05: 953.14 / 95.31 / 19.06 / 9.531; axial length 30, 31×47×47, within 0.2 % in the developed region. T5: Ha 10,000, Re 1,000, c_w 0.05, 4 cells per Hartmann layer: 1990.62 against 1972.26 analytic (+0.9 %), at most 1.5 % | T4, T5 | open (not in #302) |
 | H3.3 | Fixed-point adjoint for the march: `solvax.root_solve` on the fixed point of one RK3 step, for the march and for Newton | gradient of the pressure drop with respect to Ha and wall conductance equals central differences to 1e-6 relative (T12); cost of the reverse sweep at most the forward march | T12 | done, #302 |
-| H3.4 | Three outcomes of a march: `converged`, `stagnated`, `unsteady` (the residual does not decay while the perturbation energy oscillates or grows); LMhdX classifies them (`axial._watch`) until SOLVAX has a march driver (SOLVAX #174) | the real case is T32(c), steady to Re about 35,400 and bursting above it, which waits for the annulus; until then a known time-periodic duct run is the test, and a steady problem converges with status `converged` | unit tests (`tests/test_axial.py:323`), T32(c) later | done, #302; T32(c) open |
+| H3.4 | Three outcomes of a march: `converged`, `stagnated`, `unsteady` (the residual does not decay while the perturbation energy oscillates or grows); LMhdX classifies them (`axial._watch`) until SOLVAX has a march driver (SOLVAX #174) | the real case is T32(c), steady to Re about 35,400 and bursting above it, which waits for the annulus; until then a known time-periodic duct run is the test, and a steady problem converges with status `converged` | unit tests (`tests/test_axial.py::test_a_march_that_has_not_converged_is_classified_stagnated_or_unsteady`), T32(c) later | done, #302; T32(c) open |
 | H3.5 | Narrowed by owner decision (2026-10-26): Newton stays as an option; what was duplicate goes (the continuation, `max_newton_steps`, `inner_*` and `krylov_dimension` controls, Newton's own residual and adjoint), and Newton becomes the `"newton"` branch of the march's function on the same steady residual | no test tolerance changed | existing | done, #302 (166 lines removed, 64 added back; H.10.8) |
 
 *H3 status (2026-10-26, Lane A, one PR).* H3.1, H3.3, H3.4 and H3.5 landed together, the last without the release
@@ -1117,40 +1117,40 @@ Where each test lives at `689a119` ("not yet": no test of that ID on `main`):
 
 | ID | Location |
 |---|---|
-| T1, T15 | `tests/test_laminar_anchors.py:88` |
-| T2 | `tests/test_laminar_anchors.py:106` |
-| T3 | `tests/test_laminar_anchors.py:116` |
-| T4 | partial: `tests/test_laminar_anchors.py:122` (Stokes scaling; the march anchor is H3.2) |
+| T1, T15 | `tests/test_laminar_anchors.py::test_kzb_2012_table_2_laminar_columns` |
+| T2 | `tests/test_laminar_anchors.py::test_shercliff_pressure_gradient_of_ni_2007` |
+| T3 | `tests/test_laminar_anchors.py::test_hunt_pressure_gradient_of_ni_2007` |
+| T4 | partial: `tests/test_laminar_anchors.py::test_the_inertia_free_pressure_gradient_scales_with_the_inverse_reynolds_number` (Stokes scaling; the march anchor is H3.2) |
 | T5 | not yet |
-| T6 | `tests/test_core3d.py:1567` |
-| T7 | `tests/test_problem.py:91` |
+| T6 | `tests/test_core3d.py::test_the_summed_lorentz_force_is_the_boundary_term_and_the_current_is_divergence_free` |
+| T7 | `tests/test_problem.py::test_the_kzb_blend_reproduces_the_published_wall_cells` |
 | T8–T11, T13 | not yet |
-| T12 | partial: steady gradients `tests/test_steady.py:672`, `:1966`; the march and Newton roots differentiated `tests/test_axial.py:267` (#302) |
-| T14 | `tests/test_laminar_anchors.py:130` |
+| T12 | partial: steady gradients `tests/test_steady.py::test_a_rejected_root_cannot_produce_a_finite_objective_or_gradient`, `:1966`; the march and Newton roots differentiated `tests/test_axial.py::test_the_inertial_fringe_is_solved_balanced_and_differentiated_by_newton_and_by_the_march` (#302) |
+| T14 | `tests/test_laminar_anchors.py::test_the_laminar_duct_friction_factor_at_reynolds_3000` |
 | T16 | not yet |
 | T17, T18 | not yet |
 | T19 | not yet (named in the header of `tests/test_laminar_anchors.py`) |
 | T20–T22 | not yet |
-| T23 | `tests/test_ops.py:644` |
-| T24 | `tests/test_stepper.py:235` |
-| T25 | `tests/test_stepper.py:356` |
+| T23 | `tests/test_ops.py::test_central_transport_conserves_kinetic_energy_on_a_stretched_periodic_mesh` |
+| T24 | `tests/test_stepper.py::test_central_transport_conserves_kinetic_energy_to_the_third_order_under_rk3` |
+| T25 | `tests/test_stepper.py::test_rk3_grows_the_orr_sommerfeld_mode_at_its_rate_and_not_at_the_step` |
 | T26 | not yet |
-| T27 | `tests/test_laminar_anchors.py:147`; `tests/test_problem.py:571` |
-| T28 | `tests/test_stepper.py:181` |
+| T27 | `tests/test_laminar_anchors.py::test_the_friction_error_falls_with_the_cells_in_the_hartmann_layer_at_second_order`; `tests/test_problem.py::test_the_boeck_krasnov_zienicke_table_is_self_consistent` |
+| T28 | `tests/test_stepper.py::test_the_stepper_converges_in_time_on_the_shatrov_manufactured_flow` |
 | T29–T31, T33 | not yet |
-| T32 | partial: the `stagnated` and `unsteady` classification `tests/test_axial.py:323`; T32(c) not yet |
-| T34 | partial: `tests/test_stepper.py:258` (kinetic-energy budget) |
-| T35 | `tests/test_problem.py:675`; `tests/test_laminar_anchors.py:171`, `:198` |
-| T36 | `tests/test_ops.py:575` |
-| T37 | `tests/test_ops.py:614`, `:630` |
-| T38 | `tests/test_core3d.py:452` |
-| T39 | not yet by ID (closest `tests/test_steady.py:104`) |
-| T40 | `tests/test_core3d.py:485` |
-| T41 | partial: `tests/test_stepper.py:68`, `:74`, `:258` (H2.7 terms absent) |
+| T32 | partial: the `stagnated` and `unsteady` classification `tests/test_axial.py::test_a_march_that_has_not_converged_is_classified_stagnated_or_unsteady`; T32(c) not yet |
+| T34 | partial: `tests/test_stepper.py::test_the_kinetic_energy_budget_closes_to_the_schemes_order` (kinetic-energy budget) |
+| T35 | `tests/test_problem.py::test_the_wall_conductance_derivative_meets_the_derivative_standard`; `tests/test_laminar_anchors.py::test_the_hunt_wall_derivative_meets_ni_2007_and_the_spectral_duct`, `:198` |
+| T36 | `tests/test_ops.py::test_the_limiter_reproduces_a_linear_profile_on_a_stretched_patch` |
+| T37 | `tests/test_ops.py::test_a_periodic_seam_weighs_the_wrapped_cell_not_a_mirror_of_its_own`, `:630` |
+| T38 | `tests/test_core3d.py::test_a_pressure_gradient_force_leaves_the_fluid_at_rest` |
+| T39 | not yet by ID (closest `tests/test_steady.py::test_the_residual_vanishes_exactly_at_a_fixed_point_of_the_step`) |
+| T40 | `tests/test_core3d.py::test_the_stage_solves_its_saddle_system_next_to_walls` |
+| T41 | partial: `tests/test_stepper.py::test_central_transport_is_stable_under_rk3_up_to_its_stage_map_limit`, `:74`, `:258` (H2.7 terms absent) |
 | T42 | SOLVAX |
 | T43, T44 | not yet by ID |
 | T45 | not yet |
-| T46 | `tests/test_steady.py:2438` (frozen specification), `:2518` (5.4c, the heated zone compared with its figures), `:2550` and `:2758` (5.4e, Case 1's figures and its declared gate), `:2737` (the edge study), `:2644` and `:2687` (5.4f, Case 2's settling, independence and reported figures) |
+| T46 | `tests/test_steady.py::test_the_magnetoconvection_specification_reproduces_its_printed_numbers` (frozen specification), `:2518` (5.4c, the heated zone compared with its figures), `:2550` and `:2758` (5.4e, Case 1's figures and its declared gate), `:2737` (the edge study), `:2644` and `:2687` (5.4f, Case 2's settling, independence and reported figures) |
 | T47–T63 | not yet |
 
 #### H.7 Considered and rejected
@@ -1532,6 +1532,11 @@ production movies and raw data as release assets with checksums.
 | `docs/_static/thermal_convection_3d.webp` | Ra 10⁴, Pr 0.1 layer, 64 × 64 × 32, with and without a horizontal field (Q = 1000), 29 frames | 110 KB | Phase 5, done (#270) |
 | `docs/_static/thermal_heated_duct.webp` | Insulating and Hunt ducts at Ha 1000, Pe 2000, heated through one side wall from a cold inlet, in 3-D; inlet jets and the hottest wall temperature along the duct, 40 frames | 96 KB | Phase 5, done (#270) |
 | `docs/_static/mistrangelo.webp` | Mistrangelo et al. 2025: Case 1's Nu on M3, and Case 2's Nu and axis temperature unseeded and seeded at 15 and 3.75 ms, against the six codes' bands, from `docs/_static/data/mistrangelo.json` | 33 KB | Phase 5, done (#338) |
+| `docs/_static/numerics_grid.webp` | One staggered cell and a wall-resolving mesh at Ha 100, drawn with no solve | 15 KB | release docs (#341) |
+| `docs/_static/numerics_shift.webp` | A roll's growth rate along the field under the implicit shift and the explicit force against dt sigma B^2/rho, from `thermal_buoyancy.json` | 12 KB | release docs (#341) |
+| `docs/_static/open_ducts.webp` | The ANL fringe field, the pressure along a duct through it at Ha 20, and the excess against Ha beside the core-flow model, from `open_ducts.json` | 25 KB | release docs (#341) |
+| `docs/_static/duct_design_law.webp` | s* against H, from `examples/duct_design_law.py` | 10 KB | release docs (#341) |
+| `docs/_static/wall_stack.webp` | The Li, AlN and 316L wall stack, its effective conductance with pinholes and the solved current, from `examples/li_aln_wall_stack_example.py` | 21 KB | release docs (#341) |
 | Stellarator channel | coil field along the channel, ΔP, wall current | ≤ 150 KB + MP4 | Phase 6.2 |
 
 `docs/_static/q2d_vortex_decay.webp` (36 KB) is tracked without a row. The

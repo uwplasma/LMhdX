@@ -1506,13 +1506,13 @@ def test_a_wall_conductivity_is_a_leaf_of_the_conduction_solve():
 
     traces, steel = [], jnp.asarray([STEEL[0]] * 2)
     conduction, objective = walled_solve(6)
-    direction, gradient = jnp.asarray([1.0, -0.5]), jax.grad(objective)(steel)
-    slope = float(gradient @ direction)
+    direction, gradient = jnp.asarray([1.0, -0.5]), jax.jit(jax.grad(objective))(steel)
+    slope, compiled = float(gradient @ direction), jax.jit(lambda values: objective(values))  # its own cache
     for h in (1e-2, 1e-3):
-        central = (objective(steel + h * direction) - objective(steel - h * direction)) / (2.0 * h)
+        central = (compiled(steel + h * direction) - compiled(steel - h * direction)) / (2.0 * h)
         assert float(central) == pytest.approx(slope, rel=2e-7)
-    base = objective(steel)
-    remainders = [abs(float(objective(steel + h * direction) - base) - h * slope) for h in (4.0, 2.0, 1.0)]
+    base = compiled(steel)
+    remainders = [abs(float(compiled(steel + h * direction) - base) - h * slope) for h in (4.0, 2.0, 1.0)]
     assert all(3.5 < coarse / fine < 4.5 for coarse, fine in zip(remainders, remainders[1:])), remainders
     tight = jax.grad(lambda values: objective(values, dataclasses.replace(conduction, tolerance=1e-13)))(
         steel

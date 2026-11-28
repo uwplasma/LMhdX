@@ -1,12 +1,12 @@
 # Code verification
 
-Verification asks whether LMhdX solves its equations correctly: refine the mesh, and the error against a known
-solution must fall at the scheme's design order. (Validation, on the other pages, asks whether those equations
-describe the flow.)
+Verification asks whether LMhdX solves its equations correctly. As the mesh refines, the error against a known
+solution must fall at the scheme's design order. Validation, on the other pages, asks whether those equations describe
+the flow.
 
-This page checks the step every run in time takes, `lmhdx.thermal.build_thermal_step`, against solutions that share
-none of its operators: a manufactured solution for each term and for all of them at once, and the exact decay of a
-vortex between Hartmann walls. **Every term converges at second order in space. The step is first order in time, and
+This page checks the time step, `lmhdx.thermal.build_thermal_step`, against solutions that share none of its operators:
+a manufactured solution for each term and for all of them at once, and the exact decay of a vortex between Hartmann
+walls. **Every term converges at second order in space. The step is first order in time, and
 with the explicit Lorentz force its time error does not grow with the field.**
 
 ```{image} ../_static/verification_orders.webp
@@ -16,7 +16,7 @@ with the explicit Lorentz force its time error does not grow with the field.**
 
 ## Run it
 
-One term, conduction, on two meshes (about 4 s on a laptop CPU):
+This runs one term, conduction, on two meshes in about 4 s on a laptop CPU:
 
 ```python
 import numpy as np
@@ -29,24 +29,23 @@ print(f"RMS error {coarse:.2e} on 16 cells, {fine:.2e} on 32: order {np.log2(coa
 ```
 
 `validation/verification.py` holds every case (`TERMS`, `vortex_decay`, `hartmann_roll_growth`).
-`python scripts/make_showcase_figures.py --only verification` reruns them all, in about 40 minutes on a laptop GPU,
-and writes `docs/_static/data/verification.json` and the figure above. `tests/test_steady.py` runs the coupled case,
-three single terms and the vortex's decay at small size.
+`python scripts/make_showcase_figures.py --only verification` reruns them all in about 40 minutes on a laptop GPU and
+writes `docs/_static/data/verification.json` and the figure. `tests/test_steady.py` runs the coupled case, three single
+terms and the vortex's decay at small size.
 
 ## Each term on its own
 
 **Method.**
 - Each manufactured solution is a smooth velocity, temperature and, where tested, pressure.
-- Its source is the residual of the continuous equations, taken at the step's old time, as the step takes its
-  forcing. Only the term under test is on, besides the time derivative and the incompressibility the step always
-  enforces.
+- Its source is the residual of the continuous equations at the step's old time. Only the term under test is on,
+  besides the time derivative and incompressibility.
 - The meshes have $N$ = 8, 16, 32 and 64 cells along $x$ and $z$ (128 for the cases with two cells along $y$), and
   half as many along $y$.
 - The time step falls as $h^2$ from 0.01 at $N=8$, so that a first-order time error falls with the mesh too.
-- The errors, exact less computed, are taken at $t=0.2$ on every velocity face or cell, in $L_\infty$ and RMS.
+- The errors, exact less computed, are measured at $t=0.2$ on every velocity face or cell, in $L_\infty$ and RMS.
 
 The field lies along $y$. A flow invariant along it has the electromotive force $B\nabla\psi$, which the potential
-$B\psi$ cancels: it carries no current. A flow with no vorticity along it carries $\sigma\mathbf u\times\mathbf B$.
+$B\psi$ cancels, so it carries no current. A flow with no vorticity along it carries $\sigma\mathbf u\times\mathbf B$.
 Both vanish with their normal derivatives at the walls $z=\pm1$, so the potential and current are exact, conducting
 walls included.
 
@@ -68,59 +67,52 @@ The observed orders on the finest pair of meshes:
 | Conjugate conduction | $\nabla\cdot(k\nabla T)$, $[T]=[k\,\partial_zT]=0$ at the walls | $T$ | 1.94 | 2.00 |
 | All terms together | conducting walls | $u_x$ | 1.93 | 2.01 |
 
-```{image} ../_static/verification_orders.webp
-:alt: The observed order of accuracy of each term of the thermal step, L-infinity and RMS, near two for every term
-:align: center
-```
-
 - Every term converges at second order in RMS. Two $L_\infty$ orders are lower, for known reasons:
-  - Heat advection's 1.36 is the van Leer limiter clipping extrema.
+  - Heat advection's 1.36 comes from the van Leer limiter, which clips extrema.
   - The Hartmann-wall case refines only along $x$. The 48 cells across M1's walls are fixed, and their error is the
     floor that the $L_\infty$ error meets at $N=64$.
-- The conjugate case has walls 0.25 thick, with four times the fluid's conductivity and twice its heat capacity. The
-  temperature and heat flux are continuous across them, and its errors include the wall cells.
-- The script also draws each term's error along a line and against the mesh, as PDFs in `docs/_static/generated/`
-  (not tracked).
+- The conjugate case has walls 0.25 thick, with four times the fluid's conductivity and twice its heat capacity. Its
+  errors include the wall cells.
 
 ## In time, with the field on
 
 **The coupled case in time.** On 32 cells to $t=1$, the differences between successive halvings of $\Delta t$ fall at
 first order.
-- With the explicit Lorentz force, their constant on $u_x$ does not grow with the field: 2.20 with none, 2.14 at
-  $\sigma B^2/\rho=10$ and 2.12 at 30.
-- Under the implicit damping shift it is 3.6 and 7.7: the shift's transient error
-  ([numerics](../physics/numerics.md), "What the shift costs a transient").
+- With the explicit Lorentz force, their constant on $u_x$ does not grow with the field. It is 2.20 with no field,
+  2.14 at $\sigma B^2/\rho=10$ and 2.12 at 30.
+- Under the implicit damping shift it is 3.6 and 7.7, which is the shift's transient error
+  ({ref}`What the shift costs a transient <numerics-lorentz-shift>`).
 - At a small step, the shift's error is the floor at which spatial refinement stops.
 
 **Braking by Hartmann walls.** A vortex invariant along the field, between the walls the field crosses, is braked by
-their Hartmann layers and by the current that closes through them. `validation.shercliff.vortex_decay_rate` solves its
+the walls' Hartmann layers and the current that closes through them. `validation.shercliff.vortex_decay_rate` solves its
 decay exactly, by Chebyshev collocation across the walls, with the resolved wall as a Robin condition on the potential.
-For Case 2's steel (conductivity ratio 1.246, $t_w/a=0.087$) at Ha 235 it is $0.0933\,\sigma B^2/\rho$ at $k=\pi/2$,
-22 times the insulating walls' $1/Ha$. `validation.verification.vortex_decay` runs the vortex on Case 2's M1
-cross-section, with 48 cells, 6 in each Hartmann layer and 6 in each wall:
+For Case 2's steel (conductivity ratio 1.246, $t_w/a=0.087$) at Ha 235 it is $0.0933\,\sigma B^2/\rho$ at $k=\pi/2$, 22
+times the insulating walls' $1/Ha$. `validation.verification.vortex_decay` runs the vortex on Case 2's M1 cross-section,
+with 48 cells, 6 in each Hartmann layer and 6 in each wall:
 - Doubling the cells across the duct, in the layers or in the walls changes the rate by under 0.1 %.
-- Along the vortex's wavelength, the braking is weak by about $\sin^2(\pi/n)$ on $n$ cells: 14.1, 3.7, 0.97 and
-  0.29 % on 8, 16, 32 and 64. Case 2's rolls, 3.6–4.0 cm long on M1's 5 mm axial cells, have 7–8 cells a wavelength.
-  - The cause: the electromotive force is averaged onto the current's faces, and the current back onto the velocity's.
-    Each average multiplies a wave by $\cos(k\Delta x/2)$, so a grid-scale wave across the field is not braked by the
-    Lorentz force at all.
-  - The collocated current-conservative schemes do the same (Ni et al. 2007; as restated by Gelfgat and Zikanov 2018):
-    they interpolate $\mathbf u\times\mathbf B$ to the faces and the currents back to the cells.
+- Along the vortex's wavelength, the braking is weak by about $\sin^2(\pi/n)$ on $n$ cells, which gives 14.1, 3.7, 0.97
+  and 0.29 % on 8, 16, 32 and 64. Case 2's rolls, 3.6–4.0 cm long on M1's 5 mm axial cells, have 7–8 cells a wavelength.
+  - The cause is averaging. The step averages the electromotive force onto the current's faces, and the current back
+    onto the velocity's. Each average multiplies a wave by $\cos(k\Delta x/2)$, so the Lorentz force does not brake a
+    grid-scale wave across the field at all.
+  - The collocated current-conservative schemes do the same, interpolating $\mathbf u\times\mathbf B$ to the faces
+    and the currents back to the cells (Ni et al. 2007, as restated by Gelfgat and Zikanov 2018).
 - At Case 2's $\Delta t\,\sigma B^2/\rho$ of 0.34 (M1) and 0.27 (M2), the shift weakens the braking by 27 and 23 %,
   the factor $1+\Delta t\,\lambda$. The explicit force is within 1.9 %. Insulating walls are within 2.7 % on 16 cells
   and 1.3 % on 32.
 
-Rolls between Hartmann walls, heated, are compared with Sommeria and Moreau's model on the
-[thermal](../physics/thermal.md) page ("Growth rates").
+The {ref}`growth rates <thermal-growth-rates>` section of the convection page compares heated rolls between Hartmann
+walls with Sommeria and Moreau's model.
 
 ## Manufactured solutions elsewhere
 
-The other parts of LMhdX carry their own, on the pages of the code they check:
-- the thin conducting wall's potential, second order ([numerics](../physics/numerics.md), the staggered grid);
+Other parts of LMhdX have their own, on the pages of the code they check:
+- the thin conducting wall's potential, second order ({ref}`thin and resolved walls <numerics-walls>`);
 - the RK3 projection step on Shatrov and Gerbeth's manufactured flow, order 2.2–2.3
-  ([numerics](../physics/numerics.md), "The IMEX Runge-Kutta step");
+  ({ref}`The IMEX Runge-Kutta step <numerics-rk3>`);
 - the open duct with heat and buoyancy, a coupled manufactured solution, second order
-  ([heat transport](../physics/thermal.md), "Supported envelope");
+  ({ref}`Supported envelope <thermal-envelope>`);
 - the staggered core on stretched meshes ([validation](index.md), row 8).
 
 ## Sources
@@ -130,4 +122,4 @@ The other parts of LMhdX carry their own, on the pages of the code they check:
 - A. Yu. Gelfgat and O. Zikanov, *Computational modeling of magnetoconvection: effects of discretization method, grid
   refinement and grid stretching*, arXiv:1805.04710 (2018).
 - J. Sommeria and R. Moreau, J. Fluid Mech. 118 (1982) 507–518.
-- C. J. Roy, J. Comput. Phys. 205 (2005) 131–156: order-of-accuracy verification with manufactured solutions.
+- C. J. Roy, J. Comput. Phys. 205 (2005) 131–156 (order-of-accuracy verification with manufactured solutions).

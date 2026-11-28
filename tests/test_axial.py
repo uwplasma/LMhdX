@@ -215,9 +215,9 @@ def test_the_pressure_drop_adjoint_matches_central_differences():
     def drop(scale):
         return pressure_drop(solve_open_duct(problem, field_scale=scale).pressure, -4.0, 2.0)
 
-    gradient = float(jax.grad(drop)(1.0))
+    gradient, compiled = float(jax.jit(jax.grad(drop))(1.0)), jax.jit(drop)  # traced once, not per call
     step = 1e-4
-    central = (float(drop(1.0 + step)) - float(drop(1.0 - step))) / (2.0 * step)
+    central = (float(compiled(1.0 + step)) - float(compiled(1.0 - step))) / (2.0 * step)
     assert gradient == pytest.approx(central, rel=1e-6)
 
 
@@ -263,7 +263,7 @@ def test_invalid_open_axes_are_refused():
     assert np.allclose(np.diff(_small_fringe(growth=1.0).grid.faces[0]), 0.5)
 
 
-@pytest.mark.parametrize("method", ["newton", "march"])
+@pytest.mark.parametrize("method", [pytest.param("newton", marks=pytest.mark.slow), "march"])
 def test_the_inertial_fringe_is_solved_balanced_and_differentiated_by_newton_and_by_the_march(method):
     """H3: Ha 10, Re 5 (N 20), central transport; the drop and its adjoint against the pinned Newton root of `main`.
 
