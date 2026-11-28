@@ -1362,6 +1362,51 @@ def _save_webp(fig: plt.Figure, path: Path, dpi: int = 120, palette: bool = Fals
     print(f"wrote {path.name}: {path.stat().st_size / 1024:.0f} KiB")
 
 
+def mistrangelo() -> None:
+    """The Mistrangelo et al. 2025 page's figure, from ``docs/_static/data/mistrangelo.json`` (no solve): Case 1's Nu
+    on its finest mesh, and Case 2's Nu and axis temperature unseeded and seeded at two time steps, against the six
+    codes' bands. The data come from the released records (the JSON's ``source``)."""
+    data = json.loads((STATIC / "data" / "mistrangelo.json").read_text())
+    runs = (
+        ("unseeded, 15 ms", MUTED, "-"),
+        ("seeded, 15 ms", SERIES[0], "-"),
+        ("seeded, 3.75 ms", SERIES[1], "--"),
+    )
+    panels = (
+        ("case1", "18", "Case 1 (steady): Nu, finest mesh", "Nu  (eq. 7, L = a)", (0, 8)),
+        ("case2", "37", "Case 2 (rolls): Nu", "Nu  (eq. 7, L = a)", (0, 8)),
+        ("case2", "24", "Case 2 (rolls): T on the axis", "T  (°C)", (320, 380)),
+    )
+    with plt.rc_context(PAPER):
+        fig = plt.figure(figsize=(13.2, 4.2))
+        grid = fig.add_gridspec(1, 3, wspace=0.28, left=0.06, **ROW)
+        for column, (case, number, title, label, limits) in enumerate(panels):
+            axis = fig.add_subplot(grid[column])
+            entry = data[case][number]
+            band = entry["band"]
+            axis.fill_between(
+                band["x"], band["lower"], band["upper"], color="#c9c6bf", lw=0, label="the codes' band"
+            )
+            axis.axvspan(-0.3, 0.3, color="#f9f6ef", zorder=0, lw=0)
+            if case == "case1":
+                axis.plot(*entry["M3L1"], color=SERIES[0], lw=1.6, label="LMhdX")
+            else:
+                for name, color, style in runs:
+                    axis.plot(*entry[name], style, color=color, lw=1.6, label=f"LMhdX, {name}")
+            axis.set(xlim=(-0.4, 0.5), ylim=limits, xlabel="x (m)", ylabel=label, title=title)
+            axis.text(
+                0.0,
+                limits[0] + 0.03 * (limits[1] - limits[0]),
+                "heated zone",
+                ha="center",
+                color=MUTED,
+                size=11,
+            )
+            axis.legend(loc="upper left", fontsize=10.5, frameon=False)
+            _panel(axis, "abc"[column])
+        _save_webp(fig, STATIC / "mistrangelo.webp", dpi=110, palette=True)
+
+
 THERMAL = {
     "developed": thermal_developed,
     "entrance": thermal_entrance,
@@ -1369,6 +1414,7 @@ THERMAL = {
     "buoyancy": thermal_buoyancy,
     "convection": thermal_convection,
     "heated-duct": thermal_heated_duct,
+    "mistrangelo": mistrangelo,
 }
 
 
