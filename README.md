@@ -51,15 +51,18 @@ same objects as Python does.
   (2015) Table I (Ha 500 to 15,000) at second order with the analytic value inside the GCI band.
 - **Gradients:** implicit adjoints agree with central differences to 7e-12 in the drive and 1.2e-10 in the field.
 - **Heat transfer:** Nusselt numbers of rectangular ducts and Hartmann plates within 0.35 %, Chandrasekhar's
-  critical Rayleigh number within 0.8 %, and Mistrangelo et al.'s heated conducting duct (Case 1's heated
-  zone, code to code) within its digitized bands. The
-  [heat transport page](https://lmhdx.readthedocs.io/en/latest/physics/thermal.html) gives each comparison.
+  critical Rayleigh number within 0.8 %, and conjugate heat transfer through conducting steel walls in
+  Mistrangelo et al.'s heated duct, code to code: Case 1 (buoyant, steady) gated on two meshes and two outlet
+  lengths, holding on 6 of 11 figures, and Case 2 (convection rolls) reported, in the codes' band once the flow
+  carries a small disturbance. The
+  [heat transport page](https://lmhdx.readthedocs.io/en/latest/physics/thermal.html) and the
+  [benchmark record](https://lmhdx.readthedocs.io/en/latest/validation/mistrangelo.html) give each comparison.
 
 ![Hunt duct side-layer jets from Ha 20 to 1000](docs/_static/hunt_side_layers.webp)
 
-Research stage, not validated against a reference flow: three-dimensional convective transport, heat
-transfer (though its Nusselt numbers and Chandrasekhar's critical Rayleigh number are matched within 0.35 % and
-0.8 %), the fringe in the inertialess limit only, the ALEX B1/B2 benchmarks, and multi-device execution. The
+Research stage, not validated against a reference flow: time-dependent buoyant convection (Mistrangelo's
+Case 2 is reported, not gated, and its rolls' onset depends on the disturbances present), the ALEX B1/B2
+benchmarks, and multi-device execution. The
 [validation matrix](https://lmhdx.readthedocs.io/en/latest/validation/index.html) states each gate.
 
 ## Performance
