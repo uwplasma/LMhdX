@@ -1,35 +1,24 @@
 # The duct design law
 
-A duct that carries a fixed flow across a strong magnetic field is cheapest to
-pump when it is deep along the field and narrow across it. At a fixed
-cross-section area, one aspect ratio costs least, and a one-line law gives it.
-This page finds that optimum with LMhdX, sizes one blanket duct with it, and
-screens shapes for a heated duct.
+A duct that carries a fixed flow across a strong magnetic field is cheapest to pump when it is deep along the field
+and narrow across it. At a fixed cross-section area one aspect ratio costs least, and a one-line law gives it. This
+page finds that optimum with LMhdX, sizes one blanket duct with it, and screens shapes for a heated duct.
 
-**The law.** Let $a$ be the half-width along the field, $b = \beta a$ the
-half-width across it, and $Ha = B a\sqrt{\sigma/\mu}$. At a fixed flow rate and
-a fixed cross-section area, the insulated duct of least pumping power obeys
+**The law.** Let $a$ be the half-width along the field, $b = \beta a$ the half-width across it, and
+$Ha = B a\sqrt{\sigma/\mu}$. At a fixed flow rate and a fixed cross-section area, the insulated duct of least pumping
+power obeys
 
 $$
 s^* = \beta^*\sqrt{Ha^*} \to 2.08 ,
 $$
 
-from $s^* = 1.975$ at $Ha^* = 14$ to $2.078$ at $Ha^* = 6{,}109$ on the
-spectral reference.
-- **Why.** Shercliff's thin-layer friction law,
-  $\Delta p/L = \mu V Ha / [a^2 (1 - \alpha/(\beta\sqrt{Ha}) - 1/Ha)]$, puts the
-  balance where the side layers remove two fifths of the flow,
-  $s^* = 2.5\alpha$. That gives 2.13 with $\alpha = 0.852$ as Smolentsev (2021)
-  gives it, and 2.06 with the $\alpha = 0.825$ that Müller & Bühler print.
-- **The gain grows with the field.** The optimum's pumping power is 9 % below
-  that of the square duct of the same area at $Ha^* = 14$, 61 % below at 1,229
-  and 73 % below at 6,109.
-- **The optimum itself is not new.** Nishio et al. (2025) computed the same
-  interior minimum at fixed area and flow, with insulating walls and 10 T, and
-  their numbers imply $s^* \approx 2.08$. Müller & Bühler's friction formula
-  gives it in one line. LMhdX's study states the law with its finite-$Ha$
-  values, checks it against an independent solver and three-dimensional solves,
-  and extends it to a tilted field.
+from $s^* = 1.975$ at $Ha^* = 14$ to $2.078$ at $Ha^* = 6{,}109$ on the spectral reference. Shercliff's thin-layer
+friction law, $\Delta p/L = \mu V Ha / [a^2 (1 - \alpha/(\beta\sqrt{Ha}) - 1/Ha)]$, explains it. The balance falls where
+the side layers remove two fifths of the flow, $s^* = 2.5\alpha$, which gives 2.13 with Smolentsev's (2021)
+$\alpha = 0.852$ and 2.06 with the $\alpha = 0.825$ of Müller & Bühler. The optimum's pumping power is 9 % below the
+equal-area square duct's at $Ha^* = 14$, 61 % below at 1,229 and 73 % below at 6,109. Nishio et al. (2025) computed
+the same interior minimum, and their numbers imply $s^* \approx 2.08$. LMhdX adds the finite-$Ha$ values, a check
+against an independent solver and three-dimensional solves, and the tilted field.
 
 ## Run it
 
@@ -50,20 +39,13 @@ design: beta* 0.14851, a 20.10 mm, b 2.99 mm, W* 4.1495e-05 W, 41.7% below the s
 Wrote artifacts/examples/duct_design_law/duct_design_law_summary.json and artifacts/examples/duct_design_law/duct_design_law.png
 ```
 
-The example does two things.
-- **The design law.** At a fixed area, with $H$ the Hartmann number of the
-  equal-area square duct, it finds $\beta^*$ for each $H$.
-- **One design.** A PbLi duct (573 K) runs 0.982 m radially through an outboard
-  blanket in a $1/R$ field of 0.5 T at the first wall, at
-  $Q = 2.4\times10^{-6}$ m³/s. There the pumping power falls as the duct grows,
-  so the smallest allowed mean velocity, 10 mm/s, sets the area. `jax.grad` of
-  the solve in its field scale gives the sign of $d\Delta p/d\ln A$ exactly,
-  and that sign confirms that this bound is active. The aspect ratio is then
-  the one choice left.
+The example finds $\beta^*$ for four values of $H$, the Hartmann number of the equal-area square duct. It then sizes
+one PbLi duct (573 K) that runs 0.982 m radially through an outboard blanket in a $1/R$ field of 0.5 T at the first
+wall, at $Q = 2.4\times10^{-6}$ m³/s. There the smallest allowed mean velocity, 10 mm/s, sets the area. `jax.grad` of
+the solve in its field scale confirms the sign of $d\Delta p/d\ln A$, so the aspect ratio is the one choice left.
 
-The steps below find the optimum for one $H$, 30, as the example does. Import
-the staggered core and work in double precision. The optimum is a shallow
-minimum, which float32 solves would blur.
+The steps below find the optimum for one $H$, 30, as the example does. Work in double precision, because the optimum
+is a shallow minimum that float32 solves would blur.
 
 ```python
 from dataclasses import replace
@@ -79,10 +61,8 @@ enable_x64()
 CELLS, CELLS_IN_LAYER = 48, 6
 ```
 
-`unit_duct` builds a unit insulated duct of aspect `beta`. It builds the mesh
-for a central aspect and Hartmann number, then scales it across the field to
-`beta`. Every trial therefore has the same mesh shape and shares one compiled
-program, and the discrete pressure drop is smooth in $\beta$.
+`unit_duct` builds a unit insulated duct of aspect `beta` on a mesh made for a central aspect and scaled across the
+field. Every trial then shares one compiled program, and the pressure drop is smooth in $\beta$.
 
 ```python
 def unit_duct(beta, ha_mesh, centre):
@@ -104,9 +84,8 @@ def unit_duct(beta, ha_mesh, centre):
     )
 ```
 
-`pressure_drop` returns the pressure drop of aspect `beta` at a unit mean
-velocity through area 4, so that the square duct has $a = 1$ and $Ha = H$. One
-solve gives the flow per unit drive $q$, and $\Delta p = \mu Q L / (a^4 q)$.
+`pressure_drop` returns the drop of aspect `beta` at a unit mean velocity through area 4, so the square duct has
+$a = 1$ and $Ha = H$. One solve gives the flow per unit drive $q$, and $\Delta p = \mu Q L / (a^4 q)$.
 
 ```python
 def pressure_drop(beta, H, centre):
@@ -117,8 +96,7 @@ def pressure_drop(beta, H, centre):
     return 4.0 / (a**4 * q)
 ```
 
-Start from the law's guess, solve five trials 0.1 apart in $\ln\beta$, and take
-the minimum of the quartic through them.
+Start from the law's guess, solve five trials 0.1 apart in $\ln\beta$, and take the minimum of the quartic through them.
 
 ```python
 H = 30.0
@@ -145,30 +123,20 @@ print(f"beta* {beta:.5f}, Ha* {ha:.1f}, s* {beta * np.sqrt(ha):.4f}, {100 * savi
 beta* 0.27147, Ha* 57.6, s* 2.0599, 26.3% below the square
 ```
 
-This is the example's line for $H = 30$. The example repeats it over its four
-values of $H$, then sums the pressure drop over six stations of the $1/R$ field
-for the blanket duct.
+This is the example's line for $H = 30$. The example repeats it for four values of $H$, then sums the pressure drop
+over six stations of the $1/R$ field for the blanket duct.
 
 ## What is established
 
-On 48/6 cells, the example reproduces the study's optima to the digits printed.
-The study adds its own evidence:
+On 48/6 cells the example reproduces the study's optima to the digits printed. The study's own checks are these:
+- $\beta^*$ has a grid convergence index of 0.18–0.42 % across 32/4, 48/6 and 72/9 cells at $H$ = 30, 100 and 300.
+- The core's $s^*$ is 0.1–0.8 % above the spectral reference (`validation.shercliff`, with its `aspect` keyword).
+- `validation.open_axis.ramp_excess` compares the locally fully developed station sum with a 3-D open duct in a
+  monotone 20 % ramp. For a square duct the sum is good to 1 % only up to $\gamma\sqrt{Ha} \approx 0.2$, where $\gamma$
+  is the field's relative change per half-width. The design-law duct stays under 0.35 % up to $\gamma\sqrt{Ha} = 2$.
+  The excess does not collapse on $\gamma\sqrt{Ha}$ across $Ha$ 50 and 200, so these limits hold per $Ha$.
 
-- **Mesh convergence.** The study re-solved each optimum on 32/4, 48/6 and
-  72/9 cells at $H$ = 30, 100 and 300, and $\beta^*$ has a grid convergence
-  index of 0.18–0.42 %.
-- **An independent solver.** The core's $s^*$ is 0.1–0.8 % above the
-  spectral reference (`validation.shercliff`, with its `aspect` keyword).
-- **The station sum in a varying field.** `validation.open_axis.ramp_excess`
-  compares the locally fully developed sum with a 3-D solve of an open duct in
-  a monotone 20 % ramp. For a square duct the sum is good to 1 % only up to
-  $\gamma\sqrt{Ha} \approx 0.2$, where $\gamma$ is the field's relative change
-  per half-width. The design-law duct stays under 0.35 % up to
-  $\gamma\sqrt{Ha} = 2$. The excess does not collapse on $\gamma\sqrt{Ha}$
-  across $Ha$ 50 and 200, so this page quotes these limits per $Ha$.
-
-Check one point of that comparison in double precision. It takes about a
-minute on a CPU.
+One point of that comparison runs in about a minute on a CPU.
 
 ```python
 from validation.open_axis import ramp_excess
@@ -180,105 +148,59 @@ print(row["excess_percent"])  # 0.448
 
 ## A tilted field
 
-A poloidal field tilts $B$ within the cross-section, and the slender optimum is
-sensitive to that tilt where the square duct is not. When the study
-re-optimizes the duct in a field tilted by $B_p/B_T$, the optimum and its
-penalty collapse on $\kappa = \sqrt{Ha^*_0}\,B_p/B_T$ to within 5 %:
+A poloidal field tilts $B$ within the cross-section, and the slender optimum is sensitive to that tilt where the
+square duct is not. When the study re-optimizes the duct in a field tilted by $B_p/B_T$, the optimum and its penalty
+collapse on $\kappa = \sqrt{Ha^*_0}\,B_p/B_T$ to within 5 %:
 
 $$
 \beta^{*2} = \beta_0^{*2} + (B_p/B_T)^2 ,\qquad
 \left(\Delta p^*/\Delta p^*_0\right)^2 = 1 + \frac{0.122\,\kappa^2}{1 + \kappa/3.01} .
 $$
 
-- A penalty of at most 10 % needs $\kappa < 1.7$.
-- A duct kept at its aligned shape loses to the square beyond
-  $\kappa \approx 8$–12 at $Ha^*_0$ 1,232–6,127.
-- The study fitted both laws to the same 20 points, with $Ha^*_0$ 58–6,127,
-  $B_p/B_T \le 0.3$ and one uniform tilt per duct, so their errors are
-  in-sample.
+A penalty of at most 10 % needs $\kappa < 1.7$. A duct kept at its aligned shape loses to the square beyond
+$\kappa \approx 8$–12 at $Ha^*_0$ 1,232–6,127. The study fitted both laws to the same 20 points ($Ha^*_0$ 58–6,127,
+$B_p/B_T \le 0.3$, one uniform tilt per duct), so their errors are in-sample.
 
 ## A thermal design
 
-The developed peaks come from {ref}`fully developed heat transfer <thermal-developed-h1h2>`, and the open-duct check from {ref}`heat on an open duct <thermal-open-duct>`.
+The developed peaks come from {ref}`fully developed heat transfer <thermal-developed-h1h2>`, and the open-duct check
+from {ref}`heat on an open duct <thermal-open-duct>`.
 
-The design above takes its area from a smallest allowed velocity, which stands
-in for heat removal. A thermal design asks directly which shape and flow
-remove the heat within a temperature limit at the least pumping power. The
-question has two versions:
-- a fixed duty per channel;
-- a fixed flux on the first wall, which a plasma sets.
+The design above takes its area from a smallest allowed velocity, which stands in for heat removal. A thermal design
+asks which shape and flow remove the heat within a temperature limit at the least pumping power, either at a fixed
+duty per channel or at a fixed flux on the first wall. The two favour different shapes, so this page screens both at
+one fixed area. The study's
+[Stage 3](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage3-v1/results/stage3-thermal/README.md)
+also optimizes the area (the record below).
 
-They favour different shapes, so this page computes both. It screens shapes at
-one fixed area. The design law's own optimization over area and aspect, with the
-flow set by the heat, is the study's
-[Stage 3](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage3-v1/results/stage3-thermal/README.md),
-described in the record below.
+The specification is illustrative, not an engineering requirement:
 
-**The specification** is illustrative. None of these values is an engineering
-requirement.
-- **The fluid** is Pb-17Li at 573 K, with constant properties from Martelli et
-  al. (2019), Table 1: $\rho$ 9838 kg/m³, $c_p$ 189.8 J/(kg K), $k$ 20.4 W/(m K),
-  $\mu$ 2.153 mPa s and $\sigma$ 8.835×10⁵ S/m, so $Pr = 0.020$.
-- **The correlations' ranges differ.** They cover 508–800 K for $c_p$, 508–625 K
-  for $\mu$, and 600–800 K for $\sigma$, so $\sigma$ at 573 K is an
-  extrapolation 27 K below its range. The temperature limit, 625 K, is the top
-  of the viscosity's range.
-- **The duct** is straight, with the design's area, 2.4×10⁻⁴ m², and length,
-  0.982 m. Its walls are insulating, in a uniform 0.5 T along $a$.
-- **The heat** enters through the first wall $z=-b$, a side wall of width $2a$
-  parallel to the field, as for a channel behind a first wall whose toroidal
-  field lies in its plane. It is either:
-  - a duty of 1.5 kW per channel, whose flux $P/(2aL)$ falls as the wall
-    widens; or
-  - the square duct's flux, 98.6 kW/m², whose duty grows with $2a$.
-- **The inlet** is at 573 K.
-- **The limits** are these:
-  - fluid and wall-interface peaks of at most 625 K;
-  - $Re/Ha \le 200$, with $Re$ on $D_h$ and $Ha$ on $a$, for laminar Hartmann
-    layers;
-  - at least 95 % of the duty leaving at the outlet. The developed screening
-    delivers every watt by construction, so the workflow checks this limit on
-    the candidate, in an open duct.
-- **The cost** is the hydraulic power $Q\,\Delta p$, with no assumed pump
-  efficiency.
-- **Buoyancy** is left out, and the workflow holds the flow fixed. It reports
-  scales on the half-width $a$, with the flux's temperature scale $q''a/k$,
-  $\beta = 1.21\times10^{-4}$ /K from the same table and $|g| = 9.81$ m/s²:
-  - $N_a = Ha_a^2/Re_a = \sigma B^2 a/(\rho U)$, the Lorentz force against
-    inertia;
-  - $Ri_a = Gr_a/Re_a^2$, buoyancy against inertia;
-  - $Ri_a/N_a = Gr_a/(Re_a Ha_a^2) = \rho g\beta\Delta T/(\sigma U B^2)$, the
-    velocity buoyancy drives against the Lorentz force over the forced one.
+| | |
+|:--|:--|
+| Fluid | Pb-17Li at 573 K, constant properties from Martelli et al. (2019), Table 1: $\rho$ 9838 kg/m³, $c_p$ 189.8 J/(kg K), $k$ 20.4 W/(m K), $\mu$ 2.153 mPa s, $\sigma$ 8.835×10⁵ S/m, $Pr = 0.020$ |
+| Duct | straight, area 2.4×10⁻⁴ m², length 0.982 m, insulating walls, a uniform 0.5 T along $a$ |
+| Heat | through the first wall $z=-b$, of width $2a$ parallel to the field: 1.5 kW per channel, or the square duct's flux, 98.6 kW/m² |
+| Inlet | 573 K |
+| Limits | fluid and wall-interface peaks of at most 625 K; $Re/Ha \le 200$ ($Re$ on $D_h$, $Ha$ on $a$); at least 95 % of the duty leaving at the outlet, checked on the candidate in an open duct |
+| Cost | the hydraulic power $Q\,\Delta p$, with no pump efficiency |
 
-  They are scales, not a verdict. This page does not qualify the direction of
-  gravity, the electrical walls' closure or the thermal entrance.
+The correlations cover 508–800 K for $c_p$, 508–625 K for $\mu$ and 600–800 K for $\sigma$, so $\sigma$ at 573 K is
+an extrapolation 27 K below its range. The 625 K limit is the top of the viscosity's range. Buoyancy is left out, and
+the flow is held fixed. The workflow reports $N_a = Ha_a^2/Re_a$, $Ri_a = Gr_a/Re_a^2$ and
+$Ri_a/N_a = \rho g\beta\Delta T/(\sigma U B^2)$ as scales, with the temperature scale $q''a/k$,
+$\beta = 1.21\times10^{-4}$ /K and $|g| = 9.81$ m/s². They are not a verdict.
 
-**Each trial** follows four steps:
-1. Solve the developed flow of its shape under a unit pressure gradient.
-2. Scale that flow to the trial's flow. The Stokes flow is linear in its drive,
-   and the workflow recomputes the Joule heat from the scaled velocity.
-3. Solve the developed temperature with `developed_heat`, with the duty as the
-   first wall's heat flux.
-4. Take its peaks over the length from the inlet's 573 K with
-   `DevelopedHeat.anchored_peaks`.
+Each trial solves the developed flow of its shape under a unit pressure gradient and scales it to the trial's flow,
+which is exact because the Stokes flow is linear in its drive. The workflow recomputes the Joule heat from the scaled
+velocity, solves the temperature with `developed_heat` and takes its peaks from the 573 K inlet with
+`DevelopedHeat.anchored_peaks`. A rejected trial records why. The search sweeps 7 × 9 points in $\ln(b/a)$ and
+$\ln Q$, bisects each observed lower edge of the feasible flows, and refines the cheapest shape by golden section. It
+assumes one crossing between bracketing samples and one minimum between the cheapest shape's neighbours. The shape is
+a host design variable, so this page claims no derivative through the geometry.
 
-A rejected trial records why.
+The whole workflow is one script, which needs none of the earlier blocks. It takes about 45 s on a CPU.
 
-**The search** has three stages:
-1. A 7 × 9 sweep in $\ln(b/a)$ and $\ln Q$.
-2. Bisection of each observed lower edge of the feasible flows, between a
-   sampled infeasible flow and a feasible one.
-3. A golden-section refinement of the cheapest shape.
-
-It does not assume the temperature falls with the flow across the range. The
-square duct's feasible flows form an interval, closed above by $Re/Ha$. It does
-assume one crossing between bracketing samples, and one minimum between
-the cheapest shape's neighbours. The shape is a host design variable, so this
-page claims no derivative through the geometry.
-
-The whole workflow is one script. It continues the page's earlier blocks but
-needs none of them.
-
+````{dropdown} The workflow script
 ```python
 import jax.numpy as jnp
 import numpy as np
@@ -531,6 +453,7 @@ print(f"at the square's flux, {flux / 1e3:.1f} kW/m^2, W per metre of first wall
     f"b/a {r:.3f} {w:.3e}" for r, w in per_width
 ))
 ```
+````
 
 ```text
 b/a 0.080: x x x x x o o o o
@@ -552,23 +475,14 @@ capacity at the square's power: b/a 0.080 1.85, b/a 0.122 2.04, b/a 0.186 2.01, 
 at the square's flux, 98.6 kW/m^2, W per metre of first wall: b/a 0.080 1.755e+00, b/a 0.122 6.949e-01, b/a 0.186 5.039e-01, b/a 0.283 4.700e-01, b/a 0.431 5.012e-01, b/a 0.656 5.930e-01, b/a 1.000 7.933e-01
 ```
 
-The workflow takes about 45 s on a CPU.
+These are forced-convection screening results. For the candidate, buoyancy against inertia is not small,
+with $Ri_a = 0.17$ against 0.02 for the square. Against the Lorentz force at the flow speed it is small, with $Ri_a/N_a$
+0.027 for the candidate and 0.015 for the square. This page has not qualified buoyancy, its direction, the electrical
+walls' closure or the thermal entrance. Mixed-convection MHD studies show buoyancy reorganizing the flow and the wall
+temperatures in heated ducts (Zikanov et al. 2013; Vetcha, Smolentsev and Abdou; Mistrangelo et al. 2025), so a
+coupled buoyant calculation with the direction of gravity declared has to come before an engineering choice.
 
-**Read this first. These are forced-convection screening results.**
-- **Buoyancy against inertia is not small for the candidate.** $Ri_a = 0.17$,
-  against 0.02 for the square.
-- **Against the Lorentz force at the flow speed, buoyancy is small.**
-  $Ri_a/N_a$ is 0.027 for the candidate and 0.015 for the square.
-- **This page has not qualified** buoyancy, its direction, the electrical
-  walls' closure or the thermal entrance. Mixed-convection MHD studies show
-  buoyancy reorganizing the flow and the wall temperatures in heated ducts
-  (Zikanov et al. 2013; Vetcha, Smolentsev and Abdou; Mistrangelo et al. 2025).
-
-Neither these scales nor a small force ratio certifies or rules out a shape. The
-comparison below ranks screenings, and a coupled buoyant calculation with the
-direction of gravity declared has to come before an engineering choice.
-
-**At a fixed duty per channel**, the two ducts compare as follows:
+**At a fixed duty per channel** the two ducts compare as follows.
 
 | | Square | Candidate |
 |:--|:--|:--|
@@ -585,96 +499,56 @@ direction of gravity declared has to come before an engineering choice.
 | $Re_{D_h}/Ha_a$, $Pe_{D_h}$, $Rm$ | 117, 184, 1.1×10⁻³ | 16, 68, 1.6×10⁻³ |
 | viscous and Joule heat over the duty | 4.4×10⁻⁶, 3.8×10⁻⁶ | 9.9×10⁻⁷, 4.8×10⁻⁷ |
 
-- **Both ducts run at the 625 K wall limit.** The slender duct needs 44 % less
-  flow, because the duty enters through its wide side wall at a lower flux and
-  crosses a thin gap.
-- **Joule heat is a burden, not cooling.** As measured here, Joule and viscous
-  heat are each under 10⁻⁵ of the duty, which justifies leaving viscous heat out
-  of this example. That does not carry over to every strong-field duct.
-- **The shape is the isothermal law's.** The candidate's $b/a$ is 0.1436,
-  against $\beta^* = 0.145$ at $H = 78.5$. Near it the lowest feasible flow
-  changes by about 1 % across $b/a$ 0.12–0.19, so pressure sets the shape, and
-  the temperature limit sets the flow in place of the smallest allowed velocity.
-- **Validity.** $N_a = 1.34$ for the square duct, so its inertia is not small
-  against the Lorentz force. A straight developed laminar flow has no inertial
-  term, but its entrance region and stability would feel it.
+- Both ducts run at the 625 K wall limit. The slender duct needs 44 % less flow, because the duty enters through its
+  wide side wall at a lower flux and crosses a thin gap.
+- Joule and viscous heat are each under 10⁻⁵ of the duty here, which justifies leaving viscous heat out of this
+  example. That does not carry over to every strong-field duct.
+- The candidate's $b/a$ of 0.1436 is the isothermal law's $\beta^* = 0.145$ at $H = 78.5$. Near it the lowest
+  feasible flow changes by about 1 % across $b/a$ 0.12–0.19, so pressure sets the shape and the temperature limit
+  sets the flow.
+- $N_a = 1.34$ for the square duct, so its inertia is not small against the Lorentz force. A straight developed
+  laminar flow has no inertial term, but its entrance region and stability would feel it.
 
-**At a fixed first-wall flux** the comparison is per metre of first wall,
-since covering a wall takes $1/(2a)$ channels per metre. A wide channel then
-takes more duty and needs more flow. Of the sampled shapes, $b/a = 0.28$ is the
-cheapest, at 0.470 W/m, 41 % below the square's 0.793 W/m. The slender shapes
-lose, and $b/a = 0.08$ costs 1.755 W/m. Which shape is best therefore depends on
-which quantity the application fixes, the duty or the flux.
+**At a fixed first-wall flux** the comparison is per metre of first wall, since covering a wall takes $1/(2a)$
+channels per metre and a wide channel takes more duty. Of the sampled shapes, $b/a = 0.28$ is the cheapest at
+0.470 W/m, 41 % below the square's 0.793 W/m, and $b/a = 0.08$ costs 1.755 W/m. The best shape therefore depends on
+whether the application fixes the duty or the flux.
 
-**The reference checks.** The square duct's pressure drop is 1.48 % below the
-spectral solver's (`validation.shercliff`) on the screening mesh. It converges
-at second order: −0.66 %, −0.37 % and −0.17 % on 48/6, 64/8 and 96/12 cells. Its
-Joule heat, computed with no duty, equals `core3d.energy_budget`'s to
-$10^{-9}$. It is below its hydraulic power, which in a developed Stokes flow is
-the viscous plus the Joule dissipation.
+**Checks.** The square duct's pressure drop is 1.48 % below the spectral solver's (`validation.shercliff`) on the
+screening mesh, and converges at second order: −0.66 %, −0.37 % and −0.17 % on 48/6, 64/8 and 96/12 cells. Its Joule
+heat equals `core3d.energy_budget`'s to $10^{-9}$, below its hydraulic power. On 48/6 cells the candidate's minimum
+flow moves −0.03 % and its power +0.69 %. In an open duct of twelve axial cells from a 573 K inlet, 99.968 % of its
+duty leaves at the outlet and 0.49 W conducts back out of the inlet. The storage is 4×10⁻¹² W, half the time step
+changes neither number, and the hottest cell is 624.74 K. The axial cell Péclet number, $Pe_h/2 = 270$, shows the run
+is stationary, not that it is accurate in space, and twelve cells do not resolve the entrance region. So this checks
+the delivered duty, not the screening's peak. At the square duct's pumping power the slender shapes carry up to 2.04
+times the duty, at $b/a$ 0.122.
 
-**The candidate's checks.**
-- **On 48/6 cells** its minimum flow moves −0.03 % and its power +0.69 %.
-- **In an open duct.** Twelve axial cells carry its profile from an inlet at
-  573 K. The duty is the cell source $qA/V$ along the first wall. A face flux
-  enters its cell exactly as that source, and `thermal.load_attribution`
-  credits the duty by difference:
-  - 99.968 % of it leaves at the outlet, and 0.49 W conducts back out of the
-    inlet;
-  - the storage is 4×10⁻¹² W, so the run is steady, and half the time step
-    changes neither number;
-  - the hottest cell is 624.74 K;
-  - its axial cell Péclet number is large. $Pe_h/2 = 270$ is the first-order
-    scheme's numerical diffusivity over the physical one along the duct. The
-    tiny storage shows the run is stationary, not that it is accurate in space.
-    No run has shown the delivered share or the entrance profile to be
-    independent of the axial mesh, and this page quotes neither beyond this
-    check.
+This is a screening optimum within the declared model, not an engineering design. The model is forced convection in
+the fluid only, with the wall-interface temperature, constant properties, laminar developed flow and one uniform
+field. Conjugate walls, a varying field and the coupled buoyant flow are later steps.
 
-  Twelve cells do not resolve the entrance region, so this checks the delivered
-  duty, not the developed screening's peak.
-- **At the square duct's pumping power** the slender shapes carry up to 2.04
-  times the duty, at $b/a$ 0.122.
+## Limits and the record
 
-This is a screening optimum within the declared model, not an engineering
-design. The model is:
-- forced convection only, with buoyancy, its direction, the walls' electrical closure and the thermal entrance unqualified, as above;
-- fluid only;
-- the wall-interface temperature, not the solid's;
-- constant properties;
-- laminar developed flow;
-- one uniform field;
-- no buoyancy.
+The law assumes insulated walls, the Stokes limit and an isothermal fluid. The 3-D check covers $Ha \le 200$ and one
+ramp amplitude, so nothing here is a reactor-$Ha$ 3-D number. The 2-D law reaches $Ha^* = 6{,}109$.
 
-Conjugate walls, a varying field and the coupled buoyant flow are later steps.
-
-## Limits
-
-The results here assume insulated walls and the Stokes limit, and the law above
-is for an isothermal fluid. The 3-D check covers $Ha \le 200$ and one ramp
-amplitude, so nothing here is a reactor-$Ha$ 3-D number. The 2-D law reaches $Ha^* = 6{,}109$.
-
-## The record
-
-The full study is in
-[LMhdX-Duct-Optimization](https://github.com/uwplasma/LMhdX-Duct-Optimization).
-It holds the optimizer, the checkpointed runs, the figure pipeline and the
-[write-up](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage2-v1/results/stage2/README.md).
-A [reproduction on LMhdX 1.10.0](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage2-v1/results/stage2-repro-1.10.0/README.md)
+The full study is in [LMhdX-Duct-Optimization](https://github.com/uwplasma/LMhdX-Duct-Optimization), with its
+optimizer, checkpointed runs, figure pipeline and
+[write-up](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage2-v1/results/stage2/README.md). A
+[reproduction on LMhdX 1.10.0](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage2-v1/results/stage2-repro-1.10.0/README.md)
 is bit-identical on the fully developed path. The release
-[stage2-v1](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/tag/stage2-v1)
-carries
+[stage2-v1](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/tag/stage2-v1) carries
 [results.json](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-results.json),
-the [figures](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-figures.zip)
-and the [tables](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-tables.zip).
+the [figures](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-figures.zip) and
+the [tables](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-tables.zip).
 
-The thermal design of plan step 5.5 is the study's forced-convection screening
-of Case P, [Stage 3](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage3-v1/results/stage3-thermal/README.md),
-with a follow-up,
-[Stage 3 v2](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage3-v2/results/stage3-v2/README.md).
-Each shape takes its cheapest flow that keeps the developed peaks within
-625 K. The study then minimises the hydraulic power over area and aspect, under
-`Re/Ha ≤ 200` and an area cap:
+The thermal design of plan step 5.5 is the study's forced-convection screening of Case P,
+[Stage 3](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage3-v1/results/stage3-thermal/README.md), with
+the follow-ups [Stage 3 v2](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage3-v2/results/stage3-v2/README.md)
+and [Stage 3 v3](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/579f4d481584d28e85d472df28e615de937bb3c3/results/stage3-v3/README.md).
+Each shape takes its cheapest flow that keeps the developed peaks within 625 K, and the study minimises the hydraulic
+power over area and aspect under `Re/Ha ≤ 200` and an area cap.
 
 | | Fixed duty, 1.5 kW | Fixed first-wall flux, 96.8 kW/m² |
 |:--|:--|:--|
@@ -684,46 +558,27 @@ Each shape takes its cheapest flow that keeps the developed peaks within
 | On 72/9 cells | within 0.4 % | within 0.4 % |
 | Open duct, 12–48 axial cells (v2) | ≥ 99.96 % delivered; wall face 624.936 ± 0.003 K | ≥ 99.96 % delivered; wall face 624.952 ± 0.001 K |
 
-Nine of Stage 3's ten gates pass, and every one of v2's. The tenth is the
-fixed-flux optimum's stationarity, at 1.8e-6 against 1e-6.
-[Stage 3 v3](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/579f4d481584d28e85d472df28e615de937bb3c3/results/stage3-v3/README.md)
-meets it, and the study declared v3 before its run. Stage 3's polish had placed
-the minimum 2.55e-6 short in ln b/a. One Newton step from there brings the slope
-to 1.7e-10, and moves b/a by 2.55e-6 of itself. It is a study, not a library
-feature. `examples/duct_design_law.py` still sizes a duct by its velocity bound,
-`MIN_VELOCITY`.
+Every gate of Stage 3 and v2 passes. The fixed-flux optimum's stationarity, 1.8e-6 against 1e-6 in Stage 3, is met
+by v3, which the study declared before its run. Stage 3's polish had placed the minimum 2.55e-6 short in ln b/a, and
+one Newton step brings the slope to 1.7e-10. It is a study, not a library feature, and `examples/duct_design_law.py`
+still sizes a duct by its velocity bound, `MIN_VELOCITY`.
 
-**What its limits are.**
-- **The model.** It has an illustrative field cap of about 0.48 T, insulating
-  electrical walls, fixed properties, and fully developed inertialess flow. The
-  hydrodynamic entrance, buoyancy and solid walls are outside the study. The
-  small margins to 625 K leave out the walls, buoyancy and the properties'
-  uncertainty, so they are not a design margin.
-- **The `Re/Ha ≤ 200` filter mixes length scales.** Re is on $D_h$ and Ha on
-  $a$. The Hartmann-layer Reynolds number is $(Re/Ha)(a/D_h)$, with
-  $D_h/a = 4\beta/(1+\beta)$, so the filter does not hold it at one value
-  across aspect ratios. A rerun will apply each threshold in its own
-  definition, which changes the feasible region. The two reported designs stay
-  feasible under the corrected filter, but that does not show they stay
-  optimal. Until the rerun is recorded, the results here are the screening
-  study's, under its original filter.
-- **What is differentiated.** The area enters through the constant-property
-  scaling and the Hartmann-number dependence, so its derivative is legitimate.
-  The study optimizes the aspect ratio by derivative-free bracketing on rebuilt
-  meshes. It scans its design variables, and gradients with respect to them
-  come with LMhdX 2.0.
-- **A blanket design comes next.** For it, the objective's heated fluid width
-  becomes the gross channel pitch with its walls and ribs, and the total heat
-  removal and the coverage become constraints.
+The study's own limits:
+- An illustrative field cap of about 0.48 T, insulating electrical walls, fixed properties and fully developed
+  inertialess flow. The small margins to 625 K leave out the walls, buoyancy and the properties' uncertainty, so they
+  are not a design margin.
+- The `Re/Ha ≤ 200` filter mixes length scales. The Hartmann-layer Reynolds number is $(Re/Ha)(a/D_h)$, with
+  $D_h/a = 4\beta/(1+\beta)$, so the filter does not hold it at one value across aspect ratios. A rerun will apply
+  each threshold in its own definition. The two reported designs stay feasible under the corrected filter, which does
+  not show they stay optimal.
+- The study optimizes the aspect ratio by derivative-free bracketing on rebuilt meshes. Gradients in the design
+  variables come with LMhdX 2.0. A blanket design would add the gross channel pitch, the total heat removal and the
+  coverage as constraints.
 
-On LMhdX 1.11.0, the four designs reproduce the values in
-stage3-v1's results.json exactly. The releases list each asset's SHA-256:
-- [stage3-v1](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/tag/stage3-v1):
-  [results.json](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-results.json)
-  (`2dda7498809683860b889cefb67cc174ae65bf4b5614bfaf05d5c0a9bf1f98ca`),
-  the [figures](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-figures.zip)
-  and the [figure data](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-figure-data.zip);
-- [stage3-v2](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/tag/stage3-v2):
-  [results.json](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v2/stage3-v2-results.json)
-  (`7b4fd3b008fcc9ef5a4461853fd6e7c18ff7eae03843e37a408d84df37acb32a`) and the
-  [figures](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v2/stage3-v2-figures.zip).
+On LMhdX 1.11.0 the four designs reproduce stage3-v1's results.json exactly. The releases list each asset's SHA-256:
+[stage3-v1](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/tag/stage3-v1)
+([results.json](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-results.json),
+`2dda7498809683860b889cefb67cc174ae65bf4b5614bfaf05d5c0a9bf1f98ca`) and
+[stage3-v2](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/tag/stage3-v2)
+([results.json](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v2/stage3-v2-results.json),
+`7b4fd3b008fcc9ef5a4461853fd6e7c18ff7eae03843e37a408d84df37acb32a`).
