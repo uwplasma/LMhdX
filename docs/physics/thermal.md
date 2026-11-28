@@ -955,6 +955,31 @@ within 4 % of 1707.76; the full sweep is rerun by the figure script.
 :align: center
 ```
 
+**Growth rates.** Beyond the onset, the rate at which a roll grows checks the buoyancy, the
+transport and the Lorentz force together. `validation.thermal.convection_growth_rate` solves the
+linear problem by Chebyshev collocation at any Prandtl number, in a field along any axis and over a
+plane Poiseuille flow (its checks: 1707.76, Chandrasekhar's 3757 at $Q=100$, and Orr and
+Sommerfeld's $Re_c=5772.22$). Measured by power iteration on the thermal step, one wavelength of
+the critical roll at $Pr=0.02$ (PbLi's) and $Ra=2\times10^4$:
+- without a field, 0.35 % low on 8 cells across, then +0.09 % and −0.16 % on 16 and 32, the time and
+  mesh errors of opposite sign;
+- in a field of $Q=100$ across the roll's axis or vertical, within 0.17 % and 0.10 % on 32 cells;
+- in a field along the roll's axis, which drives no current, at the field-free rate when the Lorentz
+  force is explicit; under the default implicit shift too slowly by the factor the numerics page
+  derives, 17 % at $\Delta t\,\sigma B^2/\rho=0.27$ (16 cells, $Q=10^4$);
+- carried by a plane Poiseuille flow (Re 400 on the half-height, $Ra=10^5$), within +1.7 to +3.3 %
+  with limited momentum and van Leer heat transport on 18 to 48 cells a wavelength, the rolls
+  travelling 2 to 5 % slow; upwind heat transport, not in the record, was 13 % slow on 18 cells;
+- with Case 2's ingredients at its $\Delta t\,\sigma B^2/\rho=0.34$: carried by that flow in a field along the
+  roll's axis (18 cells, $Q=8100$), 24.6 % slow under the implicit shift and +1.65 % explicit, the field-free
+  run's error; in a field across the axis ($Q=10^4$, $Ra=4\times10^5$), 6.0 % and 2.5 % slow.
+
+A differentially heated square cavity (de Vahl Davis 1983, $Pr=0.71$) checks the steady nonlinear
+flow: the peak velocities and the hot wall's mean Nusselt number are within 0.1 % at $Ra=10^3$ on 64
+cells, 0.4 % at $10^4$ on 64, 0.1 % at $10^5$ on 128 and 0.6 % at $10^6$ on 128, converging at second
+order. `python scripts/make_showcase_figures.py --only buoyancy` reruns both, about 25 minutes on a
+laptop GPU, and writes `docs/_static/data/thermal_buoyancy.json`.
+
 At $Ra=10^4$ and $Pr=0.1$, a periodic $4\times4\times1$ layer (64 × 64 × 32
 cells, van Leer heat transport, limited momentum transport, Courant number at
 most 0.47) convects in cells that keep rearranging. A horizontal field of

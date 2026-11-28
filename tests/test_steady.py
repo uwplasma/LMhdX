@@ -1309,6 +1309,11 @@ def test_the_figure_references_meet_their_tables_and_limits():
     np.testing.assert_allclose(graetz(np.inf, xplus), 4.0 / (1.0 / 3.0 - 2.0 * series / np.pi**2), rtol=1e-5)
     assert graetz(0.0, np.array([1.0]))[0] == pytest.approx(140.0 / 17.0, rel=1e-8)
     assert float(shah_london_h1(0.5)) == pytest.approx(h1_series(1.0, 0.5), rel=1e-3)
+    # The roll's growth rate: neutral at 1707.76 (k d 3.117) and at Orr and Sommerfeld's Re 5772.22 (k 1.02056).
+    from validation.thermal import convection_growth_rate
+
+    assert abs(convection_growth_rate(3.117 / 2.0, 1707.76, 1.0)) < 1e-5
+    assert abs(convection_growth_rate(1.02056, 0.0, 1.0 / 5772.22, reynolds=5772.22, count=80).real) < 1e-7
 
 
 def _plates(cells: int, hartmann: float):

@@ -68,7 +68,9 @@ class Solver:
     ``"state"`` or ``"mixed"``, ``dtype`` ``"float64"`` or ``"float32"``. A heated run is rejected, at its
     start or at the first step past them, when its advective Courant number exceeds ``advective_cfl_limit``
     (default the transport scheme's own) or its buoyancy Courant number ``buoyancy_courant_limit`` (default
-    none), or when the start's divergence exceeds ``divergence_tolerance``.
+    none), or when the start's divergence exceeds ``divergence_tolerance``. ``magnetic_damping`` is an ``euler``
+    or ``rk3`` run's Lorentz force (:class:`lmhdx.core3d.ChannelProblem`): ``"implicit"`` slows a balanced
+    transient by ``1 + dt sigma B^2/rho``; ``"explicit"`` is time-accurate, that product under 2.
     """
 
     method: str = "auto"
@@ -82,6 +84,7 @@ class Solver:
     advective_cfl_limit: float | None = None
     buoyancy_courant_limit: float | None = None
     divergence_tolerance: float = 1.0e-10
+    magnetic_damping: str = "implicit"
 
     def resolve(self, problem) -> str:
         """Return the concrete method for ``problem``, refusing what the kernels cannot do."""
@@ -430,7 +433,7 @@ def _q2d(problem: Q2D, solver: Solver, output, record) -> Solution:
 
 
 def _transient(problem: Problem, solver: Solver, start, output, record, scheme=EULER) -> Solution:
-    kernel, forcing, scale, _, walls = channel_kernel(problem, solver.dt, solver.precision)
+    kernel, forcing, scale, _, walls = _timed_kernel(problem, solver)
     if forcing is not None or is_traced(scale) or kernel.open_axis is not None or float(scale) != 1.0:
         raise NotImplementedError("an unsteady run takes a concrete drive and field, and no open axis")
     viscous = kernel.viscous_factorizations(scheme)
@@ -461,8 +464,16 @@ def _transient(problem: Problem, solver: Solver, start, output, record, scheme=E
     return hold_walls(Solution(state._asdict(), history=history, summary=summary), walls)
 
 
+def _timed_kernel(problem: Problem, solver: Solver):
+    """:func:`channel_kernel` for a run in time, with the solver's ``magnetic_damping``."""
+    kernel, *rest = channel_kernel(problem, solver.dt, solver.precision)
+    if solver.magnetic_damping != kernel.magnetic_damping:
+        kernel = dataclasses.replace(kernel, magnetic_damping=solver.magnetic_damping)
+    return (kernel, *rest)
+
+
 def _thermal(problem: Problem, solver: Solver, start, output, record) -> Solution:
-    kernel, forcing, scale, _, walls = channel_kernel(problem, solver.dt, solver.precision)
+    kernel, forcing, scale, _, walls = _timed_kernel(problem, solver)
     if forcing is not None or is_traced(scale) or float(scale) != 1.0:
         raise NotImplementedError("an unsteady run takes a concrete drive and field")
     thermal = problem.thermal
