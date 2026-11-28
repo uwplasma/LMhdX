@@ -1,29 +1,34 @@
 # The duct design law
 
-At a fixed flow rate, an insulated rectangular duct in a strong transverse field
-has one aspect ratio of least pumping power. With $a$ the half-width along the
-field, $b = \beta a$ the half-width across it and $Ha = B a\sqrt{\sigma/\mu}$,
-the optimum at a fixed cross-section area obeys
+A duct that carries a fixed flow across a strong magnetic field is cheapest to
+pump when it is deep along the field and narrow across it. At a fixed
+cross-section area, one aspect ratio costs least, and a one-line law gives it.
+This page finds that optimum with LMhdX, sizes one blanket duct with it, and
+screens shapes for a heated duct.
+
+**The law.** Let $a$ be the half-width along the field, $b = \beta a$ the
+half-width across it, and $Ha = B a\sqrt{\sigma/\mu}$. At a fixed flow rate and
+a fixed cross-section area, the insulated duct of least pumping power obeys
 
 $$
 s^* = \beta^*\sqrt{Ha^*} \to 2.08 ,
 $$
 
 from $s^* = 1.975$ at $Ha^* = 14$ to $2.078$ at $Ha^* = 6{,}109$ on the
-spectral reference. Shercliff's thin-layer friction law,
-$\Delta p/L = \mu V Ha / [a^2 (1 - \alpha/(\beta\sqrt{Ha}) - 1/Ha)]$, puts the
-balance where the side layers remove two fifths of the flow, $s^* = 2.5\alpha$:
-2.13 with $\alpha = 0.852$ as Smolentsev (2021) gives it, 2.06 with the
-$\alpha = 0.825$ that Müller & Bühler print. The optimum is deep along the
-field and narrow across it, and its advantage grows with the field: 9 % below
-the square duct of the same area at $Ha^* = 14$, 61 % at 1,229 and 73 % at 6,109.
-
-The optimum itself is not new. Nishio et al. (2025) computed the same interior
-minimum (fixed area and flow, insulating walls, 10 T), and their numbers imply
-$s^* \approx 2.08$; Müller &
-Bühler's friction formula gives it in one line. LMhdX's study states the law
-with its finite-$Ha$ values, checks it against an independent solver and
-three-dimensional solves, and extends it to a tilted field.
+spectral reference.
+- **Why.** Shercliff's thin-layer friction law,
+  $\Delta p/L = \mu V Ha / [a^2 (1 - \alpha/(\beta\sqrt{Ha}) - 1/Ha)]$, puts the
+  balance where the side layers remove two fifths of the flow,
+  $s^* = 2.5\alpha$: 2.13 with $\alpha = 0.852$ as Smolentsev (2021) gives it,
+  2.06 with the $\alpha = 0.825$ that Müller & Bühler print.
+- **The gain grows with the field:** 9 % below the square duct of the same area
+  at $Ha^* = 14$, 61 % at 1,229 and 73 % at 6,109.
+- **The optimum itself is not new.** Nishio et al. (2025) computed the same
+  interior minimum (fixed area and flow, insulating walls, 10 T), and their
+  numbers imply $s^* \approx 2.08$; Müller & Bühler's friction formula gives it
+  in one line. LMhdX's study states the law with its finite-$Ha$ values, checks
+  it against an independent solver and three-dimensional solves, and extends it
+  to a tilted field.
 
 ## Run it
 
@@ -42,19 +47,104 @@ design: beta* 0.14851, a 20.10 mm, b 2.99 mm, W* 4.1495e-05 W, 41.7% below the s
 Wrote artifacts/examples/duct_design_law/duct_design_law_summary.json and artifacts/examples/duct_design_law/duct_design_law.png
 ```
 
-The example does two things. First, the design law: at a fixed area, with $H$
-the Hartmann number of the equal-area square duct, it finds $\beta^*$ for each
-$H$. Second, one design: a PbLi duct (573 K) running 0.982 m radially through
-an outboard blanket in a $1/R$ field of 0.5 T at the first wall, at
-$Q = 2.4\times10^{-6}$ m³/s. There the pumping power falls as the duct grows,
-so the smallest allowed mean velocity, 10 mm/s, sets the area. The sign of
-$d\Delta p/d\ln A$, exact through `jax.grad` of the solve in its field scale,
-confirms that this bound is active. The aspect ratio is then the one choice
-left.
+The example does two things.
+- **The design law.** At a fixed area, with $H$ the Hartmann number of the
+  equal-area square duct, it finds $\beta^*$ for each $H$.
+- **One design.** A PbLi duct (573 K) runs 0.982 m radially through an outboard
+  blanket in a $1/R$ field of 0.5 T at the first wall, at
+  $Q = 2.4\times10^{-6}$ m³/s. There the pumping power falls as the duct grows,
+  so the smallest allowed mean velocity, 10 mm/s, sets the area. The sign of
+  $d\Delta p/d\ln A$, exact through `jax.grad` of the solve in its field scale,
+  confirms that this bound is active. The aspect ratio is then the one choice
+  left.
 
-Each trial $\beta$ scales one mesh across the field, so the discrete pressure
-drop is smooth in $\beta$, and a quartic through five trials finds the minimum.
-All trials have the same mesh shape and share one compiled program.
+The steps below find the optimum for one $H$, 30, as the example does. Import
+the staggered core and work in double precision; the optimum is a shallow
+minimum, which float32 solves would blur.
+
+```python
+from dataclasses import replace
+
+import numpy as np
+
+from lmhdx import enable_x64
+from lmhdx.core3d import ChannelProblem
+from lmhdx.grid import PERIODIC, BoundaryCondition, Grid, uniform_faces, wall_resolving_faces
+from lmhdx.steady import channel_flow_rate, solve_compiled
+
+enable_x64()
+CELLS, CELLS_IN_LAYER = 48, 6
+```
+
+A unit insulated duct of aspect `beta`: the mesh is built for a central aspect
+and Hartmann number, then scaled across the field to `beta`. So every trial
+has the same mesh shape and shares one compiled program, and the discrete
+pressure drop is smooth in $\beta$.
+
+```python
+def unit_duct(beta, ha_mesh, centre):
+    y = wall_resolving_faces(
+        CELLS, -1.0, 1.0, layer_thickness=1.0 / ha_mesh, cells_in_layer=CELLS_IN_LAYER, max_ratio=None
+    )
+    side = min(1.0 / np.sqrt(ha_mesh), 0.25 * centre)
+    z = wall_resolving_faces(
+        CELLS, -centre, centre, layer_thickness=side, cells_in_layer=CELLS_IN_LAYER, max_ratio=None
+    )
+    wall = BoundaryCondition("neumann")
+    return ChannelProblem(
+        grid=Grid(uniform_faces(1, 0.0, 1.0), y, z * (beta / centre)),
+        conditions=(BoundaryCondition(PERIODIC), wall, wall),
+        conductivity=1.0,
+        magnetic_field=(0.0, ha_mesh, 0.0),
+        forcing=(1.0, 0.0, 0.0),
+        dt=1.0,
+    )
+```
+
+The pressure drop of aspect `beta`, at a unit mean velocity through area 4, so
+that the square duct has $a = 1$ and $Ha = H$. One solve gives the flow per
+unit drive $q$, and $\Delta p = \mu Q L / (a^4 q)$.
+
+```python
+def pressure_drop(beta, H, centre):
+    a = np.sqrt(1.0 / beta)  # area 4 = 4 a b
+    ha_mesh = 1.15 * H * np.sqrt(1.0 / centre)  # the mesh's Ha, above every trial's
+    station = replace(unit_duct(beta, ha_mesh, centre), magnetic_field=(0.0, H * a, 0.0))
+    q = float(channel_flow_rate(station, solve_compiled(station).velocity[0].data[0]))
+    return 4.0 / (a**4 * q)
+```
+
+Start from the law's guess, solve five trials 0.1 apart in $\ln\beta$, and take
+the minimum of the quartic through them.
+
+```python
+H = 30.0
+centre = (2.08 / np.sqrt(H)) ** (4.0 / 3.0)  # beta from s* = 2.08 with Ha = H / sqrt(beta)
+offsets = 0.1 * np.arange(-2, 3)
+quartic = np.polyfit(offsets, [pressure_drop(centre * np.exp(x), H, centre) for x in offsets], 4)
+x = min(
+    (root.real for root in np.roots(np.polyder(quartic))
+     if abs(root.imag) < 1e-12 and abs(root.real) <= 0.2 and np.polyval(np.polyder(quartic, 2), root.real) > 0),
+    key=abs,
+)
+beta = centre * np.exp(x)
+```
+
+Compare it with the square duct of the same area.
+
+```python
+ha = H / np.sqrt(beta)
+saving = 1.0 - pressure_drop(beta, H, centre) / pressure_drop(1.0, H, 1.0)
+print(f"beta* {beta:.5f}, Ha* {ha:.1f}, s* {beta * np.sqrt(ha):.4f}, {100 * saving:.1f}% below the square")
+```
+
+```text
+beta* 0.27147, Ha* 57.6, s* 2.0599, 26.3% below the square
+```
+
+This is the example's line for $H = 30$. The example repeats it over its four
+values of $H$, then sums the pressure drop over six stations of the $1/R$ field
+for the blanket duct.
 
 ## What is established
 
@@ -73,9 +163,13 @@ The study's own evidence:
   $\gamma\sqrt{Ha} = 2$. The excess does not collapse on $\gamma\sqrt{Ha}$
   across $Ha$ 50 and 200, so these limits are quoted per $Ha$.
 
+Check one point of that comparison, in double precision (about a minute on a
+CPU):
+
 ```python
 from validation.open_axis import ramp_excess
 
+enable_x64()
 row = ramp_excess(0.2, 1.0, 200.0, cells=48, cells_in_layer=6)  # gamma sqrt(Ha), beta, Ha
 print(row["excess_percent"])  # 0.448
 ```
@@ -92,10 +186,11 @@ $$
 \left(\Delta p^*/\Delta p^*_0\right)^2 = 1 + \frac{0.122\,\kappa^2}{1 + \kappa/3.01} .
 $$
 
-A penalty of at most 10 % needs $\kappa < 1.7$. A duct kept at its aligned
-shape loses to the square beyond $\kappa \approx 8$–12 at $Ha^*_0$ 1,232–6,127.
-Both laws are fitted to the same 20 points ($Ha^*_0$ 58–6,127, $B_p/B_T \le 0.3$,
-one uniform tilt per duct), so their errors are in-sample.
+- A penalty of at most 10 % needs $\kappa < 1.7$.
+- A duct kept at its aligned shape loses to the square beyond
+  $\kappa \approx 8$–12 at $Ha^*_0$ 1,232–6,127.
+- Both laws are fitted to the same 20 points ($Ha^*_0$ 58–6,127,
+  $B_p/B_T \le 0.3$, one uniform tilt per duct), so their errors are in-sample.
 
 ## A thermal design
 
@@ -172,6 +267,9 @@ square duct's feasible flows form an interval, closed above by $Re/Ha$. It does
 assume one crossing between bracketing samples, and one minimum between the
 cheapest shape's neighbours. The shape is a host design variable, so no
 derivative through the geometry is claimed.
+
+The whole workflow is one script; it continues the page's earlier blocks, but
+needs none of them.
 
 ```python
 import jax.numpy as jnp
@@ -543,20 +641,18 @@ Conjugate walls, a varying field and the coupled buoyant flow are later steps.
 
 ## Limits
 
-Insulated walls and the Stokes limit; the law above is for an isothermal fluid. The 3-D check covers
-$Ha \le 200$ and one ramp amplitude, so nothing here is a reactor-$Ha$ 3-D
-number. The 2-D law reaches $Ha^* = 6{,}109$.
+Insulated walls and the Stokes limit; the law above is for an isothermal fluid.
+The 3-D check covers $Ha \le 200$ and one ramp amplitude, so nothing here is a
+reactor-$Ha$ 3-D number. The 2-D law reaches $Ha^* = 6{,}109$.
 
 ## The record
 
 The full study lives in
-[LMhdX-Duct-Optimization](https://github.com/uwplasma/LMhdX-Duct-Optimization).
-That repository holds the optimizer, the checkpointed runs, the figure pipeline
-and the
+[LMhdX-Duct-Optimization](https://github.com/uwplasma/LMhdX-Duct-Optimization):
+the optimizer, the checkpointed runs, the figure pipeline and the
 [write-up](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage2-v1/results/stage2/README.md).
-It also holds a
-[reproduction on LMhdX 1.10.0](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage2-v1/results/stage2-repro-1.10.0/README.md),
-bit-identical on the fully developed path. The release
+A [reproduction on LMhdX 1.10.0](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/stage2-v1/results/stage2-repro-1.10.0/README.md)
+is bit-identical on the fully developed path. The release
 [stage2-v1](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/tag/stage2-v1)
 carries
 [results.json](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage2-v1/stage2-results.json),
@@ -598,7 +694,7 @@ b/a by 2.55e-6 of itself. It is a study, not a library feature:
   $a$. The Hartmann-layer Reynolds number is $(Re/Ha)(a/D_h)$, with
   $D_h/a = 4\beta/(1+\beta)$, so the filter does not hold it at one value
   across aspect ratios. The study is to be rerun with each threshold in its own
-  definition; that changes the feasible region. The two reported designs stay
+  definition, which changes the feasible region. The two reported designs stay
   feasible under the corrected filter, but that does not show they stay
   optimal: until the rerun is recorded, the results here are the screening
   study's, under its original filter.
@@ -612,14 +708,13 @@ b/a by 2.55e-6 of itself. It is a study, not a library feature:
   the coverage become constraints.
 
 Re-evaluated on LMhdX 1.11.0, the four designs reproduce the values in
-stage3-v1's results.json exactly. The release lists each asset's SHA-256;
-results.json is
-`2dda7498809683860b889cefb67cc174ae65bf4b5614bfaf05d5c0a9bf1f98ca`. The release
-[stage3-v1](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/tag/stage3-v1) carries
-[results.json](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-results.json),
-the [figures](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-figures.zip)
-and the [figure data](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-figure-data.zip).
-The release
-[stage3-v2](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/tag/stage3-v2) carries v2's
-[results.json](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v2/stage3-v2-results.json)
-(`7b4fd3b008fcc9ef5a4461853fd6e7c18ff7eae03843e37a408d84df37acb32a`) and [figures](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v2/stage3-v2-figures.zip).
+stage3-v1's results.json exactly. The releases list each asset's SHA-256:
+- [stage3-v1](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/tag/stage3-v1):
+  [results.json](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-results.json)
+  (`2dda7498809683860b889cefb67cc174ae65bf4b5614bfaf05d5c0a9bf1f98ca`),
+  the [figures](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-figures.zip)
+  and the [figure data](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v1/stage3-figure-data.zip);
+- [stage3-v2](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/tag/stage3-v2):
+  [results.json](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v2/stage3-v2-results.json)
+  (`7b4fd3b008fcc9ef5a4461853fd6e7c18ff7eae03843e37a408d84df37acb32a`) and the
+  [figures](https://github.com/uwplasma/LMhdX-Duct-Optimization/releases/download/stage3-v2/stage3-v2-figures.zip).

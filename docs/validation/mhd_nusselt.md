@@ -1,8 +1,37 @@
 # MHD Nusselt campaign
 
-Shercliff's square duct has insulating walls, a field along $y$ and no Joule
-heat. Ha is on the half-width $a$, and $D_h=2a$. Its developed Nusselt numbers
-are compared against two references:
+This page checks how well LMhdX predicts heat transfer in a duct with a
+magnetic field. The Nusselt number, the wall heat flux against the wall-to-bulk
+temperature difference, rises with the field as the flow flattens. LMhdX agrees
+with an independent spectral solve within 0.06 %, and with a published analysis
+at low and moderate Hartmann numbers.
+
+```{image} ../_static/thermal_developed_duct.webp
+:alt: Velocity and temperature of an H1 square duct at Ha 0 and 100 in 3-D, Nusselt numbers against aspect ratio and Hartmann number, and mesh convergence
+:align: center
+```
+
+The spectral reference takes a few seconds per number. From the repository
+root, at Ha 10 on 48 points:
+
+```python
+from validation.shercliff import developed_nusselt
+
+for heating in ("H1", "H2", "T"):
+    print(heating, f"{developed_nusselt(10.0, 48, heating=heating):.4f}")
+```
+
+```text
+H1 4.5221
+H2 3.7985
+T 3.6023
+```
+
+These are the spectral values in the Ha 10 row of the table below.
+
+The duct is Shercliff's square duct: insulating walls, a field along $y$ and
+no Joule heat. Ha is on the half-width $a$, and $D_h=2a$. Its developed
+Nusselt numbers are compared against two references:
 - an independent spectral solve, `validation.shercliff.developed_nusselt(Ha,
   points, heating=...)`. It uses Chebyshev collocation on the same nodes as that
   module's velocity, and shares no operator with the package;

@@ -1,16 +1,29 @@
 # LMhdX
 
-LMhdX solves inductionless liquid-metal MHD with JAX. It provides
-analytical-reference fully developed flows, three-dimensional ducts and pipes
-on a staggered core, ducts with an inlet and an outlet through a field that
-varies along them, and periodic Q2D flow
-with Hartmann-layer damping. LMhdX builds the physics;
-[SOLVAX](https://github.com/uwplasma/SOLVAX) supplies reusable numerical solvers.
+LMhdX simulates liquid metal flowing through strong magnetic fields, the
+physics of fusion blanket channels. It solves fully developed ducts and pipes
+against analytical references, three-dimensional ducts and pipes, ducts with an
+inlet and an outlet in a field that changes along them, heat transfer, and a
+depth-averaged (Q2D) model with Hartmann-layer damping. It is written in JAX,
+so solutions can be differentiated and run on a CPU or a GPU. LMhdX builds the
+physics; [SOLVAX](https://github.com/uwplasma/SOLVAX) supplies the numerical
+solvers.
 
 ```{image} _static/validation_ladder.webp
 :alt: Hartmann-layer collapse, flow-rate error against a spectral reference, and mesh convergence
 :align: center
 ```
+
+After `python -m pip install lmhdx`, a first duct takes three lines:
+
+```python
+import lmhdx
+
+solution = lmhdx.solve(lmhdx.duct(20.0, 24))   # Hartmann number 20, 24 x 24 cells
+print(float(solution.flow_rate))               # 0.15614...
+```
+
+The model is inductionless: the flow does not change the applied field.
 
 ## Start here
 

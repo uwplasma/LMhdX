@@ -1,8 +1,19 @@
 # FreeMHD comparison
 
+This page explains how LMhdX is run side by side with FreeMHD, an independent
+liquid-metal MHD code built on OpenFOAM. The case is the ALEX B2 square duct
+in a fringing field. Each code passes or fails on its own checks; their
+pressure difference is reported, not gated, because the two runs do not
+compute the same state.
+
+To write and hash the inputs without Docker:
+
+```console
+python -m validation.freemhd --preflight --output artifacts/freemhd-b2
+```
+
 FreeMHD is an external validator, not an LMhdX runtime dependency. One module,
-`validation/freemhd.py`, holds the whole comparison for the ALEX B2 square duct
-in a fringing field:
+`validation/freemhd.py`, holds the whole comparison:
 
 1. it writes the FreeMHD B2 input: the block mesh, the foam dictionaries, the
    field `B_y(x)/B0` interpolated linearly between the anchors of
@@ -15,6 +26,8 @@ in a fringing field:
    mean velocity;
 5. it writes `record.json` with both observables and the SHA-256 of every input
    and output.
+
+## What is compared
 
 The two codes do not compute the same state. FreeMHD runs the frozen two-update
 transient harness smoke from a uniform plug on a 5 x 5 grid. LMhdX gives the
@@ -35,6 +48,8 @@ The observable is the side-wall tap (`y = 0`, `|z| = 1`) minus the top tap
 so LMhdX takes the side tap at the first `z` cell centre and the top tap at the
 last one.
 
+## Running it
+
 The reproducible build uses
 [`freemhd_install`](https://github.com/rogeriojorge/freemhd_install) commit
 `36f409d294ba3170d64d4073378d5ef68401072f`, FreeMHD commit
@@ -51,8 +66,8 @@ python -m validation.freemhd \
   --output artifacts/freemhd-b2
 ```
 
-`--preflight` writes and hashes the inputs without Docker. The exit code is 0
-when both codes pass their own gates. Record the image ID next to the evidence:
+`--preflight`, shown at the top, writes and hashes the inputs without Docker.
+The exit code is 0 when both codes pass their own gates. Record the image ID next to the evidence:
 
 ```console
 docker image inspect freemhd-install:latest --format '{{.Id}}'

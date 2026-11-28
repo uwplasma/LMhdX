@@ -578,8 +578,8 @@ class ThermalDiagnostics(NamedTuple):
     face-normal gradient on any face: one component, not a colocated gradient
     magnitude. It is zero without buoyancy and counts in ``finite``. The
     partitioned step is first order in it; in the Benard onset of #252 the
-    critical Rayleigh number is about 15 % low near 0.2 and under 3 % near 0.025,
-    a calibration of that case, not a general bound.
+    critical Rayleigh number reads 1675.9 near 0.4 and 1675.6 near 0.025 (flat to
+    0.02 % in the step), a calibration of that case, not a general bound.
 
     With solid walls (:class:`ThermalProblem`) the ledger covers the fluid and the walls: storage and the
     sensible heat weigh each cell by its own ``rho c_p``, the conduction out crosses the outer surface, the

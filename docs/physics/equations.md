@@ -1,10 +1,12 @@
 # Equations and assumptions
 
-LMhdX solves incompressible, inductionless liquid-metal MHD. The magnetic
-Reynolds number is assumed small, so the imposed magnetic field $\mathbf B$ is
-not evolved. The full isothermal formulation below uses density $\rho$,
-kinematic viscosity $\nu$, conductivity $\sigma$, pressure $p$, and body drive
-$\mathbf f$. The implemented model reductions are described below it:
+LMhdX solves incompressible liquid-metal flow in an imposed magnetic field. The field is fixed: the currents the
+flow induces are too weak to change it (the magnetic Reynolds number is small), so only the electric potential and the
+current are solved for, together with the velocity and pressure. This page states the equations and which reduced
+form each solver uses; [numerics](numerics.md) says how they are discretized.
+
+The full isothermal formulation uses density $\rho$, kinematic viscosity $\nu$, electrical conductivity $\sigma$,
+pressure $p$ and a body drive $\mathbf f$:
 
 $$
 \nabla\cdot\mathbf u = 0,
@@ -29,17 +31,18 @@ $$
 =\nabla\cdot\left[\sigma(\mathbf u\times\mathbf B)\right].
 $$
 
-Fully developed models set $\mathbf u=(u(y,z),0,0)$ and solve the coupled
-cross-section equations. The three-dimensional staggered core
-(`lmhdx.core3d`, `lmhdx.steady`) retains all three velocity, current and
-Lorentz-force components; a duct with an inlet and an outlet (`lmhdx.axial`)
-is solved in the inertialess limit, without $\mathbf u\cdot\nabla\mathbf u$, or
-with it by Newton's method or by marching that solution to its steady state; the
-pipe with an inlet and an outlet is solved in the inertialess limit only.
-The inertialess core-flow model (`lmhdx.coreflow`) reduces the core of a
-thin-walled duct in a field $B_y(x)$ to three two-dimensional equations
-(ANL/FPP/TM-228, eqs. 4a–4c). Their verification and open gates are in the
-[validation matrix](../validation/index.md).
+Each solver uses a form of these equations:
+
+| Solver | What it keeps |
+|:--|:--|
+| Fully developed duct or pipe | $\mathbf u=(u(y,z),0,0)$: the coupled cross-section equations |
+| Three-dimensional staggered core (`lmhdx.core3d`, `lmhdx.steady`) | all three components of velocity, current and Lorentz force |
+| Duct with an inlet and an outlet (`lmhdx.axial`) | the inertialess limit, without $\mathbf u\cdot\nabla\mathbf u$; or inertia, by Newton's method or by marching to the steady state |
+| Pipe with an inlet and an outlet | the inertialess limit only |
+| Core-flow model (`lmhdx.coreflow`) | the core of a thin-walled duct in a field $B_y(x)$, as three two-dimensional equations (ANL/FPP/TM-228, eqs. 4a–4c) |
+| Heat transport (`lmhdx.thermal`) | temperature carried and conducted, with Boussinesq buoyancy and Joule heat ([heat transport](thermal.md)) |
+
+Their verification and open gates are in the [validation matrix](../validation/index.md).
 
 No-slip walls set velocity to zero. Insulating walls impose zero normal
 current. Conducting solid regions solve potential with their own conductivity
