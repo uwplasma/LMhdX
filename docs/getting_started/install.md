@@ -11,11 +11,11 @@ python -m pip install lmhdx
 lmhdx --help
 ```
 
-`lmhdx --help` lists the commands `run`, `benchmark` and `validate`. JAX 0.6.2,
-the last release for Python 3.10, is not supported: its CUDA build crashes when
-a thermal step's compiled loop runs a second time at production sizes, a fault
-that later releases do not have. SOLVAX's dependency equinox excludes JAX 0.7.0
-and 0.7.1.
+`lmhdx --help` lists the commands `run`, `benchmark` and `validate`. LMhdX does
+not support JAX 0.6.2, the last release for Python 3.10. Its CUDA build crashes
+when a thermal step's compiled loop runs a second time at production sizes, and
+later releases do not have this fault. SOLVAX's dependency equinox excludes JAX
+0.7.0 and 0.7.1.
 
 ## Plotting and accelerators
 
@@ -33,9 +33,9 @@ then check which devices JAX sees:
 python -c "import jax; print(jax.devices())"
 ```
 
-A run uses JAX's default device: one GPU when a CUDA `jaxlib` is installed,
-else the CPU with XLA's own threads. Multi-device execution is not supported
-yet.
+A run uses JAX's default device. That is one GPU when a CUDA `jaxlib` is
+installed, and otherwise the CPU with XLA's own threads. LMhdX does not support
+multi-device execution yet.
 
 | Setting | Default | Change it when |
 | --- | --- | --- |
@@ -60,9 +60,9 @@ on JAX's persistent compilation cache in `~/.cache/lmhdx/jax_compilation`. A
 new process, or a new Hartmann number on the same mesh, then reuses compiled
 solves instead of compiling them again.
 
-- Compiles over one second are kept, in at most 2 GiB.
-- Programs are shared across field values, which makes a repeated warm solve
-  35–60 % slower. For long loops over one compiled function, call
+- The cache keeps compiles that take over one second, up to 2 GiB in total.
+- The cache shares programs across field values, which makes a repeated warm
+  solve 35–60 % slower. For long loops over one compiled function, call
   `lmhdx.enable_compilation_cache(share_across_values=False)` first.
 - Set `LMHDX_COMPILATION_CACHE=0` to turn the cache off, or set it to a
   directory to move it.
@@ -70,5 +70,6 @@ solves instead of compiling them again.
   reading back a large cached program.
 
 On import, LMhdX also adds `--xla_gpu_enable_triton_gemm=false` to `XLA_FLAGS`.
-This halves the GPU compile of a steady solve at about 10 % warm cost. A value
-you set yourself wins, and `LMHDX_XLA_DEFAULTS=0` leaves `XLA_FLAGS` untouched.
+This halves the GPU compile time of a steady solve and makes a warm solve about
+10 % slower. A value you set yourself takes precedence, and
+`LMHDX_XLA_DEFAULTS=0` leaves `XLA_FLAGS` untouched.

@@ -6,20 +6,19 @@ outlet along its first axis (`lmhdx.axial`). This page sets up the ANL fringe
 of ANL/FPP/TM-228, solves it, checks its balances and differentiates its
 pressure drop, as `python examples/fringe_duct_example.py` does.
 
-The conditions follow HIMAG, FreeMHD, GridapMHD and the 2025 six-code benchmark:
-
-- **Inlet:** LMhdX's own fully developed profile at the inlet field, solved on
-  the duct's cross-section and scaled to the imposed flow rate. The flow rate is
-  exact and the pressure drop is an output.
-- **Outlet:** zero axial gradient of the velocity and `p = 0`.
-- **Both ends:** no normal current.
+The boundary conditions follow HIMAG, FreeMHD, GridapMHD and the 2025 six-code
+benchmark. The inlet takes LMhdX's own fully developed profile at the inlet
+field, solved on the duct's cross-section and scaled to the imposed flow rate.
+The flow rate is exact and the pressure drop is an output. At the outlet the
+axial gradient of the velocity is zero and `p = 0`. Neither end carries a
+normal current.
 
 ## Set up and solve
 
-`fringe_duct` builds the fringe in a square duct: the field falls as
-`B_y = Ha (1 - sin(pi x / 2 x0)) / 2` over `|x| <= x0`, uniform upstream and
-zero downstream, with buffers of uniform field before and after. Lengths are in
-duct half-widths.
+`fringe_duct` builds the fringe in a square duct. Over `|x| <= x0` the field
+falls as `B_y = Ha (1 - sin(pi x / 2 x0)) / 2`. It is uniform upstream and zero
+downstream, and the duct has buffers of uniform field before and after the fringe.
+Lengths are in duct half-widths.
 
 ```python
 from lmhdx.axial import fringe_duct, pressure_drop, solve_open_duct, station_flow_rates
@@ -52,9 +51,9 @@ print(pressure_drop(solution.pressure, -3.0, 3.0))
 131.60664371853954
 ```
 
-In the Stokes limit the solve is one preconditioned conjugate-gradient solve,
-certified on its residual; it raises if the residual is not reached. Check the
-balances it guarantees before reading a pressure.
+In the Stokes limit the solve is one preconditioned conjugate-gradient solve.
+LMhdX certifies it on its residual and raises if the solve misses that residual.
+Check the balances it guarantees before reading a pressure.
 
 ```python
 from lmhdx.axial import charge_balance, mass_balance
@@ -68,8 +67,8 @@ print(float(mass_balance(solution.velocity)), float(charge_balance(solution, pro
 1.020443188428928e-16 7.598705794737979e-15
 ```
 
-The drop is differentiable in the field strength through the same implicit
-solve as a periodic duct.
+`jax.grad` differentiates the drop in the field strength through the same
+implicit solve as for a periodic duct.
 
 ```python
 import jax
@@ -87,16 +86,17 @@ compares the upstream gradient with the fully developed one.
 
 `open_duct` turns any `ChannelProblem` with a field that is uniform over the
 inlet cross-section, including an `ImposedField` of arrays, into an
-inflow-outflow duct; `axial_faces` grades the axial mesh from the fringe into
+inflow-outflow duct. `axial_faces` grades the axial mesh from the fringe into
 the buffers.
 
 ## Add inertia
 
 With advection on (`advection="central"`), `solve_open_duct` adds inertia. It
-takes the Stokes-limit solution to its steady state by Newton-Krylov or by
-marching the Runge-Kutta stepper, whichever `method="auto"` finds faster.
-`python examples/open_duct_inertia_example.py` measures the inertial share of
-the drop this way at Ha 30. Keep `growth=1.0`, a small cell Reynolds number.
+starts from the Stokes-limit solution and reaches the steady state by
+Newton-Krylov or by marching the Runge-Kutta stepper. `method="auto"` picks
+whichever it finds faster. `python examples/open_duct_inertia_example.py`
+measures the inertial share of the drop this way at Ha 30. Keep `growth=1.0`,
+which keeps the cell Reynolds number small.
 
 ```python
 def build(advection):
@@ -113,9 +113,9 @@ print(f"status {int(full.status)}, inertial share {100 * abs(drops[1] / drops[0]
 status 0, inertial share 1.131 % at Re 5
 ```
 
-Check `status`: only `CONVERGED` (0) is a steady flow; the others are
-`stagnated` and `unsteady`. [Numerics](../physics/numerics.md) gives the
-measured inertial share ("Inertia on the open axis").
+Check `status`. Only `CONVERGED` (0) is a steady flow, and the other two
+statuses are `stagnated` and `unsteady`. The section "Inertia on the open axis"
+in [Numerics](../physics/numerics.md) gives the measured inertial share.
 
 ## What is and is not established
 
@@ -125,14 +125,16 @@ measured inertial share ("Inertia on the open axis").
   3.5e-9 at Ha 100.
 - On the ANL case the excess drop over the locally fully developed drop agrees
   within 1 % with the inertialess core-flow model (`lmhdx.coreflow`, TM-228
-  eqs. 4a–4c) once the model carries the layers' conductance
+  eqs. 4a–4c) once the model includes the layers' conductance
   (`coreflow.layer_conductances`; c 0.1, Ha 2×10⁴), and within 4–5 % at
-  c 0.02. Both models are LMhdX's: internal consistency, not validation.
-- TM-228's uncorrected 0.0178 is the inertialess thin-layer Ha → ∞ asymptote,
-  which no 3-D solve reaches. LMhdX's Ha → ∞ fits give 0.0183–0.0211, 3–18 %
-  above it, a fit band rather than a 1 % check.
-- A circular pipe with an open axis (`fringe_pipe`, `solve_open_pipe` of
-  `validation/open_pipe.py`) is solved in the Stokes limit only. There is no
-  thick or layered wall.
+  c 0.02. Both models are LMhdX's, so this is a consistency check, not a
+  validation.
+- TM-228's uncorrected 0.0178 is the inertialess thin-layer asymptote for Ha
+  going to infinity, which no 3-D solve reaches. LMhdX's fits for Ha going to
+  infinity give 0.0183–0.0211, 3–18 % above it. That is a fit band, not a 1 %
+  check.
+- LMhdX solves a circular pipe with an open axis (`fringe_pipe`,
+  `solve_open_pipe` of `validation/open_pipe.py`) in the Stokes limit only.
+  There is no thick or layered wall.
 
 The [FreeMHD guide](../validation/freemhd.md) describes the external comparison.

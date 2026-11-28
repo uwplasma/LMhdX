@@ -1,8 +1,9 @@
 # Run a first duct case
 
 This page solves a square duct in a magnetic field, the Hartmann duct, and
-checks the answer against its exact profile. You do it twice: from Python and
-from a TOML file on the command line. Both take a second or two on a laptop.
+checks the answer against its exact profile. You do it twice, once from Python
+and once from a TOML file on the command line. Both take a second or two on a
+laptop.
 
 ```{image} ../_static/validation_ladder.webp
 :alt: Hartmann-layer collapse, flow-rate error against a spectral reference, and mesh convergence
@@ -24,12 +25,12 @@ lmhdx.configure(dtype="float64")
 problem = lmhdx.duct(20.0, 24)
 ```
 
-Properties are nondimensional: density, viscosity and conductivity are one
+Properties are nondimensional. Density, viscosity and conductivity are one
 unless you change them. [Problems, solvers and one verb](problem.md) lists every
 field of a `Problem` and the other presets.
 
-**2. Solve it.** One call runs the solve; the `Output` writes a restart record,
-a ParaView file, a summary and a log into `artifacts/hartmann`:
+**2. Solve it.** One call runs the solve, and the `Output` writes a restart
+record, a ParaView file, a summary and a log into `artifacts/hartmann`:
 
 ```python
 solution = lmhdx.solve(problem, output=lmhdx.Output("artifacts/hartmann"))
@@ -40,8 +41,8 @@ print(f"residual {float(solution.residual):.2e}, flow rate {float(solution.flow_
 residual 1.25e-08, flow rate 0.156144
 ```
 
-The residual is that of the certified solve; the iterative residual varies a
-little with the platform.
+The printed residual comes from the certified solve. The iterative residual
+varies a little with the platform.
 
 **3. Check it.** Compare the velocity along $y$ at the midplane $z=0$ with the
 exact Hartmann profile $1-(\cosh(Ha\,y)-1)/(\cosh Ha-1)$:
@@ -95,10 +96,10 @@ Run it:
 lmhdx examples/hartmann_case.toml
 ```
 
-The command writes the files of its `[output]` table (a restart record, a
-ParaView file, the summary and the log), prints the summary and exits nonzero
-if the solve did not converge. In the summary, `"flow_rate"` reads 0.154647
-and `"residual"` is about 5e-09.
+The command writes the files of its `[output]` table, which are a restart
+record, a ParaView file, the summary and the log. It then prints the summary and
+exits nonzero if the solve did not converge. In the summary, `"flow_rate"` reads
+0.154647 and `"residual"` is about 5e-09.
 
 Override any key of the file with `table.key=value`, for example a stronger
 field:

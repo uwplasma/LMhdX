@@ -1,13 +1,13 @@
 # Problems, solvers and one verb
 
-Every run in LMhdX is three objects and one function. A `Problem` says what is
-solved, a `Solver` says how, and `solve(problem, solver=None, output=None,
+Every run in LMhdX is three objects and one function. A `Problem` says what to
+solve, a `Solver` says how, and `solve(problem, solver=None, output=None,
 start=None)` runs it. An `Output` writes records, ParaView files, a summary and
 a log. This page lists what each object holds, so you can build a case no
 preset covers.
 
-A preset such as `duct` only fills a `Problem`. Here one is solved at a set
-flow rate, and the pressure gradient is differentiated with respect to the
+A preset such as `duct` only fills a `Problem`. The example below solves one at
+a set flow rate and differentiates the pressure gradient with respect to the
 field strength:
 
 ```python
@@ -58,9 +58,9 @@ The presets return the grids and fields of the older constructors:
 `channel` is a plane channel at constant bulk velocity and half-width one. It
 takes the bulk Reynolds number `re`, or `R = U0 delta / nu` of Boeck, Krasnov
 and Zienicke, a wall-normal or spanwise `field`, and the domain of their Table 1
-or of Krasnov, Zikanov and Boeck 2011. A Hartmann channel (field normal to the
-walls) needs a zero net spanwise current, which no kernel imposes yet: it is
-built and refused at `solve`.
+or of Krasnov, Zikanov and Boeck 2011. A Hartmann channel, with the field normal
+to the walls, needs a zero net spanwise current, which no kernel imposes yet.
+LMhdX builds such a channel, and `solve` refuses it.
 
 ## Solvers
 
@@ -76,11 +76,12 @@ built and refused at `solve`.
 | `rk3` | the unsteady step of the three-stage IMEX scheme (a mechanical run; a heated run takes `euler`) |
 | `implicit` | named for plan step H2.2; raises until it exists |
 
-`auto` picks `euler` if `steps` is given and `stokes` or `newton` otherwise. On
+`auto` picks `euler` if you give `steps` and `stokes` or `newton` otherwise. On
 an open duct with advection it picks `march` while the Courant step of the inlet
-flow is at most four damping steps, and `newton` when the field binds harder
-(`lmhdx.axial.method_for`; `Solver().resolve(problem)` tells which). Both reach
-the same root and derivative to 1e-6.
+flow is at most four damping steps, and `newton` when the Courant step is
+longer. `lmhdx.axial.method_for` makes this choice, and
+`Solver().resolve(problem)` tells you which method it picked. Both methods
+reach the same root and derivative to 1e-6.
 
 ## Derivatives
 
@@ -93,9 +94,9 @@ You can differentiate with respect to:
   thickness, and those of its layers (see
   [differentiation](../tutorials/differentiation.md)).
 
-They run through the implicit derivative of the steady solve, at about the cost
-of one more solve. The grid, boundary kinds, which walls conduct, material
-properties and scheme names are static: a traced one raises instead of
-returning a zero. The factorizations are built on the host from the primal
-values, so differentiate with `jax.grad` outside `jit`, or close over the
-problem and `jit` the objective.
+LMhdX computes them through the implicit derivative of the steady solve, at
+about the cost of one more solve. The grid, boundary kinds, which walls
+conduct, material properties and scheme names are static, and a traced one
+raises an error instead of returning a zero. LMhdX builds the factorizations on
+the host from the primal values, so differentiate with `jax.grad` outside
+`jit`, or close over the problem and `jit` the objective.

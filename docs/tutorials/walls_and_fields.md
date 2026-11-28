@@ -1,11 +1,11 @@
 # Walls and imposed fields
 
 Real duct walls are layers of metal and insulator, and real magnets give fields
-that vary across the duct. This page builds both: a wall stack whose currents
-are solved cell by cell, and an imposed field from a formula or a measured
-table. The steps follow `python examples/li_aln_wall_stack_example.py`, which
-compares a liquid-lithium duct with an aluminium-nitride (AlN) coated wall
-against a bare steel one.
+that vary across the duct. This page builds both. It sets up a wall stack whose
+currents the solver resolves cell by cell, and an imposed field from a formula
+or a measured table. The steps follow
+`python examples/li_aln_wall_stack_example.py`, which compares a liquid-lithium
+duct with an aluminium-nitride (AlN) coated wall against a bare steel one.
 
 ## Wall layers
 
@@ -42,7 +42,8 @@ ha = hartmann_number(
 ```
 
 State each wall layer's thickness, resolution and conductivity with
-`WallLayer`, from the fluid outwards: a thin AlN coating on 316L steel.
+`WallLayer`, from the fluid outwards. This stack is a thin AlN coating on 316L
+steel.
 
 ```python
 layers = (
@@ -53,8 +54,8 @@ c = tangential_stack_conductance_ratio(layers, fluid_conductivity=CONDUCTIVITY, 
 leakage = normal_stack_leakage_ratio(layers, fluid_conductivity=CONDUCTIVITY, length_scale=HALF_WIDTH)
 ```
 
-Give the solver the stack as wall cells: one conductivity ratio (wall over
-fluid) and one width per cell.
+Give the solver the stack as wall cells, with one conductivity ratio (wall
+over fluid) and one width per cell.
 
 ```python
 ratios = tuple(layer.conductivity / CONDUCTIVITY for layer in layers for _ in range(layer.cells))
@@ -89,8 +90,8 @@ problem = ChannelProblem(
 )
 ```
 
-Solve, then scale the drive to a mean velocity of 1 cm/s; the flow is linear
-in it.
+Solve, then scale the drive to a mean velocity of 1 cm/s. The flow is linear
+in the drive.
 
 ```python
 solution = solve_steady_state(problem)
@@ -111,8 +112,8 @@ pinholes in the coating, checks the residual and the charge balance, and plots
 the comparison. Its results assess electrical MHD performance only, not
 Li/AlN material compatibility.
 
-How the stack is solved:
-- The staggered core resolves the currents in the wall cells, with the
+How the solver handles the stack:
+- The staggered core resolves the currents in the wall cells and takes the
   interface conductance from the adjacent material values and face distances.
 - A corner cell takes the nearer wall's layer.
 - `wall_conductance_ratio`, `tangential_stack_conductance_ratio` and
@@ -134,26 +135,28 @@ steel = SolidWall(
 
 `ChannelProblem(solid_walls=...)` takes a `core3d.SolidWall` or `None` at each
 end of the wall-bounded axes 1 and 2. A solid wall is a thickness in equal
-cells, with its `electrical_conductivity` (absolute, not over the fluid's)
-beside the `thermal_conductivity` and `heat_capacity` a thermal problem uses.
+cells. It has its `electrical_conductivity` beside the `thermal_conductivity`
+and `heat_capacity` a thermal problem uses. The electrical conductivity is
+absolute, not a ratio over the fluid's.
 
-How they are solved:
+How LMhdX solves them:
 - The walls become cells of an extended grid (`core3d.conjugate_grid`). The
   velocity and pressure stay on the fluid's grid.
-- The charge balance is solved through fluid and walls by
-  `solvax.pcg_linear_solve`, preconditioned by the fast-diagonal Poisson
-  inverse (`poisson.variable_helmholtz` with no shift).
-- The balance is singular, its null mode the constants. A rank-one term on
-  them makes it positive definite, and the volume mean is removed after.
-- The currents into the walls heat the fluid's half cells and are left out of
-  the Lorentz force, as a resolved wall's are. The walls' own Joule heat is not
-  deposited.
+- `solvax.pcg_linear_solve` solves the charge balance through fluid and
+  walls. The fast-diagonal Poisson inverse (`poisson.variable_helmholtz` with
+  no shift) preconditions it.
+- The balance is singular, and its null mode is the constants. A rank-one term
+  on them makes it positive definite, and the solve removes the volume mean
+  afterwards.
+- The currents into the walls heat the fluid's half cells. The Lorentz force
+  leaves them out, as it does a resolved wall's. The thermal step does not
+  deposit the walls' own Joule heat.
 - A corner cell, in walls of both axes, takes the nearer wall's material, and
   the first axis's where the two are equally near. Walls of equal cells on both
   axes tie exactly there; earlier versions split such ties unevenly
   ([what changed](https://github.com/uwplasma/LMhdX/blob/b97ad3a8525a20502279961d5b4201d158d971e9/docs/tutorials/walls_and_fields.md#solid-walls)).
 
-What is checked (`tests/test_core3d.py`):
+What `tests/test_core3d.py` checks:
 - On a section one cell long, solid walls of the same cells give the resolved
   path's potential, currents and powers to 1e-9, corners included, and its
   developed flow rate to 1e-8.
@@ -166,27 +169,27 @@ What is checked (`tests/test_core3d.py`):
   pinned conductivity converges to 1e-13 in 10 PCG iterations.
 
 **The nullspace contract.** The charge balance through insulated walls is
-singular, its null mode the constants. The solve adds `a V (V . x)/sum V` and
-removes the volume mean after, so the gauge removes the constants and nothing
-else.
-- A right-hand side whose volume mean exceeds rounding, a net source, is
-  refused: the solve returns NaN rather than absorbing it.
-- `VariableHelmholtz.defect` reports the mean that would have been removed.
+singular, and its null mode is the constants. The solve adds
+`a V (V . x)/sum V` and removes the volume mean afterwards, so the gauge
+removes the constants and nothing else.
+- The solve refuses a right-hand side whose volume mean exceeds rounding, which
+  is a net source. It returns NaN rather than absorbing it.
+- `VariableHelmholtz.defect` reports the mean the solve would have removed.
   For the charge balance it is rounding, 1e-15 of the right-hand side.
 
-**Charge, current and work** (`tests/test_core3d.py`):
+**Charge, current and work.** `tests/test_core3d.py` checks these:
 - The currents' divergence vanishes in every cell, fluid and wall, to the
   solve's 1e-13.
 - The walls carry current, and the insulated outer faces carry none.
 - The Lorentz work is minus the fluid's and the walls' Joule dissipation, to
   1e-9.
 
-**The walls' Joule heat is omitted, and measured.** The thermal step deposits
+**The walls' Joule heat is left out, and measured.** The thermal step deposits
 the fluid's Joule heat only. On plan step 5.4's developed section (Case 1, 48
-fluid cells, the pinned steel), the walls dissipate 84 % of the Joule heat:
-0.029 W/m, against the 2000 W/m that heats the duct, or 1.5e-5. Deposited, it
-would raise the bulk temperature by under 1e-3 K of its 10 K, far inside
-Figure 6's digitizing uncertainty of 0.064 K.
+fluid cells, the pinned steel), the walls dissipate 84 % of the Joule heat.
+That is 0.029 W/m, against the 2000 W/m that heats the duct, a ratio of 1.5e-5.
+If the step deposited it, it would raise the bulk temperature by under 1e-3 K
+of its 10 K, far inside Figure 6's digitizing uncertainty of 0.064 K.
 
 **A published number.** Hunt's duct at Ha 300 has conducting Hartmann walls of
 $c = 0.1$ and insulating side walls.
@@ -195,18 +198,18 @@ $c = 0.1$ and insulating side walls.
   the spectral solve.
 - On 48 cells the thin-wall model is 0.66 % below it, converging from 1.6 % on
   32 cells.
-- Solid walls of that $c$, $a/10$, $a/20$ and $a/40$ thick, sit 2.3 %, 0.64 % and
-  0.16 % below the thin-wall model, approaching it at second order in the
+- Solid walls of that $c$, $a/10$, $a/20$ and $a/40$ thick, give a result 2.3 %, 0.64 %
+  and 0.16 % below the thin-wall model, approaching it at second order in the
   thickness. That is the finite thickness's order-1 % effect.
 
 This runs with the scheduled tests.
 
 **Derivatives.** A solid wall's electrical conductivity is a leaf of the charge
-solve, put into the cells in the trace. Its derivative is tested to the
-derivative standard, with no recompilation for a new value. The steady solve
-builds its walls as constants: a gradient of the pressure drop in a wall's
-conductivity is planned with the wall-conductance work. A traced conductivity
-given to `SolidWall` is refused.
+solve, and the trace puts it into the cells. The tests check its derivative to
+the derivative standard, and a new value needs no recompilation. The steady
+solve builds its walls as constants. A gradient of the pressure drop in a
+wall's conductivity is planned with the wall-conductance work. `SolidWall`
+refuses a traced conductivity.
 
 ## Add an analytic field
 
@@ -255,7 +258,7 @@ flow rate 0.400012
 ## Use measured field data
 
 Store Cartesian coordinates (metres) and components (tesla) in an NPZ table.
-This synthetic affine example is divergence-free; replace its arrays with your
+This synthetic affine example is divergence-free. Replace its arrays with your
 measured or exported data. Include the conducting walls in the table's domain.
 
 ```python
@@ -276,14 +279,14 @@ problem = lmhdx.duct(20, 24).replace(B=Table(str(path)))
 ```
 
 The rules for a table:
-- A file with an `x` axis and components shaped `(nx, ny, nz)` is refused by
-  the cross-section sampler. A field that varies along the duct is an
+- The cross-section sampler refuses a file with an `x` axis and components
+  shaped `(nx, ny, nz)`. A field that varies along the duct is an
   `lmhdx.core3d.ImposedField` on the 3-D grid (see the
   [fringe tutorial](fringing.md)).
 - Axes must be finite, strictly increasing vectors with at least two points,
   and the component shapes must match.
-- Out-of-domain or nonfinite queries raise `ValueError`; they are never
-  silently extrapolated.
+- Out-of-domain or nonfinite queries raise `ValueError`. The sampler never
+  extrapolates them.
 - Loading a file is host-side setup, not a differentiable live coil or geometry
   interface. Keep the source's provenance, the interpolation error and
   independent Maxwell checks with each run.

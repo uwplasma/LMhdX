@@ -1,9 +1,9 @@
 # Equations and assumptions
 
-LMhdX solves incompressible liquid-metal flow in an imposed magnetic field. The field is fixed: the currents the
-flow induces are too weak to change it (the magnetic Reynolds number is small), so only the electric potential and the
-current are solved for, together with the velocity and pressure. This page states the equations and which reduced
-form each solver uses; [numerics](numerics.md) says how they are discretized.
+LMhdX solves incompressible liquid-metal flow in an imposed magnetic field. The field is fixed. The currents the flow
+induces are too weak to change it, because the magnetic Reynolds number is small. LMhdX therefore solves only for the
+electric potential and the current, together with the velocity and pressure. This page states the equations and which
+reduced form each solver uses. [Numerics](numerics.md) describes how LMhdX discretizes them.
 
 The full isothermal formulation uses density $\rho$, kinematic viscosity $\nu$, electrical conductivity $\sigma$,
 pressure $p$ and a body drive $\mathbf f$:
@@ -35,7 +35,7 @@ Each solver uses a form of these equations:
 
 | Solver | What it keeps |
 |:--|:--|
-| Fully developed duct or pipe | $\mathbf u=(u(y,z),0,0)$: the coupled cross-section equations |
+| Fully developed duct or pipe | the coupled cross-section equations for $\mathbf u=(u(y,z),0,0)$ |
 | Three-dimensional staggered core (`lmhdx.core3d`, `lmhdx.steady`) | all three components of velocity, current and Lorentz force |
 | Duct with an inlet and an outlet (`lmhdx.axial`) | the inertialess limit, without $\mathbf u\cdot\nabla\mathbf u$; or inertia, by Newton's method or by marching to the steady state |
 | Pipe with an inlet and an outlet | the inertialess limit only |
@@ -47,9 +47,9 @@ Their verification and open gates are in the [validation matrix](../validation/i
 No-slip walls set velocity to zero. Insulating walls impose zero normal
 current. Conducting solid regions solve potential with their own conductivity
 and enforce potential and normal-current continuity at interfaces. Pipe meshes
-use cylindrical/mapped electric metrics; rectangular electric operators use
+use cylindrical or mapped electric metrics. Rectangular electric operators use
 nonuniform Cartesian finite-volume metrics. Generic momentum uses a distinct
-discretization: electric closure alone does not establish nonuniform or
+discretization, so electric closure alone does not establish nonuniform or
 cylindrical vector-momentum consistency.
 
 Common dimensionless groups are
@@ -61,8 +61,8 @@ N=\frac{Ha^2}{Re},\qquad
 Rm=\mu_0\sigma UL.
 $$
 
-The inductionless model requires $Rm\ll1$. Geometry length, field orientation,
-wall conductance ratio, and velocity scale must accompany any reported value.
+The inductionless model requires $Rm\ll1$. Report the geometry length, field
+orientation, wall conductance ratio, and velocity scale with any value.
 
 ## Quasi-two-dimensional model
 
@@ -94,17 +94,17 @@ absolute integrated defect divided by the larger of initial energy and
 absolute integrated power, with the smallest positive normal working-dtype
 value as a zero-energy floor. An absolute machine-epsilon floor would hide
 relative defects in small-amplitude flows.
-Power is integrated by the trapezoidal rule at every time step, independently
-of saved-frame stride. This diagnostic has second-order quadrature error even
-when the IFRK4 field evolution is more accurate. Refine the time step when it
-fails; `completed` still does not certify mesh independence or steady flow.
-The Q2D model is a
-depth-averaged strong-field approximation; it does not resolve Hartmann-layer
-profiles or replace the 3-D formulation where the field varies along the flow.
+The solver integrates the power by the trapezoidal rule at every time step,
+whatever the saved-frame stride. This diagnostic has second-order quadrature
+error even when the IFRK4 field evolution is more accurate. Refine the time step
+when it fails. Even `completed` does not certify mesh independence or steady
+flow. The Q2D model is a depth-averaged strong-field approximation. It does not
+resolve Hartmann-layer profiles or replace the 3-D formulation where the field
+varies along the flow.
 
 ## Conventions of the channel and duct literature
 
-Two papers agree on a flow only after their scales are converted. `channel(...)` takes the bulk
+Two papers agree on a flow only after you convert their scales. `channel(...)` takes the bulk
 Reynolds number, or $R$ of Boeck, Krasnov and Zienicke, and works in half-width, bulk velocity,
 unit density and conductivity, so $\nu = 1/Re_{av}$ and $B = Ha\sqrt{\nu}$.
 

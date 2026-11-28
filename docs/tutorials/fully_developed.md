@@ -1,17 +1,17 @@
 # Fully developed duct flows
 
 Far from its ends, the flow in a long straight duct stops changing along the
-duct: it is fully developed. LMhdX then solves a single cross-section for the
-axial velocity $u(y,z)$ and the electric potential $\phi(y,z)$. This page solves
-a duct with insulating walls and one with conducting walls, sets a flow rate and
-measures the pumping power, and fits a measured velocity profile.
+duct. Such a flow is fully developed. LMhdX then solves a single cross-section
+for the axial velocity $u(y,z)$ and the electric potential $\phi(y,z)$. This
+page solves a duct with insulating walls and one with conducting walls, sets a
+flow rate and measures the pumping power, and fits a measured velocity profile.
 
 ```{image} ../_static/hunt_side_layers.webp
 :alt: Hunt's duct from Ha 20 to 1000, the jets along the side walls growing with the field
 :align: center
 ```
 
-The figure shows Hunt's duct: as the field grows, jets form along the side walls.
+The figure shows Hunt's duct. As the field grows, jets form along the side walls.
 
 ## Solve a duct
 
@@ -23,9 +23,9 @@ import lmhdx
 lmhdx.configure(dtype="float64")
 ```
 
-`lmhdx.duct(ha, cells)` is a square duct of unit half-width and unit properties,
-with the field along $y$, driven by a unit pressure gradient. Build one with
-insulating walls and one whose Hartmann walls conduct.
+`lmhdx.duct(ha, cells)` builds a square duct of unit half-width and unit
+properties, with the field along $y$ and a unit pressure gradient as the drive.
+Build one with insulating walls and one whose Hartmann walls conduct.
 
 ```python
 insulating = lmhdx.duct(20, 32)
@@ -48,7 +48,7 @@ Q 0.0915996, residual 1.3e-08
 The conducting walls carry part of the current, so the same drive pushes less
 flow.
 
-What the two ducts are:
+These are the two ducts, and a third kind of wall:
 - **Shercliff's duct.** The field is normal to the insulating $y$ walls, which
   carry the Hartmann layers; the side layers form on the $z$ walls.
 - **Hunt's duct.** `wall_conductance` makes the Hartmann walls thin conducting
@@ -56,23 +56,25 @@ What the two ducts are:
 - **Resolved walls.** `walls=dict(y=Wall(layers=...))` resolves a wall in cells
   instead (see [walls and fields](walls_and_fields.md)).
 
-The mesh and the solve:
-- The cross-section has `cells` cells along each axis, clustered to the
-  Hartmann layer `a/Ha` on the walls normal to the field and to the side layer
-  `a/sqrt(Ha)` on the others.
+The mesh and the solve work as follows:
+- The cross-section has `cells` cells along each axis. LMhdX clusters them to
+  the Hartmann layer `a/Ha` on the walls normal to the field and to the side
+  layer `a/sqrt(Ha)` on the others.
 - On 32-64 cells the flow rate is within 1 % of the spectral reference from Ha
   20 to 1000.
 - `result.residual` is the residual norm of the certified solve (relative
   tolerance 1e-9, `Solver(tol=)`). A solve that fails raises.
 - A sweep of Hartmann numbers, fields or wall conductances on one mesh size
-  compiles twice. From the third case on, the mesh, field and factorizations
-  are built on the host and passed to the program the second case compiled.
+  compiles twice. From the third case on, LMhdX builds the mesh, field and
+  factorizations on the host and passes them to the program the second case
+  compiled.
 - `Problem.replace` changes a visible part of a frozen problem, for example
   `insulating.replace(forcing=(2.0, 0.0, 0.0))`.
 
-An unsteady run is `lmhdx.solve(problem, lmhdx.Solver(dt=..., steps=...))`: a
-transient duct settles on the steady state, and `lmhdx.Output` writes its
-records (see [restart and output](../how_to/restart_and_output.md)).
+For an unsteady run, call
+`lmhdx.solve(problem, lmhdx.Solver(dt=..., steps=...))`. A transient duct
+settles on the steady state, and `lmhdx.Output` writes its records (see
+[restart and output](../how_to/restart_and_output.md)).
 
 ## Prescribe throughput and measure pumping work
 
@@ -120,10 +122,10 @@ effects. It is not a complete blanket pumping budget.
 `lmhdx.steady.channel_cross_section_weights(problem)` returns the transverse
 `(y, z)` integration weight of every cell, $\Delta y_j \Delta z_k$, for a
 `lmhdx.core3d.ChannelProblem`. Axis 0 is the flow axis of every channel this
-package builds (`lmhdx.core3d.duct_problem` and every other constructor put the
-periodic axis there), so a cell's weight does not depend on the axial spacing.
-A channel carries no fluid mask: every transverse cell counts, so the weights
-sum to the full cross-section area.
+package builds, since `lmhdx.core3d.duct_problem` and every other constructor
+put the periodic axis there. A cell's weight therefore does not depend on the
+axial spacing. A channel has no fluid mask. Every transverse cell counts, so
+the weights sum to the full cross-section area.
 
 ```python
 import numpy as np
@@ -139,8 +141,8 @@ assert np.isclose(weights.sum(), extent[1] * extent[2])
 ```
 
 This is a mesh-geometry query, not a solve, so it has no convergence or
-precision envelope to fail. The new core's throughput and pumping-power
-metrics are measured against it.
+precision envelope to fail. The new core measures its throughput and
+pumping-power metrics against it.
 
 ## Throughput and pumping power on the staggered core
 
@@ -164,22 +166,23 @@ assert np.isclose(float(achieved), target, rtol=1e-8)
 ```
 
 How they work:
-- `channel_flow_rate(problem, velocity)` takes one axial-velocity slice (every
-  axial station carries the same value by periodicity) and integrates it
-  against `channel_cross_section_weights`:
-  $Q = \sum_{j,k} \Delta y_j \Delta z_k\, u_{jk}$.
+- `channel_flow_rate(problem, velocity)` takes one axial-velocity slice and
+  integrates it against `channel_cross_section_weights`:
+  $Q = \sum_{j,k} \Delta y_j \Delta z_k\, u_{jk}$. By periodicity, every
+  axial station carries the same value.
 - `channel_flow_response` solves once at unit axial drive to measure
   $G = Q(f{=}1)$ and returns it as a `DuctResponse`.
 - `channel_drive_for_flow_rate` and `channel_fixed_flow_hydraulic_power`
   eliminate the drive the same way, $f = Q_\mathrm{target} / G$, with hydraulic
   power $f L Q_\mathrm{target}$.
 
-Envelope: the Stokes limit only. $Q = Gf$ holds because the steady residual is
-affine in the drive when `problem.advection == "off"`. `channel_flow_response`
-raises `ValueError` for any other value, since the residual then carries
-$-\nabla\cdot(\mathbf u\mathbf u)$ and a single unit-drive solve stops
-determining the whole response. Like `hydraulic_power`, these are isothermal
-segment quantities, excluding entry/exit losses, manifolds and thermal effects.
+These functions work in the Stokes limit only. $Q = Gf$ holds because the steady
+residual is affine in the drive when `problem.advection == "off"`.
+`channel_flow_response` raises `ValueError` for any other value, since the
+residual then carries $-\nabla\cdot(\mathbf u\mathbf u)$ and a single unit-drive
+solve stops determining the whole response. Like `hydraulic_power`, these are
+isothermal segment quantities, excluding entry and exit losses, manifolds and
+thermal effects.
 
 ## Fit a measured velocity profile
 
@@ -189,7 +192,8 @@ magnetic-field multiplier from a velocity profile. Replace the synthetic
 units and geometry consistent. How it works:
 - The loss is normalized and area-weighted.
 - It uses the production field solve and its implicit SOLVAX derivatives, not
-  an iteration-history tape. The objective and gradient are compiled together.
+  an iteration-history tape. `jax.jit` compiles the objective and gradient
+  together.
 - SciPy's bounded optimizer,
   [L-BFGS-B](https://docs.scipy.org/doc/scipy/reference/optimize.minimize-lbfgsb.html),
   controls the two design variables on the host.
@@ -242,8 +246,8 @@ relative squared profile error: 2.791727607454122e-21
 ```
 
 This synthetic example checks parameter recovery, not experimental validity.
-- The sign of the field is not identifiable from velocity alone: magnetic drag
-  depends on its squared magnitude, hence the positive field bound.
+- Velocity alone cannot identify the sign of the field, because magnetic drag
+  depends on its squared magnitude. That is why the field bound is positive.
 - Weak fields, a bulk-flow observation only, or uncertain viscosity or geometry
   can also make the drive and the field hard to tell apart.
 - Keep the full profile, and inspect the residual and the parameter
@@ -252,7 +256,7 @@ This synthetic example checks parameter recovery, not experimental validity.
 - Validate inferred parameters with the reporting solver and a held-out finer
   mesh before using them in a design study.
 
-For a prescribed flow rate rather than a profile, don't optimize the drive:
+For a prescribed flow rate rather than a profile, don't optimize the drive.
 `lmhdx.steady.channel_drive_for_flow_rate(problem, target_flow_rate)` eliminates
 it exactly using the linear response. Neither fit is a thermal blanket design;
 wall and geometry optimization and heat-transfer validation have separate gates.

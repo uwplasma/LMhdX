@@ -2,11 +2,11 @@
 
 JAX can give the derivative of an LMhdX result, such as a flow rate or a
 pressure drop, with respect to an input such as the field strength or a wall's
-conductance. A linear solve is differentiated by solving one more system, not
-by recording its iterations. This page shows it for a periodic duct, a duct
+conductance. LMhdX differentiates a linear solve by solving one more system,
+not by recording its iterations. This page shows it for a periodic duct, a duct
 leaving a magnet and a Q2D flow.
 
-What can be differentiated:
+What JAX can differentiate:
 - **Traced and static.** LMhdX separates traced numerical fields from
   host-side validation, status, I/O and plotting. An accepted field core
   carries continuous physical parameters through the production
@@ -15,9 +15,9 @@ What can be differentiated:
 - **The accepted field cores** are the steady duct, the finite 3-D
   rectangular, layered-duct and straight-pipe models, and the transient Q2D
   model.
-- **Implicit differentiation.** SOLVAX-backed linear systems use it: a VJP
-  solves one transposed system instead of recording PCG or GMRES iterations. A
-  coupled steady-flow interface is documented as end-to-end differentiable only
+- **Implicit differentiation.** SOLVAX-backed linear systems use it. A VJP
+  solves one transposed system instead of recording PCG or GMRES iterations.
+  The docs call a coupled steady-flow interface end-to-end differentiable only
   when its production field equations use that contract and pass independent
   gradient, residual, runtime and memory gates.
 
@@ -25,21 +25,22 @@ How failures show:
 - For `lmhdx.steady.solve_steady_state`, a rejected primal residual or
   linearized solve raises eagerly.
 - During autodiff tracing, failure instead produces nonfinite fields or
-  derivatives, without host callbacks. Reject any nonfinite objective **or**
+  derivatives, without host callbacks. Reject any nonfinite objective or
   gradient before accepting an optimizer step. Compiled failures remain
   nonfinite.
 - Drive and field scale are continuous inputs. Close over static problem
   geometry, materials and solver controls to compile objectives with
   `jax.jit(jax.value_and_grad(objective))`.
-- Host factorizations are assembled once per trace, not differentiated;
-  changing the static problem requires a new trace.
+- LMhdX assembles host factorizations once per trace and does not
+  differentiate them. Changing the static problem requires a new trace.
 
 ## Through a Problem
 
-A [`Problem`](../getting_started/problem.md) is a pytree: `jax.grad(f)(problem)`
-returns a `Problem` of derivatives with respect to its forcing, flow rate, field
-amplitude, heat source and initial temperature, and the numbers of its
-conducting walls. Properties and the grid are static, so a traced one raises.
+A [`Problem`](../getting_started/problem.md) is a pytree, so
+`jax.grad(f)(problem)` returns a `Problem` of derivatives with respect to its
+forcing, flow rate, field amplitude, heat source and initial temperature, and
+the numbers of its conducting walls. Properties and the grid are static, so a
+traced one raises.
 
 ### Wall conductance and thickness
 
@@ -69,26 +70,27 @@ print(float(slope))
 
 What is differentiable:
 - A conducting `Wall` has leaves `conductance`, or `conductivity` and
-  `thickness` (a thin wall of `c = sigma_w t_w / sigma`, lengths in the grid's
-  unit). For resolved walls, each `WallLayer`'s `conductivity` and `thickness`
-  are leaves. The cell counts and which walls conduct are static.
-- The Stokes solve of a periodic duct differentiates all of them, by
-  `jax.grad`, `jax.jvp` and `jax.vmap` (a design sweep over `c` is one
-  program), and a new value does not recompile.
+  `thickness`. The second pair gives a thin wall of `c = sigma_w t_w / sigma`,
+  with lengths in the grid's unit. For resolved walls, each `WallLayer`'s
+  `conductivity` and `thickness` are leaves. The cell counts and which walls
+  conduct are static.
+- The Stokes solve of a periodic duct differentiates all of them by
+  `jax.grad`, `jax.jvp` and `jax.vmap`, and a new value does not recompile.
+  Under `jax.vmap`, a design sweep over `c` is one program.
 - Under `jax.jit` the primal of `c` is unknown, so declare the wall
   `Wall(c, conducting=True)`.
 - A conductance of exactly `0.0` is the insulating wall, which is structure and
-  has no derivative: a traced zero raises `ValueError` (use a small positive
-  value).
-- The potential of the wall is a fast-diagonal solve whose eigenbasis is built
-  in the trace. The mirror sheets of a symmetric duct are an exactly degenerate
-  pair, so the solve is differentiated implicitly, `dx = A^-1 (db - dA x)`, not
+  has no derivative. A traced zero raises `ValueError`, so use a small positive
+  value instead.
+- The potential of the wall is a fast-diagonal solve whose eigenbasis the trace
+  builds. The mirror sheets of a symmetric duct are an exactly degenerate pair,
+  so LMhdX differentiates the solve implicitly, `dx = A^-1 (db - dA x)`, not
   through `eigh`.
 
 What is not:
 - Open ducts (`Open` axis), unsteady and thermal runs, and runs with advection
-  take the primal wall numbers. Their derivative in a wall number is NaN (never
-  a silent zero), and the other leaves are unaffected.
+  take the primal wall numbers. Their derivative in a wall number is NaN, never
+  a silent zero, and the other leaves are unaffected.
 - Two resolved walls on two axes with traced parameters raise
   `NotImplementedError`.
 
@@ -115,18 +117,18 @@ print(float(gradient.forcing[0]), float(gradient.B.strength))
 0.030703102025215097 -0.0010540563599652397
 ```
 
-The steady state is one conjugate-gradient solve differentiated by one more
-(`lmhdx.steady.solve_steady_state`), so iteration histories are absent from the
-reverse tape.
+`lmhdx.steady.solve_steady_state` finds the steady state with one
+conjugate-gradient solve and differentiates it with one more, so the reverse
+tape holds no iteration histories.
 - The continuous inputs are the pressure forcing, the field amplitude and the
   wall numbers.
 - Rectangular insulating and thin-wall Hunt ducts pass central-difference
   gates.
-- A prescribed flow rate is met by scaling the unit-drive solution, which keeps
-  it differentiable.
+- The solve meets a prescribed flow rate by scaling the unit-drive solution,
+  which keeps it differentiable.
 - The kernel-level call `solve_steady_state(problem, forcing=, field_scale=)`
-  takes the drive and a scalar multiplier of the field as arguments, so it can
-  be wrapped in `jax.jit`.
+  takes the drive and a scalar multiplier of the field as arguments, so
+  `jax.jit` can wrap it.
 
 ## Three-dimensional fringe response
 
@@ -155,12 +157,12 @@ print(float(value), float(derivative))
 ```
 
 - `python examples/fringe_duct_example.py` checks this derivative against
-  central differences (relative difference about 1e-9 on that mesh; the test
-  gate is 1e-6).
-- With advection on, the steady root, by Newton or by the march, is
-  differentiated the same way, by the implicit function theorem on one step.
-- The wall conductance, geometry and flow rate are fixed when the problem is
-  built; see the [fringe tutorial](fringing.md).
+  central differences. The relative difference is about 1e-9 on that mesh, and
+  the test gate is 1e-6.
+- With advection on, LMhdX differentiates the steady root the same way, by the
+  implicit function theorem on one step, whether Newton or the march found it.
+- `fringe_duct` fixes the wall conductance, geometry and flow rate when it
+  builds the problem. See the [fringe tutorial](fringing.md).
 
 ## Transient Q2D response
 
@@ -197,16 +199,16 @@ The working precision:
   through [JAX type promotion](https://docs.jax.dev/en/latest/101/type_promotion.html),
   with at least float32 precision.
 - Explicit float64 parameters promote a float32 initial state when x64 is
-  enabled; weak Python scalar defaults preserve a float32 state.
+  enabled. Weak Python scalar defaults preserve a float32 state.
 - Both `Q2DProblem` and `evolve_q2d` use this policy and reject complex
-  physical inputs. No manual cast of the initial state is required.
+  physical inputs. The initial state needs no manual cast.
 
 This derivative is exact for the finite dealiased IFRK4 evolution. Its default
 SOLVAX checkpoint schedule stores `O(sqrt(steps))` trajectory states instead of
 the full tape. The analytical decay, JVP/VJP identity, and compiled reverse
 memory tests in `tests/test_physics.py` are the executable acceptance contract.
 
-The explicit field-level optimization surfaces are `lmhdx.solve`,
+The explicit field-level optimization entry points are `lmhdx.solve`,
 `lmhdx.axial.solve_open_duct` and `evolve_q2d`. Other result objects are host
-orchestration unless their API reference explicitly identifies a traced field
-core and derivative evidence.
+orchestration unless their API reference names a traced field core and
+derivative evidence.

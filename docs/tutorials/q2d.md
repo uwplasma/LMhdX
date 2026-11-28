@@ -74,9 +74,9 @@ The inputs:
   Taylor--Green decay case of one mode.
 - Lengths, viscosity, friction, time and forcing must use one consistent unit
   system.
-- The zero Fourier mode is projected out, so the periodic problem has zero net
-  circulation.
-- Sparse field frames are opt-in through `history_stride`; the default keeps
+- The solver projects out the zero Fourier mode, so the periodic problem has
+  zero net circulation.
+- `history_stride` turns on sparse field frames. By default the solver keeps
   only the final state.
 
 ## Differentiate the finite evolution
@@ -112,12 +112,12 @@ print(f"{float(value):.5f} {float(gradient):.5f}")
 - This is the exact reverse derivative of the dealiased IFRK4 discretization.
 - SOLVAX divides a long recurrence into segments and rematerializes one
   segment during the backward pass. With $N$ steps and checkpoint width $C$,
-  retained trajectory state is $O(N/C+C)$; the default $C=\lceil\sqrt N\rceil$
+  retained trajectory state is $O(N/C+C)$. The default $C=\lceil\sqrt N\rceil$
   is `O(sqrt(N))`. Set `adjoint_checkpoint_size` only after measuring a
-  different memory/recomputation trade-off.
+  different trade-off between memory and recomputation.
 - `steps`, grid shape and checkpoint width are discrete static controls. Use
-  `Q2DProblem` plus `solve` when validated host diagnostics or saved frames are
-  needed; use `evolve_q2d` inside `grad`, `jvp`, `vjp` or `vmap`.
+  `Q2DProblem` with `solve` when you need validated host diagnostics or saved
+  frames. Use `evolve_q2d` inside `grad`, `jvp`, `vjp` or `vmap`.
 
 ## CPU and GPU execution
 
@@ -128,21 +128,21 @@ fields, a $256\times256$ grid, 80 steps, one compilation run and five warm
 repetitions. The final CPU and NVIDIA RTX A4000 vorticity fields agreed to
 relative $L_2=2.38\times10^{-6}$ and $L_\infty=3.67\times10^{-6}$.
 
-**Timings.** That run's speed-up is not quoted.
+**Timings.** This page does not quote that run's speed-up.
 - A float32 GPU timing counts only when its report records a true-float32
   `jax_default_matmul_precision`, because JAX's default lets Ampere cards use
   TensorFloat-32 (ADR 0005, D15).
-- The GPU reports in `benchmarks/results` record `highest` (plan step 2.1):
-  $256^2$ takes 0.863 ms per step in true float32 on one A4000.
+- The GPU reports in `benchmarks/results` record `highest` (plan step 2.1). On
+  one A4000, $256^2$ takes 0.863 ms per step in true float32.
 - The CPU reports there are from the uncontrolled 2026-09-07 run and record no
-  precision, so no Q2D CPU/GPU ratio is quoted.
-- LMhdX sets the precision to `'highest'` when a `Q2DProblem` is built, unless
+  precision, so this page quotes no Q2D CPU/GPU ratio.
+- LMhdX sets the precision to `'highest'` when you build a `Q2DProblem`, unless
   you have already chosen one.
 
 These figures characterize this workload and hardware, not every grid or
 device. Timings exclude compilation, use identical precision and inputs, and
 synchronize the final field before stopping the clock. Q2D accepts sharded
-initial fields; correctness does not imply a parallel speedup.
+initial fields, but correctness does not imply a parallel speedup.
 
 **Check placement locally.** Run from the repository root in a fresh process:
 
@@ -156,31 +156,31 @@ Repeat with two devices and `--x64 0` for float32.
 - Each run compares a single-device trajectory against the same input
   distributed over all devices, checks solver completion and field agreement,
   and records synchronized times.
-- The grid's first dimension must divide evenly by the device count.
+- The grid's first dimension must be a multiple of the device count.
 - [JAX CPU devices](https://docs.jax.dev/en/latest/config_options.html) share
-  host cores and memory: the reported efficiency is a **logical-device
-  placement comparison**, not fixed-core strong scaling or a prediction for a
+  host cores and memory. The reported efficiency is therefore a logical-device
+  placement comparison, not fixed-core strong scaling or a prediction for a
   GPU interconnect.
-- Record thread settings and host load; one CPU device can already use
+- Record thread settings and host load. One CPU device can already use
   multiple threads. Distributed FFT communication still needs profiling.
 
-Setup and diagnostic reductions are compiled; the validated reporting wrapper
-still performs host-side checks and optional frame collection. For
+JAX compiles the setup and diagnostic reductions. The validated reporting
+wrapper still performs host-side checks and optional frame collection. For
 optimization, use `evolve_q2d` inside a compiled objective to avoid reporting
 work on every evaluation, then qualify the resulting trajectory with
 `solve_q2d`. The pure kernel uses SOLVAX's checkpointed recurrence for bounded
-reverse-state storage; it does not replace the solver's Courant and energy
+reverse-state storage. It does not replace the solver's Courant and energy
 acceptance gates.
 
 ## Interpretation
 
 The solver reports kinetic energy, enstrophy, the integrated energy-budget
 residual, the final field's spectral velocity divergence and the maximum
-Courant number. Energy-budget and Courant reductions run every step; the
-divergence is evaluated once on the reported final velocity, avoiding repeated
-transforms.
+Courant number. Energy-budget and Courant reductions run every step. The
+solver evaluates the divergence once, on the reported final velocity, to avoid
+repeated transforms.
 
-When a result is accepted:
+When the solver accepts a result:
 - `status == "completed"` and `converged == True` only when fields and
   diagnostics are finite, the maximum Courant number is at most one, and the
   normalized energy-budget residual is at most `energy_budget_tolerance`
@@ -188,18 +188,18 @@ When a result is accepted:
   convergence.
 - Set the tolerance on `Q2DProblem` or `make_q2d_case`.
 - An energy-budget failure returns the computed fields with status
-  `energy_budget_exceeded`; a Courant failure takes precedence. Non-finite
+  `energy_budget_exceeded`. A Courant failure takes precedence. Non-finite
   fields or diagnostics raise an error.
 - The budget uses a time-step-by-time-step trapezoidal integral, whose error is
   second order even for an accurately evolved mode. Refine the time step and
   check the [energy normalization](../physics/equations.md) before relaxing the
   tolerance.
-- `evolve_q2d` is a traced field kernel and performs no host acceptance check;
-  qualify optimization trajectories with `solve_q2d`.
+- `evolve_q2d` is a traced field kernel and performs no host acceptance check.
+  Qualify optimization trajectories with `solve_q2d`.
 
 SM82 is a basic quasi-two-dimensional closure, not a general replacement for
 the three-dimensional inductionless solver. Use the 3-D model for developing
 Hartmann layers, spatially varying transverse structure, fringing fields, and
-geometries whose depth-average assumptions are not satisfied. Higher-order
-inertial corrections described by Pothérat, Sommeria, and Moreau are not part of
-this Q2D path.
+geometries that break the depth-average assumptions. This Q2D path leaves out
+the higher-order inertial corrections that Pothérat, Sommeria, and Moreau
+describe.
