@@ -147,6 +147,7 @@ def convection_growth_rate(
     chandrasekhar: float = 0.0,
     field: str | None = None,
     reynolds: float = 0.0,
+    friction: float = 0.0,
     count: int = 64,
 ) -> complex:
     """The eigenvalue of largest real part of a roll ``exp(i k x + sigma t)`` between rigid isothermal plates.
@@ -162,7 +163,9 @@ def convection_growth_rate(
     with ``M = s k^2`` for a field along ``x``, ``-s D^2`` along ``z`` and zero along ``y``, ``s = sigma B^2 / rho
     = Q nu / d^2``: a roll's electromotive force along the field is a gradient, and drives no current. ``Ra_c``
     1707.76 at ``k d`` 3.117, Chandrasekhar's 3757 at ``Q`` 100 and Orr and Sommerfeld's ``Re_c`` 5772.22 at
-    ``k`` 1.02056 (``Ra`` 0) are its checks.
+    ``k`` 1.02056 (``Ra`` 0) are its checks. ``friction`` adds ``- f (D^2 - k^2) w``, a uniform linear friction on
+    the roll's velocity in the same units: Sommeria and Moreau's (1982) braking of a roll along the field by the
+    Hartmann walls it ends on, :func:`validation.shercliff.vortex_decay_rate` less the viscous ``Pr k^2``.
     """
     from scipy.linalg import eig
 
@@ -173,7 +176,9 @@ def convection_growth_rate(
     buoyancy, damping = rayleigh * nu / height**3, chandrasekhar * nu / height**2
     flow = np.diag(reynolds * nu * (1.0 - nodes**2))
     curvature = np.diag(np.full(count + 1, -2.0 * reynolds * nu))
-    momentum = nu * helmholtz @ helmholtz - 1j * wavenumber * (flow @ helmholtz - curvature)
+    momentum = (
+        nu * helmholtz @ helmholtz - friction * helmholtz - 1j * wavenumber * (flow @ helmholtz - curvature)
+    )
     momentum = (
         momentum
         + {None: 0.0, "y": 0.0, "x": damping * wavenumber**2 * identity, "z": -damping * second}[field]

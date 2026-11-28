@@ -250,6 +250,14 @@ first order for the damped, and stable, by the forward-Euler bound on a damping,
 $\Delta t\,\lambda<2$, which it checks. The same roll then grows at the field-free rate to $10^{-6}$
 (`tests/test_core3d.py`). Steady solves and the open-duct march keep the shift.
 
+In an open flow the shift slows a roll's drift with its growth, but not equally. Carried by a plane
+Poiseuille flow in a field along its axis at $\Delta t\,\lambda=0.34$, against the explicit run on the
+same 18 cells a wavelength, a roll grows 26 % and drifts 14 % slower under the shift
+(`docs/_static/data/thermal_buoyancy.json`), so its growth per unit length falls about 13 %.
+
+Its time accuracy with the field on, every term's spatial order and the braking by Hartmann walls are verified
+on the [code verification](../validation/verification.md) page.
+
 Two constraints are imposed before any divergence is taken: a wall-normal
 velocity is zero on its wall faces, and on a periodic axis the duplicated first
 and last face are made equal. Without either the discrete divergence carries a

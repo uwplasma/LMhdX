@@ -805,6 +805,183 @@ def thermal_buoyancy() -> None:
     _write_record(path, record)
 
 
+VERIFICATION_STYLE = {
+    "font.family": "STIXGeneral", "mathtext.fontset": "stix", "font.size": 9, "axes.labelsize": 9,
+    "axes.titlesize": 9, "legend.fontsize": 8, "xtick.labelsize": 8, "ytick.labelsize": 8, "axes.linewidth": 0.6,
+    "xtick.major.width": 0.6, "ytick.major.width": 0.6, "xtick.direction": "in", "ytick.direction": "in",
+    "pdf.fonttype": 42,
+}  # fmt: skip
+RESOLUTION_RAMP = ("#9ec5f4", "#6da7ec", "#3987e5", "#1c5cab", "#0d366b")  # coarse to fine
+VERIFICATION_ORDER = (
+    "advection", "viscosity", "pressure", "lorentz_balanced", "lorentz_damped", "lorentz_conducting", "hartmann",
+    "buoyancy", "conduction", "heat_advection", "joule", "conjugate", "coupled",
+)  # fmt: skip
+DAMPINGS = ("implicit", "explicit")
+
+
+def verification() -> None:
+    """Code verification in docs/validation/verification.md (validation/verification.py): each term's manufactured
+    solution refined in space, the coupled one in time, the exact decay between Hartmann walls, and rolls between them.
+    Writes the record and the overview; each term's figure goes to docs/_static/generated/. About 40 minutes on a laptop
+    GPU."""
+    from validation.verification import (
+        TERMS,
+        hartmann_roll_growth,
+        manufactured_run,
+        vortex_decay,
+        vortex_eigenmode,
+    )
+
+    lmhdx.enable_x64()
+    terms, lines = [], {}
+    for name in VERIFICATION_ORDER:
+        spec = TERMS.get(name)
+        sizes = (8, 16, 32, 64) if spec is None else spec.get("sizes", (8, 16, 32, 64))
+        field = "u_z" if spec is None else spec["show"][0]
+        if spec is None:
+            runs = [vortex_eigenmode(n) for n in sizes]
+        else:
+            wall = (
+                (lambda n: (max(1, n // 8), 2.0)) if name == "coupled" else (lambda n: None)
+            )  # coupled: steel
+            runs = [manufactured_run(name, n, wall=wall(n)) for n in sizes]
+        maxima, rms = [r["max"][field] for r in runs], [r["rms"][field] for r in runs]
+        terms.append({
+            "term": name, "field": field, "cells": sizes, "dt_at_coarsest": runs[0]["dt"], "time": runs[0]["time"],
+            "max": maxima, "rms": rms, "order_max": float(np.log2(maxima[-2] / maxima[-1])),
+            "order_rms": float(np.log2(rms[-2] / rms[-1])),
+        })  # fmt: skip
+        lines[name] = [r["line"] for r in runs]
+        print(f"{name}: L_inf {np.array(maxima)}, L_2 {np.array(rms)}, orders {terms[-1]['order_rms']:.2f}")
+    steps, timed = (0.02, 0.01, 0.005, 0.0025), []
+    for case in (dict(rate=0.0), dict(rate=10.0), dict(rate=10.0, damping="implicit"), dict(rate=30.0),
+                 dict(rate=30.0, damping="implicit"), dict(rate=10.0, wall=(4, 2.0))):  # fmt: skip
+        runs = [manufactured_run("coupled", 32, dt=dt, final=1.0, **case)["fields"] for dt in steps]
+        differences = [
+            [float(np.max(np.abs(a - b))) for a, b in zip(c, f, strict=True)] for c, f in zip(runs, runs[1:])
+        ]
+        timed.append({**case, "cells": 32, "dt": steps, "differences": differences})
+        print(f"time {case}: differences in u_x {np.array(differences)[:, 0]}")
+    cases = [dict(cells_along=n) for n in (8, 16, 18, 32, 64)]
+    cases += [
+        dict(cells_along=32, step_rate=r, damping=d) for r in (0.34, 0.17, 0.085, 0.0425) for d in DAMPINGS
+    ]
+    cases += [dict(cells_along=18, step_rate=r, damping=d) for r in (0.34, 0.27) for d in DAMPINGS]
+    cases += [dict(cells_along=n, steel=False) for n in (8, 16, 32)]
+    cases += [dict(cells_along=32, steel=False, step_rate=0.34, damping=d) for d in DAMPINGS]
+    cases += [dict(cells_along=n, wavenumber=np.pi) for n in (32, 64)]
+    decay = []
+    for case in cases:
+        rate, exact = vortex_decay(**case)
+        decay.append({**case, "rate": rate, "exact": exact})
+        print(f"vortex {case}: {rate:.5f} against {exact:.5f} ({100 * (rate / exact - 1):+.2f} %)")
+    rolls = []
+    for case in (dict(), dict(damping="implicit"), dict(step_rate=0.085),
+                 dict(cells_along=64, cells=96, cells_in_layer=12, layer=64)):  # fmt: skip
+        rate, model = hartmann_roll_growth(**case)
+        rolls.append({**case, "rate": rate, "model": model})
+        print(f"rolls {case}: {rate:.4f} against {model:.4f} ({100 * (rate / model - 1):+.2f} %)")
+    _write_record(STATIC / "data" / "verification.json", {
+        "command": "python scripts/make_showcase_figures.py --only verification",
+        "terms": terms, "coupled_in_time": timed, "vortex_decay": decay, "hartmann_rolls": rolls,
+    })  # fmt: skip
+    generated = STATIC / "generated"
+    generated.mkdir(exist_ok=True)
+    with plt.rc_context(VERIFICATION_STYLE):
+        for entry in terms:
+            _verification_figure(entry, lines[entry["term"]], generated / f"verification_{entry['term']}.pdf")
+        _verification_overview(
+            terms, generated / "verification_orders.pdf", STATIC / "verification_orders.webp"
+        )
+
+
+def _verification_label(name: str) -> tuple[str, str, int]:
+    """A term's title, its mathematical form and the axis of its line."""
+    from validation.verification import TERMS
+
+    if name == "hartmann":
+        return "Braking by Hartmann walls", r"u_z=U(y)\cos(kx)\,e^{st}", 0
+    return TERMS[name]["title"], TERMS[name]["math"], TERMS[name]["show"][1]
+
+
+def _verification_figure(entry: dict, lines: list, path: Path) -> None:
+    """(a) the error along the term's line scaled by (N/N_0)^2, one curve a mesh; (b) L_inf and L_2 against h."""
+    title, math, along = _verification_label(entry["term"])
+    field, sizes = entry["field"], np.array(entry["cells"])
+    spacing = sizes[0] / sizes
+    fig, (left, right) = plt.subplots(
+        1, 2, figsize=(7.0, 2.6), gridspec_kw={"width_ratios": [1.35, 1.0]}, layout="constrained"
+    )
+    fig.get_layout_engine().set(w_pad=0.04, wspace=0.06)
+    fig.suptitle(f"{title}: ${math}$" if math else title, x=0.01, ha="left", fontsize=10)
+    for n, (coordinate, error), color in zip(sizes, lines, RESOLUTION_RAMP[-len(sizes) :], strict=True):
+        left.plot(coordinate, np.asarray(error) * (n / sizes[0]) ** 2, color=color, lw=1.2, label=rf"$N={n}$")
+    left.axhline(0.0, color="#7f7f7f", lw=0.5)
+    left.set_xlabel(f"${'xyz'[along]}$")
+    left.set_ylabel(rf"$({field}-{field}^{{h}})\,(N/{sizes[0]})^{{2}}$")
+    left.legend(frameon=False, loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=len(sizes), handlelength=1.4,
+                columnspacing=1.0, borderaxespad=0.2)  # fmt: skip
+    left.set_title("(a)", loc="left", fontsize=9, pad=27.5)  # level with (b), above its cells axis
+    maxima, rms = np.array(entry["max"]), np.array(entry["rms"])
+    for p, dash, label in ((1, (5, 2.5), r"$\mathcal{O}(h)$"), (2, (1.5, 1.5), r"$\mathcal{O}(h^{2})$")):
+        reference = 0.35 * rms[-1] * (spacing / spacing[-1]) ** p  # from below the finest point, opening away
+        right.plot(spacing, reference, color="#7f7f7f", lw=0.8, dashes=dash)
+        right.annotate(label, (spacing[0], reference[0]), xytext=(2, -14), textcoords="offset points", ha="right",
+                       va="top", color="#4d4d4d", fontsize=8)  # fmt: skip
+    right.plot(spacing, maxima, "-D", color="black", lw=1.0, ms=5, mfc="black", label=r"$L_{\infty}$")
+    right.plot(spacing, rms, "-D", color="black", lw=1.0, ms=5, mfc="white", label=r"$L_{2}$ (RMS)")
+    right.set_xscale("log", base=2)
+    right.set_yscale("log")
+    right.set_xticks(spacing, [r"$1$" if s == 1 else rf"$1/{round(1 / s)}$" for s in spacing])
+    right.minorticks_off()
+    right.set_xlabel(rf"Relative grid spacing $h/h_{{{sizes[0]}}}$")
+    right.set_ylabel(rf"Error in ${field}$")
+    top = right.secondary_xaxis(
+        "top", functions=(lambda h, n0=sizes[0]: n0 / h, lambda n, n0=sizes[0]: n0 / n)
+    )
+    top.set_xticks(sizes, [rf"${n}$" for n in sizes])
+    top.minorticks_off()
+    top.tick_params(direction="in", labelsize=8)
+    top.set_xlabel(r"Cells $N$", labelpad=3)
+    right.grid(True, which="major", color="#e6e6e6", lw=0.5)
+    right.set_axisbelow(True)
+    right.legend(frameon=False, loc="upper left", handlelength=1.8, labelspacing=0.3)
+    right.set_title("(b)", loc="left", fontsize=9)
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def _verification_overview(terms: list, pdf: Path, webp: Path) -> None:
+    """The observed order of every term, L_inf filled and L_2 open, on the finest pair of meshes."""
+    entries = terms[::-1]
+    fig, axis = plt.subplots(figsize=(7.0, 3.9))
+    y = np.arange(len(entries))
+    for x, dash in ((1.0, (5, 2.5)), (2.0, (1.5, 1.5))):
+        axis.axvline(x, color="#7f7f7f", lw=0.8, dashes=dash)
+    axis.text(1.0, len(entries) - 0.45, " First order", color="#4d4d4d", fontsize=8, va="bottom")
+    axis.text(2.0, len(entries) - 0.45, " Second order", color="#4d4d4d", fontsize=8, va="bottom")
+    axis.plot(
+        [e["order_max"] for e in entries], y, "D", color="black", ms=5.5, ls="none", label=r"$L_{\infty}$"
+    )
+    axis.plot([e["order_rms"] for e in entries], y, "D", color="black", ms=8, mfc="none", mew=1.0, ls="none",
+              label=r"$L_{2}$ (RMS)")  # fmt: skip
+    labels = []
+    for entry in entries:
+        title, math, _ = _verification_label(entry["term"])
+        labels.append(f"{title}: ${math}$" if math else title)
+    axis.set_yticks(y, labels, fontsize=8)
+    axis.set_xlim(0.9, 2.3)
+    axis.set_ylim(-0.6, len(entries) + 0.15)
+    axis.set_xlabel("Observed order of accuracy (finest pair of meshes)")
+    axis.grid(True, axis="x", color="#e6e6e6", lw=0.5)
+    axis.set_axisbelow(True)
+    axis.tick_params(axis="y", length=0)
+    axis.legend(frameon=False, loc="lower left", bbox_to_anchor=(0.0, 1.0), ncol=2, markerscale=0.8)
+    fig.tight_layout()
+    fig.savefig(pdf)
+    _save_webp(fig, webp, dpi=150, palette=True)
+
+
 def thermal_convection(rayleigh: float = 1.0e4, prandtl: float = 0.1, chandrasekhar: float = 1000.0) -> None:
     """A liquid-metal layer heated from below: cells without a field, rolls along a horizontal one.
 
@@ -1367,6 +1544,7 @@ THERMAL = {
     "entrance": thermal_entrance,
     "onset": thermal_onset,
     "buoyancy": thermal_buoyancy,
+    "verification": verification,
     "convection": thermal_convection,
     "heated-duct": thermal_heated_duct,
 }
