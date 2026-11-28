@@ -212,7 +212,7 @@ class ThermalProblem:
     ``walls`` adds solid walls that conduct and store heat (ADR 0009 D36): per axis ``(lower, upper)``, each
     ``None`` or a :class:`lmhdx.core3d.SolidWall`, on axes 1 and 2. The temperature then lives on
     :attr:`thermal_grid`, ``thermal_conditions`` hold on its outer surface, and the flow stays on its own grid
-    (``docs/physics/thermal.md``, "Conduction through solid walls"). A flow with ``solid_walls`` gives them as
+    (``docs/physics/thermal/walls.md``, "Conduction through solid walls"). A flow with ``solid_walls`` gives them as
     the thermal walls, which ``walls`` may repeat but not change: the charge and the heat share one grid.
     """
 
@@ -1296,7 +1296,7 @@ def developed_heat(
 
 
 class DevelopedWallTemperature(NamedTuple):
-    """The duct of :func:`developed_wall_temperature`; ``docs/physics/thermal.md`` gives the equations.
+    """The duct of :func:`developed_wall_temperature`; ``docs/physics/thermal/developed.md`` gives the equations.
 
     ``temperature`` is ``(T - T_w)/(T_b - T_w)``, ``eigenvalue`` is ``Lambda`` in ``-L(theta) = Lambda f theta`` with
     ``f = u/u_mean``, and ``nusselt`` averages the wall flux over the held walls. ``eigen_residual`` and

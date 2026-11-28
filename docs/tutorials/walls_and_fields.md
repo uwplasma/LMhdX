@@ -9,6 +9,8 @@ duct with an aluminium-nitride (AlN) coated wall against a bare steel one.
 
 ## Wall layers
 
+{ref}`Thin and resolved walls <numerics-walls>` and {ref}`the electric scheme <numerics-electric>` explain how the walls enter the solve.
+
 Import what the solve needs and work in double precision.
 
 ```python
@@ -121,6 +123,8 @@ How the solver handles the stack:
 
 ## Solid walls
 
+{ref}`Thin and resolved walls <numerics-walls>` covers the electric side, and {ref}`conduction through solid walls <thermal-walls>` the thermal side.
+
 Wall layers solve the potential separably, so they reach two axes only when the
 third has one cell. Solid walls lift that limit (ADR 0009, D36).
 
@@ -212,6 +216,8 @@ wall's conductivity is planned with the wall-conductance work. `SolidWall`
 refuses a traced conductivity.
 
 ## Add an analytic field
+
+{ref}`The imposed field <numerics-imposed-field>` explains how a varying field enters the Lorentz force and the potential.
 
 `make_divergence_free_cross_section_field` gives a compact analytic field on
 the cross-section. Sample it with `sample_cross_section_field` before a

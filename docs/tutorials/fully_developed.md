@@ -15,6 +15,8 @@ The figure shows Hunt's duct. As the field grows, jets form along the side walls
 
 ## Solve a duct
 
+The mesh resolves the Hartmann and side layers as {ref}`wall-resolving coordinates <numerics-wall-coordinates>` describes, and the solve finds the steady state as {ref}`a differentiable root <numerics-steady-root>`.
+
 Import LMhdX and work in double precision.
 
 ```python
@@ -77,6 +79,8 @@ settles on the steady state, and `lmhdx.Output` writes its records (see
 [restart and output](../how_to/restart_and_output.md)).
 
 ## Prescribe throughput and measure pumping work
+
+This uses {ref}`drive elimination <numerics-drive-elimination>`: one solve at unit drive gives the drive for any flow rate.
 
 `python examples/hunt_example.py` runs Hunt's duct at a requested flow rate;
 edit `TARGET_FLOW_RATE` and `DUCT_LENGTH` near its top. These are its steps.
@@ -185,6 +189,8 @@ isothermal segment quantities, excluding entry and exit losses, manifolds and
 thermal effects.
 
 ## Fit a measured velocity profile
+
+The gradients come from {ref}`implicit derivatives <numerics-derivatives>` of the steady solve.
 
 This bounded inverse problem infers a positive pressure-gradient drive and a
 magnetic-field multiplier from a velocity profile. Replace the synthetic

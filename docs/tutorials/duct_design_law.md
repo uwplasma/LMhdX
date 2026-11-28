@@ -33,6 +33,8 @@ spectral reference.
 
 ## Run it
 
+The pressure drop at each shape comes from {ref}`drive elimination <numerics-drive-elimination>`.
+
 ```bash
 python examples/duct_design_law.py  # about 20 s on a CPU
 ```
@@ -196,6 +198,8 @@ $$
   in-sample.
 
 ## A thermal design
+
+The developed peaks come from {ref}`fully developed heat transfer <thermal-developed-h1h2>`, and the open-duct check from {ref}`heat on an open duct <thermal-open-duct>`.
 
 The design above takes its area from a smallest allowed velocity, which stands
 in for heat removal. A thermal design asks directly which shape and flow

@@ -2,8 +2,10 @@
 
 LMhdX solves incompressible liquid-metal flow in an imposed magnetic field. The field is fixed. The currents the flow
 induces are too weak to change it, because the magnetic Reynolds number is small. LMhdX therefore solves only for the
-electric potential and the current, together with the velocity and pressure. This page states the equations and which
+electric potential and the current, together with the velocity and pressure. This page states the equations and the
 reduced form each solver uses. [Numerics](numerics.md) describes how LMhdX discretizes them.
+
+## The core equations
 
 The full isothermal formulation uses density $\rho$, kinematic viscosity $\nu$, electrical conductivity $\sigma$,
 pressure $p$ and a body drive $\mathbf f$:
@@ -31,25 +33,10 @@ $$
 =\nabla\cdot\left[\sigma(\mathbf u\times\mathbf B)\right].
 $$
 
-Each solver uses a form of these equations:
-
-| Solver | What it keeps |
-|:--|:--|
-| Fully developed duct or pipe | the coupled cross-section equations for $\mathbf u=(u(y,z),0,0)$ |
-| Three-dimensional staggered core (`lmhdx.core3d`, `lmhdx.steady`) | all three components of velocity, current and Lorentz force |
-| Duct with an inlet and an outlet (`lmhdx.axial`) | the inertialess limit, without $\mathbf u\cdot\nabla\mathbf u$; or inertia, by Newton's method or by marching to the steady state |
-| Pipe with an inlet and an outlet | the inertialess limit only |
-| Core-flow model (`lmhdx.coreflow`) | the core of a thin-walled duct in a field $B_y(x)$, as three two-dimensional equations (ANL/FPP/TM-228, eqs. 4a–4c) |
-| Heat transport (`lmhdx.thermal`) | temperature carried and conducted, with Boussinesq buoyancy and Joule heat ([heat transport](thermal.md)) |
-
-Their verification and open gates are in the [validation matrix](../validation/index.md).
-
-No-slip walls set velocity to zero. Insulating walls impose zero normal
-current. Conducting solid regions solve potential with their own conductivity
-and enforce potential and normal-current continuity at interfaces. Pipe meshes
-use cylindrical or mapped electric metrics. Rectangular electric operators use
-nonuniform Cartesian finite-volume metrics. Generic momentum uses a distinct
-discretization, so electric closure alone does not establish nonuniform or
+No-slip walls set velocity to zero. Insulating walls impose zero normal current. Conducting solid regions solve
+potential with their own conductivity and enforce potential and normal-current continuity at interfaces. Pipe meshes
+use cylindrical or mapped electric metrics. Rectangular electric operators use nonuniform Cartesian finite-volume
+metrics. Generic momentum uses a distinct discretization, so electric closure alone does not establish nonuniform or
 cylindrical vector-momentum consistency.
 
 Common dimensionless groups are
@@ -61,46 +48,24 @@ N=\frac{Ha^2}{Re},\qquad
 Rm=\mu_0\sigma UL.
 $$
 
-The inductionless model requires $Rm\ll1$. Report the geometry length, field
-orientation, wall conductance ratio, and velocity scale with any value.
+The inductionless model requires $Rm\ll1$. Report the geometry length, field orientation, wall conductance ratio, and
+velocity scale with any value.
 
-## Quasi-two-dimensional model
+## The model hierarchy
 
-For a strong uniform field normal to a shallow flow plane, the basic
-Sommeria--Moreau closure evolves depth-averaged vorticity:
+Each solver keeps part of these equations:
 
-$$
-\frac{\partial\omega}{\partial t}
-+\mathbf u_\perp\cdot\nabla_\perp\omega
-=\nu\nabla_\perp^2\omega-\frac{\omega}{\tau_H}+f_\omega,
-$$
+| Solver | What it keeps | Page |
+|:--|:--|:--|
+| Three-dimensional staggered core (`lmhdx.core3d`, `lmhdx.steady`) | all three components of velocity, current and Lorentz force | [time stepping](numerics/time.md), [steady solves](numerics/steady.md) |
+| Fully developed duct or pipe | the coupled cross-section equations for $\mathbf u=(u(y,z),0,0)$ | [steady solves](numerics/steady.md) |
+| Duct with an inlet and an outlet (`lmhdx.axial`) | the inertialess limit, without $\mathbf u\cdot\nabla\mathbf u$; or inertia, by Newton's method or by marching to the steady state | [open ducts](open_ducts.md) |
+| Pipe with an inlet and an outlet | the inertialess limit only | {ref}`open pipe <open-ducts-pipe>` |
+| Core-flow model (`lmhdx.coreflow`) | the core of a thin-walled duct in a field $B_y(x)$, as three two-dimensional equations (ANL/FPP/TM-228, eqs. 4a–4c) | [core-flow model](coreflow.md) |
+| Quasi-two-dimensional model (`lmhdx.q2d`) | depth-averaged vorticity in a strong uniform field normal to a periodic plane | [Q2D](q2d.md) |
+| Heat transport (`lmhdx.thermal`) | temperature carried and conducted, with Boussinesq buoyancy and Joule heat | [heat transport](thermal.md) |
 
-$$
-\mathbf u_\perp=(\partial_y\psi,-\partial_x\psi),\qquad
--\nabla_\perp^2\psi=\omega.
-$$
-
-Here $1/\tau_H$ is the linear Hartmann-layer friction and $f_\omega$ is a
-vorticity source. On a periodic domain the velocity is divergence free by
-construction. With kinetic energy $E=\langle|\mathbf u_\perp|^2\rangle/2$ and
-enstrophy $Z=\langle\omega^2\rangle/2$,
-
-$$
-\frac{dE}{dt}=-2\nu Z-\frac{2E}{\tau_H}+\langle\psi f_\omega\rangle.
-$$
-
-`solve_q2d` enforces `energy_budget_tolerance` (default $10^{-3}$) on the
-absolute integrated defect divided by the larger of initial energy and
-absolute integrated power, with the smallest positive normal working-dtype
-value as a zero-energy floor. An absolute machine-epsilon floor would hide
-relative defects in small-amplitude flows.
-The solver integrates the power by the trapezoidal rule at every time step,
-whatever the saved-frame stride. This diagnostic has second-order quadrature
-error even when the IFRK4 field evolution is more accurate. Refine the time step
-when it fails. Even `completed` does not certify mesh independence or steady
-flow. The Q2D model is a depth-averaged strong-field approximation. It does not
-resolve Hartmann-layer profiles or replace the 3-D formulation where the field
-varies along the flow.
+Their verification and open gates are in the [validation matrix](../validation/index.md).
 
 ## Conventions of the channel and duct literature
 

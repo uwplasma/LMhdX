@@ -15,6 +15,8 @@ normal current.
 
 ## Set up and solve
 
+{ref}`The inlet and outlet conditions <open-ducts-bcs>` and {ref}`the lift <open-ducts-lift>` describe the scheme behind this solve.
+
 `fringe_duct` builds the fringe in a square duct. Over `|x| <= x0` the field
 falls as `B_y = Ha (1 - sin(pi x / 2 x0)) / 2`. It is uniform upstream and zero
 downstream, and the duct has buffers of uniform field before and after the fringe.
@@ -91,6 +93,8 @@ the buffers.
 
 ## Add inertia
 
+{ref}`March or Newton <open-ducts-march-newton>` explains the two inertial solvers and how `method="auto"` chooses.
+
 With advection on (`advection="central"`), `solve_open_duct` adds inertia. It
 starts from the Stokes-limit solution and reaches the steady state by
 Newton-Krylov or by marching the Runge-Kutta stepper. `method="auto"` picks
@@ -115,7 +119,7 @@ status 0, inertial share 1.131 % at Re 5
 
 Check `status`. Only `CONVERGED` (0) is a steady flow, and the other two
 statuses are `stagnated` and `unsteady`. The section "Inertia on the open axis"
-in [Numerics](../physics/numerics.md) gives the measured inertial share.
+in {ref}`the open-duct evidence <validation-open-ducts-inertia>` gives the measured inertial share.
 
 ## What is and is not established
 

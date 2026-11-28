@@ -9,6 +9,8 @@ evolution.
 
 ## Set up and run
 
+{ref}`The Q2D model <q2d-model>` gives the equations, and {ref}`the spectral IFRK4 step <q2d-ifrk4>` the time step.
+
 Import JAX's NumPy and LMhdX.
 
 ```python
@@ -192,7 +194,7 @@ When the solver accepts a result:
   fields or diagnostics raise an error.
 - The budget uses a time-step-by-time-step trapezoidal integral, whose error is
   second order even for an accurately evolved mode. Refine the time step and
-  check the [energy normalization](../physics/equations.md) before relaxing the
+  check the {ref}`energy normalization <q2d-energy-budget>` before relaxing the
   tolerance.
 - `evolve_q2d` is a traced field kernel and performs no host acceptance check.
   Qualify optimization trajectories with `solve_q2d`.

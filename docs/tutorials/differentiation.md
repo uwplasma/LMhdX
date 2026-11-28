@@ -36,6 +36,8 @@ How failures show:
 
 ## Through a Problem
 
+{ref}`Derivatives <numerics-derivatives>` explains the policy behind every gradient on this page.
+
 A [`Problem`](../getting_started/problem.md) is a pytree, so
 `jax.grad(f)(problem)` returns a `Problem` of derivatives with respect to its
 forcing, flow rate, field amplitude, heat source and initial temperature, and
@@ -132,6 +134,8 @@ tape holds no iteration histories.
 
 ## Three-dimensional fringe response
 
+The open duct and its solve are described in {ref}`ducts with an inlet and an outlet <open-ducts>`.
+
 `lmhdx.axial.solve_open_duct` solves a duct with an inlet and an outlet through
 a field that varies along it, and is differentiable in the field scale. The
 derivative is one more conjugate-gradient solve with the same operator, as for
@@ -165,6 +169,8 @@ print(float(value), float(derivative))
   builds the problem. See the [fringe tutorial](fringing.md).
 
 ## Transient Q2D response
+
+The step is {ref}`the spectral IFRK4 step <q2d-ifrk4>`.
 
 For a time-dependent field objective, call the field-only core.
 

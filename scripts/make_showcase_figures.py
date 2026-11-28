@@ -754,7 +754,7 @@ def _cavity(cells: int, rayleigh: float, pr: float = 0.71, stretch: float = 0.0)
 
 
 def thermal_buoyancy() -> None:
-    """Buoyancy's checks in docs/physics/thermal.md: roll growth rates against the Chebyshev eigenproblem, and de Vahl
+    """Buoyancy's checks in docs/physics/thermal/convection.md: roll growth rates against the Chebyshev eigenproblem, and de Vahl
     Davis's cavity (1983, his Table). Data only, about 25 minutes on a laptop GPU."""
     lmhdx.enable_x64()
     rolls = []

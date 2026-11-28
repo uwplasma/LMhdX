@@ -89,6 +89,7 @@ tutorials/q2d
 :caption: How-to guides
 
 how_to/restart_and_output
+how_to/heated_duct
 ```
 
 ```{toctree}
@@ -96,8 +97,11 @@ how_to/restart_and_output
 :caption: Physics and numerics
 
 physics/equations
-physics/numerics
+physics/open_ducts
+physics/q2d
+physics/coreflow
 physics/thermal
+physics/numerics
 ```
 
 ```{toctree}
@@ -110,6 +114,8 @@ validation/q2d
 validation/freemhd
 validation/mistrangelo
 validation/mhd_nusselt
+validation/developed_heat
+validation/open_ducts
 validation/channel_turbulence
 ```
 

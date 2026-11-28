@@ -1528,13 +1528,13 @@ def test_the_inverse_iteration_stops_on_its_tolerance_and_reports_where_it_stopp
 
 
 def test_the_t_condition_snippet_runs_as_written():
-    """The usage snippet of docs/physics/thermal.md's uniform-wall-temperature paragraph."""
+    """The usage snippet of docs/physics/thermal/developed.md's uniform-wall-temperature paragraph."""
     from pathlib import Path
 
-    page = (Path(__file__).resolve().parents[1] / "docs/physics/thermal.md").read_text()
+    page = (Path(__file__).resolve().parents[1] / "docs/physics/thermal/developed.md").read_text()
     code = page.split("**The uniform wall temperature.**", 1)[1].split("```python\n", 1)[1].split("```", 1)[0]
     namespace = {"__name__": "t_condition"}
-    exec(compile(code, "thermal.md", "exec"), namespace)
+    exec(compile(code, "developed.md", "exec"), namespace)
     assert float(namespace["result"].nusselt) == pytest.approx(2.98226, rel=1e-5)
 
 
@@ -1660,13 +1660,13 @@ def test_the_developed_pipe_meets_its_exact_nusselt_numbers():
 
 
 def test_the_pipe_snippet_runs_as_written():
-    """The pipe recipe of docs/physics/thermal.md, run from the page."""
+    """The pipe recipe of docs/physics/thermal/developed.md, run from the page."""
     from pathlib import Path
 
-    page = (Path(__file__).resolve().parents[1] / "docs/physics/thermal.md").read_text()
+    page = (Path(__file__).resolve().parents[1] / "docs/physics/thermal/developed.md").read_text()
     code = page.split("**The pipe.**", 1)[1].split("```python\n", 1)[1].split("```", 1)[0]
     namespace = {"__name__": "pipe"}
-    exec(compile(code, "thermal.md", "exec"), namespace)
+    exec(compile(code, "developed.md", "exec"), namespace)
     assert namespace["flux"] == pytest.approx(48.0 / 11.0, rel=1e-3)
     assert namespace["held"] == pytest.approx(3.65679, rel=1e-3)
 
@@ -2457,7 +2457,7 @@ def test_the_thermal_step_in_a_field_is_first_order_in_time_and_its_explicit_for
     16 cells to t = 0.3; the difference between runs at dt and dt/2 is the time error. With the explicit Lorentz
     force it is first order (1.04 at sigma B^2/rho = 30) and does not grow with the field: 0.0076 at 10 and 0.0058 at
     30 between dt 0.02 and 0.01, the stronger field damping its damped part's error. Under the implicit shift it is
-    0.083 at 30, the transient error of the shift (docs/physics/numerics.md)."""
+    0.083 at 30, the transient error of the shift (docs/physics/numerics/time.md)."""
     from validation.verification import manufactured_run
 
     def time_error(rate, damping="explicit", steps=(0.02, 0.01)):

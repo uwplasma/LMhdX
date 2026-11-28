@@ -90,7 +90,7 @@ first order.
 - With the explicit Lorentz force, their constant on $u_x$ does not grow with the field. It is 2.20 with no field,
   2.14 at $\sigma B^2/\rho=10$ and 2.12 at 30.
 - Under the implicit damping shift it is 3.6 and 7.7, which is the shift's transient error
-  ([numerics](../physics/numerics.md), "What the shift costs a transient").
+  ({ref}`What the shift costs a transient <numerics-lorentz-shift>`).
 - At a small step, the shift's error is the floor at which spatial refinement stops.
 
 **Braking by Hartmann walls.** Take a vortex invariant along the field, between the walls the field crosses. The walls'
@@ -111,17 +111,17 @@ with 48 cells, 6 in each Hartmann layer and 6 in each wall:
   the factor $1+\Delta t\,\lambda$. The explicit force is within 1.9 %. Insulating walls are within 2.7 % on 16 cells
   and 1.3 % on 32.
 
-The [thermal](../physics/thermal.md) page ("Growth rates") compares heated rolls between Hartmann walls with Sommeria
+The {ref}`growth rates <thermal-growth-rates>` section of the convection page compares heated rolls between Hartmann walls with Sommeria
 and Moreau's model.
 
 ## Manufactured solutions elsewhere
 
 The other parts of LMhdX carry their own, on the pages of the code they check:
-- the thin conducting wall's potential, second order ([numerics](../physics/numerics.md), the staggered grid);
+- the thin conducting wall's potential, second order ({ref}`thin and resolved walls <numerics-walls>`);
 - the RK3 projection step on Shatrov and Gerbeth's manufactured flow, order 2.2–2.3
-  ([numerics](../physics/numerics.md), "The IMEX Runge-Kutta step");
+  ({ref}`The IMEX Runge-Kutta step <numerics-rk3>`);
 - the open duct with heat and buoyancy, a coupled manufactured solution, second order
-  ([heat transport](../physics/thermal.md), "Supported envelope");
+  ({ref}`Supported envelope <thermal-envelope>`);
 - the staggered core on stretched meshes ([validation](index.md), row 8).
 
 ## Sources
