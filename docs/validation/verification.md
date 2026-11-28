@@ -1,12 +1,37 @@
 # Code verification
 
-Verification asks whether the discrete equations converge to the continuous ones at the scheme's design order;
-validation, on the other pages, asks whether those equations describe the flow. This page verifies the thermal step,
-the path every run in time takes (`lmhdx.thermal.build_thermal_step`), against references that share none of its
-operators: manufactured solutions, one per term and all at once, and exact solutions with the Lorentz force.
-`validation/verification.py` holds them. `tests/test_steady.py` runs the coupled case, three single terms and the
-decay at small size. `python scripts/make_showcase_figures.py --only verification` reruns them all, in about 40
-minutes on a laptop GPU, and writes `docs/_static/data/verification.json` and the figures below.
+Verification asks whether LMhdX solves its equations correctly: refine the mesh, and the error against a known
+solution must fall at the scheme's design order. (Validation, on the other pages, asks whether those equations
+describe the flow.)
+
+This page checks the step every run in time takes, `lmhdx.thermal.build_thermal_step`, against solutions that share
+none of its operators: a manufactured solution for each term and for all of them at once, and the exact decay of a
+vortex between Hartmann walls. **Every term converges at second order in space. The step is first order in time, and
+with the explicit Lorentz force its time error does not grow with the field.**
+
+```{image} ../_static/verification_orders.webp
+:alt: The observed order of accuracy of each term of the thermal step, L-infinity and RMS, near two for every term
+:align: center
+```
+
+## Run it
+
+One term, conduction, on two meshes (about 4 s on a laptop CPU):
+
+```python
+import numpy as np
+
+from validation.verification import manufactured_run
+
+coarse, fine = (manufactured_run("conduction", cells)["rms"]["T"] for cells in (16, 32))
+print(f"RMS error {coarse:.2e} on 16 cells, {fine:.2e} on 32: order {np.log2(coarse / fine):.2f}")
+# RMS error 1.29e-03 on 16 cells, 3.51e-04 on 32: order 1.88
+```
+
+`validation/verification.py` holds every case (`TERMS`, `vortex_decay`, `hartmann_roll_growth`).
+`python scripts/make_showcase_figures.py --only verification` reruns them all, in about 40 minutes on a laptop GPU,
+and writes `docs/_static/data/verification.json` and the figure above. `tests/test_steady.py` runs the coupled case,
+three single terms and the vortex's decay at small size.
 
 ## Each term on its own
 
@@ -54,10 +79,8 @@ The observed orders on the finest pair of meshes:
     floor that the $L_\infty$ error meets at $N=64$.
 - The conjugate case has walls 0.25 thick, with four times the fluid's conductivity and twice its heat capacity. The
   temperature and heat flux are continuous across them, and its errors include the wall cells.
-- Each term's figure has two panels. Panel (a) is the error along a line, scaled by $(N/8)^2$, so curves that collapse
-  are second order. Panel (b) is the errors against the relative grid spacing $h/h_8$, with $N$ along the top. The
-  script writes them as PDFs to `docs/_static/generated/`, which is not tracked; where a published copy belongs is
-  part of the question of where large results live ([#336](https://github.com/uwplasma/LMhdX/issues/336)).
+- The script also draws each term's error along a line and against the mesh, as PDFs in `docs/_static/generated/`
+  (not tracked).
 
 ## In time, with the field on
 
@@ -89,6 +112,16 @@ cross-section, with 48 cells, 6 in each Hartmann layer and 6 in each wall:
 
 Rolls between Hartmann walls, heated, are compared with Sommeria and Moreau's model on the
 [thermal](../physics/thermal.md) page ("Growth rates").
+
+## Manufactured solutions elsewhere
+
+The other parts of LMhdX carry their own, on the pages of the code they check:
+- the thin conducting wall's potential, second order ([numerics](../physics/numerics.md), the staggered grid);
+- the RK3 projection step on Shatrov and Gerbeth's manufactured flow, order 2.2–2.3
+  ([numerics](../physics/numerics.md), "The IMEX Runge-Kutta step");
+- the open duct with heat and buoyancy, a coupled manufactured solution, second order
+  ([heat transport](../physics/thermal.md), "Supported envelope");
+- the staggered core on stretched meshes ([validation](index.md), row 8).
 
 ## Sources
 
