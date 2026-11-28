@@ -1,6 +1,13 @@
 (how-to-heated-duct)=
 # Run a heated duct
 
+```{image} ../_static/thermal_heated_duct.webp
+:alt: Insulating and Hunt ducts heated through one side wall from a cold inlet
+:align: center
+```
+
+*Insulating and Hunt ducts at Ha 1000 and Pe 2000, heated through one side wall from a cold inlet.*
+
 This guide runs a heated duct through `lmhdx.solve`, by hand with `lmhdx.thermal`, and from TOML.
 The [heat transport page](../physics/thermal.md) gives the equations, limits and diagnostics.
 

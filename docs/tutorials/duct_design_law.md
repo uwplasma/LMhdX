@@ -39,6 +39,13 @@ design: beta* 0.14851, a 20.10 mm, b 2.99 mm, W* 4.1495e-05 W, 41.7% below the s
 Wrote artifacts/examples/duct_design_law/duct_design_law_summary.json and artifacts/examples/duct_design_law/duct_design_law.png
 ```
 
+```{image} ../_static/duct_design_law.webp
+:alt: The optimum s* against H, approaching the thin-layer law
+:align: center
+```
+
+*The optimum's $s^* = \beta^*\sqrt{Ha^*}$ against $H$, approaching the thin-layer law's 2.13. Drawn by `python examples/duct_design_law.py`.*
+
 The example finds $\beta^*$ for four values of $H$, the Hartmann number of the equal-area square duct. It then sizes
 one PbLi duct (573 K) that runs 0.982 m radially through an outboard blanket in a $1/R$ field of 0.5 T at the first
 wall, at $Q = 2.4\times10^{-6}$ m³/s. There the smallest allowed mean velocity, 10 mm/s, sets the area. `jax.grad` of

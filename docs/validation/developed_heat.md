@@ -4,6 +4,13 @@ These tables check the [fully developed duct and pipe](../physics/thermal/develo
 series, closed forms and Chebyshev or spectral solves of the same equations. They verify the solver,
 and none is a comparison with experiment.
 
+```{image} ../_static/thermal_developed_duct.webp
+:alt: Developed Nusselt numbers against their exact series and the Hartmann plates' closed form
+:align: center
+```
+
+*The developed Nusselt numbers against their exact series, and the Hartmann plates against their closed form.*
+
 ## The developed duct
 
 H1 and H2 Nusselt numbers. The flow is the package's own steady solve or a uniform slug:

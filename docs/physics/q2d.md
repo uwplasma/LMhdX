@@ -3,6 +3,13 @@
 `lmhdx.q2d` evolves a periodic, depth-averaged flow in a strong uniform field normal to the flow plane. The
 [Q2D tutorial](../tutorials/q2d.md) runs it, and the [Q2D anchors](../validation/q2d.md) validate it.
 
+```{image} ../_static/q2d_turbulence_poster.webp
+:alt: Decaying Q2D turbulence: three vorticity snapshots and the energy spectrum
+:align: center
+```
+
+*Decaying Q2D turbulence on 256² cells, with three snapshots of the vorticity and the energy spectrum against a $k^{-3}$ guide.*
+
 (q2d-model)=
 ## The model
 

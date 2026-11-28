@@ -78,6 +78,13 @@ damping step ({ref}`March or Newton <open-ducts-march-newton>`). The heat transp
 (numerics-lorentz-shift)=
 ## What the shift costs a transient
 
+```{image} ../../_static/numerics_shift.webp
+:alt: Growth rate of a roll along the field under the implicit shift and the explicit force
+:align: center
+```
+
+*The growth rate of a convection roll along the field, over its exact rate, as the time step grows. The implicit damping shift slows it, by up to the factor 1 + Δt σB²/ρ, and the explicit Lorentz force keeps the exact rate. Drawn by `python scripts/make_showcase_figures.py --only shift` from `docs/_static/data/thermal_buoyancy.json`.*
+
 The shift is implicit, but the step takes the potential's share of the force, $-\sigma\nabla\phi\times\mathbf B$, from
 the old velocity. Where the two balance, the Lorentz force nearly vanishes. That happens in a quasi-two-dimensional
 core, or in a convection roll whose axis lies along the field, since the roll's electromotive force is a gradient and

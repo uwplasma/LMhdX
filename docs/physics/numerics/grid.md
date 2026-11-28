@@ -1,6 +1,13 @@
 (numerics-grid)=
 # The staggered grid and the electric scheme
 
+```{image} ../../_static/numerics_grid.webp
+:alt: A staggered cell and a wall-resolving mesh at Ha 100
+:align: center
+```
+
+*(a) A staggered cell carries velocity and current on its faces, and pressure and potential at its centre. (b) A wall-resolving mesh at Ha 100 packs cells into the Hartmann layers, 1/Ha thick, and the side layers, 1/√Ha thick. Drawn by `python scripts/make_showcase_figures.py --only grid`.*
+
 Every three-dimensional solver in LMhdX uses one finite-volume grid and one electric scheme. The periodic and open
 ducts, the pipe, every fully developed `Problem` and the heat transport share them. The fast solves that invert these
 operators are on [Solvers](solvers.md).

@@ -53,6 +53,13 @@ print(pressure_drop(solution.pressure, -3.0, 3.0))
 131.60664371853954
 ```
 
+```{image} ../_static/open_ducts.webp
+:alt: The ANL fringe field, the pressure along the duct, and the excess pressure drop against Ha
+:align: center
+```
+
+*(a) The field this page imposes. (b) The pressure along the duct, which the solve above gives. (c) Where the excess goes at high Ha, from the [open-duct evidence](../validation/open_ducts.md). Drawn by `python scripts/make_showcase_figures.py --only fringe`.*
+
 In the Stokes limit the solve is one preconditioned conjugate-gradient solve,
 and LMhdX raises if it misses its residual. Check the balances before reading a
 pressure.

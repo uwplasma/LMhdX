@@ -1,6 +1,13 @@
 (open-ducts)=
 # Ducts with an inlet and an outlet
 
+```{image} ../_static/open_ducts.webp
+:alt: The ANL fringe field, the pressure along a duct through it, and the excess pressure drop against Ha
+:align: center
+```
+
+*(a) The ANL fringe field. (b) The pressure along a duct through it at Ha 20, as the fringe tutorial sets it up. (c) The excess pressure drop of the fringe on the 3-D core against the core-flow model, with TM-228's thin-layer asymptotes dashed. Drawn by `python scripts/make_showcase_figures.py --only fringe`.*
+
 `lmhdx.axial` gives the staggered core an inflow-outflow axis, the first, for a duct that runs through a varying field
 such as a magnet's fringe. It solves the inertialess limit or, by marching or Newton's method, the steady flow with
 inertia. `validation/open_pipe.py` does the same for the pipe. The evidence is on

@@ -1,6 +1,13 @@
 (thermal-walls)=
 # Conduction through solid walls
 
+```{image} ../../_static/mistrangelo.webp
+:alt: LMhdX with conducting steel walls against the six codes of Mistrangelo et al. 2025
+:align: center
+```
+
+*LMhdX with conducting steel walls against the six codes of Mistrangelo et al. (2025). The [benchmark record](../../validation/mistrangelo.md) explains each panel.*
+
 Solid walls conduct and store heat around the fluid, as in Mistrangelo et al.'s heated duct (ADR 0009
 D36). This page gives the conjugate equation, its discretization and solve, and what the tests check.
 

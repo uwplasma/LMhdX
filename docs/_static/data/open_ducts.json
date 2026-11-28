@@ -1,0 +1,6 @@
+{
+  "source": "docs/validation/open_ducts.md, the table of the excess with the layers' conductance: the 3-D core, the global and the local closures of the core-flow model, and TM-228's asymptote, for c = 0.02 and c = 0.1",
+  "hartmann": [400, 800, 1600, 3200, 10000, 20000],
+  "c=0.02": {"core": [0.04503, 0.03893, 0.03419, 0.03042, 0.02577, 0.02375], "global": [0.04967, 0.03865, 0.03261, 0.02855, 0.02415, 0.02235], "asymptote": 0.01783},
+  "c=0.1": {"core": [0.05510, 0.05077, 0.04751, 0.04506, 0.04230, 0.04209], "global": [0.05522, 0.04973, 0.04621, 0.04379, 0.04124, 0.04022], "asymptote": 0.03901}
+}

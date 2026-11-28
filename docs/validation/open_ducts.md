@@ -5,6 +5,13 @@ outlet](../physics/open_ducts.md), rows 6, 7 and 24 of the [validation matrix](i
 fringe against TM-228 and LMhdX's [core-flow model](../physics/coreflow.md). The pipe runs through the ALEX B1 magnet
 against the measurement.
 
+```{image} ../_static/open_ducts.webp
+:alt: The ANL fringe field, the pressure along a duct through it, and the excess pressure drop against Ha
+:align: center
+```
+
+*(a) The ANL fringe field. (b) The pressure along a duct through it at Ha 20. (c) The excess on the 3-D core against the core-flow model, from the table below, with TM-228's asymptotes dashed. Drawn by `python scripts/make_showcase_figures.py --only fringe`.*
+
 The ANL fringe has $x_0=3$, $c=0.02$ on all four walls and $B_y$ alone. Its buffers are 15 half-widths upstream and 10
 downstream, with 0.25 axial spacing over $[-6,3]$ for 70 axial cells and over the ramp $[-3,3]$ for 60. Every run is in
 the Stokes limit unless it names a Reynolds number. Drops are in units of $\sigma U_0B_0^2a$.

@@ -1,6 +1,13 @@
 (numerics-solvers)=
 # Linear and nonlinear solvers
 
+```{image} ../../_static/device_scaling.webp
+:alt: Time per step against size for the 3-D core and Q2D, on a CPU and a GPU
+:align: center
+```
+
+*Time per step against problem size for the 3-D core and Q2D, on a CPU and one GPU, in both precisions, with the G4 targets drawn.*
+
 LMhdX inverts its operators with direct fast-diagonal solves where the grid allows, and with preconditioned Krylov
 methods elsewhere. The operators come from [the staggered grid](grid.md). SOLVAX supplies the generic algorithms.
 

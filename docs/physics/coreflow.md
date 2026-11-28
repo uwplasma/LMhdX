@@ -5,6 +5,13 @@ Hartmann number and interaction parameter, following Hua, Walker, Picologlou and
 inertialess, and it is the reference that the three-dimensional open duct is compared with
 ([Open ducts](open_ducts.md)).
 
+```{image} ../_static/open_ducts.webp
+:alt: The ANL fringe field, the pressure along a duct through it, and the excess pressure drop against Ha
+:align: center
+```
+
+*Panel (c) compares the core-flow model with the 3-D core on the ANL fringe, for two wall conductances; the [open-duct page](open_ducts.md) describes the other panels.*
+
 (coreflow-model)=
 ## The model
 

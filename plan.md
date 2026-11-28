@@ -1532,6 +1532,11 @@ production movies and raw data as release assets with checksums.
 | `docs/_static/thermal_convection_3d.webp` | Ra 10⁴, Pr 0.1 layer, 64 × 64 × 32, with and without a horizontal field (Q = 1000), 29 frames | 110 KB | Phase 5, done (#270) |
 | `docs/_static/thermal_heated_duct.webp` | Insulating and Hunt ducts at Ha 1000, Pe 2000, heated through one side wall from a cold inlet, in 3-D; inlet jets and the hottest wall temperature along the duct, 40 frames | 96 KB | Phase 5, done (#270) |
 | `docs/_static/mistrangelo.webp` | Mistrangelo et al. 2025: Case 1's Nu on M3, and Case 2's Nu and axis temperature unseeded and seeded at 15 and 3.75 ms, against the six codes' bands, from `docs/_static/data/mistrangelo.json` | 33 KB | Phase 5, done (#338) |
+| `docs/_static/numerics_grid.webp` | One staggered cell and a wall-resolving mesh at Ha 100, drawn with no solve | 15 KB | release docs (#341) |
+| `docs/_static/numerics_shift.webp` | A roll's growth rate along the field under the implicit shift and the explicit force against dt sigma B^2/rho, from `thermal_buoyancy.json` | 12 KB | release docs (#341) |
+| `docs/_static/open_ducts.webp` | The ANL fringe field, the pressure along a duct through it at Ha 20, and the excess against Ha beside the core-flow model, from `open_ducts.json` | 25 KB | release docs (#341) |
+| `docs/_static/duct_design_law.webp` | s* against H, from `examples/duct_design_law.py` | 10 KB | release docs (#341) |
+| `docs/_static/wall_stack.webp` | The Li, AlN and 316L wall stack, its effective conductance with pinholes and the solved current, from `examples/li_aln_wall_stack_example.py` | 21 KB | release docs (#341) |
 | Stellarator channel | coil field along the channel, ΔP, wall current | ≤ 150 KB + MP4 | Phase 6.2 |
 
 `docs/_static/q2d_vortex_decay.webp` (36 KB) is tracked without a row. The

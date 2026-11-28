@@ -7,6 +7,13 @@ duct with an aluminium-nitride (AlN) coated wall against a bare steel one.
 
 ## Wall layers
 
+```{image} ../_static/wall_stack.webp
+:alt: The Li, AlN and 316L wall stack, its effective conductance with pinholes, and the solved current
+:align: center
+```
+
+*The Li | AlN | 316L wall stack's conductivity, its effective conductance as pinholes open in the insulator, and the solved current with the insulator intact and bare. Drawn by `python examples/li_aln_wall_stack_example.py`.*
+
 {ref}`Thin and resolved walls <numerics-walls>` and {ref}`the electric scheme <numerics-electric>` explain how the walls enter the solve.
 
 Import what the solve needs and work in double precision.

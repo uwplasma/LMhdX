@@ -1584,6 +1584,132 @@ def mistrangelo() -> None:
         _save_webp(fig, STATIC / "mistrangelo.webp", dpi=110, palette=True)
 
 
+def numerics_grid() -> None:
+    """The numerics pages' grid figure (no solve): one staggered cell of the cross-section, and a wall-resolving mesh
+    at Ha 100 that puts cells in the Hartmann layers (1/Ha) and the side layers (1/sqrt(Ha))."""
+    with plt.rc_context(PAPER):
+        fig = plt.figure(figsize=(12.0, 4.6))
+        grid = fig.add_gridspec(1, 2, width_ratios=[1.0, 1.25], wspace=0.25, left=0.04, **ROW)
+        axis = fig.add_subplot(grid[0])
+        axis.add_patch(plt.Rectangle((0, 0), 1, 1, fill=False, lw=1.6, color=INK))
+        axis.plot(0.5, 0.5, "o", color=SERIES[1], ms=10)
+        axis.text(0.55, 0.56, r"$p,\ \varphi$", size=15)
+        for x, y, dx, dy, label in ((0.0, 0.5, 0.18, 0, r"$v$"), (1.0, 0.5, 0.18, 0, r"$v$"),
+                                    (0.5, 0.0, 0, 0.18, r"$w$"), (0.5, 1.0, 0, 0.18, r"$w$")):  # fmt: skip
+            axis.annotate(
+                "", (x + dx, y + dy), (x, y), arrowprops=dict(arrowstyle="-|>", color=SERIES[0], lw=2)
+            )
+            axis.text(x + dx + 0.03 * (dx > 0) - 0.02, y + dy + 0.03 * (dy > 0) - 0.02 * (dx > 0), label, size=15,
+                      color=SERIES[0])  # fmt: skip
+        axis.text(0.5, -0.2, "velocity and current on the faces,\npressure and potential at the centre",
+                  ha="center", va="top", size=12)  # fmt: skip
+        axis.set(xlim=(-0.35, 1.45), ylim=(-0.45, 1.35), aspect="equal", title="One staggered cell")
+        axis.axis("off")
+        _panel(axis, "a")
+        axis = fig.add_subplot(grid[1])
+        y = np.asarray(
+            wall_resolving_faces(24, -1.0, 1.0, layer_thickness=1.0 / 100.0, cells_in_layer=4, max_ratio=None)
+        )
+        z = np.asarray(
+            wall_resolving_faces(24, -1.0, 1.0, layer_thickness=0.1, cells_in_layer=4, max_ratio=None)
+        )
+        for face in y:
+            axis.plot([face, face], [-1, 1], color=MUTED, lw=0.6)
+        for face in z:
+            axis.plot([-1, 1], [face, face], color=MUTED, lw=0.6)
+        axis.add_patch(plt.Rectangle((-1, -1), 2, 2, fill=False, lw=1.6, color=INK))
+        axis.annotate("B", (0.55, 0.0), (-0.55, 0.0), arrowprops=dict(arrowstyle="-|>", color=SERIES[1], lw=2.2),
+                      color=SERIES[1], size=15, va="center")  # fmt: skip
+        axis.set(xlim=(-1.08, 1.08), ylim=(-1.08, 1.08), aspect="equal", xlabel="y (along the field)",
+                 ylabel="z (across it)", title="Wall-resolving mesh, Ha 100, 24 cells")  # fmt: skip
+        axis.text(1.12, 0.0, "Hartmann\nlayers 1/Ha", size=11, va="center")
+        axis.text(
+            0.0,
+            0.82,
+            "side layers 1/\u221aHa",
+            size=11,
+            ha="center",
+            bbox=dict(fc="white", ec="none", pad=1.5),
+        )
+        _panel(axis, "b")
+        _save_webp(fig, STATIC / "numerics_grid.webp", dpi=110, palette=True)
+
+
+def numerics_shift() -> None:
+    """The time-stepping page's figure, from docs/_static/data/thermal_buoyancy.json (no solve): the growth rate of a
+    roll along the field, over its exact rate, against dt sigma B^2/rho, under the implicit shift and the explicit
+    force."""
+    rolls = json.loads((STATIC / "data" / "thermal_buoyancy.json").read_text())["rolls"]
+    along = [r for r in rolls if r.get("field") == "y" and not r.get("re")]
+    with plt.rc_context(PAPER):
+        fig, axis = plt.subplots(figsize=(7.0, 4.4))
+        fig.subplots_adjust(left=0.13, right=0.97, top=0.9, bottom=0.15)
+        for damping, color, marker, label in (("implicit", SERIES[1], "o", "implicit damping shift"),
+                                              ("explicit", SERIES[0], "s", "explicit Lorentz force")):  # fmt: skip
+            points = sorted(
+                (r["dt_sigma_B2"], r["rate"] / r["exact"]) for r in along if r["damping"] == damping
+            )
+            axis.plot(*zip(*points), marker + "-", color=color, label=label, **OPEN)
+        axis.axhline(1.0, color=MUTED, lw=0.8)
+        axis.set_xscale("log")
+        axis.set(xlabel=r"$\Delta t\,\sigma B^2/\rho$", ylabel="growth rate / exact rate", ylim=(0.0, 1.15),
+                 title="A roll along the field: the shift slows a balanced transient")  # fmt: skip
+        axis.legend(loc="lower left")
+        _save_webp(fig, STATIC / "numerics_shift.webp", dpi=110, palette=True)
+
+
+def open_ducts() -> None:
+    """The open-duct pages' figure: the ANL fringe's field and the pressure along a duct through it (the fringe
+    example, solved here in seconds), and the 3-D core's excess against Ha beside the core-flow model, from
+    docs/_static/data/open_ducts.json."""
+    from lmhdx.axial import fringe_duct, solve_open_duct, station_pressure
+
+    lmhdx.enable_x64()
+    problem = fringe_duct(hartmann=20.0, wall_conductance=0.02, half_length=3.0, upstream=6.0, downstream=3.0,
+                          spacing=0.5, cells=12, cells_in_layer=3, flow_rate=4.0)  # fmt: skip
+    centres, means = (np.asarray(v) for v in station_pressure(solve_open_duct(problem).pressure))
+    data = json.loads((STATIC / "data" / "open_ducts.json").read_text())
+    x = np.linspace(-9.0, 6.0, 400)
+    field = np.where(
+        x < -3.0, 1.0, np.where(x > 3.0, 0.0, 0.5 * (1.0 - np.sin(np.pi * np.clip(x, -3, 3) / 6.0)))
+    )
+    with plt.rc_context(PAPER):
+        fig = plt.figure(figsize=(13.2, 4.2))
+        grid = fig.add_gridspec(1, 3, wspace=0.32, left=0.06, **ROW)
+        axis = fig.add_subplot(grid[0])
+        axis.plot(x, field, color=INK, lw=1.6)
+        axis.axvspan(-3.0, 3.0, color="#f9f6ef", zorder=0, lw=0)
+        axis.set(xlabel="x / half-width", ylabel=r"$B_y / B_0$", title="The ANL fringe", ylim=(-0.05, 1.1))
+        _panel(axis, "a")
+        axis = fig.add_subplot(grid[1])
+        axis.plot(centres, means, "o-", color=SERIES[0], ms=4)
+        axis.axvspan(-3.0, 3.0, color="#f9f6ef", zorder=0, lw=0)
+        axis.set(xlabel="x / half-width", ylabel="mean pressure", title="Pressure along the duct, Ha 20")
+        _panel(axis, "b")
+        axis = fig.add_subplot(grid[2])
+        ha = np.asarray(data["hartmann"], float)
+        for key, color in (("c=0.02", SERIES[0]), ("c=0.1", SERIES[1])):
+            entry = data[key]
+            axis.plot(
+                ha, entry["core"], "o", color=color, label=f"3-D core, {key.replace('=', ' = ')}", **OPEN
+            )
+            axis.plot(ha, entry["global"], "-", color=color, lw=1.2, label="core-flow model")
+            axis.axhline(entry["asymptote"], color=color, ls="--", lw=0.9)
+        axis.set_xscale("log")
+        axis.set(
+            xlabel="Ha",
+            ylabel=r"excess $\Delta p - \Delta p_{FD}$",
+            title="Excess pressure drop of the fringe",
+        )
+        axis.text(450, 0.0185, "TM-228's asymptotes", size=10, color=MUTED, va="bottom")
+        axis.legend(loc="upper right", fontsize=9.5, frameon=False)
+        _panel(axis, "c")
+        _save_webp(fig, STATIC / "open_ducts.webp", dpi=110, palette=True)
+
+
+NUMERICS = {"grid": numerics_grid, "shift": numerics_shift, "fringe": open_ducts}
+
+
 THERMAL = {
     "developed": thermal_developed,
     "entrance": thermal_entrance,
@@ -1600,7 +1726,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--only",
-        choices=("q2d", "hunt", "ladder", "pipe", "scaling", *THERMAL),
+        choices=("q2d", "hunt", "ladder", "pipe", "scaling", *THERMAL, *NUMERICS),
         help="Regenerate one asset group.",
     )
     args = parser.parse_args()
@@ -1614,6 +1740,9 @@ def main() -> None:
     if args.only in (None, "pipe"):
         pipe_sweep()
     for name, figure in THERMAL.items():
+        if args.only in (None, name):
+            figure()
+    for name, figure in NUMERICS.items():
         if args.only in (None, name):
             figure()
     if args.only == "scaling":
