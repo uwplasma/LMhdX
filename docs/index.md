@@ -91,6 +91,7 @@ physics/thermal
 :caption: Validation
 
 validation/index
+validation/verification
 validation/q2d
 validation/freemhd
 validation/mistrangelo

@@ -972,7 +972,12 @@ the critical roll at $Pr=0.02$ (PbLi's) and $Ra=2\times10^4$:
   travelling 2 to 5 % slow; upwind heat transport, not in the record, was 13 % slow on 18 cells;
 - with Case 2's ingredients at its $\Delta t\,\sigma B^2/\rho=0.34$: carried by that flow in a field along the
   roll's axis (18 cells, $Q=8100$), 24.6 % slow under the implicit shift and +1.65 % explicit, the field-free
-  run's error; in a field across the axis ($Q=10^4$, $Ra=4\times10^5$), 6.0 % and 2.5 % slow.
+  run's error; in a field across the axis ($Q=10^4$, $Ra=4\times10^5$), 6.0 % and 2.5 % slow;
+- along the field between insulating Hartmann walls at Ha 235 ($Pr=0.0196$, $Ra=10^5$; M1's 48 cells across
+  the walls), against Sommeria and Moreau's model with the exact friction of the [numerics](numerics.md)
+  page, which halves the field-free rate: +3.5 % on 32 × 48 × 32 cells at $\Delta t\,\sigma B^2/\rho=0.34$,
+  +1.5 % refined to 64 × 96 × 64; under the implicit shift 11 % slow
+  (`validation.verification.hartmann_roll_growth`).
 
 A differentially heated square cavity (de Vahl Davis 1983, $Pr=0.71$) checks the steady nonlinear
 flow: the peak velocities and the hot wall's mean Nusselt number are within 0.1 % at $Ra=10^3$ on 64
