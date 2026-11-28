@@ -24,7 +24,7 @@ from lmhdx.grid import (
 from lmhdx.ops import face_gradient
 from lmhdx.steady import momentum_terms, solve_steady_state, steady_residual
 from validation.shercliff import flow_rate, hartmann_wall_current, quadrant_flow_rate
-from validation.thermal import h1_series, plate_nusselt
+from validation.thermal import h1_series, h2_series, plate_nusselt
 
 pytestmark = pytest.mark.numerical
 
@@ -1131,8 +1131,9 @@ def test_the_developed_nusselt_numbers_meet_their_exact_values(aspect, slug):
     on 64 cells, order above 1.5 (square). The series is computed independently of any discrete operator (square
     3.60795, aspect 0.5 4.12330, square slug 7.1135). The flow is the package's own steady solve, or a uniform slug.
 
-    H2, a uniform flux on every wall, on the same square Poiseuille flow: Shah & London's 3.091, within 0.5 % on 64
-    cells, at an order between 1.5 and 2.5, and its Richardson value within 0.3 % (#240).
+    H2, a uniform flux on every wall, on the same square Poiseuille flow: the series 3.08738 (``h2_series``, no
+    discrete operator either), within 0.5 % on 64 cells, at an order between 1.5 and 2.5, and its Richardson value
+    within 1e-4. Shah & London's 3.091, cited in the review of #240 and the reference until then, is 0.12 % above it.
     """
     exact = h1_series(1.0, aspect, slug=slug)
     errors, uniform_flux = [], []
@@ -1149,8 +1150,9 @@ def test_the_developed_nusselt_numbers_meet_their_exact_values(aspect, slug):
         coarse, middle, fine = uniform_flux
         order = np.log2((coarse - middle) / (middle - fine))
         extrapolated = fine + (fine - middle) / (2.0**order - 1.0)
-        assert abs(fine / 3.091 - 1.0) < 5e-3 and 1.5 < order < 2.5, uniform_flux
-        assert abs(extrapolated / 3.091 - 1.0) < 3e-3, (uniform_flux, extrapolated)
+        series = h2_series(1.0, 1.0)
+        assert abs(fine / series - 1.0) < 5e-3 and 1.5 < order < 2.5, uniform_flux
+        assert abs(extrapolated / series - 1.0) < 1e-4, (uniform_flux, extrapolated)
 
 
 def test_a_hartmann_flow_transfers_heat_better_toward_slug_flow():
@@ -1520,11 +1522,11 @@ def test_the_t_condition_snippet_runs_as_written():
 
 def test_the_spectral_nusselt_reference_meets_the_exact_series():
     """``validation.shercliff.developed_nusselt``, the reference of the MHD Nusselt campaign: at Ha 0 it gives the
-    H1 double-sine series, H2's 3.08738 (Wang; the package's Richardson value) and T's 2.97753, on 32 points."""
+    H1 double-sine series, the H2 sine and cosine series (3.08738) and T's 2.97753, on 32 points."""
     from validation.shercliff import developed_nusselt
 
     assert developed_nusselt(0.0, 32) == pytest.approx(h1_series(1.0, 1.0), rel=1e-7)
-    assert developed_nusselt(0.0, 32, heating="H2") == pytest.approx(3.08738, rel=1e-5)
+    assert developed_nusselt(0.0, 32, heating="H2") == pytest.approx(h2_series(1.0, 1.0), rel=1e-7)
     assert developed_nusselt(0.0, 32, heating="T") == pytest.approx(_SQUARE_T, rel=1e-5)
 
 

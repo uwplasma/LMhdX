@@ -579,10 +579,14 @@ Each shape takes its cheapest flow that keeps the developed peaks within
 | On 72/9 cells | within 0.4 % | within 0.4 % |
 | Open duct, 12–48 axial cells (v2) | ≥ 99.96 % delivered; wall face 624.936 ± 0.003 K | ≥ 99.96 % delivered; wall face 624.952 ± 0.001 K |
 
-Nine of Stage 3's ten gates pass, and every one of v2's. The failure stays
-open: the fixed-flux optimum's stationarity, 1.8e-6 against 1e-6. It is a
-study, not a library feature: `examples/duct_design_law.py` still sizes a duct
-by its velocity bound, `MIN_VELOCITY`.
+Nine of Stage 3's ten gates pass, and every one of v2's. The tenth, the
+fixed-flux optimum's stationarity (1.8e-6 against 1e-6), is met by
+[Stage 3 v3](https://github.com/uwplasma/LMhdX-Duct-Optimization/blob/579f4d481584d28e85d472df28e615de937bb3c3/results/stage3-v3/README.md),
+declared before its run. Stage 3's polish had placed the minimum 2.55e-6 short
+in ln b/a. One Newton step from there brings the slope to 1.7e-10, and moves
+b/a by 2.55e-6 of itself. It is a study, not a library feature:
+`examples/duct_design_law.py` still sizes a duct by its velocity bound,
+`MIN_VELOCITY`.
 
 **What its limits are.**
 - **The model.** About a 0.48 T illustrative field cap, insulating electrical

@@ -39,8 +39,9 @@ beside the readings. The test also checks the stored spectral values at Ha 10.
 **LMhdX against the spectral solve.**
 - They agree within 0.06 % in all three conditions.
 - The 128-cell value at Ha 100 is converged to 0.02 % (128 against 192 cells).
-- At Ha 0 the spectral solve gives the double-sine series in H1 and H2, and
-  2.97753 in T, where Shah & London list 2.976.
+- At Ha 0 the spectral solve gives the exact series in H1 and H2 (3.60795
+  and 3.08738, `validation.thermal`), and 2.97753 in T, where Shah & London
+  list 2.976.
 - All three numbers climb toward their slug-flow limits, 7.114, 6 and
   $\pi^2/2=4.935$, as the core flattens. The side layers, of thickness
   $\propto Ha^{-1/2}$, keep the approach slow.

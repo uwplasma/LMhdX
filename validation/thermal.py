@@ -5,6 +5,7 @@ operator, mesh or solver with the package:
 
 - :func:`h1_series`, the H1 rectangular duct by double sine series, and :func:`shah_london_h1`, Shah &
   London's (1978) fit of it;
+- :func:`h2_series`, the H2 rectangular duct (a uniform flux on every wall) by sine and cosine series;
 - :func:`plate_nusselt`, uniformly heated Hartmann plates in closed form;
 - :func:`graetz`, the plates' thermal entrance without axial conduction, by eigen-expansion;
 - :func:`chandrasekhar_onset`, the onset of convection between rigid plates in a vertical field
@@ -24,6 +25,7 @@ __all__ = [
     "chandrasekhar_onset",
     "graetz",
     "h1_series",
+    "h2_series",
     "plate_nusselt",
     "shah_london_h1",
 ]
@@ -46,6 +48,40 @@ def h1_series(a: float, b: float, slug: bool = False, terms: int = 801) -> float
     if slug:
         return 16.0 * a**2 * b**2 * diameter / (perimeter * first)
     return first**2 * diameter / (perimeter * np.sum(weight / eigen**3))
+
+
+def h2_series(a: float, b: float, terms: int = 801) -> float:
+    """Nu of the H2 duct ``[-a, a] x [-b, b]``, a uniform flux on every wall, from series: no discrete operator.
+
+    The velocity is a double sine series. The temperature is the lift ``x^2/2a + y^2/2b``, whose outward normal
+    derivative is one on every wall and whose Laplacian is ``P/A``, plus a double cosine series that solves
+    ``laplacian(psi) = (P/A)(u/u_mean - 1)`` with ``d psi/dn = 0``. Nu is on ``D_h`` with the perimeter mean of the
+    wall temperature: 3.08738 for the square, where ``validation.shercliff.developed_nusselt``'s Chebyshev
+    collocation agrees to 1e-8 and Shah & London (1978) list 3.091.
+    """
+    odd, even = np.arange(1, terms, 2, dtype=float), np.arange(0, terms, 2, dtype=float)
+    across, along = (odd * np.pi / (2.0 * a)) ** 2, (odd * np.pi / (2.0 * b)) ** 2
+    velocity = 16.0 / (np.pi**2 * np.outer(odd, odd) * (across[:, None] + along[None, :]))
+    in_x, in_y = 4.0 * a / (odd * np.pi), 4.0 * b / (odd * np.pi)  # integrals of the sines
+    area, perimeter = 4.0 * a * b, 4.0 * (a + b)
+    mean = in_x @ velocity @ in_y / area
+    norm = np.where(even == 0, 2.0, 1.0)  # of the cosines, over the half-width
+    project = 4.0 * odd[:, None] / (np.pi * (odd[:, None] ** 2 - even[None, :] ** 2)) / norm[None, :]
+    cosines = project.T @ velocity @ project  # u in the cosines
+    source = perimeter / area * cosines / mean
+    source[0, 0] -= perimeter / area
+    eigen = (even[:, None] * np.pi / (2.0 * a)) ** 2 + (even[None, :] * np.pi / (2.0 * b)) ** 2
+    eigen[0, 0] = 1.0
+    psi = -source / eigen
+    psi[0, 0] = 0.0
+    on_x, on_y = a / 2.0 + b / 6.0 + psi[:, 0].sum(), a / 6.0 + b / 2.0 + psi[0, :].sum()  # wall means
+    wall = (4.0 * b * on_x + 4.0 * a * on_y) / perimeter
+    half = odd * np.pi / 2.0
+    squared = 2.0 / half - 4.0 / half**3  # the integral of t^2 sin(half (t + 1)) over [-1, 1]
+    flow_lift = a**2 / 2.0 * (squared @ velocity @ in_y) + b**2 / 2.0 * (in_x @ velocity @ squared)
+    flow_psi = np.sum(cosines * psi * np.outer(norm * a, norm * b))
+    bulk = (flow_lift + flow_psi) / (area * mean)
+    return 4.0 * a * b / (a + b) / (wall - bulk)
 
 
 def shah_london_h1(alpha):
