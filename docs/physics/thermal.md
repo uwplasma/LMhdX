@@ -739,8 +739,8 @@ time steps, $\Delta t_0=0.05/(Q+Ra_c^{1/2})$ and $\Delta t_0/2$.
 
 The growth rate comes from power iteration on the time stepper. Every half time unit, the script
 scales the perturbation of the conducting state back to $10^{-6}$, and the rate settles to five
-digits by the third rescaling. The script no longer uses a free decay to a smaller amplitude,
-because round-off noise sets its rate near onset. [Buoyant convection, at main's commit](https://github.com/uwplasma/LMhdX/blob/b97ad3a8525a20502279961d5b4201d158d971e9/docs/physics/thermal.md#buoyant-convection)
+digits by the third rescaling. A free decay to a smaller amplitude would not work, because
+round-off noise sets its rate near onset. [Buoyant convection, at main's commit](https://github.com/uwplasma/LMhdX/blob/b97ad3a8525a20502279961d5b4201d158d971e9/docs/physics/thermal.md#buoyant-convection)
 has the details.
 
 The reference is Chandrasekhar's eigenproblem solved by Chebyshev collocation
