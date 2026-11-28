@@ -642,6 +642,169 @@ def thermal_onset(chandrasekhar_numbers: tuple[float, ...] = (0.0, 10.0, 100.0, 
         _save_webp(fig, STATIC / "thermal_magnetoconvection.webp", dpi=110, palette=True)
 
 
+def _roll_rate(cells, layer, *, field=None, q=0.0, re=0.0, ra=2e4, pr=0.02, courant=0.3, damping="implicit"):
+    """A roll's growth rate and phase speed in LMhdX's thermal step, by power iteration (the setting of
+    :func:`validation.thermal.convection_growth_rate`, one wavelength at ``k d`` 3.117, two cells along ``y``). The
+    disturbance is averaged along ``y`` at each rescaling: a roll along ``x`` on the two cells, which a field along
+    ``x`` leaves undamped, would otherwise overtake the 2-D roll the reference describes."""
+    from validation.thermal import convection_growth_rate
+
+    k, nu = 3.117 / 2.0, pr
+    grid = Grid(
+        uniform_faces(cells, 0.0, 2 * np.pi / k), uniform_faces(2, 0.0, 1.0), uniform_faces(layer, -1.0, 1.0)
+    )
+    speed, gb, s = re * nu, ra * nu / 8.0, q * nu / 4.0
+    dt = courant * (2 * np.pi / k / cells / speed if speed else 2.0 / layer / np.sqrt(gb))
+    wall, wrap = BoundaryCondition(NEUMANN), BoundaryCondition(PERIODIC)
+    magnetic = tuple(float(np.sqrt(s)) if field == axis else 0.0 for axis in "xyz")
+    flow = ChannelProblem(
+        grid, (wrap, wrap, wall), viscosity=nu, magnetic_field=magnetic, forcing=(2 * nu * speed, 0.0, 0.0),
+        dt=float(dt), advection="limited", magnetic_damping=damping,
+    )  # fmt: skip
+    thermal = ThermalProblem(
+        flow, (wrap, wrap, thermal_boundary("temperature", 1.0, 0.0)), 1.0, 1.0, 0.5, joule_heating=False,
+        expansion_coefficient=gb, gravity=(0.0, 0.0, -1.0), advection="van_leer",
+    )  # fmt: skip
+    x, z = np.asarray(grid.centers[0])[:, None, None], np.asarray(grid.centers[2])[None, None, :]
+    rest = zero_velocity(flow)
+    profile = speed * (1.0 - z**2) * np.ones(rest[0].data.shape)
+    moving = (rest[0].replace_data(jnp.asarray(profile)), *rest[1:])
+    conduction = np.broadcast_to(0.5 - 0.5 * z, grid.shape)
+    base = initial_thermal_state(thermal, conduction, moving)
+    state = initial_thermal_state(thermal, conduction + 1e-7 * np.cos(k * x) * np.cos(np.pi * z / 2), moving)
+    reference = convection_growth_rate(k, ra, pr, chandrasekhar=q, field=field, reynolds=re, count=96)
+    interval = min(0.2 / max(abs(reference.real), 0.05), 0.25 * 2 * np.pi / k / speed if speed else np.inf)
+    steps = max(4, round(interval / dt))
+    step, heat = (
+        build_thermal_step(thermal, dtype=jnp.float64),
+        Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid),
+    )
+    run = jax.jit(
+        lambda a, b: tuple(advance_thermal(step, c, heat, steps, checkpoint=False)[0] for c in (a, b))
+    )
+    centre = layer // 2  # the vertical velocity's face at z = 0
+    wave = np.exp(-1j * k * np.asarray(grid.centers[0]))
+
+    def measure(a, b):
+        energy = float(sum(jnp.sum((v.data - u.data) ** 2) for u, v in zip(a.velocity, b.velocity)))
+        return energy, complex(
+            np.sum(np.asarray(b.velocity[2].data - a.velocity[2].data)[:, 0, centre] * wave)
+        )
+
+    # the disturbance averaged over the two cells along y; a periodic face array stores three
+    def flat(u, v, f):
+        return u + (jnp.mean((v - u)[:, :2], axis=1, keepdims=True) if jnp.ndim(u) == 3 else v - u) * f
+
+    rescale = jax.jit(lambda a, b, f: jax.tree_util.tree_map(lambda u, v: flat(u, v, f), a, b))
+    base, state = run(base, state)
+    energy, _ = measure(base, state)
+    state = rescale(base, state, 1e-7 / np.sqrt(energy))
+    energy, mode = measure(base, state)
+    for _ in range(40):
+        base, state = run(base, state)
+        after, moved = measure(base, state)
+        rate, phase = 0.5 * np.log(after / energy) / (steps * dt), -np.angle(moved / mode) / (k * steps * dt)
+        state = rescale(base, state, np.sqrt(energy / after))
+        energy, mode = measure(base, state)
+    return rate, phase, reference.real, -reference.imag / k, float(dt) * s
+
+
+def _cavity(cells: int, rayleigh: float, pr: float = 0.71, stretch: float = 0.0) -> tuple:
+    """de Vahl Davis's square cavity (hot x = 0, cold x = 1, adiabatic z) run to rest in time; returns the peak u on
+    x = 0.5, the peak w on z = 0.5 (both in kappa/L) and the hot wall's mean Nusselt number."""
+    faces = uniform_faces(cells, 0.0, 1.0)
+    if stretch:
+        faces = 0.5 + 0.5 * np.tanh(stretch * np.linspace(-1, 1, cells + 1)) / np.tanh(stretch)
+    grid = Grid(faces, uniform_faces(2, 0.0, 1.0), faces)
+    wall, wrap = BoundaryCondition(NEUMANN), BoundaryCondition(PERIODIC)
+    peak = {1e3: 3.7, 1e4: 19.6, 1e5: 68.6, 1e6: 219.4}[rayleigh]
+    dt = 0.4 * float(np.min(np.diff(faces))) / peak
+    flow = ChannelProblem(grid, (wall, wrap, wall), viscosity=pr, dt=dt, advection="limited")
+    sides = (thermal_boundary("temperature", 1.0, 0.0), wrap, thermal_boundary("heat_flux", conductivity=1.0))
+    thermal = ThermalProblem(
+        flow, sides, 1.0, 1.0, 0.5, joule_heating=False, expansion_coefficient=rayleigh * pr, gravity=(0.0, 0.0, -1.0),
+        advection="van_leer",
+    )  # fmt: skip
+    x = np.asarray(grid.centers[0])[:, None, None]
+    state = initial_thermal_state(thermal, np.broadcast_to(1.0 - x, grid.shape), zero_velocity(flow))
+    step, heat = (
+        build_thermal_step(thermal, dtype=jnp.float64),
+        Field(jnp.zeros(grid.shape), (CENTER,) * 3, grid),
+    )
+    steps = max(1, round(0.05 / dt))
+    run = jax.jit(lambda s: advance_thermal(step, s, heat, steps, checkpoint=False)[0])
+    before = np.asarray(state.temperature.data)
+    for _ in range(60):  # to |dT/dt| < 1e-5
+        state = run(state)
+        now = np.asarray(state.temperature.data)
+        if np.max(np.abs(now - before)) < 1e-5 * steps * dt:
+            break
+        before = now
+    centres, edges = np.asarray(grid.centers[0]), np.asarray(grid.faces[0])
+    u, w, t = (np.asarray(f.data)[:, 0, :] for f in (state.velocity[0], state.velocity[2], state.temperature))
+    middle = int(np.searchsorted(edges, 0.5))
+    share = (0.5 - edges[middle - 1]) / (edges[middle] - edges[middle - 1])
+    u_line, w_line = (
+        (1 - share) * u[middle - 1] + share * u[middle],
+        (1 - share) * w[:, middle - 1] + share * w[:, middle],
+    )
+    first, second = centres[0] - edges[0], centres[1] - edges[0]
+    slope = ((t[0] - 1) * second**2 - (t[1] - 1) * first**2) / (first * second * (second - first))
+    return float(np.max(u_line)), float(np.max(w_line)), float(np.sum(-slope * np.diff(edges)))
+
+
+def thermal_buoyancy() -> None:
+    """Buoyancy's checks in docs/physics/thermal.md: roll growth rates against the Chebyshev eigenproblem, and de Vahl
+    Davis's cavity (1983, his Table). Data only, about 25 minutes on a laptop GPU."""
+    lmhdx.enable_x64()
+    rolls = []
+    cases = [dict(cells=n, layer=n) for n in (8, 16, 32)]
+    cases += [dict(cells=32, layer=32, field=f, q=100.0) for f in "xz"]
+
+    def stable(q, n):  # dt sigma B^2 / rho under 2 at Courant 0.3 of the buoyancy speed
+        return q * 0.02 / 4.0 * 0.3 * (2.0 / n) / np.sqrt(2e4 * 0.02 / 8.0) < 2.0
+
+    for q in (1e3, 1e4, 1e5):
+        for n in (16, 32, 64):
+            cases += [
+                dict(cells=n, layer=n, field="y", q=q, damping=d)
+                for d in ("implicit", "explicit")[: 1 + stable(q, n)]
+            ]
+    cases += [dict(cells=n, layer=32, re=400.0, ra=1e5, damping="implicit") for n in (18, 24, 48)]
+    # Case 2's ingredients at its dt sigma B^2/rho of 0.34: a through-flow and a field along the roll; a field across it.
+    for damping in ("implicit", "explicit"):
+        cases.append(dict(cells=18, layer=32, re=400.0, ra=1e5, field="y", q=8100.0, damping=damping))
+        cases.append(dict(cells=16, layer=16, ra=4e5, field="x", q=1e4, courant=1.72, damping=damping))
+    for case in cases:
+        rate, phase, exact, travel, product = _roll_rate(**case)
+        rolls.append(
+            {
+                **case,
+                "rate": rate,
+                "exact": exact,
+                "speed": phase,
+                "exact_speed": travel,
+                "dt_sigma_B2": product,
+            }
+        )
+        print(f"roll {case}: {rate:.5f} against {exact:.5f} ({100 * (rate / exact - 1):+.2f} %)")
+    table = {1e3: (3.649, 3.697, 1.118), 1e4: (16.178, 19.617, 2.243), 1e5: (34.73, 68.59, 4.519),
+             1e6: (64.63, 219.36, 8.800)}  # fmt: skip
+    cavity = []
+    for ra, sizes in ((1e3, (32, 64)), (1e4, (32, 64)), (1e5, (32, 64, 128)), (1e6, (64, 128))):
+        for n in sizes:
+            found = _cavity(n, ra, stretch=1.5 if ra >= 1e5 else 0.0)
+            cavity.append({"Ra": ra, "cells": n, "u w Nu": found, "de Vahl Davis": table[ra]})
+            print(f"cavity Ra {ra:g} on {n}: {np.round(100 * (np.array(found) / table[ra] - 1), 2)} %")
+    path = STATIC / "data" / "thermal_buoyancy.json"
+    record = {
+        "command": "python scripts/make_showcase_figures.py --only buoyancy",
+        "rolls": rolls,
+        "cavity": cavity,
+    }
+    _write_record(path, record)
+
+
 def thermal_convection(rayleigh: float = 1.0e4, prandtl: float = 0.1, chandrasekhar: float = 1000.0) -> None:
     """A liquid-metal layer heated from below: cells without a field, rolls along a horizontal one.
 
@@ -1141,6 +1304,24 @@ def benchmark_scaling() -> None:
     _save_webp(fig, STATIC / "device_scaling.webp", dpi=100)
 
 
+def _write_record(path: Path, record: dict) -> None:
+    """Write a record to six digits, one entry of each list per line: small diffs when a rerun changes a case."""
+    record, lines = _compact(record), ["{"]
+    for i, (key, value) in enumerate(record.items()):
+        end = "," if i < len(record) - 1 else ""
+        if isinstance(value, list) and value and isinstance(value[0], dict):
+            entries = [json.dumps(entry, separators=(", ", ": ")) for entry in value]
+            lines += [
+                f" {json.dumps(key)}: [",
+                *(f"  {e}," for e in entries[:-1]),
+                f"  {entries[-1]}",
+                f" ]{end}",
+            ]
+        else:
+            lines.append(f" {json.dumps(key)}: {json.dumps(value)}{end}")
+    path.write_text("\n".join([*lines, "}"]) + "\n")
+
+
 def _compact(value):
     if isinstance(value, dict):
         return {str(key): _compact(item) for key, item in value.items()}
@@ -1185,6 +1366,7 @@ THERMAL = {
     "developed": thermal_developed,
     "entrance": thermal_entrance,
     "onset": thermal_onset,
+    "buoyancy": thermal_buoyancy,
     "convection": thermal_convection,
     "heated-duct": thermal_heated_duct,
 }

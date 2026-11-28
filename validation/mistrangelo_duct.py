@@ -69,6 +69,7 @@ def case1(
     record: dict | None = None,
     case: str = "case1",
     edge_spacing: float | None = None,
+    magnetic_damping: str = "implicit",
 ) -> tuple:
     """Step 5.4e's coupled problem and its start: Case 1's full duct in SI units, temperatures in deg C.
 
@@ -79,7 +80,8 @@ def case1(
     outer bottom surface takes ``q''`` over ``|x| <= 0.3`` m and its full outer width. The axial mesh has
     ``spacing`` over ``core`` and grows into the buffers out to ``span``; ``edge_spacing`` refines it toward the
     heated zone's two ends (:func:`edge_faces`). No Joule heat. ``case`` names the specification's case whose ``u0``
-    and ``q''`` it takes (:func:`case2`). Returns the problem and its start.
+    and ``q''`` it takes (:func:`case2`). ``magnetic_damping`` is the flow's (:class:`lmhdx.core3d.ChannelProblem`):
+    the campaigns of 5.4e and 5.4f ran ``"implicit"``. Returns the problem and its start.
     """
     enable_x64()
     record = record or spec()
@@ -124,6 +126,7 @@ def case1(
         dt=dt,
         advection="limited",
         solid_walls=walls,
+        magnetic_damping=magnetic_damping,
     )
     flow = open_duct(base, u0 * (2.0 * a) ** 2)
     x = np.asarray(grid.centers[0])
