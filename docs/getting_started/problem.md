@@ -58,9 +58,9 @@ The presets return the grids and fields of the older constructors:
 `channel` is a plane channel at constant bulk velocity and half-width one. It
 takes the bulk Reynolds number `re`, or `R = U0 delta / nu` of Boeck, Krasnov
 and Zienicke, a wall-normal or spanwise `field`, and the domain of their Table 1
-or of Krasnov, Zikanov and Boeck 2011. A Hartmann channel, with the field normal
-to the walls, needs a zero net spanwise current, which no kernel imposes yet.
-LMhdX builds such a channel, and `solve` refuses it.
+or of Krasnov, Zikanov and Boeck 2011. LMhdX builds a Hartmann channel, with
+the field normal to the walls, but `solve` refuses it, because no kernel imposes
+the zero net spanwise current it needs.
 
 ## Solvers
 

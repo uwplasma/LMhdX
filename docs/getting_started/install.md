@@ -12,10 +12,9 @@ lmhdx --help
 ```
 
 `lmhdx --help` lists the commands `run`, `benchmark` and `validate`. LMhdX does
-not support JAX 0.6.2, the last release for Python 3.10. Its CUDA build crashes
-when a thermal step's compiled loop runs a second time at production sizes, and
-later releases do not have this fault. SOLVAX's dependency equinox excludes JAX
-0.7.0 and 0.7.1.
+not support JAX 0.6.2, the last release for Python 3.10, because its CUDA build
+crashes when a thermal step's compiled loop runs a second time at production
+sizes. SOLVAX's dependency equinox excludes JAX 0.7.0 and 0.7.1.
 
 ## Plotting and accelerators
 

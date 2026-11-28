@@ -5,7 +5,7 @@ experiments. The first is the onset of instability in a Kolmogorov-like flow
 (Tithof et al. 2017), where LMhdX finds the critical Reynolds number within
 1.2 %. The second is the energy spectrum of a driven vortex lattice (Sommeria
 1986), where the spectrum's constant falls in the expected range only at the
-higher friction Reynolds numbers. These are validation rows 13 and 15 of the plan.
+higher friction Reynolds numbers. These are validation rows 13 and 15.
 
 Each point of the neutral curve takes a few seconds. From the repository root,
 this computes the row $q=0.465$ of the first table below:
@@ -36,8 +36,8 @@ $\alpha=0.064\,\mathrm{s^{-1}}$, $\nu=3.26\times10^{-6}\,\mathrm{m^2/s}$ and
 magnet width $w=1.27$ cm, so $\kappa=\pi/w$ and $\alpha/(\nu\kappa^2)=0.3208$.
 The Reynolds number is $Re=Uw/\nu$, with $U$ the rms speed.
 
-`lmhdx.q2d` solves the $\beta=1$ model (velocity and forcing rescale by $\beta$
-in the others). The campaign:
+`lmhdx.q2d` solves the $\beta=1$ model (other $\beta$ rescale velocity and
+forcing). The campaign:
 - takes a box of one forcing period in $y$ and $2\pi/(q\kappa)$ in $x$;
 - starts from the exact steady flow plus a $10^{-8}$ perturbation in the modes
   $e^{i\kappa(ny+qx)}$, $n=-1,0,1$;
@@ -58,10 +58,9 @@ A parabola through the measured curve gives $Re_c=7.694$, $+1.23$ % from the
 published 7.60, at $q_c=0.462$, $-0.64$ % from 0.465. **Row 15 is met, within
 its 2 %.**
 - The simulated curve lies 0.4–1.1 % above eq. (4.1), as expected of a
-  three-mode truncation compared with the full periodic problem.
-- The published 7.60 is also 0.6 % below eq. (4.1) evaluated at this
-  $\alpha/(\nu\kappa^2)$, which gives 7.646. The difference is the rounding of
-  the printed parameters.
+  three-mode truncation against the full periodic problem.
+- The published 7.60 is 0.6 % below eq. (4.1) at this $\alpha/(\nu\kappa^2)$,
+  7.646, from the rounding of the printed parameters.
 - `tests/test_q2d_identities.py` gates the neutral Reynolds number at $q_c$
   within 2 % of 7.60 and 1 % of eq. (4.1), in about 7 s.
 
@@ -69,15 +68,14 @@ its 2 %.**
 
 Sommeria (J. Fluid Mech. 170, 139, 1986) drives a lattice of vortices in
 mercury and measures the inverse-cascade spectrum
-$E(k)=C\,\varepsilon^{2/3}k^{-5/3}$. The plan's range for $C$ is 3–7. It comes
-from plan Section 3.3 and was not re-read from the paper.
+$E(k)=C\,\varepsilon^{2/3}k^{-5/3}$. The plan's range for $C$, 3–7, comes from
+plan Section 3.3 and was not re-read from the paper.
 
 The campaign applies the steady forcing $\omega_f=F\sin(6x)\sin(6y)$ on
 $[0,2\pi]^2$, six periods per side, with friction $\alpha=1$, viscosity
 $2\times10^{-3}$ and 128² cells. The time step is $dt=2\times10^{-3}$, halved
-at the largest $F$ to keep the Courant number in bounds. The campaign starts
-from a random vorticity of amplitude $10^{-2}$, runs to $t=150$ and
-averages over the last 90.
+at the largest $F$ for the Courant number. Each run starts from a random
+vorticity of amplitude $10^{-2}$, runs to $t=150$ and averages over the last 90.
 - The flux $\Pi(k)$ is the cumulative spectral transfer of the advection term,
   so $\varepsilon$ in the law is the local inverse flux $|\Pi(k)|$ and does not
   assume what friction removes.
@@ -105,12 +103,12 @@ upper part of its range $Re_\alpha$ 1–30 on this definition.**
 - The two seeds agree to 0.1 at $Re_\alpha\le14$ and to 0.7 at the largest.
 - $C$ rises with $Re_\alpha$ as the inertial range widens. The box has only the
   shells $k=1$–5 below the forcing, so the plateau is short and the value
-  depends on the band, 3–6 here. That is a limit of this campaign.
+  depends on the band, 3–6 here.
 - **The runs do not reach condensation.** The fundamental holds 0.1–5.7 % of
   the energy, rising with $Re_\alpha$, and a condensate would hold most of it.
   Larger $Re_\alpha$ and longer runs are needed.
 - This campaign did not confirm Sommeria's own definition of $Re_\alpha$ or his
   forcing geometry, so the mapping of the row's "Re_α 1–30" to these runs is an
   assumption.
-- One statistical run per $F$ and seed is a single window of 90 time units, or
-  600 to 6,000 turnovers of the forcing scale.
+- Each run averages one window of 90 time units, 600 to 6,000 turnovers of the
+  forcing scale.

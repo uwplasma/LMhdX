@@ -2,8 +2,8 @@
 
 Mistrangelo et al. (Nucl. Fusion 65, 2025, 116006) ran six codes on the same problem. PbLi flows through a duct with
 2 mm steel walls, heated from below over 60 cm, through a magnet whose field falls off toward both ends. There is no
-experiment, so the benchmark is code against code. LMhdX runs the whole duct, with the fringing field, the conducting
-walls, inertia, buoyancy and heat conducted through the steel.
+experiment, so the benchmark is code against code. LMhdX runs the whole duct with the fringing field, conducting walls,
+inertia, buoyancy and heat conduction through the steel.
 
 ```{image} ../_static/mistrangelo.webp
 :alt: Nu along the heated zone for Case 1, and Nu and the axis temperature for Case 2, against the six codes' bands
@@ -15,14 +15,14 @@ walls, inertia, buoyancy and heat conducted through the steel.
 `python scripts/make_showcase_figures.py --only mistrangelo` draws it from `docs/_static/data/mistrangelo.json`.*
 
 **Case 1 (steady, 0.03 m/s, 4 W/cm²) agrees with the codes.** We gated it on three meshes and two outlet lengths
-against a rule fixed before the runs. The gate holds on 6 of the 11 figures. Three of the five misses are numerical
-and converge toward the band with refinement: the heater's sharp edge (Figures 9 and 18) and a side-layer jet
-(Figure 12). The other two follow inputs the paper leaves to each code: the steel's conductivity ratio (a jet 0.7 %
-high, Figure 13, partly not traced) and the inlet (Figure 19).
+against a rule fixed before the runs, and the gate holds on 6 of the 11 figures. Three of the five misses are
+numerical and converge toward the band with refinement, at the heater's sharp edge (Figures 9 and 18) and a
+side-layer jet (Figure 12). The other two follow inputs the paper leaves to each code, the steel's conductivity ratio
+(a jet 0.7 % high, Figure 13, partly not traced) and the inlet (Figure 19).
 
 **Case 2 (convection rolls, 0.01 m/s, 10 W/cm²) agrees once the flow carries a small disturbance.** Buoyancy makes
-rolls aligned with the field grow along the heated zone. How far along they appear depends on how large the
-disturbances feeding them are, and the paper does not say what its codes carried.
+rolls aligned with the field grow along the heated zone. Where they appear depends on the size of the disturbances
+feeding them, which the paper does not give.
 - With a weak random forcing just upstream of the heater (10⁻⁴ u₀), the rolls start where the codes' do. Nu, the
   axis temperature and the wall temperature then lie in the codes' band. The result is the same at 15 ms and 3.75 ms,
   with the onset moving by 1.5 cm between them.
@@ -57,9 +57,8 @@ fields = {"u": state.velocity[0].data, "v": state.velocity[1].data, "w": state.v
 figures = duct.case2_observables(thermal, fields)  # {figure: (x, y)}, as the paper defines them
 ```
 
-It takes about 15 s. The figures above use the same `case2_observables` on fields averaged over a long run.
-
-The production runs used meshes M1–M3 on one NVIDIA A100 each, in float64:
+It takes about 15 s. The figures above apply `case2_observables` to fields averaged over a long run, on meshes M1–M3
+with one NVIDIA A100 each, in float64:
 
 | Mesh | Fluid cells across | In each layer | Per wall | Along the core | Cells | Δt | Time per step |
 |:--|--:|--:|--:|--:|--:|--:|--:|
@@ -77,9 +76,9 @@ What the setup fixes, and what it had to infer:
 - **Properties.** The paper prints no material data. We pin PbLi's viscosity, electrical conductivity and expansion to
   the printed Ha, Re and Gr, and take its other properties from Martelli et al. 2019. We pin the steel's conductivity
   ratio to the developed pressure gradient, −0.0863 σu₀B₀².
-- **Inferred.** The setup infers Case 2's 10 W/cm² and 0.01 m/s from the ratios of the printed Gr and Re. It also
-  infers the heated width, L = a in Nu, and the pressure scale σu₀B₀². A figure confirms each one, as the checks under
-  the reference tables below show.
+- **Inferred.** The setup infers Case 2's 10 W/cm² and 0.01 m/s from the ratios of the printed Gr and Re, and also
+  the heated width, L = a in Nu, and the pressure scale σu₀B₀². A figure confirms each one (see the checks under the
+  reference tables).
 - **Numerics.** The runs use Van Leer heat transport, limited momentum transport and backward-Euler viscosity and
   conduction, and they solve the potential and pressure at every step.
 - **Case 2's averaging.** Each run burns in for at least 300 s, until two consecutive 50 s means of the bulk
@@ -88,15 +87,15 @@ What the setup fixes, and what it had to infer:
 - **Case 2's disturbance.** A random vertical force acts over x = −0.5 to −0.35 m. It is uniform along the field, has
   the three lowest sine modes across the height and draws new random amplitudes every 2 s. Its size makes the vertical
   velocity at the slab's end 10⁻⁴ u₀, which takes 3.19 × 10⁻⁵ m/s² on M1. It enters through the thermal step's
-  `force(t)`, so the library is unchanged. The run script is `case2_run.py --seed`, among the run scripts.
+  `force(t)` (`case2_run.py --seed`).
 
 ## Case 1: results
 
-There were seven runs: M1, M2 and M3 with the outlet at 1.5 m, M1 and M2 with it at 2.25 m, M1 at half the time
-step, and M1 with every solver's stopping tolerance 100 times looser. All were steady in the heated zone, with the heat
+Seven runs were made, M1, M2 and M3 with the outlet at 1.5 m, M1 and M2 with it at 2.25 m, M1 at half the time step,
+and M1 with every solver's stopping tolerance 100 times looser. All were steady in the heated zone, with the heat
 balance closed to 1e-11 of its largest term (5e-10 with the looser tolerances). A point passes if its distance outside
-the codes' band, widened by the digitizing uncertainty, is within LMhdX's own uncertainty U, and U is at most half the
-band's width. In practice the mesh change sets U.
+the codes' band, widened by the digitizing uncertainty, is within LMhdX's own uncertainty U, which is at most half the
+band's width and in practice set by the mesh change.
 
 | Figure | Quantity | Points | Inside the band, M3 | Points not passing, M1 / M2 / M3 / M1L2 / M2L2 | Gate |
 |:--|:--|--:|--:|:--|:--|
@@ -122,7 +121,7 @@ Why the five miss:
   third of it comes from the mesh. The rest follows the steel's conductivity ratio, pinned to the printed gradient, and
   a weaker buoyant asymmetry between the two jets than the codes show.
 - **Figure 19 upstream of x = −1 m.** LMhdX's inflow is the developed profile, so almost no transverse motion arrives
-  from upstream. The band there is one code's, most likely its inlet's. The specification leaves the inlet to each
+  from upstream. The band there is one code's, most likely from its inlet, which the specification leaves to each
   code.
 
 Reported, not gated:
@@ -139,8 +138,7 @@ Case 2 is reported against the codes' spread, not gated, because the codes each 
 and averaging window (Tables 2–5).
 
 **With the disturbance (M1).** The tables give Nu, the axis temperature and the wall temperature over the heater's
-second half.
-**Bold** values lie within the band widened by the digitizing uncertainty.
+second half. **Bold** values lie within the band widened by the digitizing uncertainty.
 
 | x | Nu, unseeded | Nu, seeded, 15 ms | Nu, seeded, 3.75 ms | Nu, the band |
 |:--|--:|--:|--:|:--|
@@ -189,8 +187,8 @@ What remains with the disturbance:
 - The swings behind the heater are larger, 41 K on the axis at x = 0.33 m against 30 K unseeded. The paper reports
   fluctuations up to 30 K there without saying whether that is a swing or an amplitude.
 
-**M2 agrees with M1 at its probes.** The seeded M2 run did not meet the settling rule, because its windows' means
-swing by about 1 K about a steady level. So we compare it at its probes over its last 450 s:
+**M2 agrees with M1 at its probes.** The seeded M2 run did not meet the settling rule, since its windows' means swing
+by about 1 K about a steady level, so we compare it at its probes over its last 450 s:
 
 | Probe | M2, unseeded | M2, seeded | M1, seeded | M1, unseeded |
 |:--|--:|--:|--:|--:|
@@ -200,8 +198,8 @@ swing by about 1 K about a steady level. So we compare it at its probes over its
 | Axis, x = 0.33 m | 376.67 ± 0.06 °C | 371.32 ± 0.35 °C | 370.61 ± 0.30 °C | 375.14 ± 0.03 °C |
 
 **What sets the onset.** These checks rule out the obvious numerical explanations:
-- *The disturbance's size.* Before the heater, a tenfold larger seed moves the onset 3.6 cm upstream. At the inlet the
-  field damps a seed by five decades on its way to the heater, so an inflow disturbance alone does not explain the
+- *The disturbance's size.* Before the heater, a tenfold larger seed moves the onset 3.6 cm upstream. The field damps
+  a seed at the inlet by five decades on its way to the heater, so an inflow disturbance alone does not explain the
   codes' early onset.
 - *The time step.* A linearised disturbance grows and drifts the same at 15, 7.5 and 3.75 ms (56–58 per metre,
   9.5 mm/s), and with the same seed the onset is 0.068 m at 15 ms and 0.082 m at 3.75 ms. Without a seed the onset is
@@ -209,13 +207,13 @@ swing by about 1 K about a steady level. So we compare it at its probes over its
   3.75 ms the flow goes steady.
 - *The scheme.* An explicit Lorentz force moved the unseeded onset 3 cm downstream, and halving the axial spacing
   moved it 2 cm upstream. Sub-stepping the transports, conduction or the viscous solve at 15 ms left the growth over
-  the heater as it was, and giving the 3.75 ms step the 15 ms step's coupling lag brought none of it back. None of
-  these explains the difference between the steps, or the codes' earlier onset.
+  the heater unchanged, and giving the 3.75 ms step the 15 ms step's coupling lag brought none of it back. None of
+  these explains the difference between the steps or the codes' earlier onset.
 
-**Unseeded, for the record.** Three runs (M2 and M1 with the outlet at 1.5 m, M1 at 2.25 m) settled after 650–900 s, and
-we averaged them over 450–900 s. Behind the heater the temperature on the axis swings by up to 30 K with a period of
-about 4 s, as the paper finds, but the rolls saturate only at the heater's end. 62 % or more of every figure's points
-lie within the widened band. The misses gather over the heater's second half.
+**Unseeded, for the record.** Three runs (M2 and M1 with the outlet at 1.5 m, M1 at 2.25 m) settled after 650–900 s
+and were averaged over 450–900 s. Behind the heater the axis temperature swings by up to 30 K with a period of about
+4 s, as the paper finds, but the rolls saturate only at the heater's end. At least 62 % of every figure's points lie
+within the widened band, and the misses gather over the heater's second half.
 
 ## Reference tables
 
@@ -238,11 +236,10 @@ average. The paper puts the jets' maximum at 0.935 a, and the section has 0.929 
 `python scripts/digitize_mistrangelo.py DIR` writes `src/lmhdx/data/benchmarks/references/mistrangelo2025-case1.json`
 (90 KB) and `-case2.json` (77 KB) from the paper's figure images (CC BY 4.0). Each is within 0.53 px of every extracted
 pixel column and carries its digitizing uncertainty, 2.3–2.5 px. A band is the envelope of the codes chosen to agree,
-not a confidence interval. `validation.mistrangelo.band_misfit` measures the distance outside it, widened by that
-uncertainty. Every code's full curve is in the release assets `mistrangelo2025-case1-extraction.zip`
-and `-case2-extraction.zip` of
-[mistrangelo2025-references](https://github.com/uwplasma/LMhdX/releases/tag/mistrangelo2025-references).
-`benchmarks/provenance.json` holds every SHA-256.
+not a confidence interval, and `validation.mistrangelo.band_misfit` measures the distance outside it, widened by that
+uncertainty. Every code's full curve is in `mistrangelo2025-case1-extraction.zip` and `-case2-extraction.zip` of
+[mistrangelo2025-references](https://github.com/uwplasma/LMhdX/releases/tag/mistrangelo2025-references), with the
+SHA-256s in `benchmarks/provenance.json`.
 
 | Case 1 figure | Quantity | Left out of the band | Why (page) | Chosen by |
 |:--|:--|:--|:--|:--|
@@ -292,8 +289,8 @@ Checks of the inferred values (`tests/test_steady.py`):
 ### Step 5.4c: the heated zone on a held flow
 
 This step solves Case 1's heated zone (−0.4 ≤ x ≤ 0.4 m) on the developed section's flow, with conducting walls and no
-fringe or buoyancy. It has 576,000 cells and takes 3.5 minutes on a laptop GPU.
-`python -m validation.mistrangelo heated DIR` writes its record.
+fringe or buoyancy, on 576,000 cells in 3.5 minutes on a laptop GPU. `python -m validation.mistrangelo heated DIR`
+writes its record.
 
 | Figure | Quantity | Inside the codes' band | Within half a pixel | Largest outside | Mean offset |
 |:--|:--|--:|--:|--:|--:|
@@ -304,17 +301,16 @@ fringe or buoyancy. It has 576,000 cells and takes 3.5 minutes on a laptop GPU.
 
 ### Records
 
-We declared each campaign before it ran (D12). Its full declaration, run-by-run results and diagnostics stay at the
-commit where we wrote them:
+Each campaign was declared before it ran (D12). The declarations, run-by-run results and diagnostics are at these
+commits:
 - [Case 1, gated, and the edge study](https://github.com/uwplasma/LMhdX/blob/b97ad3a8525a20502279961d5b4201d158d971e9/docs/validation/mistrangelo.md)
   (#327, #331), and Case 2's main and seeded runs on the same page (#331).
 - [Case 2's time-step study](https://github.com/uwplasma/LMhdX/blob/50ea1644b97daaf74d36e1b30a732690e175cf05/docs/validation/mistrangelo.md)
   (#338): the explicit Lorentz force, the quarter step, the sub-stepped terms, the linearised disturbance and the seeded
   run at 3.75 ms.
 
-The records are release assets of
-[LMhdX Research Assets v2](https://github.com/uwplasma/LMhdX/releases/tag/lmhdx-research-assets-v2) (ADR 0009 D38),
-with the run scripts:
+The records and run scripts are release assets of
+[LMhdX Research Assets v2](https://github.com/uwplasma/LMhdX/releases/tag/lmhdx-research-assets-v2) (ADR 0009 D38):
 
 | File | SHA-256 |
 |:--|:--|
@@ -330,12 +326,12 @@ with the run scripts:
 
 `case2_reported.py` (SHA-256 `cd7a53ea…`), which writes the Case 2 records from the runs' outputs, is not yet
 published. It joins the campaign scripts once #336 is settled. The seeded run at 3.75 ms (#338) has no released record
-yet either, and its curves are in the figure's data file. The averaged fields (5.9 GB, and 3.7 GB for the seeded runs)
-stay outside the repository.
+yet, and its curves are in the figure's data file. The averaged fields (5.9 GB, and 3.7 GB for the seeded runs) stay
+outside the repository.
 
-`tests/test_steady.py` checks the functions that made these results, in about 20 s, without a production run: the
-coarse duct's heat balance and throughflow, every observable of a known flow, the gate's rule on curves made from the
-references, Case 2's settling and independence checks, and `case2_reported`.
+`tests/test_steady.py` checks the functions behind these results in about 20 s, without a production run. It covers
+the coarse duct's heat balance and throughflow, every observable of a known flow, the gate's rule, Case 2's settling
+and independence checks, and `case2_reported`.
 
 ## Sources
 

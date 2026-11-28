@@ -36,10 +36,10 @@ print(f"T max {float(history.temperature_max[-1]):.4f}")  # T max 0.0402
 
 ## A worked example
 
-This example builds the step by hand with `lmhdx.thermal`, the same step "Run it" reaches through
-`lmhdx.solve`. A nondimensional Hartmann duct runs two cases. In the first, a forcing drives the
-duct along its periodic axis, a uniform volumetric source heats it, and its top wall cools it. The
-second is the same duct with buoyancy.
+This example builds by hand with `lmhdx.thermal` the step that "Run it" reaches through
+`lmhdx.solve`. It runs a nondimensional Hartmann duct twice. A forcing drives it along its periodic
+axis, a uniform volumetric source heats it, and its top wall cools it. The second run adds
+buoyancy.
 
 ```python
 import dataclasses
@@ -113,10 +113,10 @@ The command holds the start to the same limits and to `divergence_tolerance`. Ea
 writes a record (`heated_duct_000010.npz`) and a frame (`heated_duct_000010.vtr`), gathered by
 `heated_duct.pvd`. The first rejected chunk stops the run, writes only
 `heated_duct_000020_rejected.npz` (a record that imports but does not resume), and exits with code 2.
-`heated_duct_summary.json` holds the verdict, the first rejected sample's step, reasons and Courant
-numbers, the limits, the last diagnostics with their `time` (from the rejected chunk on a rejection,
-while `steps` counts only accepted steps), and each diagnostic's largest value. No limit applies to
-the heat balance residual or the Boussinesq measure.
+`heated_duct_summary.json` holds the verdict, the limits, each diagnostic's largest value, the first
+rejected sample's step, reasons and Courant numbers, and the last diagnostics with their `time`. On
+a rejection these come from the rejected chunk, while `steps` counts only accepted steps. No limit
+applies to the heat balance residual or the Boussinesq measure.
 
 To resume, name a record in `[start]`:
 
@@ -127,9 +127,8 @@ path = "out/heated_duct_000020.npz"
 
 Its step numbers the frames that follow, and `heated_duct_from_000020.pvd` gathers them, so the
 first series stays intact. With `steps = 20`, that run ends on the same record, bit for bit, as the
-run of 40 steps. `mode = "resume"`, the default, refuses a record written for another problem or
-solver, ignoring the run's length. `mode = "import"` starts another experiment from the record's
-state. `lmhdx upgrade` converts files of schema 1.
+run of 40 steps. `mode = "resume"`, the default, refuses a record of another problem or solver, and
+`mode = "import"` starts another experiment from the record's state. `lmhdx upgrade` converts files of schema 1.
 
 ## What a run costs
 

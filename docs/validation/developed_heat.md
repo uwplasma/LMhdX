@@ -1,8 +1,8 @@
 # Fully developed heat transfer
 
 These tables check the [fully developed duct and pipe](../physics/thermal/developed.md) against exact
-series, closed forms and Chebyshev or spectral solves of the same equations. They verify the solver.
-None is a comparison with experiment.
+series, closed forms and Chebyshev or spectral solves of the same equations. They verify the solver,
+and none is a comparison with experiment.
 
 ## The developed duct
 
@@ -15,24 +15,23 @@ H1 and H2 Nusselt numbers. The flow is the package's own steady solve or a unifo
 | square, slug flow | 7.11354 | −1.5 % / −0.38 % / −0.094 % | 1.98, 1.99 |
 | square, H2 (uniform flux on every wall) | 3.08738 | +1.41 % / +0.36 % / +0.090 % | 1.98, 1.99 |
 
-The H2 case tests the heat-flux path that the design workflow uses. Its reference,
+The H2 case tests the heat-flux path of the design workflow. Its reference,
 `validation.thermal.h2_series`, expands the velocity in sines and the temperature as a lift plus
-cosines, and bases Nu on the perimeter mean of the wall temperature. The spectral solve of the MHD
-Nusselt campaign (`validation.shercliff.developed_nusselt`) agrees with it to 1e-8, and the
-package's Richardson value, 3.08733, to 2e-5. Shah & London's (1978) 3.091, which the review of #240
-cited, is 0.12 % above all three. Bluck et al. (2015) tabulate 3.0871.
+cosines, and bases Nu on the perimeter mean of the wall temperature. The MHD Nusselt campaign's
+spectral solve agrees with it to 1e-8, and the package's Richardson value, 3.08733, to 2e-5. Shah &
+London's (1978) 3.091, which the review of #240 cited, is 0.12 % above all three. Bluck et al. (2015)
+tabulate 3.0871.
 
-The H1 values lie on Shah & London's polynomial fit for rectangular ducts, with the coefficients
-taken from the `ht` library. The comparison uses the fit but never gates on it, and does not consult
-the book's own tables. The tests check the aspect-0.5 duct only at 64 cells, and the refinement study
-uses the square ducts.
+The H1 values lie on Shah & London's polynomial fit for rectangular ducts, with coefficients from
+the `ht` library. The comparison never gates on the fit and does not consult the book's tables. The
+tests check the aspect-0.5 duct only at 64 cells.
 
 ## Hartmann plates
 
 Hartmann flow between plates at $y=\pm a$, each taking in a uniform heat flux with no source and no
 Joule heat, has $Nu=4/\int_0^1F_H^2\,ds$ with $D_h=4a$. Here $F_H$ is the integral of the
-mean-normalized Hartmann velocity $f_H=(1-\cosh(Hs)/\cosh H)/(1-\tanh H/H)$. Quadrature computes the
-reference, which runs from $140/17$ at Ha 0 to 12 as Ha grows. Given the cell means of the analytical
+mean-normalized Hartmann velocity $f_H=(1-\cosh(Hs)/\cosh H)/(1-\tanh H/H)$. The reference, by
+quadrature, runs from $140/17$ at Ha 0 to 12 as Ha grows. Given the cell means of the analytical
 velocity across one cell with insulated ends, the plates' own $Nu$ converges as follows:
 
 | Flow | Exact | 32 / 64 / 128 cells | Order |
@@ -61,8 +60,8 @@ $Nu_T$ from `developed_wall_temperature`:
 The square duct's reference is a Chebyshev collocation of the same eigenproblem, extrapolated from
 40, 48 and 56 nodes at its observed order 2.0. The package's own Richardson value, 2.97749, agrees
 with it to 1.5e-5. Shah & London (1978) list 2.976, 0.05 % below both. The slug-flow row is exact
-because the sampled sines of slug flow are exact eigenfunctions of the cell-centred Dirichlet
-Laplacian. The plates carry the cell means of the analytical velocity, with $D_h=4a$, and their
+because slug flow's sampled sines are exact eigenfunctions of the cell-centred Dirichlet Laplacian.
+The plates carry the cell means of the analytical velocity, with $D_h=4a$, and their
 references are one-dimensional Chebyshev solves.
 
 ## The pipe

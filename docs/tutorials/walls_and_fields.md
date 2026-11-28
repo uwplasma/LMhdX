@@ -1,9 +1,7 @@
 # Walls and imposed fields
 
-Real duct walls are layers of metal and insulator, and real magnets give fields
-that vary across the duct. This page builds both. It sets up a wall stack whose
-currents the solver resolves cell by cell, and an imposed field from a formula
-or a measured table. The steps follow
+This page builds a wall stack whose currents the solver resolves cell by cell,
+and an imposed field from a formula or a measured table. The steps follow
 `python examples/li_aln_wall_stack_example.py`, which compares a liquid-lithium
 duct with an aluminium-nitride (AlN) coated wall against a bare steel one.
 
@@ -106,13 +104,10 @@ print(f"Ha {ha:.0f}, c {c:.3g}, normal leakage {leakage:.3g}, dp/dx {0.01 / mean
 Ha 224, c 0.00844, normal leakage 7.81e-13, dp/dx 0.3686 Pa/m at 1 cm/s
 ```
 
-The example prints the same pressure gradient for the coated wall, and 1.14 Pa/m
-for the bare one.
-
-The example repeats this for a bare 316L wall of the same thickness, sweeps
-pinholes in the coating, checks the residual and the charge balance, and plots
-the comparison. Its results assess electrical MHD performance only, not
-Li/AlN material compatibility.
+The example repeats this for a bare 316L wall of the same thickness, which
+needs 1.14 Pa/m. It also sweeps pinholes in the coating, checks the residual
+and the charge balance, and plots the comparison. Its results assess
+electrical MHD performance only, not Li/AlN material compatibility.
 
 How the solver handles the stack:
 - The staggered core resolves the currents in the wall cells and takes the
@@ -139,9 +134,9 @@ steel = SolidWall(
 
 `ChannelProblem(solid_walls=...)` takes a `core3d.SolidWall` or `None` at each
 end of the wall-bounded axes 1 and 2. A solid wall is a thickness in equal
-cells. It has its `electrical_conductivity` beside the `thermal_conductivity`
-and `heat_capacity` a thermal problem uses. The electrical conductivity is
-absolute, not a ratio over the fluid's.
+cells, with an absolute `electrical_conductivity` (not a ratio over the
+fluid's) beside the `thermal_conductivity` and `heat_capacity` a thermal
+problem uses.
 
 How LMhdX solves them:
 - The walls become cells of an extended grid (`core3d.conjugate_grid`). The
@@ -149,12 +144,8 @@ How LMhdX solves them:
 - `solvax.pcg_linear_solve` solves the charge balance through fluid and
   walls. The fast-diagonal Poisson inverse (`poisson.variable_helmholtz` with
   no shift) preconditions it.
-- The balance is singular, and its null mode is the constants. A rank-one term
-  on them makes it positive definite, and the solve removes the volume mean
-  afterwards.
 - The currents into the walls heat the fluid's half cells. The Lorentz force
-  leaves them out, as it does a resolved wall's. The thermal step does not
-  deposit the walls' own Joule heat.
+  leaves them out, as it does a resolved wall's.
 - A corner cell, in walls of both axes, takes the nearer wall's material, and
   the first axis's where the two are equally near. Walls of equal cells on both
   axes tie exactly there; earlier versions split such ties unevenly
@@ -204,14 +195,13 @@ $c = 0.1$ and insulating side walls.
   32 cells.
 - Solid walls of that $c$, $a/10$, $a/20$ and $a/40$ thick, give a result 2.3 %, 0.64 %
   and 0.16 % below the thin-wall model, approaching it at second order in the
-  thickness. That is the finite thickness's order-1 % effect.
+  thickness.
 
 This runs with the scheduled tests.
 
 **Derivatives.** A solid wall's electrical conductivity is a leaf of the charge
-solve, and the trace puts it into the cells. The tests check its derivative to
-the derivative standard, and a new value needs no recompilation. The steady
-solve builds its walls as constants. A gradient of the pressure drop in a
+solve. The tests check its derivative to the derivative standard, and a new
+value needs no recompilation. The steady solve builds its walls as constants. A gradient of the pressure drop in a
 wall's conductivity is planned with the wall-conductance work. `SolidWall`
 refuses a traced conductivity.
 
@@ -237,7 +227,7 @@ print(f"max |div B| {np.abs(divergence).max():.1e}, Bz from {sampled[..., 2].min
 max |div B| 3.5e-05, Bz from 4.250 to 5.750
 ```
 
-The divergence is the finite differences' error, small against a field of 5.
+The divergence is the finite differences' error.
 
 Pass any such callable to a `Problem` as `lmhdx.fields.Func(fn, params)`, a
 function `fn(x, y, z, params)` that returns the three components at the cell
@@ -263,9 +253,9 @@ flow rate 0.400012
 
 ## Use measured field data
 
-Store Cartesian coordinates (metres) and components (tesla) in an NPZ table.
-This synthetic affine example is divergence-free. Replace its arrays with your
-measured or exported data. Include the conducting walls in the table's domain.
+Store Cartesian coordinates (metres) and components (tesla) in an NPZ table
+that covers the conducting walls. Replace this synthetic, divergence-free
+example's arrays with your measured or exported data.
 
 ```python
 from pathlib import Path
@@ -293,6 +283,6 @@ The rules for a table:
   and the component shapes must match.
 - Out-of-domain or nonfinite queries raise `ValueError`. The sampler never
   extrapolates them.
-- Loading a file is host-side setup, not a differentiable live coil or geometry
-  interface. Keep the source's provenance, the interpolation error and
-  independent Maxwell checks with each run.
+- Loading a file is host-side setup and is not differentiable. Keep the
+  source's provenance, the interpolation error and independent Maxwell checks
+  with each run.

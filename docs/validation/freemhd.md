@@ -1,10 +1,9 @@
 # FreeMHD comparison
 
-This page explains how LMhdX runs side by side with FreeMHD, an independent
-liquid-metal MHD code built on OpenFOAM. The case is the ALEX B2 square duct
-in a fringing field. Each code passes or fails on its own checks. Their
-pressure difference is reported, not gated, because the two runs do not
-compute the same state.
+This page explains how LMhdX runs beside FreeMHD, an independent liquid-metal
+MHD code built on OpenFOAM, on the ALEX B2 square duct in a fringing field.
+Each code passes or fails on its own checks. Their pressure difference is
+reported, not gated, because the two runs do not compute the same state.
 
 To write and hash the inputs without Docker:
 
@@ -29,11 +28,11 @@ FreeMHD is an external validator, not an LMhdX runtime dependency. One module,
 
 ## What is compared
 
-The two codes do not compute the same state. FreeMHD runs the frozen two-update
-transient smoke test from a uniform plug on a 5 x 5 grid. LMhdX gives the
-steady inertialess core flow. The cross-code pressure difference is therefore
-reported, not gated, and so is LMhdX against the ALEX `pressure_observable`
-column. Each code passes or fails on its own gates:
+FreeMHD runs the frozen two-update transient smoke test from a uniform plug on
+a 5 x 5 grid, and LMhdX gives the steady inertialess core flow. So the
+cross-code pressure difference is reported, not gated, and so is LMhdX against
+the ALEX `pressure_observable` column. Each code passes or fails on its own
+gates:
 
 - FreeMHD must meet the `[harness_smoke_execution]` limits on step count, time
   step, Courant number, mass, current and interface-current balance, and
@@ -67,8 +66,8 @@ python -m validation.freemhd \
   --output artifacts/freemhd-b2
 ```
 
-`--preflight`, shown at the top, writes and hashes the inputs without Docker.
-The exit code is 0 when both codes pass their own gates. Record the image ID next to the evidence:
+The exit code is 0 when both codes pass their own gates. Record the image ID next
+to the evidence:
 
 ```console
 docker image inspect freemhd-install:latest --format '{{.Id}}'

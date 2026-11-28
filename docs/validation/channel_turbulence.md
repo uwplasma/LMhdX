@@ -11,12 +11,10 @@ high, outside the 2 % target, and this page gives the suspected reason.
 :align: center
 ```
 
-The case is `examples/channel_turbulence_example.py`. Run it with
-`python examples/channel_turbulence_example.py`, but expect more than an hour on
-a CPU (see "Result and cost" below). It is also the scheduled test
-`tests/test_channel_turbulence.py`, plan step H5.1, which is marked `slow` and
-runs outside the pull-request tiers. The `turbulence` workflow runs it weekly on
-the uwplasma Macs.
+Run `python examples/channel_turbulence_example.py`, but expect more than an
+hour on a CPU. It is also the scheduled test `tests/test_channel_turbulence.py`
+(plan step H5.1), marked `slow` and outside the pull-request tiers, which the
+`turbulence` workflow runs weekly on the uwplasma Macs.
 
 ## Case
 
@@ -32,14 +30,13 @@ the uwplasma Macs.
 - Times are in half-widths per bulk velocity. One time unit is
   $Re_\tau^2/Re\approx17$ viscous times.
 
-A flux correction every 50 steps, or 1.25 time units, holds the bulk velocity.
-It adds the deficit $1-U_b$ as a unit-bulk profile $\propto 1-z^2$, which
-satisfies the walls and is divergence-free. The body force is a constant
-$2\times10^{-3}$, so the drive that the run needed is the force plus the mean
-correction per unit time. The run reports $Re_\tau$ from the mean wall shear,
-taken from a quadratic through the wall and the two nearest cell centres, and
-independently from that mean drive. The two agree to 0.2 %. $U_{cl}$ is the
-mean at $z=0$, averaged over the two central cells.
+A flux correction every 50 steps, or 1.25 time units, holds the bulk velocity
+by adding the deficit $1-U_b$ as a divergence-free unit-bulk profile
+$\propto 1-z^2$. The body force is a constant $2\times10^{-3}$, so the drive the
+run needed is the force plus the mean correction per unit time. The run reports
+$Re_\tau$ from the mean wall shear, from a quadratic through the wall and the
+two nearest cell centres, and independently from that mean drive. The two agree
+to 0.2 %. $U_{cl}$ is the mean over the two central cells.
 
 The start is the laminar profile plus low-wavenumber noise of amplitude 0.2 in
 modes up to 4. The instantaneous $Re_\tau$ peaks near 385 at $t=12$ and
@@ -48,12 +45,11 @@ settles by $t\approx100$.
 ## Statistics window
 
 After a burn-in of 200, the run samples the plane-averaged mean profile every
-1.25 time units for 200 time units, which gives 160 samples. The window
-is about 3,300 viscous times, or 32 flow-throughs of $L_x$ at the bulk
-velocity. The Re_tau trace over the window has a standard deviation of 3.4 and
-a block-mean standard error of 0.7, or 0.2 %. The first and second half give
-333.6 and 333.2. The paper does not state its
-averaging time.
+1.25 time units for 200 time units, 160 samples. The window is about 3,300
+viscous times, or 32 flow-throughs of $L_x$ at the bulk velocity. The Re_tau
+trace over the window has a standard deviation of 3.4 and a block-mean standard
+error of 0.7, or 0.2 %. The first and second half give 333.6 and 333.2. The
+paper does not state its averaging time.
 
 ## Result and cost
 
@@ -68,24 +64,22 @@ $U_{cl}$ is within the plan's 1.5 % but just below the finite-difference
 spread. $Re_\tau$ is **not** within the plan's 2 %. It is 8.7 % high, far
 outside both the statistical error and the time-step effect.
 
-The probable cause is the scheme, not the run. The staggered central scheme
-conserves kinetic energy and adds no numerical dissipation, and at
-$\Delta x^+\approx33$, $\Delta y^+\approx16$ nothing removes energy from the
-unresolved scales, so the friction is higher. The paper's scheme B is
+The probable cause is the scheme. The staggered central scheme adds no
+numerical dissipation, and at $\Delta x^+\approx33$, $\Delta y^+\approx16$
+nothing removes energy from the unresolved scales, so the friction is higher. The paper's scheme B is
 dissipative at $O(\Delta t\,\Delta x^2)$ and matches the spectral value at this
 resolution. That reading is a hypothesis until the $96^3$ and $128^3$ runs,
 with about 4 and 8 times the cells, show $Re_\tau$ falling toward 306.
 
-The run used one shared Mac with 14 cores, a load average of 40 to 100 during
-the run, float64 and one XLA CPU process. It cost:
+The run used one shared 14-core Mac (load average 40 to 100), float64 and one
+XLA CPU process. It cost:
 - 0.29 s per step at $\Delta t=0.025$, or 1 h 18 min of stepping for 16,000
   steps and 400 time units;
 - 0.22 s per step at $\Delta t=0.0125$, which restarted from the $t=200$ state
   with 25 time units of burn-in.
 
-The plan's estimate of "minutes to hours" holds. The 128³ case is about 8 times
-the cells and twice the steps, about 20 hours at the same speed, and remains a
-GPU run.
+The 128³ case has about 8 times the cells and twice the steps, about 20 hours
+at the same speed, so it remains a GPU run.
 
 The scheduled test gates $U_{cl}$ at 1.5 %, the regime and the agreement
 between shear and drive. It carries the plan's 2 % $Re_\tau$ gate as a strict

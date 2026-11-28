@@ -67,9 +67,8 @@ The mesh and the solve work as follows:
 - `result.residual` is the residual norm of the certified solve (relative
   tolerance 1e-9, `Solver(tol=)`). A solve that fails raises.
 - A sweep of Hartmann numbers, fields or wall conductances on one mesh size
-  compiles twice. From the third case on, LMhdX builds the mesh, field and
-  factorizations on the host and passes them to the program the second case
-  compiled.
+  compiles twice. From the third case on, LMhdX reuses the second case's
+  program with a mesh, field and factorizations built on the host.
 - `Problem.replace` changes a visible part of a frozen problem, for example
   `insulating.replace(forcing=(2.0, 0.0, 0.0))`.
 
@@ -114,22 +113,20 @@ drive 0.54214, dQ/d(drive) 0.0922271, power 0.0677675
 
 The problem is linear in its drive. One solve gives the flow per unit drive
 `G`, the required drive is `Q / G` (`result.pressure_gradient`), and the check
-tests `Q = G*drive` to `1e-8`. This checks the linear drive-to-flow relation,
-not an independent physical reference. The example also writes the solution
-with `lmhdx.Output`, and a JSON summary of the flow, the drive,
-`d(drive)/dQ = 1/G` and the hydraulic power `drive*L*Q`. This is the work of a
-fully developed segment, excluding entry and exit, manifolds and thermal
-effects. It is not a complete blanket pumping budget.
+tests `Q = G*drive` to `1e-8`. That checks the linear relation, not a physical
+reference. The example also writes the solution with `lmhdx.Output`, and a JSON
+summary of the flow, the drive, `d(drive)/dQ = 1/G` and the hydraulic power
+`drive*L*Q`. That power covers a fully developed segment only, without entry
+and exit, manifolds or thermal effects.
 
 ## Cross-section weights on the staggered core
 
 `lmhdx.steady.channel_cross_section_weights(problem)` returns the transverse
 `(y, z)` integration weight of every cell, $\Delta y_j \Delta z_k$, for a
-`lmhdx.core3d.ChannelProblem`. Axis 0 is the flow axis of every channel this
-package builds, since `lmhdx.core3d.duct_problem` and every other constructor
-put the periodic axis there. A cell's weight therefore does not depend on the
-axial spacing. A channel has no fluid mask. Every transverse cell counts, so
-the weights sum to the full cross-section area.
+`lmhdx.core3d.ChannelProblem`. Every constructor, `lmhdx.core3d.duct_problem`
+among them, puts the periodic flow axis at axis 0, so a cell's weight does not
+depend on the axial spacing. A channel has no fluid mask, so the weights sum to
+the full cross-section area.
 
 ```python
 import numpy as np
@@ -143,10 +140,6 @@ extent = problem.grid.extent
 assert weights.shape == problem.grid.shape[1:]
 assert np.isclose(weights.sum(), extent[1] * extent[2])
 ```
-
-This is a mesh-geometry query, not a solve, so it has no convergence or
-precision envelope to fail. The new core measures its throughput and
-pumping-power metrics against it.
 
 ## Throughput and pumping power on the staggered core
 
@@ -184,9 +177,8 @@ These functions work in the Stokes limit only. $Q = Gf$ holds because the steady
 residual is affine in the drive when `problem.advection == "off"`.
 `channel_flow_response` raises `ValueError` for any other value, since the
 residual then carries $-\nabla\cdot(\mathbf u\mathbf u)$ and a single unit-drive
-solve stops determining the whole response. Like `hydraulic_power`, these are
-isothermal segment quantities, excluding entry and exit losses, manifolds and
-thermal effects.
+solve stops determining the whole response. Like `hydraulic_power`, they
+describe an isothermal segment only.
 
 ## Fit a measured velocity profile
 
@@ -256,13 +248,10 @@ This synthetic example checks parameter recovery, not experimental validity.
   depends on its squared magnitude. That is why the field bound is positive.
 - Weak fields, a bulk-flow observation only, or uncertain viscosity or geometry
   can also make the drive and the field hard to tell apart.
-- Keep the full profile, and inspect the residual and the parameter
-  sensitivity. For targets outside this two-parameter model, report the
-  residual that remains; optimizer success is not a fit-quality certificate.
-- Validate inferred parameters with the reporting solver and a held-out finer
-  mesh before using them in a design study.
+- Keep the full profile and inspect the residual, since optimizer success
+  does not certify the fit. Check the inferred parameters on a finer mesh
+  before using them in a design study.
 
-For a prescribed flow rate rather than a profile, don't optimize the drive.
+For a prescribed flow rate, don't optimize the drive.
 `lmhdx.steady.channel_drive_for_flow_rate(problem, target_flow_rate)` eliminates
-it exactly using the linear response. Neither fit is a thermal blanket design;
-wall and geometry optimization and heat-transfer validation have separate gates.
+it exactly.

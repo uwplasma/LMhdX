@@ -1,9 +1,7 @@
 # Restart and write output
 
 This page shows how to save a run to disk and pick it up again. `lmhdx.Output`
-writes restart records, ParaView files, a summary and a log. A steady solve
-writes its fields once, and an unsteady run writes them every chunk. A restarted
-run gives the same answer, bit for bit, as one that never stopped.
+writes restart records, ParaView files, a summary and a log.
 
 Pass an `Output` as the third argument of `solve`, and a record as `start=`:
 
@@ -26,18 +24,16 @@ generated output outside the repository.
 ## An unsteady run
 
 `lmhdx.solve(problem, solver, Output("out", every=20))` runs in compiled chunks
-of 20 steps. It writes the files below for every kind of run, including a
-projection run, a heated run and a Q2D run, and writes them once for a steady
-solve:
-- the record `run_000020.npz` after each accepted chunk, which holds the exact
+of 20 steps. After each chunk it writes these files, for projection, heated and
+Q2D runs alike. A steady solve writes them once.
+- the record `run_000020.npz`, after each accepted chunk, which holds the exact
   state and the identity of the problem and solver that wrote it;
 - the ParaView frame `run_000020.vtr`, gathered in `run.pvd`. A polar grid
   writes `.vts` instead, at the points $(r\cos\theta, r\sin\theta, z)$.
   `fields=("velocity",)` limits the arrays. Stretched grids need nothing extra,
   because the rectilinear file holds the face coordinates;
 - `run_summary.json`, which holds a finite flag and the last and largest value
-  of each diagnostic. The writer folds these in chunk by chunk, so the file does
-  not grow with the run;
+  of each diagnostic. It does not grow with the run;
 - the solver's log, `run.log`, with the banner, a block per chunk with its
   progress and the time remaining, and the footer. Beside it, `run.jsonl` holds
   a JSON line per chunk. The log also goes to stderr, so the command's stdout is
@@ -48,9 +44,9 @@ and a record and a frame at steps 10, 20, 30 and 40 in `out/`.
 
 `Output(name=)` names the files. In a TOML file, the case's `name` sets it.
 Every file carries the run's `name`, so two runs in one directory, or a resume,
-do not overwrite each other. A run in chunks matches the same run in one chunk
-bit for bit, and so does a run restarted from a record, because the state at a
-step boundary is all that carries over to the next step.
+do not overwrite each other. A run in chunks, or one restarted from a record,
+matches the same run in one chunk bit for bit, because only the state at a step
+boundary carries over to the next step.
 
 ## Records and restarts
 
@@ -70,8 +66,8 @@ With an `Output`, `Solution.history` holds only the last chunk, so a long run's
 memory does not grow. The whole series is in the `.jsonl` file. There, a
 history stride must divide `every` and `steps`. Without an `Output`, the
 kernel's own rule applies. LMhdX checks every step of a heated run against its
-limits, whatever the history stride, because the stride only thins the history
-returned. A rejection reports the first step past a limit.
+limits, whatever the stride, and a rejection reports the first step past a
+limit.
 
 ## Heated runs
 

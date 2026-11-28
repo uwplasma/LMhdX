@@ -83,9 +83,9 @@ The inputs:
 
 ## Differentiate the finite evolution
 
-`evolve_q2d` is the field-only numerical core for optimization. It omits host
-status and output assembly, so continuous array, forcing, length, viscosity,
-Hartmann-friction and timestep parameters remain traced. Differentiate an
+`evolve_q2d` is the field-only core for optimization. It skips host status and
+output assembly, so continuous array, forcing, length, viscosity,
+Hartmann-friction and timestep parameters stay traced. Differentiate an
 energy objective with respect to the friction.
 
 ```python
@@ -130,7 +130,7 @@ fields, a $256\times256$ grid, 80 steps, one compilation run and five warm
 repetitions. The final CPU and NVIDIA RTX A4000 vorticity fields agreed to
 relative $L_2=2.38\times10^{-6}$ and $L_\infty=3.67\times10^{-6}$.
 
-**Timings.** This page does not quote that run's speed-up.
+**Timings.**
 - A float32 GPU timing counts only when its report records a true-float32
   `jax_default_matmul_precision`, because JAX's default lets Ampere cards use
   TensorFloat-32 (ADR 0005, D15).
@@ -141,10 +141,10 @@ relative $L_2=2.38\times10^{-6}$ and $L_\infty=3.67\times10^{-6}$.
 - LMhdX sets the precision to `'highest'` when you build a `Q2DProblem`, unless
   you have already chosen one.
 
-These figures characterize this workload and hardware, not every grid or
-device. Timings exclude compilation, use identical precision and inputs, and
-synchronize the final field before stopping the clock. Q2D accepts sharded
-initial fields, but correctness does not imply a parallel speedup.
+These figures hold for this workload and hardware only. Timings exclude
+compilation, use identical precision and inputs, and synchronize the final
+field before stopping the clock. Q2D accepts sharded initial fields, but a
+correct sharded run does not imply a parallel speedup.
 
 **Check placement locally.** Run from the repository root in a fresh process:
 
@@ -160,27 +160,17 @@ Repeat with two devices and `--x64 0` for float32.
   and records synchronized times.
 - The grid's first dimension must be a multiple of the device count.
 - [JAX CPU devices](https://docs.jax.dev/en/latest/config_options.html) share
-  host cores and memory. The reported efficiency is therefore a logical-device
-  placement comparison, not fixed-core strong scaling or a prediction for a
-  GPU interconnect.
-- Record thread settings and host load. One CPU device can already use
-  multiple threads. Distributed FFT communication still needs profiling.
-
-JAX compiles the setup and diagnostic reductions. The validated reporting
-wrapper still performs host-side checks and optional frame collection. For
-optimization, use `evolve_q2d` inside a compiled objective to avoid reporting
-work on every evaluation, then qualify the resulting trajectory with
-`solve_q2d`. The pure kernel uses SOLVAX's checkpointed recurrence for bounded
-reverse-state storage. It does not replace the solver's Courant and energy
-acceptance gates.
+  host cores and memory, so the reported efficiency compares logical-device
+  placement. It is not strong scaling or a prediction for a GPU interconnect.
+- Record thread settings and host load, since one CPU device can already use
+  multiple threads.
 
 ## Interpretation
 
 The solver reports kinetic energy, enstrophy, the integrated energy-budget
 residual, the final field's spectral velocity divergence and the maximum
-Courant number. Energy-budget and Courant reductions run every step. The
-solver evaluates the divergence once, on the reported final velocity, to avoid
-repeated transforms.
+Courant number. Energy-budget and Courant reductions run every step, and the
+divergence once, on the final velocity.
 
 When the solver accepts a result:
 - `status == "completed"` and `converged == True` only when fields and
@@ -199,9 +189,8 @@ When the solver accepts a result:
 - `evolve_q2d` is a traced field kernel and performs no host acceptance check.
   Qualify optimization trajectories with `solve_q2d`.
 
-SM82 is a basic quasi-two-dimensional closure, not a general replacement for
-the three-dimensional inductionless solver. Use the 3-D model for developing
-Hartmann layers, spatially varying transverse structure, fringing fields, and
-geometries that break the depth-average assumptions. This Q2D path leaves out
+SM82 is a basic quasi-two-dimensional closure. Use the 3-D inductionless
+model for developing Hartmann layers, spatially varying transverse structure,
+fringing fields, and geometries that break the depth-average assumptions. This Q2D path leaves out
 the higher-order inertial corrections that Pothérat, Sommeria, and Moreau
 describe.

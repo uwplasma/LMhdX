@@ -12,7 +12,7 @@ at low and moderate Hartmann numbers.
 ```
 
 The spectral reference takes a few seconds per number. From the repository
-root, this computes Ha 10 on 48 points:
+root, this computes the Ha 10 row of the table below on 48 points:
 
 ```python
 from validation.shercliff import developed_nusselt
@@ -27,14 +27,12 @@ H2 3.7985
 T 3.6023
 ```
 
-These are the spectral values in the Ha 10 row of the table below.
-
 The duct is Shercliff's square duct, with insulating walls, a field along $y$
-and no Joule heat. Ha is on the half-width $a$, and $D_h=2a$. This page
-compares its developed Nusselt numbers against two references:
+and no Joule heat. Ha is on the half-width $a$, and $D_h=2a$. Its developed
+Nusselt numbers are compared against two references:
 - an independent spectral solve, `validation.shercliff.developed_nusselt(Ha,
-  points, heating=...)`. It uses Chebyshev collocation on the same nodes as that
-  module's velocity, and shares no operator with the package;
+  points, heating=...)`, by Chebyshev collocation, which shares no operator with
+  the package;
 - a published analysis, Bluck, Wolfendale & Marquis (2015).
 
 LMhdX runs on the 128-cell meshes of `duct_problem`. The thermal conditions
@@ -44,18 +42,17 @@ are:
 - H2: a uniform wall flux, axially and around the section;
 - T: the wall at one temperature everywhere, the excess decaying along the duct.
 
-Each Nu is the section's mean Nusselt number, the wall flux averaged over the
-whole perimeter against the wall-to-bulk difference, on $D_h=2a$.
+Each Nu is the wall flux averaged over the whole perimeter against the
+wall-to-bulk difference, on $D_h=2a$.
 
 **Two kinds of statement.** LMhdX against the spectral solve is verification.
 `tests/test_steady.py` gates one point, 48 cells at Ha 10, within 0.3 % of the
-spectral solve in each condition. The published curves are a reading from a
-figure, reported with its uncertainty. `python -m validation.mhd_nusselt`
-regenerates every number on this page in about ten minutes on a laptop CPU. The
-compact record,
+spectral solve in each condition, and checks the stored spectral values at Ha 10.
+The published curves are a reading from a figure, reported with its uncertainty.
+`python -m validation.mhd_nusselt` regenerates every number on this page in
+about ten minutes on a laptop CPU. The record,
 `src/lmhdx/data/benchmarks/references/bluck2015-shercliff-nusselt.json`, holds
-the spectral column of the table below, the definition of Nu and that command,
-beside the readings. The test also checks the stored spectral values at Ha 10.
+the spectral column, the definition of Nu and that command, beside the readings.
 
 | Ha on $a$ | H1 mean Nu on $D_h$: LMhdX / spectral | H2: LMhdX / spectral | T: LMhdX / spectral |
 |--:|:--|:--|:--|
@@ -78,13 +75,13 @@ beside the readings. The test also checks the stored spectral values at Ha 10.
 ## The published curves
 
 Bluck, Wolfendale & Marquis (2015) is an analytical series for the same duct.
-We read their square-duct curves in Figs. 4 (H1) and 6 (H2) from the vector
-paths of the accepted manuscript.
+We read its square-duct curves in Figs. 4 (H1) and 6 (H2) from the accepted
+manuscript's vector paths.
 - **How we read them.** Each curve is a polyline whose vertices lie at
-  Ha $=10^{k/4}$, mapped through the figures' own tick marks. That regular
-  spacing suggests the authors' computed points, but the vertices are evidence
-  of the drawn curve, not access to their numbers. The readings, the
-  calibration and the manuscript's SHA-256 are in
+  Ha $=10^{k/4}$, mapped through the figures' own tick marks. That spacing
+  suggests the authors' computed points, but the vertices are evidence of the
+  drawn curve only. The readings, the calibration and the manuscript's SHA-256
+  are in
   `src/lmhdx/data/benchmarks/references/bluck2015-shercliff-nusselt.json` and
   `benchmarks/provenance.json`.
 - **A check.** The H1 curve's plateau reads 3.60678, against their tabulated
@@ -102,10 +99,9 @@ much more closely with the spectral solve under the following reading:
   below.
 
 So the authors appear to have drawn Figure 4 against the half-width, a factor
-of 2 from the paper's own definition. That is our inference from the fit.
-Neither the authors nor an independently reproduced analytical value of theirs
-at nonzero Ha has confirmed it. The record keeps both readings and the
-published definition.
+of 2 from the paper's own definition. That is our inference from the fit, and
+neither the authors nor a reproduced analytical value of theirs at nonzero Ha
+has confirmed it. The record keeps both readings and the published definition.
 
 Three uncertainties stay separate:
 - the reading's precision, which is the calibration through the figures' tick
@@ -117,8 +113,8 @@ Three uncertainties stay separate:
 
 Both curves fall below the spectral solve as Ha grows. The authors note that
 their series' hyperbolic terms overflow double precision at large Ha, and that
-they regroup them through logarithms. The error left there is not quantified.
-The agreement of two in-house discretizations, LMhdX and the spectral solve,
-does not show that the publication is wrong there. The comparison checks LMhdX
-against both references at low and moderate Ha. Above Ha ≈ 30, the reference
-used here is the independent spectral solve.
+they regroup them through logarithms, with the remaining error not quantified.
+The agreement of LMhdX and the spectral solve, both in-house, does not show
+that the publication is wrong there. So LMhdX is checked against both
+references at low and moderate Ha, and above Ha ≈ 30 against the spectral solve
+alone.

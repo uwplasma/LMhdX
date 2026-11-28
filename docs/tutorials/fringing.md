@@ -9,7 +9,7 @@ pressure drop, as `python examples/fringe_duct_example.py` does.
 The boundary conditions follow HIMAG, FreeMHD, GridapMHD and the 2025 six-code
 benchmark. The inlet takes LMhdX's own fully developed profile at the inlet
 field, solved on the duct's cross-section and scaled to the imposed flow rate.
-The flow rate is exact and the pressure drop is an output. At the outlet the
+The pressure drop is an output. At the outlet the
 axial gradient of the velocity is zero and `p = 0`. Neither end carries a
 normal current.
 
@@ -53,9 +53,9 @@ print(pressure_drop(solution.pressure, -3.0, 3.0))
 131.60664371853954
 ```
 
-In the Stokes limit the solve is one preconditioned conjugate-gradient solve.
-LMhdX certifies it on its residual and raises if the solve misses that residual.
-Check the balances it guarantees before reading a pressure.
+In the Stokes limit the solve is one preconditioned conjugate-gradient solve,
+and LMhdX raises if it misses its residual. Check the balances before reading a
+pressure.
 
 ```python
 from lmhdx.axial import charge_balance, mass_balance

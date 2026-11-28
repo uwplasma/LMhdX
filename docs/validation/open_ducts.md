@@ -1,9 +1,9 @@
 # The ANL fringe duct and the ALEX pipe
 
 This page holds the evidence for the open duct and the open pipe of [Ducts with an inlet and an
-outlet](../physics/open_ducts.md). It covers rows 6, 7 and 24 of the [validation matrix](index.md). The duct runs
-through the ANL fringe and is compared with TM-228 and LMhdX's [core-flow model](../physics/coreflow.md). The pipe runs
-through the ALEX B1 magnet and is compared with the measurement.
+outlet](../physics/open_ducts.md), rows 6, 7 and 24 of the [validation matrix](index.md). The duct runs through the ANL
+fringe against TM-228 and LMhdX's [core-flow model](../physics/coreflow.md). The pipe runs through the ALEX B1 magnet
+against the measurement.
 
 The ANL fringe has $x_0=3$, $c=0.02$ on all four walls and $B_y$ alone. Its buffers are 15 half-widths upstream and 10
 downstream, with 0.25 axial spacing over $[-6,3]$ for 70 axial cells and over the ramp $[-3,3]$ for 60. Every run is in
@@ -28,7 +28,7 @@ end faces by 3e-7 (row 28 asks for 0.5 %).
 (validation-open-ducts-fringe)=
 ## The excess on the three-dimensional core
 
-`lmhdx.axial.fringe_duct` reproduces the geometry of the core-flow gate at finite Hartmann number. The excess is
+`lmhdx.axial.fringe_duct` is the core-flow gate's geometry at finite Hartmann number. The excess is
 $\Delta p-\Delta p_{FD}$ over $[-6,2]$. Here $\Delta p_{FD}$ is LMhdX's own fully developed gradient at the local
 field, integrated with 24 Gauss points over the ramp. All runs used one A4000.
 
@@ -43,22 +43,21 @@ field, integrated with 24 Gauss points over the ramp. All runs used one A4000.
 
 - **The mesh is converged.** At Ha 400, $41\times32^2$ (axial spacing 0.5), $70\times48^2$ (0.25) and $118\times64^2$
   (0.125) give 0.04461, 0.04504 and 0.04514, a change of 0.2 % at the last refinement.
-- **The excess decays slowly.** It shrinks by a factor of 0.78–0.80 per doubling of Ha, a power $Ha^{-0.35}$, not the
-  $Ha^{-1/2}$ of the plan's fit. A free power law extrapolates to 0.0158–0.0168, 6–11 % below the core-flow model's
+- **The excess decays slowly.** It shrinks by a factor of 0.78–0.80 per doubling of Ha, a power $Ha^{-0.35}$, not
+  $Ha^{-1/2}$. A free power law extrapolates to 0.0158–0.0168, 6–11 % below the core-flow model's
   0.01783 (and TM-228's 0.0178).
 - **Rows 7 and 24 are not met here.** At Ha 3200 the excess is still 71 % above the core-flow value. The absolute drop
   falls from 0.228 to 0.121, against TM-228's 0.0932. At Ha $10^4$ on the Ha 3200 mesh the drop is 0.11152, the
-  locally fully developed one 0.08575 and the excess 0.02576, 44 % above 0.01783, a slope of $Ha^{-0.15}$. That mesh's
-  convergence at Ha $10^4$ was not checked in that run. The meshes at high Ha below refine it.
+  locally fully developed one 0.08575 and the excess 0.02576, 44 % above 0.01783, a slope of $Ha^{-0.15}$. The meshes
+  at high Ha below check that mesh.
 
 (validation-open-ducts-inertia)=
 ## The inertial share
 
 The inertial share is $\Delta p(Re)-\Delta p(0)$ over the excess, with $Re=Ua/\nu$ on the mean velocity and
 $N=Ha^2/Re$. The Stokes-preconditioned Newton solve measured it on the ANL fringe with buffers at the core spacing
-(`fringe_duct(growth=1.0)`, $124\times32^2$, cell Reynolds number $\le 8$), with continuation from $Re=15$ in steps of
-0.1 of the flow rate. The relative residual is $\le 10^{-10}$, the mass balance $\le 1.5\times10^{-16}$ and the charge
-balance $\le 1.9\times10^{-13}$.
+(`fringe_duct(growth=1.0)`, $124\times32^2$, cell Reynolds number $\le 8$). The relative residual is $\le 10^{-10}$,
+the mass balance $\le 1.5\times10^{-16}$ and the charge balance $\le 1.9\times10^{-13}$.
 
 | Ha | Re | N | $\Delta p$ | inertial | share | outer iterations | cold time |
 |---|---|---|---|---|---|---|---|
@@ -71,17 +70,16 @@ balance $\le 1.9\times10^{-13}$.
 | 200 | 20 | 2000 | 0.182048 | 0.000518 | 0.98 % | 229 | 21 min |
 | 200 | 40 | 1000 | 0.182760 | 0.001230 | 2.33 % | 18,932 | 21.8 h |
 
-A re-run with a fixed continuation took 313 outer iterations at Ha 100, Re 20, 5,302 at Re 33, 289 at Ha 200, Re 20
-and 18,932 at Re 40, and gave the same shares and drops. Krylov recycling took the outer iterations from 313 to 224 and
-from 289 to 206 at Re 20, but from 5,302 to 11,202 at Ha 100, Re 33, and was not adopted. These counts predate the
-outlet face's $u^2$ flux, whose mode caused much of the growth of the outer count with Re. The campaigns were not
-re-run. With the default buffer growth (cell Reynolds number 66) the Ha 100, Re 33 run stalled past Re 31.35.
+Krylov recycling took the outer iterations at Re 20 from 313 to 224 (Ha 100) and from 289 to 206 (Ha 200), but from
+5,302 to 11,202 at Ha 100, Re 33. The solve does not use it. The outer counts predate the outlet face's $u^2$ flux,
+whose mode caused much of their growth with Re. With the default buffer growth (cell Reynolds number 66) the Ha 100,
+Re 33 run stalled past Re 31.35.
 
 - At fixed Re the share depends little on Ha. At fixed N it changes, 0.42 % at Ha 100, Re 10 against 2.33 % at Ha 200,
-  Re 40, both at N 1000. The data do not support the plan's $\beta N^{-1/3}$ term on this range (Ha 100–200, Re 10–40).
+  Re 40, both at N 1000. So the data do not support the plan's $\beta N^{-1/3}$ term on Ha 100–200, Re 10–40.
 - A least-squares fit of $\ln$ share on $\ln Re$ and $\ln Ha$ gives share
-  $\approx 0.045\,\% \cdot Re^{1.31} Ha^{-0.16}$. A fit in Re alone gives $0.021\,\% \cdot Re^{1.30}$. The 2.3 % of #218 on a $70\times32^2$ mesh agrees
-  with the 2.33 % here.
+  $\approx 0.045\,\% \cdot Re^{1.31} Ha^{-0.16}$. A fit in Re alone gives $0.021\,\% \cdot Re^{1.30}$. The 2.3 % of
+  #218 on a $70\times32^2$ mesh agrees with the 2.33 % here.
 - Station by station, the inertial change of $-\partial_x\bar p$ is $\le 2.3\,\%$ of the local gradient wherever
   $N b(x)^2 \ge 125$, and of order the gradient only where $N b^2 \lesssim 30$ (downstream of $x=1$), where the
   gradient itself is small.
@@ -92,9 +90,9 @@ b97ad3a](https://github.com/uwplasma/LMhdX/blob/b97ad3a8525a20502279961d5b4201d1
 (validation-open-ducts-layers)=
 ## The layers' conductance (rows 7 and 24)
 
-LMhdX's fully developed gradient lies above Walker's thin-wall value $1/(1+1/c_t+1/(3c_s))$ at every finite Ha. Count
-the Hartmann layers as a conductance $1/Ha$ added to $c_t$, and invert Walker's formula for the side walls. That gives
-$c_{s,\mathrm{eff}} = c + k\,Ha^{-1/2}$, the classical side-layer flux.
+LMhdX's fully developed gradient lies above Walker's thin-wall value $1/(1+1/c_t+1/(3c_s))$ at every finite Ha.
+Counting the Hartmann layers as a conductance $1/Ha$ added to $c_t$ and inverting Walker's formula for the side walls
+gives $c_{s,\mathrm{eff}} = c + k\,Ha^{-1/2}$, the classical side-layer flux.
 
 - At $c=0.02$, $k$ = 1.91, 1.46, 1.28, 1.19, 1.11 and 1.07 at Ha 400, 800, 1600, 3200, $10^4$ and $2\times10^4$. At
   $c=0.1$ it is 1.40, 1.24, 1.14, 1.04, 0.83 and 0.64.
@@ -145,10 +143,10 @@ model difference, not a waiver.
 ## The ALEX pipe (row 6)
 
 Buoyancy drives the observables of Mistrangelo et al. 2025, and LMhdX does not package its reference values. So
-row 6 runs on the ALEX B1 pipe instead (Ha 6600, N 10700, $c=0.027$, a
-thin conducting wall). `lmhdx/data/benchmarks/references/alex-b1-pipe.csv` packages the measured field table and the
-digitized excess pressure gradient, with an uncertainty of 0.002. Its equations are LMhdX's in the Stokes limit, and
-the interaction parameter is large ($N=10700$ under the magnet, while the duct's inertial share at $N=1000$ is 0.4 %).
+row 6 runs on the ALEX B1 pipe (Ha 6600, N 10700, $c=0.027$, a thin conducting wall).
+`lmhdx/data/benchmarks/references/alex-b1-pipe.csv` packages the measured field table and the digitized excess pressure
+gradient, with an uncertainty of 0.002. The Stokes limit applies, since $N=10700$ under the magnet and the duct's
+inertial share at $N=1000$ is 0.4 %.
 
 **The open pipe's checks.** On the test mesh ($10\times12\times14$, Ha 20, $c=0.05$, CPU) the operator is symmetric to
 2.5e-14, the energy identity holds to 1e-15, and charge, flow rate and mass hold to 5e-14, 1e-13 and 1e-14. Under a
@@ -169,8 +167,8 @@ the drop in the field scale matches central differences to 2.8e-10.
 | 6600 | 48 × 64 × 140 (spacing 0.125) | 11,437 | 740 s | 0.02665 | −3.3 % | 2.44 / 5.13 |
 
 - The cross-section is converged. Doubling the azimuth or going to 64 radial cells moves no station by more than 3e-5.
-- Upstream, LMhdX gives 0.0266 against 0.0250 measured (inside the 0.002 uncertainty). The integrated excess is within
-  3.3 % (the frozen gate is 10 %).
+- Upstream, LMhdX gives 0.0266 against 0.0250 measured, inside the 0.002 uncertainty. The integrated excess is within
+  3.3 %, against a frozen gate of 10 %.
 - Station by station the section mean is outside the data, with a weighted RMS of 2.4 against the frozen 1 and an
   $L_\infty$ of 5.1 against 2. Upstream of the pole edge the model peaks at $x=-3$ (0.0279 against 0.0220), where the
   axial currents of the fringe add to the local gradient. Downstream (from $x=-1$ to 2) it falls faster than the
@@ -184,8 +182,8 @@ weighted RMS and $L_\infty$ are 2.43 and 5.08 for the section mean, 1.79 and 3.8
 and 6.60 at the walls normal to the field ($\theta=0,\pi$). At the walls parallel to the field ($\theta=\pm\pi/2$) they
 are 0.86 and 1.39, inside the frozen 1 and 2. The packaged table does not record where ALEX put its taps, so this is a
 statement about the observable, not a tuned parameter. The model reproduces the data if they are side-wall taps, and
-not if they are section means or Hartmann-wall taps. The original report (scanned) must settle which. The draft Newton
-solve showed that inertia is about $30\times$ too small in any case.
+not if they are section means or Hartmann-wall taps. The original scanned report must settle which. The draft Newton
+solve showed that inertia is about $30\times$ too small to close the gap.
 
 Station values at $x=-15,-12.5,-10,-7.5,-5,-3,-2,-1,0,1,2,3,4,5,7.5,10$ (Ha 6600, $48\times64\times76$):
 
@@ -214,5 +212,5 @@ $L_\infty$ are in uncertainties, and "upstream" is the model's mean gradient for
 | $c=0.054$ | 0.0520 | 8.61 / 13.47 | 7.77 / 13.43 |
 
 The upstream gradient fixes the wall conductance. The data admit $c$ of about 0.025 to 0.029, and $c=0.020$ or 0.035
-miss it by 18 % and 39 %. None of these variations closes the gap for the section mean. The choice of observable does.
-This study did not test a finite-thickness wall, the field's $B_x$ component or inertia.
+miss it by 18 % and 39 %. No variation closes the gap for the section mean, but the choice of observable does. This
+study did not test a finite-thickness wall, the field's $B_x$ component or inertia.
